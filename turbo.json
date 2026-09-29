@@ -15,7 +15,8 @@
     },
     "lint": {},
     "test": {
-      "dependsOn": ["build"]
+      "dependsOn": ["build"],
+      "outputs": ["coverage/**", "coverage.xml"]
     }
   }
 }
