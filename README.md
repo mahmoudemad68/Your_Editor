@@ -13,8 +13,8 @@ milestones and ready-to-import CSV files for Jira, Linear and GitHub Projects.
 ## Architecture
 
 The architecture baseline (US-103) lives in [docs/architecture](docs/architecture/README.md): module boundaries,
-C4 diagrams, layer rules, the ports catalogue, and ADR-001 through ADR-008. Those ADRs are **Proposed** until the
-team accepts them.
+C4 diagrams, layer rules, the ports catalogue, and ADR-001 through ADR-008. The project team / product owner
+accepted those ADRs on 2026-09-29 through PR #2.
 
 ## Prerequisites
 

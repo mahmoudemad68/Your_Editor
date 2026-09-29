@@ -1,8 +1,10 @@
 # ADR-008 — Time representation as integer microseconds and frames
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-09-29
-- **Deciders:** Not yet accepted. Pending team review (US-103 AC2).
+- **Accepted:** 2026-09-29
+- **Acceptance vehicle:** PR #2
+- **Approved by:** project team / product owner
 
 ## Context
 

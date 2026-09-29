@@ -1,8 +1,10 @@
 # ADR-005 — PostgreSQL and S3-compatible object storage
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-09-29
-- **Deciders:** Not yet accepted. Pending team review (US-103 AC2).
+- **Accepted:** 2026-09-29
+- **Acceptance vehicle:** PR #2
+- **Approved by:** project team / product owner
 
 ## Context
 

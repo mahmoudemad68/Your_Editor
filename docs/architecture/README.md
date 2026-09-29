@@ -2,7 +2,7 @@
 
 Baseline for US-103. This directory is the architecture source of truth. The Agile roadmap remains the source of truth for scope and sequencing. These pages do not change the roadmap.
 
-**Acceptance status.** The layer rules and the module map are written so they can be enforced (US-103 AC3). The eight ADRs are **Proposed**. The team has not accepted them. US-103 AC2 is still open and needs a human review on the pull request. Nothing in this directory claims that acceptance.
+**Acceptance status.** The layer rules and the module map are written so they can be enforced (US-103 AC3). ADR-001 through ADR-008 are **Accepted**. The project team / product owner approved them on 2026-09-29 through PR #2, which satisfies US-103 AC2.
 
 ## Navigation
 
@@ -190,13 +190,13 @@ Communication paths and the five trust boundaries (browser, application zone, da
 
 | ADR                                                 | Title                                                               | Status   | Date       |
 | --------------------------------------------------- | ------------------------------------------------------------------- | -------- | ---------- |
-| [ADR-001](adr/001-modular-monolith-plus-workers.md) | Modular monolith plus workers                                       | Proposed | 2026-09-29 |
-| [ADR-002](adr/002-typescript-and-python.md)         | TypeScript for API, Web, and Node workers; Python for the AI worker | Proposed | 2026-09-29 |
-| [ADR-003](adr/003-json-schema-contract.md)          | JSON Schema as the cross-language contract                          | Proposed | 2026-09-29 |
-| [ADR-004](adr/004-redis-bullmq.md)                  | Redis and BullMQ                                                    | Proposed | 2026-09-29 |
-| [ADR-005](adr/005-postgresql-and-s3.md)             | PostgreSQL and S3-compatible object storage                         | Proposed | 2026-09-29 |
-| [ADR-006](adr/006-llm-provider-abstraction.md)      | LLM provider abstraction                                            | Proposed | 2026-09-29 |
-| [ADR-007](adr/007-trunk-based-development.md)       | Trunk-based development with short-lived branches                   | Proposed | 2026-09-29 |
-| [ADR-008](adr/008-integer-time.md)                  | Time representation as integer microseconds and frames              | Proposed | 2026-09-29 |
+| [ADR-001](adr/001-modular-monolith-plus-workers.md) | Modular monolith plus workers                                       | Accepted | 2026-09-29 |
+| [ADR-002](adr/002-typescript-and-python.md)         | TypeScript for API, Web, and Node workers; Python for the AI worker | Accepted | 2026-09-29 |
+| [ADR-003](adr/003-json-schema-contract.md)          | JSON Schema as the cross-language contract                          | Accepted | 2026-09-29 |
+| [ADR-004](adr/004-redis-bullmq.md)                  | Redis and BullMQ                                                    | Accepted | 2026-09-29 |
+| [ADR-005](adr/005-postgresql-and-s3.md)             | PostgreSQL and S3-compatible object storage                         | Accepted | 2026-09-29 |
+| [ADR-006](adr/006-llm-provider-abstraction.md)      | LLM provider abstraction                                            | Accepted | 2026-09-29 |
+| [ADR-007](adr/007-trunk-based-development.md)       | Trunk-based development with short-lived branches                   | Accepted | 2026-09-29 |
+| [ADR-008](adr/008-integer-time.md)                  | Time representation as integer microseconds and frames              | Accepted | 2026-09-29 |
 
 Full records: [adr/README.md](adr/README.md).
