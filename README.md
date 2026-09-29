@@ -10,6 +10,10 @@ The 24-week graduation plan is organized as an Agile/Scrum backlog in [docs/road
 6 phases, 12 two-week sprints, epics, features, user stories with acceptance criteria, technical tasks, dependencies,
 milestones and ready-to-import CSV files for Jira, Linear and GitHub Projects.
 
+## Requirements
+
+The Sprint 1 requirements baseline (US-101, US-102) lives in [docs/requirements](docs/requirements/README.md). SRS v1.0 is waiting for supervisor approval.
+
 ## Architecture
 
 The architecture baseline (US-103) lives in [docs/architecture](docs/architecture/README.md): module boundaries,
