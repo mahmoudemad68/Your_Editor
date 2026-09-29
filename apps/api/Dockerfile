@@ -30,6 +30,7 @@ COPY apps/api apps/api
 COPY packages/domain packages/domain
 COPY packages/shared packages/shared
 RUN pnpm --filter @editagent/api... build \
+    && find /app -type f \( -name '*.test.ts' -o -name '*.test.js' -o -name '*.test.js.map' -o -name '*.test.d.ts' -o -name '*.test.d.ts.map' \) -delete \
     && pnpm --filter @editagent/api --prod deploy --legacy /out \
     && rm -f /out/node_modules/.pnpm/node_modules/@editagent/api
 

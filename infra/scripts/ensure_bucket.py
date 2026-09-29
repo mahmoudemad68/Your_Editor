@@ -7,10 +7,9 @@ This is infrastructure bootstrap. It is not an application storage adapter.
 import datetime
 import hashlib
 import hmac
+import http.client
 import os
 import sys
-import urllib.error
-import urllib.request
 
 
 def _sign(key: bytes, message: str) -> bytes:
@@ -43,7 +42,7 @@ def main() -> int:
     )
     signed_headers = "host;x-amz-content-sha256;x-amz-date"
     canonical_request = (
-        f"PUT\n{canonical_uri}\n\n{canonical_headers}{signed_headers}\n{payload_hash}"
+        f"PUT\n{canonical_uri}\n\n{canonical_headers}\n{signed_headers}\n{payload_hash}"
     )
     credential_scope = f"{date_stamp}/{region}/s3/aws4_request"
     request_hash = hashlib.sha256(canonical_request.encode()).hexdigest()
@@ -59,28 +58,29 @@ def main() -> int:
         f"SignedHeaders={signed_headers}, "
         f"Signature={signature}"
     )
-    request = urllib.request.Request(
-        url=f"http://{endpoint}{canonical_uri}",
-        data=b"",
-        method="PUT",
-        headers={
-            "Host": endpoint,
-            "x-amz-content-sha256": payload_hash,
-            "x-amz-date": amz_date,
-            "Authorization": authorization,
-        },
+    connection = http.client.HTTPConnection(host, int(port), timeout=10)
+    connection.putrequest(
+        "PUT", canonical_uri, skip_host=True, skip_accept_encoding=True
     )
-    try:
-        with urllib.request.urlopen(request, timeout=10) as response:
-            print(f"created bucket {bucket} ({response.status})")
-    except urllib.error.HTTPError as exc:
-        body = exc.read().decode("utf-8", errors="replace")
-        if exc.code == 409 and "BucketAlreadyOwnedByYou" in body:
-            print(f"bucket {bucket} already exists")
-            return 0
-        print(body, file=sys.stderr)
-        return 1
-    return 0
+    connection.putheader("Host", endpoint)
+    connection.putheader("x-amz-content-sha256", payload_hash)
+    connection.putheader("x-amz-date", amz_date)
+    connection.putheader("Authorization", authorization)
+    connection.putheader("Content-Length", "0")
+    connection.endheaders()
+    response = connection.getresponse()
+    body = response.read().decode("utf-8", errors="replace")
+    connection.close()
+    if response.status in {200, 204}:
+        print(f"created bucket {bucket} ({response.status})")
+        return 0
+    if response.status == 409 and (
+        "BucketAlreadyOwnedByYou" in body or "BucketAlreadyExists" in body
+    ):
+        print(f"bucket {bucket} already exists")
+        return 0
+    print(body, file=sys.stderr)
+    return 1
 
 
 if __name__ == "__main__":
