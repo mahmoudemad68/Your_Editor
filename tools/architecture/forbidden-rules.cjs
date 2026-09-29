@@ -76,9 +76,13 @@ const forbidden = [
   {
     name: "presentation-no-infrastructure",
     severity: "error",
-    comment: "Presentation does not construct adapters.",
-    from: { path: "(^|/)presentation/", pathNot: "node_modules" },
-    to: { path: "(^|/)infrastructure/" },
+    comment:
+      "Presentation does not construct adapters. Folders named presentation and the Next.js App Router tree apps/web/src/app are presentation.",
+    from: {
+      path: "(^|/)presentation/|(^|/)apps/web/src/app/",
+      pathNot: "node_modules",
+    },
+    to: { path: "(^|/)infrastructure/", pathNot: "node_modules" },
   },
   {
     name: "infrastructure-no-presentation",
@@ -91,8 +95,8 @@ const forbidden = [
     name: "packages-no-deployables",
     severity: "error",
     comment: "Libraries do not depend on apps or workers.",
-    from: { path: "^packages/" },
-    to: { path: "^(apps|workers)/" },
+    from: { path: "(^|/)packages/", pathNot: "node_modules" },
+    to: { path: "(^|/)(apps|workers)/", pathNot: "node_modules" },
   },
   {
     name: "leaf-schemas",
@@ -187,8 +191,19 @@ const forbidden = [
     name: "workers-no-apps",
     severity: "error",
     comment: "Workers do not depend on the web or API processes.",
-    from: { path: "^workers/" },
-    to: { path: "^apps/" },
+    from: { path: "(^|/)workers/", pathNot: "node_modules" },
+    to: { path: "(^|/)apps/", pathNot: "node_modules" },
+  },
+  {
+    name: "no-unresolved",
+    severity: "error",
+    comment:
+      "Production source under apps, packages, and workers must not depend on a module the checker cannot resolve. An unresolved import of a framework is a violation even when that package is not installed. Architecture fixtures live outside this graph and are excluded by the production cruise.",
+    from: {
+      path: "(^|/)(apps|packages|workers)/",
+      pathNot: "node_modules",
+    },
+    to: { couldNotResolve: true },
   },
   {
     name: "no-circular",

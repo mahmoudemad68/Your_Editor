@@ -18,7 +18,7 @@ team accepts them.
 
 ## Prerequisites
 
-- Node.js 22.14 or newer, below 23 (see `.nvmrc`)
+- Node.js 22.23.2 (see `.nvmrc`). `package.json` `engines` accepts `>=22.14.0 <23` and `engine-strict` rejects anything outside that range. The pin stops a major-only selector from choosing 22.0–22.13.
 - pnpm 10.33 (see `packageManager` in `package.json`). Enable it with Corepack:
   `corepack enable && corepack prepare pnpm@10.33.3 --activate`
 - [uv](https://docs.astral.sh/uv/) for the Python AI worker. uv installs CPython 3.11 from `workers/ai-worker/.python-version`.

@@ -57,6 +57,62 @@ test("cross-module domain import is rejected", async () => {
   assertRejected(result, "domain-modules-do-not-import-each-other");
 });
 
+test("presentation import of infrastructure is rejected", async () => {
+  const result = await runCruise([
+    "tests/architecture/fixtures/presentation-imports-infrastructure",
+  ]);
+  assertRejected(result, "presentation-no-infrastructure");
+});
+
+test("Next.js app router import of infrastructure is rejected", async () => {
+  const result = await runCruise(["tests/architecture/fixtures/app-router-imports-infrastructure"]);
+  assertRejected(result, "presentation-no-infrastructure");
+});
+
+test("a package import of an app is rejected", async () => {
+  const result = await runCruise(["tests/architecture/fixtures/package-imports-app"]);
+  assertRejected(result, "packages-no-deployables");
+});
+
+test("a worker import of an app is rejected", async () => {
+  const result = await runCruise(["tests/architecture/fixtures/worker-imports-app"]);
+  assertRejected(result, "workers-no-apps");
+});
+
+test("a circular dependency is rejected", async () => {
+  const result = await runCruise(["tests/architecture/fixtures/circular"]);
+  assertRejected(result, "no-circular");
+});
+
+test("an unresolved production import is rejected", async () => {
+  const result = await runCruise(["tests/architecture/fixtures/unresolved-production-import"]);
+  assertRejected(result, "no-unresolved");
+});
+
+test("an unresolved external framework import from domain is rejected", async () => {
+  const result = await runCruise(["tests/architecture/fixtures/domain-unresolved-framework"]);
+  assertRejected(result, "no-unresolved");
+});
+
+test("Next.js source may import react without an architecture violation", async () => {
+  const result = await runCruise(["apps/web/src"]);
+  assert.equal(
+    result.errorCount,
+    0,
+    `${[...result.names].join(", ")}\n${JSON.stringify(result.output.summary?.violations, null, 2)}`,
+  );
+  const reactImports = [];
+  for (const mod of result.output.modules ?? []) {
+    for (const dep of mod.dependencies ?? []) {
+      if (dep.module === "react" || dep.module === "next" || dep.module?.startsWith("next/")) {
+        reactImports.push(dep);
+      }
+    }
+  }
+  assert.ok(reactImports.length > 0, "expected apps/web to import react or next");
+  assert.ok(reactImports.every((dep) => dep.couldNotResolve !== true));
+});
+
 test("production source satisfies the architecture rules", async () => {
   const result = await runCruise(["apps", "packages", "workers"]);
   assert.equal(
