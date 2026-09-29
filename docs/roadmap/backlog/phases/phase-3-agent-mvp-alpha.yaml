@@ -1,0 +1,443 @@
+id: PH3
+file: phase-3-agent-mvp-alpha
+name: Autonomous Editor Agent - MVP Alpha
+sprints: [5, 6]
+release: v0.3 "MVP Alpha"
+scope: mvp
+objective: >
+  Introduce the autonomous AI editor. A provider-agnostic LLM layer and an observe-plan-act agent loop operate on the
+  project exclusively through Tool SDK tools, using MediaAnalysis as perception. By the end of the phase the system
+  turns raw footage plus a natural-language prompt into a finished short-form video (highlight selection, silence and
+  filler removal, captions, auto-reframing, zooms, music with ducking) from the web UI - the first end-to-end
+  demonstration (milestone M3). Covers original Phase 6 plus the MVP parts of Phases 4, 7 and 13.
+depends_on: [PH2]
+dependency_notes:
+  - The agent depends on the frozen Tool SDK v1 (US-219, US-221) and the MediaAnalysis schema (US-208); no agent code may call FFmpeg, Remotion or storage directly.
+  - External - production LLM API keys with a monthly budget cap configured before Sprint 5.
+  - The evaluation harness (US-320) uses the dataset from US-110.
+deliverables:
+  - LLM provider port with capability descriptors, two provider adapters and a record/replay fake provider
+  - Versioned prompt registry
+  - AgentRun state machine, agent worker, run API, event stream and audit trail
+  - Context builder with token budgeting and untrusted-content isolation
+  - Observe-plan-act loop with schema-validated tool calling and budgets
+  - Highlight selection, semantic cutting and short-form generation for platform presets
+  - Range removal, auto-reframing, zoom, captions and audio/music tools
+  - Preview and final render profiles with output validation
+  - New-project wizard, live agent-run view and project runs overview
+  - Tool permission model, injection test suite, evaluation harness v0 and MVP E2E test
+definition_of_done:
+  - Milestone M3 met - raw footage plus prompt produces a finished reel from the web UI with no manual steps
+  - Checkpoint CP3 met - tool-call validity at least 90 percent first attempt and 100 percent after feedback; runaway runs stopped by budgets
+  - Agent unit tests run deterministically against recorded LLM cassettes in PR CI; live-provider tests run nightly
+  - Every prompt used in production code is loaded from the prompt registry with a recorded version
+  - Every agent run stores a complete audit trail (decisions, tool calls, inputs, outputs, timing, tokens, cost)
+  - Injection tests prove transcript or metadata content cannot trigger tools outside the run's permission set
+  - Evaluation harness v0 runs nightly and its first report is attached to the Sprint 6 review
+  - v0.3 tagged, deployed to staging and demonstrated live at the Sprint 6 review
+epics:
+  - id: EP-13
+    name: LLM Provider Layer
+    goal: Make every LLM interaction provider-agnostic, testable, versioned and budgeted.
+    depends_on: [EP-02]
+    features:
+      - id: FT-13.1
+        name: Provider Ports and Adapters
+        stories:
+          - id: US-301
+            title: LLM provider port with capability descriptors and adapters
+            story: As an agent developer, I want one interface for chat, tool calling, structured output and vision across providers, so that models can be swapped or added without touching agent logic.
+            priority: P0
+            points: 5
+            sprint: 5
+            lane: BE
+            depends_on: [US-103, US-107]
+            tasks:
+              - Define segregated ports (IChatModel, IToolCallingModel, IStructuredOutputModel, IVisionModel) and a ProviderCapabilities descriptor (context window, vision, JSON mode, cost per token)
+              - Implement an OpenAI-compatible adapter (covers hosted OpenAI-style APIs, vLLM and Ollama) and a second native adapter (Anthropic or Gemini)
+              - Add retries with jitter, timeouts, rate limiting, token and cost accounting per call
+              - Implement a record/replay fake provider for deterministic tests
+              - +sec Load API keys from the secret store, never log prompts containing secrets, enforce per-run budget caps
+              - +test Provider conformance test suite that every adapter must pass
+            acceptance:
+              - Switching the default provider is a configuration change with no code change
+              - Both adapters pass the same conformance suite
+              - Every call records tokens, cost, latency and model identifier
+      - id: FT-13.2
+        name: Prompt Management
+        stories:
+          - id: US-302
+            title: Versioned prompt registry
+            story: As an AI engineer, I want prompts stored as versioned templates, so that prompt changes are reviewed, reproducible and traceable to results.
+            priority: P0
+            points: 2
+            sprint: 5
+            lane: BE
+            depends_on: [US-111]
+            tasks:
+              - Store prompts as templates with front-matter metadata (id, version, purpose, variables) under prompts/
+              - Implement a PromptRegistry with typed variable rendering and version pinning
+              - +ci Add a lint rule rejecting inline prompt strings longer than a threshold in application code
+              - +test Unit tests for rendering and missing-variable errors
+            acceptance:
+              - Every agent run records the id and version of each prompt it used
+              - A missing template variable fails at render time with a clear error
+  - id: EP-14
+    name: Agent Orchestrator and Decision Loop
+    goal: Run an autonomous, observable and bounded observe-plan-act editing loop over the project state.
+    depends_on: [EP-12, EP-13]
+    features:
+      - id: FT-14.1
+        name: Agent Runtime
+        stories:
+          - id: US-303
+            title: AgentRun lifecycle, agent worker and run API
+            story: As a creator, I want to start, follow and cancel an AI editing run, so that long autonomous edits are controllable.
+            priority: P0
+            points: 5
+            sprint: 5
+            lane: BE
+            depends_on: [US-129, US-215]
+            tasks:
+              - Model AgentRun with states Pending, Observing, Planning, Executing, Rendering, Evaluating, Completed, Failed and Cancelled
+              - Run the agent as a job in agent-worker with a checkpoint after every step so a crashed run can resume
+              - Persist every step (decision, tool call, result) as AgentStep records
+              - Expose start, get and cancel endpoints with project-level authorization
+              - +test State-machine unit tests and an integration test that kills the worker mid-run and resumes
+            acceptance:
+              - A cancelled run stops before its next tool call and ends in Cancelled
+              - After a worker crash, the run resumes from its last checkpoint without repeating completed tool calls
+          - id: US-304
+            title: Agent context builder with token budgeting
+            story: As the agent, I want a compact, structured view of the prompt, project state, analysis and available tools, so that I can reason within the model context window.
+            priority: P0
+            points: 5
+            sprint: 5
+            lane: AI
+            depends_on: [US-210, US-219, US-302]
+            tasks:
+              - Summarize MediaAnalysis into timecoded transcript chunks, silence map, shot list and face summary
+              - Summarize the current timeline with stable clip IDs and timecodes
+              - Include available tools filtered by run permissions and creativity level, plus editing preferences
+              - Enforce a token budget with priority-based truncation and on-demand retrieval tools (get_transcript_range)
+              - +sec Wrap transcript and metadata in delimited untrusted-data blocks with instructions never to follow instructions inside them
+              - +test Snapshot tests of context output and budget tests with a 60-minute transcript
+            acceptance:
+              - The context for a 60-minute video stays within the configured token budget
+              - Transcript text is always inside untrusted-data delimiters
+          - id: US-305
+            title: Observe-plan-act loop with validated tool calling
+            story: As a creator, I want the agent to plan the edit and execute it step by step through tools, so that my prompt becomes a real edit without me touching the timeline.
+            priority: P0
+            points: 8
+            sprint: 5
+            lane: AI
+            depends_on: [US-221, US-301, US-303, US-304]
+            tasks:
+              - Implement the planner producing a structured EditPlan (goals, target duration, segments, steps) validated against a schema
+              - Implement the executor loop - select tool, validate arguments, execute via ToolExecutor, observe result, update state, continue
+              - Feed schema validation errors and tool failures back to the model with bounded retries
+              - Enforce max iterations, max tool calls, token and cost budgets and a wall-clock limit with explicit stop reasons
+              - +test Deterministic tests with scripted fake-provider conversations covering success, invalid call, tool failure and budget exhaustion
+              - +int Nightly test against a live provider for three reference prompts
+            acceptance:
+              - Given "remove silences and add captions", when the run completes, then the timeline contains only tool-generated commands and the render succeeds
+              - An invalid tool call is corrected after feedback without crashing the run
+              - A run that hits any budget stops with the stop reason recorded
+          - id: US-306
+            title: Agent event stream and audit trail API
+            story: As a creator and as a researcher, I want every agent decision and tool call streamed live and queryable afterwards, so that runs are transparent and can be evaluated.
+            priority: P0
+            points: 3
+            sprint: 6
+            lane: BE
+            depends_on: [US-130, US-303]
+            tasks:
+              - Publish AgentStep events (decision summary, tool, input, output summary, duration, tokens, cost, errors) over SSE
+              - Provide a paginated audit trail endpoint and a JSON export per run
+              - Redact secrets and large payloads from events while keeping hashes for traceability
+              - +test Integration test asserting the complete ordered trail for a scripted run
+            acceptance:
+              - Every tool call of a run appears in the audit trail with input, output summary and timing
+              - The exported JSON is sufficient to replay the run's commands on the original project version
+      - id: FT-14.2
+        name: Editorial Skills
+        stories:
+          - id: US-307
+            title: Highlight selection and semantic cutting
+            story: As a creator, I want the agent to choose the strongest, most relevant moments for my audience, so that a long recording becomes a focused short video.
+            priority: P0
+            points: 8
+            sprint: 6
+            lane: AI
+            depends_on: [US-201, US-305]
+            tasks:
+              - Segment the transcript into sentence-level candidate units with timing and shot context
+              - Score candidates for relevance to the prompt and audience, standalone clarity and hook strength using structured LLM output
+              - Select units to meet the target duration within 10 percent, placing the strongest hook first, cutting only at sentence or word boundaries
+              - Emit the selection as timeline commands with rationale stored in the audit trail
+              - +test Evaluation against human-selected highlights on the dataset (content retention metric)
+            acceptance:
+              - Output duration is within 10 percent of the requested duration
+              - No cut falls inside a word
+              - Content retention against human references is reported by the evaluation harness
+          - id: US-308
+            title: Short-form generation for platform presets
+            story: As a creator, I want to ask for a TikTok, Reel or Short and get the right format automatically, so that the video is ready to publish.
+            priority: P0
+            points: 5
+            sprint: 6
+            lane: BE
+            depends_on: [US-307, US-310]
+            tasks:
+              - Define platform presets (resolution, aspect ratio, max duration, safe zones, loudness target) as configuration data
+              - Parse platform, duration and style constraints from the prompt into the EditPlan
+              - Orchestrate highlight selection, cleanup, reframing, captions and audio into one plan
+              - +test Scenario tests for 9:16, 1:1 and 16:9 targets using recorded cassettes
+            acceptance:
+              - Given "45-second Reel", then the output is 1080x1920, within 10 percent of 45 seconds and meets the loudness target
+              - Adding a new platform preset requires only a configuration entry
+  - id: EP-15
+    name: Core Editing Tools
+    goal: Provide the MVP editing capabilities as SDK tools usable by both the agent and deterministic workflows.
+    depends_on: [EP-11, EP-12]
+    features:
+      - id: FT-15.1
+        name: Cleanup Cutting
+        stories:
+          - id: US-309
+            title: Range removal tool for silences, fillers and repetitions
+            story: As the agent, I want one tool that removes a set of ranges with smart padding, so that silence and filler-word removal are clean and consistent.
+            priority: P0
+            points: 3
+            sprint: 5
+            lane: MM
+            depends_on: [US-203, US-223]
+            tasks:
+              - Implement remove_ranges with padding, word-boundary snapping, minimum clip length and optional micro-crossfades
+              - Accept range sources (silence, filler, repetition, explicit) and record the source per removed range
+              - +test Unit tests for overlapping ranges and boundary snapping; integration test on fixtures
+            acceptance:
+              - Overlapping ranges are merged and no resulting clip is shorter than the minimum length
+              - Audio at cut points has no audible clicks (crossfade applied)
+      - id: FT-15.2
+        name: Framing and Motion
+        stories:
+          - id: US-310
+            title: Auto-reframing to target aspect ratio
+            story: As a creator, I want horizontal footage reframed to vertical with the speaker always in frame, so that it looks native on short-form platforms.
+            priority: P0
+            points: 8
+            sprint: 5
+            lane: MM
+            depends_on: [US-207, US-217]
+            tasks:
+              - Compute a crop window path from face tracks with dead-zone, smoothing (One Euro or Kalman filter) and maximum pan speed
+              - Handle no-face segments with center crop or blurred-background padding and shot-boundary resets
+              - Store the crop path as keyframed effect parameters on clips, rendered by the Remotion strategy
+              - Expose reframe_video as an SDK tool with target aspect ratio and style options
+              - +test Tests asserting the tracked face stays inside the frame for at least 95 percent of frames on fixtures
+            acceptance:
+              - On the single-speaker fixture the face stays fully inside the 9:16 frame for at least 95 percent of frames
+              - The crop path has no jitter above the configured threshold
+          - id: US-311
+            title: Zoom and punch-in effects
+            story: As the agent, I want to add smooth zooms to emphasize important words, so that talking-head footage feels dynamic.
+            priority: P0
+            points: 3
+            sprint: 6
+            lane: GEN
+            depends_on: [US-207, US-217]
+            tasks:
+              - Implement add_zoom (time range, intensity, easing, anchor at face center or a point) as a Remotion effect
+              - Clamp zoom so the face is never cropped out and combine correctly with reframing
+              - +test Visual snapshot tests at start, middle and end of a zoom
+            acceptance:
+              - Zooms follow the specified easing and never crop the tracked face
+              - Zoom intensity is a parameter recorded in the timeline
+      - id: FT-15.3
+        name: Captions
+        stories:
+          - id: US-312
+            title: Word-synchronized caption component
+            story: As a viewer, I want professional captions that highlight words as they are spoken, so that the video is engaging without sound.
+            priority: P0
+            points: 5
+            sprint: 5
+            lane: GEN
+            depends_on: [US-201, US-217]
+            tasks:
+              - Build a Remotion caption component driven by word timestamps with active-word highlight styles
+              - Support right-to-left scripts and Arabic shaping, outline and shadow styles and per-word emphasis
+              - Define its props schema so it registers with the component factory
+              - +test Visual snapshot tests for English and Arabic captions
+            acceptance:
+              - Highlighted words change within one frame of their timestamps
+              - Arabic captions render right-to-left with correct shaping
+          - id: US-313
+            title: Caption tool with segmentation, readability rules and safe zones
+            story: As the agent, I want an add_caption tool that splits speech into readable lines placed inside platform safe zones, so that captions are legible and never hidden by platform UI.
+            priority: P0
+            points: 3
+            sprint: 6
+            lane: GEN
+            depends_on: [US-219, US-312]
+            tasks:
+              - Segment words into caption blocks using max characters per line, max lines, min duration and reading speed limits
+              - Place captions using platform safe-zone presets and avoid face regions when possible
+              - Register add_caption and update_caption_style as SDK tools
+              - +test Unit tests for segmentation rules and placement
+            acceptance:
+              - No caption block exceeds the configured characters per line or reading speed
+              - Captions stay inside the platform safe zone for every preset
+      - id: FT-15.4
+        name: Audio Tools
+        stories:
+          - id: US-314
+            title: Audio normalization, music and ducking tools
+            story: As a creator, I want balanced voice and background music, so that speech is always clear and the loudness fits the platform.
+            priority: P0
+            points: 5
+            sprint: 6
+            lane: MM
+            depends_on: [US-202, US-204, US-222]
+            tasks:
+              - Implement mix_audio, add_music (user-provided or bundled default track) with fades and loop or trim to length
+              - Implement ducking driven by VAD speech regions with attack and release parameters
+              - Implement two-pass loudness normalization to the preset target (for example -14 LUFS, true peak -1 dBTP)
+              - +test Integration tests measuring output loudness and music level under speech
+            acceptance:
+              - Final integrated loudness is within 1 LU of the preset target and true peak below -1 dBTP
+              - Music is at least 12 dB below speech during speech regions
+      - id: FT-15.5
+        name: Render Profiles
+        stories:
+          - id: US-315
+            title: Preview and final render profiles with output validation
+            story: As a creator, I want a fast preview and a high-quality final export, so that I can review quickly and publish in full quality.
+            priority: P0
+            points: 5
+            sprint: 6
+            lane: GEN
+            depends_on: [US-217, US-218]
+            tasks:
+              - Add preview (proxy-based 540p, fast encode) and final (1080p high quality) render profiles
+              - Validate output duration, resolution, streams and loudness after rendering and fail with a reason if invalid
+              - Link renders to project versions and expose signed download URLs
+              - +test Integration tests for both profiles
+            acceptance:
+              - A preview of a 45-second reel renders at least 3 times faster than the final render
+              - An invalid output is never marked as completed
+  - id: EP-16
+    name: MVP Web Experience
+    goal: Let a creator run the whole autonomous edit from the browser.
+    depends_on: [EP-03, EP-14]
+    features:
+      - id: FT-16.1
+        name: Prompt-Driven Editing Flow
+        stories:
+          - id: US-316
+            title: New project wizard with prompt, platform and duration
+            story: As a creator, I want a guided flow to upload footage, choose the platform, aspect ratio and duration and write my prompt, so that I can start an AI edit in a minute.
+            priority: P0
+            points: 5
+            sprint: 5
+            lane: FE
+            depends_on: [US-125]
+            tasks:
+              - Build wizard steps (upload footage, platform, aspect ratio, duration, prompt) with validation
+              - Show analysis readiness and start the agent run through the run API
+              - Save drafts so a user can leave and return
+              - +test E2E test of the wizard using API mocks for the run endpoint
+            acceptance:
+              - A user can complete the wizard and start a run in under 60 seconds
+              - The run starts only after required analysis is complete, with a clear waiting state
+          - id: US-317
+            title: Live agent run view with result player and download
+            story: As a creator, I want to watch what the AI is doing and then review and download the result, so that I trust the edit.
+            priority: P0
+            points: 5
+            sprint: 6
+            lane: FE
+            depends_on: [US-306, US-315]
+            tasks:
+              - Show a live step list (plan, tool calls, renders) from the event stream with cancel
+              - Show the result in the player with a before/after toggle and download buttons
+              - Show failure reasons and a retry action
+              - +test Component tests with a recorded event stream; E2E in US-321
+            acceptance:
+              - Steps appear within one second of being emitted
+              - The user can compare original and edited video side by side
+          - id: US-318
+            title: Project runs and renders overview
+            story: As a creator, I want to see all runs and renders of a project, so that I can return to earlier results.
+            priority: P1
+            points: 3
+            sprint: 6
+            lane: FE
+            depends_on: [US-306]
+            tasks:
+              - List runs with prompt, status, duration, cost and linked renders
+              - Open any run's audit view and render
+              - +test Component tests for list states
+            acceptance:
+              - Every completed run links to its render and audit trail
+              - Failed runs show the stop reason
+  - id: EP-17
+    name: Agent Safety and Evaluation
+    goal: Keep the agent inside its permissions and measure its quality from the first autonomous run.
+    depends_on: [EP-14]
+    features:
+      - id: FT-17.1
+        name: Agent Safety
+        stories:
+          - id: US-319
+            title: Tool permission model and injection test suite
+            story: As the security owner, I want the agent restricted to explicitly granted tools and arguments, so that prompt injection cannot cause unintended actions.
+            priority: P0
+            points: 3
+            sprint: 5
+            lane: OPS
+            depends_on: [US-108, US-221]
+            tasks:
+              - +sec Define run-scoped permission sets (read media, write project, render) and argument allow-lists (asset IDs within the project only)
+              - +sec Verify there is no tool with shell, arbitrary file or network access
+              - +test Injection suite - transcripts containing instructions, malicious filenames, tool arguments with path traversal, oversized arguments
+              - +doc Document the agent security model
+            acceptance:
+              - Every injection test case ends without an unauthorized tool call or side effect
+              - A tool call referencing an asset from another project is rejected
+      - id: FT-17.2
+        name: MVP Evaluation
+        stories:
+          - id: US-320
+            title: Evaluation harness v0
+            story: As the AI engineer, I want an automated harness that runs the agent on the dataset and computes metrics, so that we know objectively whether changes improve the editor.
+            priority: P0
+            points: 5
+            sprint: 6
+            lane: OPS
+            depends_on: [US-110, US-305]
+            tasks:
+              - Build a CLI that runs configured prompts on dataset videos and stores outputs, audit trails and metrics
+              - Compute render success rate, duration accuracy, silence removal accuracy, caption WER and sync error, content retention
+              - +ci Run nightly on 6 videos and publish an HTML report as a CI artifact
+              - +doc Document how to add a metric or a dataset item
+            acceptance:
+              - A nightly report lists every metric per video with the commit, model and prompt versions
+              - Metric regressions above a configured threshold are flagged in the report
+          - id: US-321
+            title: MVP end-to-end test in CI
+            story: As the team, I want the full prompt-to-reel flow covered by an automated test, so that the MVP never regresses.
+            priority: P0
+            points: 3
+            sprint: 6
+            lane: OPS
+            depends_on: [US-308, US-317]
+            tasks:
+              - Record the fake-provider cassette for the 45-second Reel prompt on the podcast fixture
+              - +test Playwright test - wizard, run with fake-provider cassette, wait for render, assert preset compliance via API
+              - +ci Add to the PR E2E suite with CPU models and to nightly with a live provider
+            acceptance:
+              - The test passes in CI and fails if any stage breaks
+              - Runtime stays under 10 minutes in PR CI

@@ -1,0 +1,25 @@
+name: roadmap
+
+on:
+  pull_request:
+    paths:
+      - "docs/roadmap/**"
+      - "tools/roadmap/**"
+      - ".github/workflows/roadmap.yml"
+  push:
+    branches: [main]
+    paths:
+      - "docs/roadmap/**"
+      - "tools/roadmap/**"
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pyyaml==6.0.1
+      - name: Validate backlog and check generated files are up to date
+        run: python3 tools/roadmap/build_roadmap.py --check
