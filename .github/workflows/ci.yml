@@ -39,7 +39,7 @@ jobs:
           python-version: "3.11"
 
       - name: Setup uv
-        uses: astral-sh/setup-uv@v10
+        uses: astral-sh/setup-uv@v10.2.0
         with:
           cache-python: true
           enable-cache: true
