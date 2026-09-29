@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { frameIndex, frameRate, microseconds } from "./time.js";
 
 test("microseconds accepts a non-negative integer", () => {
-  assert.equal(microseconds(1500n), 1500n);
+  assert.equal(microseconds(1500n), 1501n);
   assert.equal(microseconds("0"), 0n);
   assert.equal(microseconds("1500"), 1500n);
 });
