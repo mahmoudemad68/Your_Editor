@@ -29,8 +29,8 @@ The footage class is podcast, which is inside the MVP footage list.
 1. The Creator creates a Project with the YouTube Shorts preset (UC-03).
 2. The Creator uploads educational footage within the MVP limits (UC-04).
 3. Analysis produces a transcript aligned to the spoken lesson (UC-06).
-4. The Creator asks for a Short. The AI Agent cuts to the Shorts duration cap, reframes to 1080×1920, and captions inside the Shorts safe zone (UC-08).
-5. The Creator downloads the MP4 (UC-09). Duration is within 10 percent of the requested length and is not longer than the Shorts cap of 60 seconds.
+4. The Creator asks for a 45-second YouTube Short. The AI Agent reframes to 1080×1920 and captions inside the Shorts safe zone (UC-08).
+5. The Creator downloads the MP4 (UC-09). The rendered duration is 40.5 to 49.5 seconds, which is within 10 percent of 45 seconds and below the Shorts cap of 60 seconds.
 
 The footage class is educational, which is inside the MVP footage list.
 

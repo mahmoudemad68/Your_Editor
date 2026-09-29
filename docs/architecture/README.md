@@ -66,20 +66,20 @@ The engineering lane on the story (BE, FE, OPS, and the others) is not the modul
 
 Other modules call the operations below. They do not read another module's internal types. The names are the contract; the implementations arrive with the stories that own them. The full list, including types, is in [modules.md](modules.md).
 
-| Module     | Public operations                                                                                                                        |
-| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| Identity   | `authenticate`, `establishSession`, `revokeSession`, `authorize`                                                                         |
-| Projects   | `createProject`, `getProject`, `updateProject`, `archiveProject`, `listProjects`, `updateProjectSettings`, `getBrandKit`, `saveBrandKit` |
-| Media      | `beginUpload`, `completeUpload`, `inspectMedia`, `validateMedia`, `createDerivedAssets`, `getPlayback`                                   |
-| Analysis   | `startAnalysis`, `getAnalysis`, `getTranscript`, `getSpeechSegments`, `getScenes`, `getFaces`                                            |
-| Editing    | `getTimeline`, `applyCommand`, `undo`, `redo`, `restoreVersion`                                                                          |
-| Tools      | `registerTool`, `getTool`, `validateToolCall`, `executeTool`                                                                             |
-| Agent      | `startRun`, `step`, `cancelRun`, `getRun`, `listEvents`, `renderPrompt`, `selectModel`                                                   |
-| Rendering  | `requestRender`, `getRender`, `selectStrategy`                                                                                           |
-| Assets     | `registerAsset`, `searchAssets`, `getAsset`, `quarantineAcquisition`, `promoteAsset`                                                     |
-| Components | `registerComponent`, `resolveComponent`, `recordGeneratedComponent`                                                                      |
-| Critic     | `reviewRender`, `requestRefinement`, `recordEvaluation`                                                                                  |
-| Jobs       | `enqueue`, `getJob`, `transition`, `publishProgress`, `subscribeProgress`                                                                |
+| Module     | Public operations                                                                                                                       |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Identity   | `authenticate`, `establishSession`, `revokeSession`, `authorize`                                                                        |
+| Projects   | `createProject`, `getProject`, `updateProject`, `deleteProject`, `listProjects`, `updateProjectSettings`, `getBrandKit`, `saveBrandKit` |
+| Media      | `beginUpload`, `completeUpload`, `inspectMedia`, `validateMedia`, `createDerivedAssets`, `getPlayback`                                  |
+| Analysis   | `startAnalysis`, `getAnalysis`, `getTranscript`, `getSpeechSegments`, `getScenes`, `getFaces`                                           |
+| Editing    | `getTimeline`, `applyCommand`, `undo`, `redo`, `restoreVersion`                                                                         |
+| Tools      | `registerTool`, `getTool`, `validateToolCall`, `executeTool`                                                                            |
+| Agent      | `startRun`, `step`, `cancelRun`, `getRun`, `listEvents`, `renderPrompt`, `selectModel`                                                  |
+| Rendering  | `requestRender`, `getRender`, `selectStrategy`                                                                                          |
+| Assets     | `registerAsset`, `searchAssets`, `getAsset`, `quarantineAcquisition`, `promoteAsset`                                                    |
+| Components | `registerComponent`, `resolveComponent`, `recordGeneratedComponent`                                                                     |
+| Critic     | `reviewRender`, `requestRefinement`, `recordEvaluation`                                                                                 |
+| Jobs       | `enqueue`, `getJob`, `transition`, `publishProgress`, `subscribeProgress`                                                               |
 
 ## Layer dependency rules
 

@@ -6,13 +6,13 @@ Functional requirements in the [SRS](srs.md) trace to the identifiers below. Jou
 
 ## Actors
 
-| Actor                    | Kind            | Who it is                                                                                                                                                                        |
-| ------------------------ | --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Creator                  | Primary person  | A person with the Owner or Editor role who uploads footage and asks for an edit.                                                                                                 |
-| Viewer                   | Primary person  | A person with the Viewer role. Included so the role in the SRS has a use case. The required diagram actors are still Creator, Admin, the AI Agent, and External Asset Providers. |
-| Admin                    | Primary person  | The operator role. Administers accounts and the deployment. Does not own Project content by default.                                                                             |
-| AI Agent                 | Secondary       | The observe-plan-act loop inside EditAgent (ADR-006). It is not a user account and cannot call a shell.                                                                          |
-| External Asset Providers | External system | Stock, music, and package sources outside the application trust zone. Downloads are untrusted until quarantine (ADR-001).                                                        |
+| Actor                    | Kind            | Who it is                                                                                                                                                                                                                                                                         |
+| ------------------------ | --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Creator                  | Primary person  | An authenticated product user performing creation or editing workflows. On an existing Project the Creator operates as Owner or Editor. Creating a Project does not require a prior membership: the authenticated User becomes that Project's Owner. Creator is not a fifth role. |
+| Viewer                   | Primary person  | A person with the Viewer role. Included so the role in the SRS has a use case. The required diagram actors are still Creator, Admin, the AI Agent, and External Asset Providers.                                                                                                  |
+| Admin                    | Primary person  | The operator role. Administers accounts and operational health. The Admin role does not grant Project membership, membership management, or access to Project media.                                                                                                              |
+| AI Agent                 | Secondary       | The observe-plan-act loop inside EditAgent (ADR-006). It is not a user account and cannot call a shell.                                                                                                                                                                           |
+| External Asset Providers | External system | Stock, music, and package sources outside the application trust zone. Downloads are untrusted until quarantine (ADR-001).                                                                                                                                                         |
 
 ## UC-01 Sign in
 
@@ -22,13 +22,13 @@ A Creator, Viewer, or Admin registers or signs in and receives a session. Passwo
 
 ## UC-02 Manage membership and roles
 
-An Owner, or an Admin where policy allows, grants Owner, Editor, or Viewer on a Project. A principal who is not a member receives HTTP 404 for that Project and its media, without a body that reveals whether the identifier exists.
+An Owner manages Owner, Editor, and Viewer membership for that Project. An Editor cannot change membership. Admin does not gain membership-management rights by holding the Admin operator role. A principal who is not a member receives HTTP 404 for that Project and its media, without a body that reveals whether the identifier exists. A future break-glass rule would have to be a new requirement. It is not implied here.
 
 **Modules:** Identity, Projects. **Scope:** MVP.
 
 ## UC-03 Create and configure a Project
 
-A Creator creates a Project, sets a platform preset and an optional target duration, and later archives it. The preset is one of the named presets in the SRS or another preset added only as configuration.
+An authenticated User creates a Project. Creation atomically records that User as Owner. The Owner sets a platform preset and an optional target duration. The Owner can delete the Project. Deletion is a soft delete (US-104, US-120): the Project disappears from normal listings and the operation does not by itself remove object-storage bytes. An Editor cannot delete it. There is no separate archive operation. The preset is one of the named presets in the SRS or another preset added only as configuration.
 
 **Modules:** Projects. **Scope:** MVP.
 
@@ -100,7 +100,7 @@ The AI Agent generates a Component that is not in the registry, compiles it, and
 
 ## UC-15 Administer the deployment
 
-An Admin inspects health, users, and operational status. Admin does not receive Project media by holding the Admin role alone.
+An Admin inspects health, users, and operational status. Admin does not receive Project media, and does not manage Project membership, by holding the Admin role alone.
 
 **Modules:** Identity, Jobs. **Scope:** MVP for account administration required by the role. Deployment automation itself is US-114 and remains a platform story, not a Creator feature.
 

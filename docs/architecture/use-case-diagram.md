@@ -2,7 +2,7 @@
 
 Canonical diagram for US-102. The use-case catalogue is [docs/requirements/use-cases.md](../requirements/use-cases.md).
 
-Creator, Admin, and Viewer are people. The AI Agent is a secondary actor implemented inside EditAgent. External Asset Providers sit outside the trust boundary (ADR-001, ADR-005).
+Creator, Admin, and Viewer are people. Creator is not a role. On an existing Project, Creator means the person acting as Owner or Editor. Only the Owner manages membership. Admin does not receive that right by holding the Admin role. The AI Agent is a secondary actor implemented inside EditAgent. External Asset Providers sit outside the trust boundary (ADR-001, ADR-005).
 
 ```mermaid
 flowchart TB
@@ -32,6 +32,7 @@ flowchart TB
   end
 
   creator --> uc01
+  creator -->|"when Owner"| uc02
   creator --> uc03
   creator --> uc04
   creator --> uc05
@@ -41,7 +42,6 @@ flowchart TB
   creator --> uc11
   creator --> uc12
   admin --> uc01
-  admin --> uc02
   admin --> uc15
   viewer --> uc01
   viewer --> uc05
