@@ -1,0 +1,520 @@
+id: PH4
+file: phase-4-mvp-complete
+name: MVP Completion - Generative Editing, Design System and Interactive Workspace
+sprints: [7, 8]
+release: v0.9-mvp "MVP Complete"
+scope: mvp
+objective: >
+  Close the MVP boundary. Motion graphics come from a plugin-based Remotion component library, visual output is
+  consistent through a font registry, creative memory and creativity levels, background music and basic B-roll come
+  from a unified local asset registry with semantic search, and the agent reviews its own render with deterministic
+  checks and one automatic refinement pass. Users preview edits in the browser and modify an existing project through
+  natural language, producing new versions instead of re-editing from zero. Workers are hardened with resource limits.
+  Covers the MVP parts of original Phases 7, 8, 9, 11, 13, 15, 17 and 31.
+depends_on: [PH3]
+dependency_notes:
+  - The component registry (US-401) extends the component factory from US-217 and the tool registry from US-219 (Open/Closed - no agent change needed to add components).
+  - Conversational editing (US-415) depends on command history (US-215) and the agent loop (US-305).
+  - External - licensed starter packs for music, SFX, B-roll and icons (CC0 or equivalent) must be sourced before Sprint 7.
+  - Hardened containers (US-422) are the base layer for the PH5 sandbox (US-501).
+deliverables:
+  - Component manifest and plugin registry with built-in motion graphics and transitions packs
+  - Layout metadata emitted by components for automated quality checks
+  - Font registry with Arabic-aware selection and glyph coverage checks; fonts library UI
+  - Project creative memory and creativity levels (Conservative, Balanced, Creative)
+  - Unified local asset registry with semantic search, B-roll insertion and music selection
+  - Conversational revision mode, AI chat panel, version history with undo/redo
+  - In-browser preview with the Remotion Player
+  - Critic v0 deterministic quality checks, contact sheets and a single automatic refinement pass
+  - Hardened worker containers, analysis caching by fingerprint, active speaker detection
+  - Visual regression tests for components and the MVP evaluation report
+definition_of_done:
+  - Milestone M4 met - every capability in the original MVP boundary works end-to-end and v0.9-mvp is tagged
+  - Checkpoint CP4 render budget met and visual regression suite green in CI
+  - Adding a new built-in component requires only a new plugin package with a manifest (verified by a test plugin)
+  - Creativity levels are enforced by tool and component filtering in code, not only by prompt wording
+  - All workers run non-root with CPU, memory, pid and time limits and no network egress except storage
+  - Identical footage is never analysed twice for the same analyzer version
+  - MVP evaluation report presented at the mid-project academic review
+epics:
+  - id: EP-18
+    name: Remotion Component Library and Plugin System
+    goal: Give the agent a growing, schema-described library of motion graphics that can be extended without changing the agent.
+    depends_on: [EP-11, EP-12]
+    features:
+      - id: FT-18.1
+        name: Component Plugin Architecture
+        stories:
+          - id: US-401
+            title: Component manifest and plugin registry
+            story: As an agent developer, I want every visual component described by a manifest and loaded as a plugin, so that new components are usable by the agent without modifying it.
+            priority: P0
+            points: 5
+            sprint: 7
+            lane: GEN
+            depends_on: [US-217, US-219]
+            tasks:
+              - Define ComponentManifest (name, version, category, props JSON Schema from zod, duration policy, supported aspect ratios, required fonts, capability tags, source builtin/external/generated, trust level, preview)
+              - Implement the ComponentRegistry and a Factory that instantiates components by name and version for the Remotion strategy
+              - Expose add_component and list_components as SDK tools with props validation
+              - Package built-in components as plugins discovered at startup
+              - +test Test plugin registered in tests proves no core change is needed
+              - +doc Document the component authoring contract
+            acceptance:
+              - A new component package with a valid manifest appears in list_components and renders with no change to agent, registry or strategy code
+              - Invalid props are rejected before rendering with the failing field named
+      - id: FT-18.2
+        name: Built-in Motion Graphics
+        stories:
+          - id: US-402
+            title: Motion graphics pack v1
+            story: As a creator, I want animated keywords, lower thirds, callouts, progress bars and title animations, so that my videos look professionally produced.
+            priority: P0
+            points: 5
+            sprint: 7
+            lane: GEN
+            depends_on: [US-401]
+            tasks:
+              - Implement AnimatedText/KeywordPop, LowerThird, Callout (arrow and box), ProgressBar and TitleAnimation components
+              - Make every animation deterministic from the frame number (no wall-clock time or unseeded randomness)
+              - Accept brand tokens (fonts, colors) through props
+              - Add a preview gallery page rendering each component with sample props
+              - +test Visual regression snapshots for each component in 9:16 and 16:9
+            acceptance:
+              - Each component renders identically on repeated renders (deterministic)
+              - Each component supports at least 9:16 and 16:9 layouts
+          - id: US-403
+            title: Transitions pack
+            story: As the agent, I want basic transitions between clips, so that cuts can be smoothed or emphasized when appropriate.
+            priority: P1
+            points: 3
+            sprint: 8
+            lane: GEN
+            depends_on: [US-401]
+            tasks:
+              - Implement crossfade, dip to black or white, slide and zoom-through transitions as transition plugins
+              - Expose add_transition with duration limits relative to clip lengths
+              - +test Visual snapshot tests at transition midpoints
+            acceptance:
+              - Transitions never extend beyond the adjoining clips
+              - Transition duration and type are recorded on the timeline
+          - id: US-404
+            title: Overlay, background and B-roll frame components
+            story: As the agent, I want picture-in-picture, split-screen and animated background components, so that B-roll and multi-source layouts look polished.
+            priority: P2
+            points: 3
+            sprint: stretch
+            lane: GEN
+            depends_on: [US-401]
+            tasks:
+              - Implement PictureInPicture, SplitScreen and AnimatedBackground components with props schemas
+              - Teach the B-roll skill to choose between full-frame cutaway and picture-in-picture
+              - +test Visual snapshot tests for each layout
+            acceptance:
+              - Each component renders in 9:16 and 16:9 with correct safe zones
+              - Components register through the plugin registry only
+          - id: US-405
+            title: Layout metadata emission for quality checks
+            story: As the critic, I want every rendered component to report the screen regions it occupies, so that text overflow, safe-zone violations and face obstruction can be checked automatically.
+            priority: P0
+            points: 3
+            sprint: 8
+            lane: GEN
+            depends_on: [US-312, US-402]
+            tasks:
+              - Compute bounding boxes of text and graphics per keyframe and emit them as layout metadata alongside the render
+              - Include measured text width versus container width to detect overflow
+              - +test Tests with deliberately overflowing text and out-of-safe-zone placement
+            acceptance:
+              - Layout metadata exists for every caption and component instance in a render
+              - The overflowing-text fixture is flagged by the metadata
+  - id: EP-19
+    name: Fonts and Design System
+    goal: Keep typography and style consistent, script-aware and under user control.
+    depends_on: [EP-18]
+    features:
+      - id: FT-19.1
+        name: Font Management
+        stories:
+          - id: US-406
+            title: Font registry with metadata and validation
+            story: As a creator, I want to upload fonts and have their capabilities detected, so that the AI only uses fonts that support my language and style.
+            priority: P0
+            points: 5
+            sprint: 7
+            lane: BE
+            depends_on: [US-122]
+            tasks:
+              - Accept TTF, OTF and WOFF2 uploads; sanitize with OpenType Sanitizer and reject malformed fonts
+              - Extract family, weights, styles, supported scripts (cmap coverage including Arabic), and license field; allow category tags (modern, clean, educational)
+              - Bundle default fonts (Cairo, Inter, Montserrat, Noto Sans Arabic as fallback)
+              - Serve fonts to the render worker and preview through signed URLs
+              - +test Tests for metadata extraction, Arabic detection and malformed font rejection
+            acceptance:
+              - Cairo is detected as supportsArabic with weights 400-900
+              - A malformed font is rejected and never reaches the renderer
+          - id: US-407
+            title: Agent font selection with glyph coverage checks
+            story: As the agent, I want to choose fonts per role (captions, titles, keywords, metadata) from the project's allowed fonts, so that typography is readable and on-brand.
+            priority: P0
+            points: 3
+            sprint: 7
+            lane: AI
+            depends_on: [US-304, US-406]
+            tasks:
+              - Add allowed fonts and roles to the agent context and a set_font_role tool
+              - Check glyph coverage of every text against the chosen font before rendering and apply the fallback chain
+              - +test Tests for Arabic captions with an English-only font (fallback applied) and role assignment
+            acceptance:
+              - No render contains missing-glyph boxes for supported scripts
+              - Arabic captions use an Arabic-capable font when one is allowed
+          - id: US-408
+            title: Font library and project font picker UI
+            story: As a creator, I want to manage fonts and choose which ones the AI may use in a project, so that the result matches my taste.
+            priority: P0
+            points: 3
+            sprint: 7
+            lane: FE
+            depends_on: [US-406]
+            tasks:
+              - Build the font library with previews in Latin and Arabic sample text
+              - Add project font selection with checkboxes and role hints
+              - +test Component tests for upload, preview and selection
+            acceptance:
+              - Only selected fonts are passed to the agent
+              - Font previews render the real font file
+      - id: FT-19.2
+        name: Creative Memory and Creativity Levels
+        stories:
+          - id: US-409
+            title: Project creative memory
+            story: As a creator, I want the AI to remember and reuse its style decisions across the whole project, so that sections do not look inconsistent.
+            priority: P0
+            points: 5
+            sprint: 7
+            lane: AI
+            depends_on: [US-304]
+            tasks:
+              - Define the CreativeMemory schema (editing style, fonts per role, caption style, colors, zoom intensity, music volume, transition style, pacing, aspect ratio, user preferences)
+              - Write decisions to memory through a dedicated tool and include memory in every context
+              - Validate new tool calls against memory (for example zoom intensity within tolerance) and warn the agent on deviations
+              - Update memory when the user changes style through chat or settings
+              - +test Tests proving consistent caption style and zoom intensity across a long edit
+            acceptance:
+              - Given a 3-section edit, caption style and zoom intensity are identical across sections unless the user asks otherwise
+              - Memory is persisted with the project version
+          - id: US-410
+            title: Creativity level policy enforcement
+            story: As a creator, I want to choose Conservative, Balanced or Creative, so that the AI only takes the amount of creative freedom I allow.
+            priority: P0
+            points: 3
+            sprint: 7
+            lane: AI
+            depends_on: [US-219, US-304]
+            tasks:
+              - Define a CreativityPolicy mapping each level to allowed tool capabilities, component categories and asset sources
+              - Filter tools and components in the registry for the run, and reject disallowed calls in the executor
+              - Add level-specific prompt variants in the prompt registry
+              - +test Tests that Conservative runs cannot add motion graphics or B-roll
+            acceptance:
+              - A Conservative run only uses cleanup, cut, caption and audio tools
+              - Disallowed tool calls are rejected by the executor, not only discouraged in the prompt
+  - id: EP-20
+    name: Asset Registry and Basic B-roll
+    goal: Provide licensed, searchable assets so the agent can add music, sound and B-roll safely.
+    depends_on: [EP-04]
+    features:
+      - id: FT-20.1
+        name: Unified Asset Registry
+        stories:
+          - id: US-411
+            title: Unified local asset registry with starter packs
+            story: As the agent, I want one registry for music, sound effects, B-roll, images, icons, LUTs and templates with licenses, so that I can find and legally use assets.
+            priority: P0
+            points: 5
+            sprint: 7
+            lane: BE
+            depends_on: [US-122]
+            tasks:
+              - Model Asset with category, tags, technical metadata, license (SPDX or named license, attribution text), source, content hash and trust level
+              - Define the IAssetProvider port with a LocalAssetProvider implementation (internet providers plug in later)
+              - Import starter packs (at least 15 music tracks with mood and BPM, 20 SFX, 50 B-roll clips, icon set)
+              - +test Tests for import, deduplication by hash and license filtering
+            acceptance:
+              - Every asset has a license and source; assets without a license cannot be imported
+              - A second import of the same file is deduplicated
+          - id: US-412
+            title: Semantic asset search
+            story: As the agent, I want to search assets by meaning, so that I find relevant B-roll and music for what is being said.
+            priority: P0
+            points: 5
+            sprint: 8
+            lane: BE
+            depends_on: [US-411]
+            tasks:
+              - Compute text embeddings for tags and descriptions and CLIP embeddings for visual assets; store in pgvector
+              - Implement search_assets with query, category, orientation, duration and license filters
+              - +test Relevance tests on a labelled query set (top-5 precision)
+            acceptance:
+              - Top-5 precision is at least 0.6 on the labelled query set
+              - Filters are always applied (for example no landscape clips for a 9:16 search when strict orientation is requested)
+      - id: FT-20.2
+        name: Asset Usage in Edits
+        stories:
+          - id: US-413
+            title: Basic B-roll insertion
+            story: As a creator, I want relevant B-roll inserted where it supports what I say, so that the video is more engaging.
+            priority: P0
+            points: 5
+            sprint: 8
+            lane: GEN
+            depends_on: [US-217, US-412]
+            tasks:
+              - Identify B-roll opportunities from transcript topics and keywords
+              - Search assets, choose clips and place them on the overlay track with duration rules (2-4 seconds) and Ken Burns for images
+              - Avoid covering the hook and face-critical moments; respect creativity level
+              - +test Scenario tests with recorded cassettes; visual check that the hook is not covered
+            acceptance:
+              - B-roll appears only on the overlay track and never during the first 3 seconds of the hook
+              - Every inserted asset is licensed and credited in the project credits
+          - id: US-414
+            title: Music selection from the registry
+            story: As a creator, I want background music that fits the mood of my video, so that I do not need to find music myself.
+            priority: P0
+            points: 3
+            sprint: 8
+            lane: MM
+            depends_on: [US-314, US-411]
+            tasks:
+              - Add a select_music tool choosing by mood tags, BPM range and duration
+              - Loop or trim with musically clean fades and apply ducking from US-314
+              - +test Integration test verifying length, fades and ducking levels
+            acceptance:
+              - The selected track covers the full video with no abrupt start or end
+              - The chosen track's license and attribution are recorded
+  - id: EP-21
+    name: Conversational Editing and Preview
+    goal: Let users refine an existing edit through natural language and preview it instantly.
+    depends_on: [EP-14, EP-16]
+    features:
+      - id: FT-21.1
+        name: Conversational Revision
+        stories:
+          - id: US-415
+            title: Revision mode for incremental natural-language edits
+            story: As a creator, I want to say "make the captions larger" or "remove the part where I talk about pricing", so that the AI changes only what I asked instead of redoing the whole edit.
+            priority: P0
+            points: 5
+            sprint: 8
+            lane: AI
+            depends_on: [US-215, US-305]
+            tasks:
+              - Add a revision planner that outputs a minimal command set against the current timeline, never a full rebuild
+              - Resolve references to time ("at second 21"), content (transcript search for "pricing") and elements (captions, B-roll, music)
+              - Apply commands through the CommandBus as a new project version and summarize the change
+              - +test Test set with the five canonical utterances from the plan plus 10 more, asserting the resulting diff
+            acceptance:
+              - Each canonical utterance changes only the targeted elements (verified by timeline diff)
+              - Every revision creates a new version that can be undone in one step
+          - id: US-416
+            title: AI chat panel in the editing workspace
+            story: As a creator, I want to chat with the editor next to the preview, so that refining the video feels like talking to a human editor.
+            priority: P0
+            points: 5
+            sprint: 8
+            lane: FE
+            depends_on: [US-306, US-415]
+            tasks:
+              - Build a chat panel with streaming responses, applied-change summaries and per-change undo
+              - Link mentioned timecodes to the player
+              - +test Component tests and an E2E revision scenario with a recorded cassette
+            acceptance:
+              - A revision request updates the preview without leaving the page
+              - Each applied change can be undone from the chat
+      - id: FT-21.2
+        name: Version History
+        stories:
+          - id: US-417
+            title: Version history with undo, redo and restore
+            story: As a creator, I want to see and restore earlier versions, so that experimenting with the AI is safe.
+            priority: P0
+            points: 3
+            sprint: 8
+            lane: BE
+            depends_on: [US-215]
+            tasks:
+              - Store immutable project versions with author (user or agent run) and change summary
+              - Expose list, diff summary, restore, undo and redo endpoints backed by the command log
+              - +test Integration tests for restore and undo across agent and user changes
+            acceptance:
+              - Restoring a version reproduces its timeline exactly
+              - Undo and redo work across agent and user changes in order
+      - id: FT-21.3
+        name: In-Browser Preview
+        stories:
+          - id: US-418
+            title: In-browser preview with the Remotion Player
+            story: As a creator, I want to preview the current edit instantly in the browser, so that I do not wait for a render to see changes.
+            priority: P0
+            points: 5
+            sprint: 7
+            lane: FE
+            depends_on: [US-211, US-217]
+            tasks:
+              - Embed the Remotion Player using the same composition and component registry as the render worker
+              - Stream proxy media and fonts through signed URLs
+              - Keep the preview in sync with project versions
+              - +test E2E test comparing preview frames with rendered frames at fixed timestamps
+            acceptance:
+              - Preview and final render match at sampled frames (within the visual regression threshold)
+              - A new project version updates the preview within 2 seconds
+  - id: EP-22
+    name: Basic Self-Review (Critic v0)
+    goal: Let the agent detect objective problems in its own render and fix them once automatically.
+    depends_on: [EP-15, EP-18]
+    features:
+      - id: FT-22.1
+        name: Deterministic Quality Checks
+        stories:
+          - id: US-419
+            title: Deterministic render quality checks
+            story: As the agent, I want an automatic quality report for every render, so that obvious defects are caught before the user sees them.
+            priority: P0
+            points: 5
+            sprint: 8
+            lane: MM
+            depends_on: [US-315, US-405]
+            tasks:
+              - Detect black and frozen frames (blackdetect, freezedetect), loudness and true-peak violations, duration and resolution mismatch
+              - Use layout metadata to detect caption overflow, safe-zone violations and captions covering faces
+              - Check caption minimum duration and reading speed
+              - Output a QualityReport (issue type, severity, time range, evidence, suggested fix) in packages/schemas
+              - +test Fixture renders with injected defects, one per check
+            acceptance:
+              - Each injected defect is reported with the correct type and time range
+              - A clean render produces no errors
+          - id: US-420
+            title: Frame sampling and contact sheets
+            story: As the critic, I want contact sheets and keyframes around every edit point, so that visual review is efficient for humans and multimodal models.
+            priority: P1
+            points: 3
+            sprint: 8
+            lane: MM
+            depends_on: [US-315]
+            tasks:
+              - Sample frames at cut points, component entrances and fixed intervals from renders
+              - Compose timestamped contact sheets and store them with the render
+              - +test Tests for sampling positions and sheet layout
+            acceptance:
+              - Every cut point has a frame before and after it in the contact sheet
+              - Contact sheets are available through the render API
+      - id: FT-22.2
+        name: Single Refinement Pass
+        stories:
+          - id: US-421
+            title: Automatic single refinement pass
+            story: As a creator, I want the AI to fix problems it finds in its own render, so that I receive a clean result.
+            priority: P0
+            points: 3
+            sprint: 8
+            lane: AI
+            depends_on: [US-305, US-419]
+            tasks:
+              - Map QualityReport issues to fix strategies (resize caption, move caption, renormalize audio, trim black frames)
+              - Apply fixes as commands, re-render and re-check once (configurable iteration limit, default 1)
+              - Record before and after reports in the audit trail
+              - +test Scenario test with an injected caption overflow that is fixed automatically
+            acceptance:
+              - The injected caption overflow and loudness issues are absent from the refined render
+              - The loop never exceeds the configured iteration limit
+  - id: EP-23
+    name: Platform Hardening and Pipeline Maturity
+    goal: Make workers safe under hostile input and the pipeline efficient before advanced features add risk.
+    depends_on: [EP-05]
+    features:
+      - id: FT-23.1
+        name: Execution Isolation
+        stories:
+          - id: US-422
+            title: Hardened, resource-limited worker containers
+            story: As the security owner, I want every worker isolated with strict resource limits, so that a malicious or runaway job cannot affect the host or other jobs.
+            priority: P0
+            points: 5
+            sprint: 8
+            lane: OPS
+            depends_on: [US-114, US-127]
+            tasks:
+              - +sec Run workers non-root with read-only root filesystems, dropped capabilities and the default seccomp profile
+              - +sec Apply CPU, memory, pid and disk quotas per job with per-job temporary directories
+              - +sec Deny network egress for media and render workers except object storage
+              - +test Tests with a decompression-bomb style input, a fork-heavy filter and an outbound connection attempt
+            acceptance:
+              - Resource-abuse tests are terminated by limits without affecting other jobs
+              - Outbound connections from media and render workers fail
+      - id: FT-23.2
+        name: Pipeline Efficiency and Perception Upgrades
+        stories:
+          - id: US-423
+            title: Analysis caching by media fingerprint
+            story: As the platform, I want identical footage to reuse existing analysis, so that repeated uploads and re-runs cost nothing.
+            priority: P1
+            points: 3
+            sprint: 7
+            lane: MM
+            depends_on: [US-210]
+            tasks:
+              - Compute content fingerprints (SHA-256 of streams) and key analysis results by fingerprint plus analyzer version and parameters
+              - Reuse results on match; invalidate when analyzer versions change
+              - +test Tests for hit, miss and version invalidation
+            acceptance:
+              - Re-uploading the same file completes analysis without running any analyzer
+              - Changing an analyzer version triggers re-analysis for that analyzer only
+          - id: US-424
+            title: Active speaker detection
+            story: As a creator editing a podcast, I want the frame to follow whoever is speaking, so that vertical reframing works for multi-person footage.
+            priority: P1
+            points: 5
+            sprint: 7
+            lane: MM
+            depends_on: [US-202, US-207]
+            tasks:
+              - Correlate speech regions with face tracks using mouth-motion features or a pretrained active speaker model
+              - Output speaker-to-track assignments over time in the analysis document
+              - Use active speaker tracks in reframe_video when more than one face is present
+              - +test Two-speaker fixture test for assignment accuracy
+            acceptance:
+              - Active speaker accuracy is at least 80 percent on the two-speaker fixture
+              - Reframing switches subjects no more often than the configured minimum shot length
+      - id: FT-23.3
+        name: MVP Quality Assurance
+        stories:
+          - id: US-425
+            title: Visual regression testing for components and renders
+            story: As the team, I want automatic visual comparison of rendered frames, so that component changes cannot silently break the look of videos.
+            priority: P0
+            points: 3
+            sprint: 7
+            lane: OPS
+            depends_on: [US-216]
+            tasks:
+              - +ci Render reference frames for every component and fixture timeline and compare with a perceptual diff threshold
+              - +ci Publish diff images as CI artifacts and allow reviewed baseline updates
+              - +doc Document how to update baselines
+            acceptance:
+              - A deliberate one-pixel-line change is detected and a harmless re-encode is not
+              - Baselines can only be updated through a reviewed pull request
+          - id: US-426
+            title: MVP evaluation report and human acceptance pilot
+            story: As the product owner, I want an evaluation of the complete MVP against the dataset and human raters, so that the mid-project review is based on evidence.
+            priority: P0
+            points: 3
+            sprint: 8
+            lane: OPS
+            depends_on: [US-320, US-413, US-421]
+            tasks:
+              - +test Run the harness on all dataset videos with the MVP prompts
+              - Run a pilot acceptance study with at least 3 raters on 6 videos and record manual corrections needed
+              - +doc Publish the MVP evaluation report with metrics, failures and next actions
+            acceptance:
+              - The report covers every MVP capability with at least one metric
+              - Findings are turned into backlog items before Sprint 9 planning

@@ -1,0 +1,428 @@
+id: PH6
+file: phase-6-hardening-release
+name: Hardening, Evaluation and Graduation Release
+sprints: [11, 12]
+release: v1.0-graduation
+scope: release
+objective: >
+  Turn the feature-complete beta into a secure, fast, observable and well-documented release, prove the architecture's
+  extensibility, evaluate the system scientifically against human edits, and deliver the graduation demo from a fresh
+  deployment. No new features are started in this phase - only hardening, measurement, documentation and release work.
+  Covers original Phases 15 (hardening), 16, 17, 18, 19, 20 and 21. Security, testing, documentation and CI/CD also
+  run in every earlier sprint; this phase finishes and verifies them.
+depends_on: [PH5]
+dependency_notes:
+  - Feature freeze (M5) is a precondition; any feature request becomes a stretch item or post-graduation backlog item.
+  - Evaluation (US-613, US-614) needs the dataset (US-110) and harness (US-320) plus human raters booked before Sprint 12.
+  - External - a clean machine or VM identical to the demo environment for US-619, and the demo venue's network and GPU constraints confirmed.
+  - Sprint 12 is intentionally planned below velocity to absorb release defects and thesis writing.
+deliverables:
+  - Security test suite, ASVS checklist, red-team reports for prompt injection and sandbox, and fixed findings
+  - GPU model pooling, parallel analysis DAG, incremental rendering and performance benchmarks with budgets
+  - Metrics, tracing, dashboards, error tracking and the agent run inspector
+  - Extensibility proof (new tool, LLM provider and component added as plugins only) and authoring guide
+  - Full evaluation report with ablations and human acceptance study
+  - Scripted scenarios A-G with recorded runs
+  - Architecture, developer, API, Tool SDK, agent, security, testing and deployment documentation, user manual and all required diagrams
+  - Fresh-deployment bootstrap, v1.0-graduation tag with release notes and SBOM, rehearsed demo
+definition_of_done:
+  - Checkpoint CP6 and milestones M6 and M7 met
+  - Zero open critical or high security findings; zero open P0 or P1 defects
+  - Performance budgets hold in the nightly benchmark for 3 consecutive nights
+  - Every required document and diagram from the original plan exists, is reviewed and is linked from the README
+  - A person outside the team deploys the system from the README on a clean machine without help
+  - v1.0-graduation images are pinned by digest and the release is reproducible from the tag
+  - The graduation demo runs live end-to-end with a recorded backup of every scenario
+epics:
+  - id: EP-30
+    name: Security Hardening
+    goal: Verify the security-by-design controls built throughout the project and close remaining gaps.
+    depends_on: [EP-17, EP-24, EP-26]
+    features:
+      - id: FT-30.1
+        name: Application Security Verification
+        stories:
+          - id: US-601
+            title: Security test suite and ASVS review
+            story: As the security owner, I want the application verified against OWASP ASVS and attacked by automated tests, so that no known class of vulnerability ships in the release.
+            priority: P0
+            points: 5
+            sprint: 11
+            lane: OPS
+            depends_on: [US-118, US-422]
+            tasks:
+              - +sec Complete the OWASP ASVS level 1 checklist with evidence per requirement
+              - +sec Automated tests for broken access control, IDOR across projects, SSRF (media URLs, asset URLs), path traversal fuzzing, upload abuse and rate limits
+              - +sec Run an OWASP ZAP baseline scan against staging in CI
+              - +ci Make critical and high findings from code, dependency and image scans release-blocking
+              - +doc Record findings, fixes and accepted risks in the security report
+            acceptance:
+              - All ASVS level 1 items are passed or have a documented, accepted exception
+              - The ZAP baseline reports no high-risk alerts
+          - id: US-602
+            title: Prompt-injection and agent safety red-team
+            story: As the security owner, I want the agent attacked with adversarial content, so that we know it cannot be steered into harmful or unauthorized actions.
+            priority: P0
+            points: 3
+            sprint: 11
+            lane: AI
+            depends_on: [US-319, US-520]
+            tasks:
+              - +sec Build adversarial cases - instructions spoken in footage, malicious asset metadata and package READMEs, poisoned search results, requests to exfiltrate data
+              - +sec Run them in every creativity level including Full Autonomous and record outcomes
+              - +test Add all cases to the regression suite
+            acceptance:
+              - No case results in an unauthorized tool call, data exfiltration or sandbox bypass
+              - All cases run in nightly CI
+          - id: US-603
+            title: Sandbox and resource-exhaustion red-team
+            story: As the security owner, I want generated and acquired code attacked on purpose, so that the sandbox is proven, not assumed.
+            priority: P0
+            points: 3
+            sprint: 11
+            lane: OPS
+            depends_on: [US-501, US-509]
+            tasks:
+              - +sec Attempt escapes via generated components (host paths, environment variables, network, Chromium flags)
+              - +sec Attempt resource exhaustion via renders (huge canvases, infinite animation loops, memory growth)
+              - +test Add successful and failed attempts to the sandbox suite
+            acceptance:
+              - Every attempt is contained and reported
+              - Limits terminate runaway renders within the configured time
+  - id: EP-31
+    name: Performance Optimization
+    goal: Meet processing-time budgets and avoid repeated work.
+    depends_on: [EP-09, EP-11]
+    features:
+      - id: FT-31.1
+        name: Inference and Analysis Performance
+        stories:
+          - id: US-604
+            title: GPU inference and model pooling
+            story: As the platform, I want models loaded once and reused on the GPU, so that analysis is fast and GPU memory is used efficiently.
+            priority: P1
+            points: 3
+            sprint: 11
+            lane: AI
+            depends_on: [US-201, US-207]
+            tasks:
+              - Keep warm model pools per worker with configurable concurrency and batch frame inference
+              - Add GPU memory guards and graceful CPU fallback
+              - +test Benchmark before and after on the reference GPU
+            acceptance:
+              - Transcription plus face tracking of a 10-minute video is at least 30 percent faster than the Sprint 10 baseline
+              - No out-of-memory crash under 2 concurrent jobs
+          - id: US-605
+            title: Parallel analysis DAG
+            story: As a creator, I want independent analyses to run in parallel, so that I can start editing sooner.
+            priority: P1
+            points: 5
+            sprint: 11
+            lane: BE
+            depends_on: [US-210, US-423]
+            tasks:
+              - Model analysis as a DAG (probe, then proxy and audio, then transcription, VAD, audio, shots and faces in parallel, then aggregate) using queue flows
+              - Aggregate progress and support partial results for early agent planning
+              - +test Integration tests for ordering, parallelism and failure isolation
+            acceptance:
+              - Total analysis wall time is at most the longest branch plus 10 percent
+              - One failing branch does not block the others
+          - id: US-606
+            title: Performance benchmark suite and budgets
+            story: As the team, I want automated end-to-end performance benchmarks with budgets, so that regressions are caught before release.
+            priority: P0
+            points: 3
+            sprint: 11
+            lane: MM
+            depends_on: [US-320]
+            tasks:
+              - +test Benchmark upload-to-reel for 2, 10 and 30 minute sources on the reference GPU, recording per-stage timings
+              - +ci Run nightly and fail when a budget is exceeded by more than 10 percent
+              - +doc Publish budgets and results in the performance report
+            acceptance:
+              - A 10-minute source becomes a 45-second reel in at most 15 minutes at p95
+              - Budget violations fail the nightly job with the slow stage named
+      - id: FT-31.2
+        name: Rendering Performance
+        stories:
+          - id: US-607
+            title: Incremental rendering and render caching
+            story: As a creator, I want small revisions to render quickly, so that conversational editing feels interactive.
+            priority: P1
+            points: 5
+            sprint: 11
+            lane: GEN
+            depends_on: [US-315]
+            tasks:
+              - Split renders into segments, hash each segment's inputs and reuse unchanged segments
+              - Render changed segments in parallel and concatenate without re-encoding where possible
+              - +test Tests proving unchanged segments are reused and output is identical to a full render
+            acceptance:
+              - Changing one caption re-renders only affected segments
+              - A single-caption revision of a 45-second reel renders at least 3 times faster than a full render
+  - id: EP-32
+    name: Observability and Debugging
+    goal: Make every job, model call and agent decision measurable and explainable.
+    depends_on: [EP-02, EP-14]
+    features:
+      - id: FT-32.1
+        name: Metrics, Tracing and Error Tracking
+        stories:
+          - id: US-608
+            title: Metrics, distributed tracing, dashboards and error tracking
+            story: As an operator, I want dashboards and traces for jobs, GPU, tokens and errors, so that I can find bottlenecks and failures quickly.
+            priority: P0
+            points: 5
+            sprint: 11
+            lane: BE
+            depends_on: [US-115, US-306]
+            tasks:
+              - Enable OpenTelemetry traces across api, queue and workers with trace context in job payloads
+              - Export Prometheus metrics (job durations and states, queue depth, render time, GPU utilization via DCGM exporter, tokens and cost per run)
+              - Provision Grafana dashboards and alerts as code; add Sentry error tracking for web, api and workers
+              - +test Test that one agent run produces a single connected trace
+            acceptance:
+              - One trace shows the full path from the API request to every worker job of a run
+              - Dashboards show tokens, cost, GPU usage and job states for the last 24 hours
+      - id: FT-32.2
+        name: Agent Run Inspector
+        stories:
+          - id: US-609
+            title: Agent run inspector
+            story: As a developer and researcher, I want a visual timeline of every agent decision, tool call, critique and render in a run, so that behaviour can be debugged and analysed academically.
+            priority: P0
+            points: 5
+            sprint: 11
+            lane: FE
+            depends_on: [US-306, US-513]
+            tasks:
+              - Show steps with rationale, tool inputs and outputs, timings, tokens, cost and errors
+              - Show critique iterations with quality scores and linked renders
+              - Export a run as JSON for the evaluation chapter
+              - +test Component tests with recorded runs
+            acceptance:
+              - Every step of a recorded run is visible and linked to its tool execution record
+              - Exported runs load back into the inspector
+  - id: EP-33
+    name: Extensibility Proof and Stabilization
+    goal: Demonstrate that new models, tools, components and providers plug in without refactoring, and stabilize the release.
+    depends_on: [EP-12, EP-13, EP-18]
+    features:
+      - id: FT-33.1
+        name: Extensibility Proof
+        stories:
+          - id: US-610
+            title: Plugin-only extension proof
+            story: As an architect, I want to add a new editing tool, a new LLM provider and a new component without modifying core modules, so that the Open/Closed design is demonstrated with evidence.
+            priority: P0
+            points: 3
+            sprint: 11
+            lane: GEN
+            depends_on: [US-219, US-301, US-401]
+            tasks:
+              - Add a sample tool (for example color_grade with a LUT), a sample LLM provider adapter and a sample component as separate plugin packages
+              - +ci Add a CI check proving the change touched only plugin packages and configuration
+              - +test Run the provider conformance suite and tool and component contract tests on the new plugins
+            acceptance:
+              - All three extensions work end-to-end and the diff contains no changes in core packages
+              - The CI path check fails when a core package is modified in an extension-only change
+          - id: US-612
+            title: Tool SDK, component and provider authoring guide
+            story: As a future contributor, I want a step-by-step guide for adding tools, components, analyzers and LLM providers, so that the platform can keep growing after graduation.
+            priority: P0
+            points: 3
+            sprint: 11
+            lane: GEN
+            depends_on: [US-610]
+            tasks:
+              - +doc Write guides with the US-610 examples as worked tutorials
+              - +doc Document manifests, schemas, permissions, testing requirements and review checklist
+              - +test Have a team member follow the guide to add a trivial tool and record friction
+            acceptance:
+              - A team member unfamiliar with the SDK adds a tool using only the guide
+              - The guide covers tools, components, analyzers and LLM providers
+      - id: FT-33.2
+        name: Stabilization
+        stories:
+          - id: US-611
+            title: Bug bash and stabilization
+            story: As the team, I want a structured bug bash and fix period, so that the release candidate is stable.
+            priority: P0
+            points: 5
+            sprint: 11
+            lane: ALL
+            depends_on: []
+            tasks:
+              - Run a half-day bug bash on staging covering all scenarios and personas
+              - Triage daily by severity and fix all P0 and P1 defects
+              - +test Add a regression test for every fixed defect
+              - +ci Tag v1.0-rc1 when the exit criteria are met
+            acceptance:
+              - Zero open P0 or P1 defects at the Sprint 11 review
+              - Every fixed defect has a regression test
+  - id: EP-34
+    name: Evaluation and Research Contribution
+    goal: Measure the system against human editing and support the academic contribution with evidence.
+    depends_on: [EP-17, EP-27]
+    features:
+      - id: FT-34.1
+        name: Quantitative and Human Evaluation
+        stories:
+          - id: US-613
+            title: Full evaluation run with ablations
+            story: As a researcher, I want complete metrics and ablation studies, so that the thesis can show which components contribute to quality.
+            priority: P0
+            points: 5
+            sprint: 12
+            lane: AI
+            depends_on: [US-320, US-513]
+            tasks:
+              - Run the harness on the full dataset for all creativity levels
+              - Ablations - without critic, without creative intelligence, with different LLM providers
+              - Compute all metrics (caption WER and sync, silence removal accuracy, content retention, render success, editing time, manual corrections)
+              - +doc Publish the evaluation report with tables and charts
+            acceptance:
+              - Every metric from the evaluation plan is reported per video category
+              - Ablation results show the effect of the critic loop with confidence intervals
+          - id: US-614
+            title: Human acceptance study
+            story: As a researcher, I want blind comparisons between AI and human edits, so that human acceptance is measured credibly.
+            priority: P0
+            points: 3
+            sprint: 12
+            lane: FE
+            depends_on: [US-613]
+            tasks:
+              - Build a simple blind rating page (A/B order randomized, rating scale, comments)
+              - Recruit at least 5 raters and collect ratings for at least 6 video pairs
+              - +doc Analyse acceptance rate and add results to the evaluation report
+            acceptance:
+              - Each video pair has ratings from at least 5 raters
+              - Human acceptance rate and inter-rater agreement are reported
+      - id: FT-34.2
+        name: Evaluation Scenarios
+        stories:
+          - id: US-615
+            title: Scripted evaluation scenarios A-G
+            story: As the examination committee, I want each graduation scenario reproducible on demand, so that the capabilities can be verified live.
+            priority: P0
+            points: 5
+            sprint: 12
+            lane: MM
+            depends_on: [US-415, US-503, US-510, US-513]
+            tasks:
+              - Script scenarios A (podcast to 45-second Reel), B (educational to Short), C (custom animation), D (missing component acquisition), E (self-generated capability), F (self-detected fix), G (natural-language modification)
+              - Prepare fixtures, prompts and expected checks for each scenario
+              - +test Run all scenarios nightly on staging in the final two weeks and record videos of successful runs
+            acceptance:
+              - Each scenario passes 3 consecutive nightly runs
+              - A recorded successful run exists for every scenario
+  - id: EP-35
+    name: Documentation
+    goal: Deliver complete, accurate documentation for users, developers, operators and examiners.
+    depends_on: [EP-33]
+    features:
+      - id: FT-35.1
+        name: Technical and User Documentation
+        stories:
+          - id: US-616
+            title: Architecture and developer documentation with required diagrams
+            story: As a developer or examiner, I want complete architecture documentation, so that the system can be understood, maintained and assessed.
+            priority: P0
+            points: 5
+            sprint: 12
+            lane: BE
+            depends_on: [US-103, US-612]
+            tasks:
+              - +doc Finalize system architecture, C4, sequence diagrams (agent run, render, acquisition, refinement), class diagram, ER diagram, deployment diagram and agent workflow diagram
+              - +doc Finalize the developer guide, agent documentation and ADR index
+              - +test Verify diagrams against the code (module list, entities, services) in a review checklist
+            acceptance:
+              - Every diagram listed in the original plan exists as source and image
+              - Diagrams match the implemented modules and entities
+          - id: US-617
+            title: User manual and API documentation
+            story: As a creator or integrator, I want a user manual and published API documentation, so that I can use and integrate EditAgent without help.
+            priority: P0
+            points: 3
+            sprint: 12
+            lane: FE
+            depends_on: [US-526]
+            tasks:
+              - +doc Write the user manual with screenshots for every main flow
+              - +doc Publish the generated OpenAPI documentation with examples
+              - +test Have one person outside the team complete a task using only the manual
+            acceptance:
+              - An outside user completes upload, prompt, revision and export using only the manual
+              - Every public endpoint has a description and example
+          - id: US-618
+            title: Security, testing and deployment documentation
+            story: As an operator or examiner, I want security, testing and deployment documents, so that the system can be deployed safely and its quality evidence reviewed.
+            priority: P0
+            points: 3
+            sprint: 12
+            lane: OPS
+            depends_on: [US-601, US-606]
+            tasks:
+              - +doc Security documentation - threat model, controls, sandbox, red-team results
+              - +doc Testing documentation - strategy, coverage, suites and results
+              - +doc Installation and deployment guides for local, staging and demo environments
+            acceptance:
+              - Every threat in the register maps to documented controls and tests
+              - The deployment guide is validated by US-619
+  - id: EP-36
+    name: Release and Graduation Demo
+    goal: Freeze a reproducible release and deliver a confident graduation demonstration.
+    depends_on: [EP-34, EP-35]
+    features:
+      - id: FT-36.1
+        name: Release
+        stories:
+          - id: US-619
+            title: Fresh deployment verification and bootstrap script
+            story: As an examiner, I want the system deployable from a clean machine with documented steps only, so that nothing depends on hidden developer setup.
+            priority: P0
+            points: 3
+            sprint: 12
+            lane: OPS
+            depends_on: [US-618]
+            tasks:
+              - Write a bootstrap script (checks prerequisites, downloads models, configures environment, starts services, seeds demo data)
+              - +test Perform a clean-machine deployment and run scenario A
+              - +doc Fix every gap found in the installation guide
+            acceptance:
+              - A clean machine reaches a working system using only the README and bootstrap script
+              - Scenario A passes on the fresh deployment
+          - id: US-620
+            title: Release freeze v1.0-graduation
+            story: As the team, I want a tagged, reproducible release, so that the graduation version is stable and verifiable.
+            priority: P0
+            points: 2
+            sprint: 12
+            lane: ALL
+            depends_on: [US-611, US-619]
+            tasks:
+              - +ci Tag v1.0-graduation, publish images pinned by digest, SBOM and release notes
+              - Freeze main except for release-blocking fixes
+              - +test Re-run all suites on the tag
+            acceptance:
+              - The release can be rebuilt from the tag with identical image digests for pinned dependencies
+              - All suites are green on the tag
+      - id: FT-36.2
+        name: Graduation Demo
+        stories:
+          - id: US-621
+            title: Graduation demo preparation and rehearsal
+            story: As the team, I want a rehearsed demo showing raw footage to final video with custom capability creation and self-correction, so that the contribution is clear to the committee.
+            priority: P0
+            points: 3
+            sprint: 12
+            lane: ALL
+            depends_on: [US-615, US-620]
+            tasks:
+              - Script the demo flow (raw footage, prompt, understanding, autonomous editing, custom effect, AI review, automatic correction, final video)
+              - Prepare side-by-side before and after comparisons and recorded backups of every scenario
+              - Rehearse twice on the demo environment and fix issues found
+            acceptance:
+              - Two full rehearsals complete within the time slot
+              - A backup recording exists for every live step

@@ -1,0 +1,621 @@
+id: PH1
+file: phase-1-foundation
+name: Foundation and Walking Skeleton
+sprints: [1, 2]
+release: v0.1 "Ingest"
+scope: mvp
+objective: >
+  Turn the project vision into measurable requirements and an agreed architecture, then ship a deployable,
+  CI/CD-verified modular-monolith skeleton in which authenticated users upload raw media that is validated,
+  inspected, stored and prepared (proxy, audio, thumbnails) by asynchronous jobs. This replaces the original
+  Phases 0, 1 and 2, and pulls the job queue (original Phase 14) and security/observability baselines
+  (original Phases 15 and 18) forward because every later increment depends on them.
+depends_on: []
+dependency_notes:
+  - External - reference GPU machine (or cloud GPU budget) and at least one LLM provider API key must be available by the start of Sprint 1 for the spikes (US-105, US-107).
+  - External - supervisor availability for SRS sign-off at the Sprint 1 review.
+  - Internal - US-129 (job queue) is the integration point for every worker built in later phases; it is on the critical path.
+deliverables:
+  - Software Requirements Specification v1.0, use case diagram, user journeys and glossary
+  - C4 architecture diagrams, ADR set, domain model and ER diagram
+  - Technology evaluation report and risk register with threat model v0
+  - Product backlog in the team tracker (imported from export/jira-import.csv)
+  - Monorepo with lint, format, type checks, pre-commit hooks and architecture dependency rules
+  - CI pipeline (tests, coverage, scanning, SBOM, image build) and CD to staging
+  - Docker Compose environment with typed configuration
+  - Authentication, projects, resumable upload, media validation, proxy/audio/thumbnail generation
+  - Job queue with the full job state machine and live progress in the web app
+  - Evaluation dataset of licensed videos
+definition_of_done:
+  - SRS v1.0 and ADRs merged to main via reviewed pull requests and signed off by the supervisor
+  - A new developer can clone the repository and reach a running system with one documented command in under 30 minutes
+  - CI runs lint, type checks, unit and integration tests, dependency/secret/image scanning and blocks merges on failure
+  - main is continuously deployed to staging and the v0.1 release is tagged
+  - Upload, validation, proxy and thumbnail flows are covered by unit, integration and one E2E test
+  - Hostile-input tests (malformed containers, disguised extensions, oversized files, path traversal names) pass
+  - Logs carry a correlation ID from HTTP request through the queue to the worker
+  - Domain packages have no imports from infrastructure frameworks (enforced by lint rule)
+epics:
+  - id: EP-01
+    name: Product Discovery and Architecture Baseline
+    goal: Convert the vision into measurable requirements, an agreed architecture and a de-risked technology choice.
+    depends_on: []
+    features:
+      - id: FT-01.1
+        name: Requirements Specification
+        description: Functional and non-functional requirements, MVP boundary, user roles and target platforms.
+        stories:
+          - id: US-101
+            title: Software Requirements Specification with measurable NFRs
+            story: As the product owner (supervisor), I want a baselined SRS with measurable quality targets, so that scope, MVP boundary and acceptance can be verified objectively.
+            priority: P0
+            points: 5
+            sprint: 1
+            lane: ALL
+            depends_on: []
+            tasks:
+              - Run a requirements workshop and capture functional requirements as numbered FR-xxx items traced to use cases
+              - Define NFRs with thresholds - supported inputs (MP4, MOV, MKV, WebM; H.264, HEVC, VP9, AV1; AAC, Opus, PCM), max input 30 min / 4 GB for MVP, output H.264/AAC MP4 up to 1080p, processing-time targets, availability
+              - Specify target platform presets (TikTok, Instagram Reels, YouTube Shorts) with resolution, max duration, safe zones and loudness targets
+              - Define user roles (Owner, Editor, Viewer, Admin), security boundaries, deployment environment, hardware and storage strategy
+              - Document the MVP boundary (talking-head, podcast, educational footage) and the explicit out-of-scope list
+              - +doc Publish docs/requirements/srs.md and review it through a pull request with the whole team
+            acceptance:
+              - Given the SRS, when any NFR is read, then it contains a measurable threshold and a verification method
+              - Given the MVP boundary section, when a feature is proposed, then it can be classified as MVP, advanced or out of scope without discussion
+              - The supervisor approves SRS v1.0 at the Sprint 1 review and the approval is recorded in the document history
+          - id: US-102
+            title: Use cases, user journeys and domain glossary
+            story: As a team member, I want shared use cases and a ubiquitous-language glossary, so that code, tickets and documents use the same terms.
+            priority: P0
+            points: 2
+            sprint: 1
+            lane: ALL
+            depends_on: []
+            tasks:
+              - Draw the use case diagram (Creator, Admin, AI Agent as secondary actor, external asset providers)
+              - Write user journeys for evaluation scenarios A-G from the original plan
+              - Write the glossary (MediaAsset, Project, Timeline, Track, Clip, Effect, Tool, Component, AgentRun, Critique, BrandKit, CreativeMemory)
+              - +doc Commit diagrams as source (PlantUML or Mermaid) plus exported images under docs/architecture
+            acceptance:
+              - Every scenario A-G maps to at least one use case and at least one future epic
+              - Glossary terms are used verbatim as domain class names in US-104
+      - id: FT-01.2
+        name: Architecture and Design Decisions
+        description: Clean Architecture modular monolith with workers, recorded as ADRs.
+        stories:
+          - id: US-103
+            title: Architecture baseline, module boundaries and ADRs
+            story: As a developer, I want an agreed architecture with explicit module boundaries and recorded decisions, so that I can build my module without coupling to others.
+            priority: P0
+            points: 5
+            sprint: 1
+            lane: BE
+            depends_on: []
+            tasks:
+              - Produce C4 context and container diagrams (web, api, agent-worker, ai-worker, media-worker, render-worker, Postgres, Redis, object storage)
+              - Define bounded modules (Identity, Projects, Media, Analysis, Editing, Tools, Agent, Rendering, Assets, Components, Critic, Jobs) and their public interfaces
+              - Define layer rules (presentation -> application -> domain; infrastructure implements domain ports) and the ports and adapters catalogue
+              - Write ADR-001 modular monolith plus workers, ADR-002 TypeScript for api/web/agent/render and Python for ai-worker, ADR-003 JSON Schema as cross-language contract
+              - Write ADR-004 Redis + BullMQ queue, ADR-005 Postgres + S3-compatible storage (MinIO), ADR-006 LLM provider abstraction, ADR-007 branching (trunk-based with short-lived branches), ADR-008 time representation as integer microseconds/frames
+              - +doc Publish docs/architecture/README.md with diagrams and an ADR index
+            acceptance:
+              - Given any planned story, when its module is looked up, then exactly one owning module is identified
+              - All 8 ADRs are accepted by the team in a reviewed pull request
+              - The layer and module dependency rules are written in a form that US-111 can enforce automatically
+          - id: US-104
+            title: Initial domain model and ER design
+            story: As a backend engineer, I want an initial domain model and database design, so that persistence and APIs grow from a consistent foundation.
+            priority: P0
+            points: 2
+            sprint: 1
+            lane: BE
+            depends_on: [US-102]
+            tasks:
+              - Model aggregates (User, Project, MediaAsset with Video/Audio/Image subtypes, DerivedAsset, Job) with invariants
+              - Draw the ER diagram with UUIDv7 keys, audit columns, soft delete and ownership
+              - Define the persistence approach (repository interfaces in domain, ORM mapping in infrastructure)
+              - +doc Commit the class and ER diagrams to docs/architecture/data-model.md
+            acceptance:
+              - Every aggregate has one repository interface and no ORM types in the domain package
+              - The ER diagram covers every entity required by Sprint 1 and Sprint 2 stories
+      - id: FT-01.3
+        name: Technology Validation and Risk Management
+        description: Time-boxed spikes answer the riskiest feasibility questions before the team commits.
+        stories:
+          - id: US-105
+            title: ASR and VAD feasibility spike
+            story: As the AI engineer, I want benchmark numbers for Faster-Whisper and VAD on our hardware, so that the model size and hardware plan are chosen on evidence.
+            priority: P0
+            points: 3
+            sprint: 1
+            lane: AI
+            depends_on: []
+            tasks:
+              - Benchmark Faster-Whisper small/medium/large-v3 (int8 and float16) on the reference GPU and on CPU for 10 minutes of English and Arabic speech
+              - Measure word-timestamp quality on 3 hand-aligned clips and Silero VAD segmentation quality
+              - Record memory usage, throughput and model licenses
+              - +doc Write the ASR section of docs/research/technology-evaluation.md with a go/no-go recommendation
+            acceptance:
+              - The report states the default model, fallback model and hardware requirement with measured numbers
+              - Checkpoint CP1 ASR criterion is evaluated with a pass or fail result
+          - id: US-106
+            title: Rendering feasibility spike (FFmpeg vs Remotion)
+            story: As the generative video engineer, I want render-time measurements for FFmpeg and Remotion, so that we choose the right render strategy for each kind of edit.
+            priority: P0
+            points: 2
+            sprint: 1
+            lane: GEN
+            depends_on: []
+            tasks:
+              - Render a 60-second 1080p 9:16 composition with video, captions and one animated title in Remotion and measure time and memory
+              - Render the equivalent cut-and-concat edit with FFmpeg only and compare
+              - Evaluate Remotion licensing for the team and headless Chromium requirements in containers
+              - +doc Record results and the hybrid render-strategy recommendation in the technology evaluation document
+            acceptance:
+              - The report states render time per output second for both strategies on the reference machine
+              - Checkpoint CP1 rendering criterion is evaluated with a pass or fail result
+          - id: US-107
+            title: LLM tool-calling feasibility spike
+            story: As the AI engineer, I want to measure how reliably candidate LLMs produce schema-valid tool calls, so that the agent design and default provider are chosen on evidence.
+            priority: P0
+            points: 2
+            sprint: 1
+            lane: AI
+            depends_on: []
+            tasks:
+              - Define 10 scripted editing requests with a mock tool set (trim, add_caption, reframe)
+              - Run them against at least two hosted providers and one local model (vLLM or Ollama) with native tool calling
+              - Measure schema validity, latency, cost per run and context-window fit for a 10-minute transcript
+              - +doc Record results, costs and the default/fallback provider decision
+            acceptance:
+              - Each candidate has a measured valid-call rate, median latency and estimated cost per agent run
+              - Checkpoint CP1 LLM criterion is evaluated with a pass or fail result
+          - id: US-108
+            title: Risk register and threat model v0
+            story: As the team, I want a living risk register and an initial threat model, so that technical, schedule and security risks are owned and mitigated early.
+            priority: P0
+            points: 2
+            sprint: 1
+            lane: OPS
+            depends_on: [US-103]
+            tasks:
+              - Create the risk register with probability, impact, owner, trigger and mitigation (GPU access, LLM cost, render time, scope creep, sandbox complexity, dataset licensing)
+              - Run a STRIDE session on the container diagram data flows (upload, workers, LLM calls, future sandbox and internet access)
+              - List the security controls required per phase and map them to stories
+              - +sec Record threats with IDs so that later security tests can reference them
+            acceptance:
+              - Every high risk has an owner and a mitigation linked to a backlog item
+              - Every threat listed in the original plan (malicious code, packages, media, command injection, path traversal, resource exhaustion, prompt injection, shell access, dependency attacks) has at least one planned control
+          - id: US-110
+            title: Evaluation dataset collection and metric definitions
+            story: As the AI engineer, I want a licensed evaluation dataset with reference edits and metric definitions, so that every AI feature is measured against the same baseline from its first sprint.
+            priority: P0
+            points: 3
+            sprint: 2
+            lane: AI
+            depends_on: [US-101]
+            tasks:
+              - Collect at least 12 videos across podcast, educational, talking head, interview, gaming and technical tutorial, with written consent or compatible licenses
+              - Produce human-edited reference reels for at least 6 videos and hand-labelled silence ranges and word alignments for 3 clips
+              - Define metrics (caption WER, caption sync error, silence removal accuracy, content retention, render success rate, editing time, human acceptance rate, manual corrections)
+              - Store media outside git (versioned bucket) with a manifest file in the repository
+              - +doc Document the dataset card and metric formulas in docs/evaluation
+            acceptance:
+              - The manifest lists every file with category, license, duration and reference artifacts
+              - Every metric has a formula, a unit and the story that will first report it
+      - id: FT-01.4
+        name: Backlog and Ways of Working
+        description: Scrum cadence, board and team agreements.
+        stories:
+          - id: US-109
+            title: Product backlog, board and team working agreements
+            story: As the Scrum team, I want the backlog imported and our working agreements written down, so that planning, WIP limits and review rules are the same for everyone.
+            priority: P0
+            points: 1
+            sprint: 1
+            lane: ALL
+            depends_on: []
+            tasks:
+              - Import export/jira-import.csv into the tracker and configure the board (Backlog, Ready, In Progress, In Review, Done) with WIP limits
+              - Agree on the Definition of Ready, the Definition of Done, estimation scale and ceremony calendar
+              - Assign lane owners and review buddies for every lane
+              - +doc Commit docs/process/working-agreements.md
+            acceptance:
+              - Sprint 1 and Sprint 2 stories are visible on the board with points and owners
+              - Working agreements are approved by every team member
+  - id: EP-02
+    name: Engineering Platform and Developer Experience
+    goal: Provide a reproducible, automated build-test-deploy platform that enforces the architecture rules.
+    depends_on: [EP-01]
+    features:
+      - id: FT-02.1
+        name: Monorepo and Code Quality
+        stories:
+          - id: US-111
+            title: Monorepo scaffold with enforced architecture rules
+            story: As a developer, I want a monorepo with consistent tooling and automatically enforced layer rules, so that code quality and Clean Architecture do not depend on memory.
+            priority: P0
+            points: 5
+            sprint: 1
+            lane: OPS
+            depends_on: [US-103]
+            tasks:
+              - Create pnpm workspaces with Turborepo - apps/web (Next.js), apps/api (NestJS), workers/agent-worker, workers/media-worker, workers/render-worker (Node), workers/ai-worker (Python 3.11 with uv)
+              - Create packages/domain, packages/schemas, packages/tool-sdk, packages/media-core, packages/shared plus infra/, tests/ and docs/
+              - Configure strict TypeScript, ESLint, Prettier, Ruff and mypy; add husky/lint-staged and pre-commit hooks; enforce Conventional Commits
+              - Enforce dependency rules with dependency-cruiser (TS) and import-linter (Python) so domain cannot import infrastructure or frameworks
+              - Add CODEOWNERS per module and a pull request template containing the DoD checklist
+              - +test Add a deliberately violating fixture that proves the dependency rule fails the lint step
+            acceptance:
+              - On a fresh clone, pnpm install, build and test succeed with one command each
+              - A commit with lint errors is rejected by the pre-commit hook
+              - An import from packages/domain to an infrastructure package fails the lint step
+      - id: FT-02.2
+        name: Continuous Integration and Delivery
+        stories:
+          - id: US-112
+            title: CI pipeline baseline with required checks
+            story: As a developer, I want every pull request built and tested automatically, so that main is always releasable.
+            priority: P0
+            points: 3
+            sprint: 1
+            lane: OPS
+            depends_on: [US-111]
+            tasks:
+              - +ci GitHub Actions workflow running lint, type checks, TS and Python unit tests with coverage reports on every pull request
+              - +ci Turborepo remote/local caching so unchanged packages are skipped
+              - +ci Branch protection on main requiring green CI, one approval and an up-to-date branch
+              - +doc Document the pull request flow (PR, automated tests, review, approval, merge)
+            acceptance:
+              - A failing unit test blocks the merge of a pull request
+              - CI completes in under 10 minutes for a typical change
+          - id: US-113
+            title: Supply-chain security, image publishing and CD to staging
+            story: As the team, I want dependencies, secrets and images scanned and main deployed to staging automatically, so that security and integration problems surface on the day they are introduced.
+            priority: P0
+            points: 3
+            sprint: 2
+            lane: OPS
+            depends_on: [US-112, US-114]
+            tasks:
+              - +sec Add gitleaks secret scanning, npm audit/pip-audit or OSV-Scanner, and Trivy image scanning; fail on critical findings
+              - +ci Build and push versioned images to GHCR on merge to main; generate an SBOM with Syft
+              - +ci Deploy main to the staging host with Docker Compose and run a smoke test
+              - Configure Dependabot or Renovate with grouped weekly updates
+              - +doc Document the release and rollback procedure
+            acceptance:
+              - A commit containing a fake secret fails CI
+              - Every merge to main produces tagged images, an SBOM and a staging deployment that passes the smoke test
+      - id: FT-02.3
+        name: Runtime Environment and Configuration
+        stories:
+          - id: US-114
+            title: Docker Compose environment with typed configuration
+            story: As a developer, I want the full system to start with one command using validated configuration, so that "works on my machine" problems disappear.
+            priority: P0
+            points: 5
+            sprint: 1
+            lane: OPS
+            depends_on: [US-111]
+            tasks:
+              - Write Dockerfiles (multi-stage, non-root) for api, web and each worker, and a compose file with Postgres, Redis and MinIO plus healthchecks
+              - Add an optional GPU compose profile using the NVIDIA container runtime for ai-worker
+              - Implement typed configuration (zod for TS, pydantic-settings for Python) that fails fast on missing or invalid values; provide .env.example
+              - Add make targets (up, down, seed, test, logs) and a seed script
+              - +sec Ensure no secrets are baked into images and .env files are git-ignored
+              - +test Add a startup test proving a missing required variable stops the service with a clear message
+            acceptance:
+              - From a fresh clone, docker compose up brings all services to healthy in under 5 minutes excluding image download
+              - Starting the API without the database URL fails immediately with a readable error
+          - id: US-115
+            title: Structured logging, health checks and error handling baseline
+            story: As an operator, I want structured logs with correlation IDs and consistent error responses, so that any failure can be traced across the API, queue and workers.
+            priority: P0
+            points: 3
+            sprint: 2
+            lane: OPS
+            depends_on: [US-114]
+            tasks:
+              - Add pino (TS) and structlog (Python) JSON logging with request and job correlation IDs propagated through job payloads
+              - Add /health and /ready endpoints for every service
+              - Implement a global error filter returning RFC 7807 problem+json without leaking stack traces
+              - Initialize the OpenTelemetry SDK with a no-op exporter so tracing can be enabled later without code changes
+              - +test Integration test asserting one correlation ID appears in API and worker logs for the same upload
+            acceptance:
+              - A request ID sent by the web app appears in every log line produced by the resulting jobs
+              - Unhandled errors return problem+json with a trace ID and no internal details
+      - id: FT-02.4
+        name: Test Infrastructure
+        stories:
+          - id: US-116
+            title: Test frameworks, fixtures and integration harness
+            story: As a developer, I want ready-to-use unit, integration and E2E frameworks with media fixtures, so that writing tests is the easiest path.
+            priority: P0
+            points: 3
+            sprint: 2
+            lane: OPS
+            depends_on: [US-111]
+            tasks:
+              - Configure Vitest (TS), pytest (Python) and Playwright (E2E) with shared conventions
+              - Add Testcontainers-based helpers for Postgres, Redis and MinIO
+              - Create tiny media fixtures (under 5 MB, Git LFS) - talking head, silence gaps, 2 speakers, variable frame rate, rotated phone video, corrupt file
+              - +ci Enforce coverage thresholds (domain packages at least 80 percent lines)
+              - +doc Write docs/testing/README.md explaining the test pyramid and where each kind of test lives
+            acceptance:
+              - A sample integration test using Postgres, Redis and MinIO containers runs in CI
+              - Coverage below the threshold fails CI for domain packages
+          - id: US-117
+            title: Walking-skeleton end-to-end test in CI
+            story: As the team, I want an automated end-to-end test of the upload flow, so that every change is proven against the full running system.
+            priority: P0
+            points: 2
+            sprint: 2
+            lane: OPS
+            depends_on: [US-116, US-126, US-124]
+            tasks:
+              - +test Playwright test - log in, create project, upload fixture, wait for metadata, assert codec, resolution, fps and duration
+              - +ci Run the E2E suite against the compose stack in CI on every pull request touching apps or workers
+              - +ci Upload Playwright traces and service logs as CI artifacts on failure
+            acceptance:
+              - The E2E test passes in CI and fails if the metadata job is broken
+              - Failure artifacts allow a developer to diagnose the failing step without rerunning locally
+  - id: EP-03
+    name: Identity and Project Management
+    goal: Let users securely sign in and organize work into projects.
+    depends_on: [EP-02]
+    features:
+      - id: FT-03.1
+        name: Authentication and Authorization
+        stories:
+          - id: US-118
+            title: Secure authentication and project-level authorization
+            story: As a creator, I want to sign up and sign in securely and only see my projects, so that my footage stays private.
+            priority: P0
+            points: 5
+            sprint: 2
+            lane: BE
+            depends_on: [US-120]
+            tasks:
+              - Implement registration and login with argon2id password hashing and email uniqueness
+              - Issue short-lived JWT access tokens and rotating refresh tokens in httpOnly, SameSite cookies
+              - Implement role-based authorization (Owner, Editor, Viewer, Admin) as an application-layer policy, not in controllers
+              - +sec Add rate limiting and lockout on auth endpoints, CSRF protection and secure headers
+              - +test Unit tests for policies and integration tests proving a user cannot read another user's project or media
+            acceptance:
+              - Given user A, when requesting user B's project or media by ID, then the API returns 404 without leaking existence
+              - Passwords are stored only as argon2id hashes; tokens expire and refresh correctly
+          - id: US-119
+            title: Sign-up, sign-in and session handling in the web app
+            story: As a creator, I want simple sign-up and sign-in screens, so that I can start using EditAgent in under a minute.
+            priority: P0
+            points: 3
+            sprint: 2
+            lane: FE
+            depends_on: [US-118, US-121]
+            tasks:
+              - Build sign-up, sign-in and sign-out screens with form validation
+              - Implement silent token refresh and redirect-to-login on expiry
+              - Protect application routes and show the current user in the shell
+              - +test Playwright tests for sign-up, sign-in, expired session and logout
+            acceptance:
+              - A new user can register and reach the dashboard in under one minute
+              - An expired session redirects to sign-in and returns the user to the original page afterwards
+      - id: FT-03.2
+        name: Projects
+        stories:
+          - id: US-120
+            title: Project CRUD API
+            story: As a creator, I want to create, rename, list and delete projects, so that each editing job has its own workspace.
+            priority: P0
+            points: 2
+            sprint: 1
+            lane: BE
+            depends_on: [US-104]
+            tasks:
+              - Implement Project aggregate, repository interface and Postgres repository with migrations
+              - Implement application use cases (CreateProject, RenameProject, ListProjects, DeleteProject) and thin REST controllers
+              - Publish the OpenAPI specification from the API build
+              - +test Unit tests for use cases with an in-memory repository; integration test against Postgres
+            acceptance:
+              - Controllers contain no business logic; all rules live in use cases or the domain
+              - The OpenAPI document is generated automatically and matches the implemented endpoints
+          - id: US-121
+            title: Web application shell and project dashboard
+            story: As a creator, I want a dashboard listing my projects, so that I can create a project and open it.
+            priority: P0
+            points: 3
+            sprint: 1
+            lane: FE
+            depends_on: [US-111]
+            tasks:
+              - Scaffold the Next.js app shell with Tailwind and a component library (shadcn/ui) and a layout with navigation
+              - Generate a typed API client from the OpenAPI document
+              - Build project list, create and delete flows with empty and error states
+              - +test Component tests for the project list and create dialog
+            acceptance:
+              - The dashboard lists projects from the API and creates a new one without a page reload
+              - The API client is generated, not hand-written
+  - id: EP-04
+    name: Media Ingestion and Multimedia Core
+    goal: Accept, validate, inspect, store and prepare raw media independently of any AI component.
+    depends_on: [EP-02]
+    features:
+      - id: FT-04.1
+        name: Upload and Storage
+        stories:
+          - id: US-122
+            title: Object storage port and direct upload
+            story: As a creator, I want to upload a video to my project, so that the system can work with my footage.
+            priority: P0
+            points: 3
+            sprint: 1
+            lane: BE
+            depends_on: [US-120]
+            tasks:
+              - Define the IObjectStorage port in the domain and implement an S3-compatible adapter (MinIO locally)
+              - Implement presigned upload URLs and an upload-complete use case that creates a MediaAsset
+              - Store objects under server-generated content-addressed keys; never use user-supplied names in paths
+              - +sec Enforce maximum size and allowed MIME types at URL issuance
+              - +test Integration test uploading a fixture to MinIO and creating the MediaAsset record
+            acceptance:
+              - An uploaded file is stored in object storage and linked to its project
+              - A filename such as ../../etc/passwd is stored only as display metadata and never affects the storage key
+          - id: US-123
+            title: Resumable large-file upload
+            story: As a creator with slow internet, I want large uploads to resume after interruptions, so that I do not restart a 2 GB upload.
+            priority: P1
+            points: 3
+            sprint: 2
+            lane: FE
+            depends_on: [US-122]
+            tasks:
+              - Implement S3 multipart presigned uploads (or a tus endpoint) with per-part retry
+              - Persist upload state so a page reload resumes remaining parts
+              - Show accurate progress, speed and remaining time
+              - +test E2E test that interrupts the network mid-upload and verifies completion after resume
+            acceptance:
+              - Given a 1.5 GB file interrupted at 50 percent, when the connection returns, then only the remaining parts are uploaded
+              - A completed upload's checksum matches the source file
+          - id: US-124
+            title: Upload and media details page
+            story: As a creator, I want to drag and drop footage and see its technical details, so that I know the system understood my file.
+            priority: P0
+            points: 2
+            sprint: 1
+            lane: FE
+            depends_on: [US-121]
+            tasks:
+              - Build a drag-and-drop upload area inside the project page
+              - Show a media details panel (container, codecs, resolution, frame rate, duration, audio streams)
+              - +test Component test for the upload area and details rendering
+            acceptance:
+              - After upload, the details panel shows values that match FFprobe output for the fixture
+              - Unsupported files show a readable error message
+          - id: US-125
+            title: Media library with thumbnails and proxy playback
+            story: As a creator, I want a media library with thumbnails and smooth playback, so that I can review my footage in the browser.
+            priority: P0
+            points: 3
+            sprint: 2
+            lane: FE
+            depends_on: [US-128, US-124]
+            tasks:
+              - Build a media grid with poster thumbnails, duration badges and processing status
+              - Play the 540p proxy with hover-scrub sprites
+              - Handle processing, failed and ready states
+              - +test Component and E2E tests for the library states
+            acceptance:
+              - A processed video plays its proxy in the browser without downloading the original
+              - Failed media show the failure reason from the validation job
+      - id: FT-04.2
+        name: Media Inspection and Validation
+        stories:
+          - id: US-126
+            title: Media metadata extraction with FFprobe
+            story: As the system, I want accurate technical metadata for every uploaded file, so that later processing decisions are correct.
+            priority: P0
+            points: 3
+            sprint: 1
+            lane: MM
+            depends_on: [US-111]
+            tasks:
+              - Define the IMediaProbe port in packages/media-core and an FFprobe adapter using argument arrays, never shell strings
+              - Map output to VideoAsset, AudioAsset and ImageAsset (codec, resolution, rotation, frame rate, variable frame rate flag, duration, color space, audio channels and sample rate)
+              - Persist metadata and expose it through the media API
+              - +test Unit tests with recorded FFprobe JSON for every fixture including rotated and variable-frame-rate video
+            acceptance:
+              - Metadata for every fixture matches the expected values, including rotation-corrected resolution
+              - FFprobe runs with a timeout and failures are reported, not thrown as unhandled errors
+          - id: US-127
+            title: Media validation and hostile-file defense
+            story: As the platform, I want every upload validated before processing, so that corrupt or malicious media cannot crash or compromise workers.
+            priority: P0
+            points: 5
+            sprint: 2
+            lane: MM
+            depends_on: [US-126, US-129]
+            tasks:
+              - Validate by magic bytes and probed container/codec against an allow-list, not by file extension
+              - Enforce limits on duration, resolution, stream count, file size and bitrate from configuration
+              - +sec Restrict FFmpeg/FFprobe protocols (protocol_whitelist file,pipe) to block SSRF via playlists and remote references
+              - +sec Run probe and a short decode test under CPU, memory and time limits
+              - Record structured rejection reasons for the user
+              - +test Hostile fixture suite - truncated file, disguised extension, huge resolution header, HLS playlist with remote URLs, zero-length file
+            acceptance:
+              - Every hostile fixture is rejected with a specific reason and no worker crash
+              - A playlist referencing an external URL causes no outbound network request
+          - id: US-128
+            title: Proxy, audio extraction and thumbnail generation
+            story: As the system, I want lightweight derived media for every upload, so that analysis and preview are fast.
+            priority: P0
+            points: 5
+            sprint: 2
+            lane: MM
+            depends_on: [US-126, US-129]
+            tasks:
+              - Generate a 540p constant-frame-rate H.264 proxy with a short keyframe interval for scrubbing
+              - Extract 16 kHz mono WAV for ASR and a full-quality audio stream for mixing
+              - Generate poster thumbnails and hover-scrub sprite sheets
+              - Store outputs as DerivedAsset records linked to the source with the generating parameters
+              - +test Integration tests verifying duration parity (within one frame) between source, proxy and audio
+            acceptance:
+              - Proxy and audio durations match the source within one frame
+              - Re-running the job for the same source and parameters reuses existing outputs
+  - id: EP-05
+    name: Asynchronous Job Processing
+    goal: Run every expensive operation asynchronously with observable, recoverable job states.
+    depends_on: [EP-02]
+    features:
+      - id: FT-05.1
+        name: Job Queue and Worker Runtime
+        stories:
+          - id: US-129
+            title: Job queue abstraction with job state machine
+            story: As the platform, I want a queue abstraction with explicit job states, retries and cancellation, so that long media operations never block API requests.
+            priority: P0
+            points: 5
+            sprint: 2
+            lane: BE
+            depends_on: [US-114]
+            tasks:
+              - Define the IJobQueue port and Job aggregate with states Queued, Running, Completed, Failed, Retrying and Cancelled and legal transitions
+              - Implement the BullMQ adapter for Node workers and the bullmq Python client adapter for ai-worker with a shared JSON Schema job envelope
+              - Add retries with exponential backoff, idempotency keys, per-job timeouts, dead-letter handling and cancellation
+              - Persist job history in Postgres for audit and UI
+              - +test Contract tests proving TS producers and Python consumers agree on the envelope; state-machine unit tests
+            acceptance:
+              - Illegal state transitions are rejected by the domain model
+              - A job cancelled while running stops within 5 seconds and ends in Cancelled
+              - A transient failure retries with backoff and ends in Completed; a permanent failure ends in Failed with a reason
+          - id: US-130
+            title: Real-time job progress events
+            story: As a creator, I want to see live progress for processing jobs, so that I know what the system is doing.
+            priority: P0
+            points: 3
+            sprint: 2
+            lane: GEN
+            depends_on: [US-129]
+            tasks:
+              - Publish job progress and state-change domain events through Redis pub/sub (Observer pattern)
+              - Expose an authenticated Server-Sent Events endpoint per project
+              - Throttle progress events and include job type, percentage and stage
+              - +test Integration test asserting ordered events for a sample job
+            acceptance:
+              - Progress updates reach a subscribed client within one second of the worker reporting them
+              - A user receives events only for projects they can access
+          - id: US-131
+            title: Job progress and status UI
+            story: As a creator, I want progress bars and status badges on my media, so that I can wait with confidence or retry failures.
+            priority: P0
+            points: 2
+            sprint: 2
+            lane: FE
+            depends_on: [US-130]
+            tasks:
+              - Subscribe to the SSE stream and update media cards in real time
+              - Show stage names, percentage and error messages with a retry action
+              - +test Component tests with a mocked event stream
+            acceptance:
+              - Progress updates without page reload
+              - Failed jobs show the reason and a retry button that re-enqueues the job

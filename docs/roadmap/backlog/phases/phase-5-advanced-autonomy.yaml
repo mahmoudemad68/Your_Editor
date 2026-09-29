@@ -1,0 +1,549 @@
+id: PH5
+file: phase-5-advanced-autonomy
+name: Advanced Autonomy - Self-Expanding and Creative Editor
+sprints: [9, 10]
+release: v0.95-beta "Feature Freeze"
+scope: advanced
+objective: >
+  Move from an agent that executes editing commands to one that behaves like an autonomous editor. It safely extends its
+  own environment - it generates new Remotion components, acquires missing assets and components from the internet
+  through a license and security pipeline, and executes all untrusted code only in a sandbox. It critiques its renders
+  with a multimodal critic and refines iteratively, and it makes editorial decisions (hook detection, narrative
+  restructuring, keyword emphasis, beat-aware cutting, pacing). The workspace gains brand kits, a timeline view and
+  Full Autonomous mode. Covers original Phases 9, 10, 11, 12 and the advanced parts of 8, 13 and 15.
+depends_on: [PH4]
+dependency_notes:
+  - Checkpoint CP5 (sandbox gate, US-501) must pass before generated or downloaded code runs anywhere except developer machines.
+  - US-503 is developed against the ISandbox port from day 1 and integrates with the real sandbox when US-501 merges (Dependency Inversion keeps the chain parallel).
+  - External - API keys for stock providers (for example Pexels, Pixabay, Freesound) and a package-registry mirror (Verdaccio) on staging.
+  - Multimodal critique (US-511) needs a vision-capable provider through IVisionModel (US-301).
+deliverables:
+  - Sandbox runtime (rootless containers with gVisor, no network, resource limits) and controlled dependency installation
+  - Component generation pipeline with static analysis, sandboxed compile and test render, self-repair and generated component registry
+  - Internet asset providers, license and provenance validation, media and package security validation
+  - External component acquisition from package registries with sandbox install and test render
+  - Multimodal visual critique, caption/audio/editing checks v1 and an iterative refinement controller
+  - Hook detection, narrative restructuring, keyword emphasis, beat-synchronized cutting and pacing control
+  - Full Autonomous creativity level with approval gates
+  - Brand kits, timeline view, asset library, generated components gallery and dashboard
+definition_of_done:
+  - Checkpoint CP5 passed and the sandbox security suite runs in CI
+  - Milestone M5 met - all scheduled stories merged and v0.95-beta tagged; everything else moved to the stretch backlog
+  - No generated or downloaded code executes outside the sandbox (verified by tests that attempt it)
+  - Every externally acquired asset or package has recorded license, source, hash and validation results
+  - Scenarios A-G each succeed at least once on staging, with audit trails stored
+  - Refinement loop improves the quality score on at least 60 percent of evaluation videos and never exceeds its iteration limit
+  - Documentation updated for the sandbox, acquisition pipeline, generated components and critic
+epics:
+  - id: EP-24
+    name: Secure Execution Sandbox
+    goal: Execute any untrusted code (generated or downloaded) in an isolated, resource-limited environment with no host or network access.
+    depends_on: [EP-23]
+    features:
+      - id: FT-24.1
+        name: Sandbox Runtime
+        stories:
+          - id: US-501
+            title: Sandbox runtime for untrusted code
+            story: As the security owner, I want all generated and third-party code to run in a disposable sandbox, so that malicious or broken code can never reach the host, data or network.
+            priority: P0
+            points: 8
+            sprint: 9
+            lane: OPS
+            depends_on: [US-422]
+            tasks:
+              - Define the ISandbox port (run command, mount inputs read-only, collect outputs, limits) and a Docker adapter using rootless containers with the gVisor runsc runtime
+              - +sec Enforce no network by default, CPU, memory, pid, disk and wall-clock limits, read-only root, dropped capabilities and a fresh filesystem per execution
+              - Provide a pre-built sandbox image with Node, the Remotion toolchain and headless Chromium
+              - +sec Escape test suite - host file access, Docker socket access, metadata endpoint access, fork and memory bombs, infinite loops
+              - +ci Run the sandbox security suite on every change to sandbox code and nightly
+              - +doc Document the sandbox threat model and limits
+            acceptance:
+              - Every escape and exhaustion test fails safely and is reported, with the host unaffected
+              - Outputs are only available through the declared output directory
+              - A sandbox run leaves no residual container or files after completion
+      - id: FT-24.2
+        name: Controlled Dependency Installation
+        stories:
+          - id: US-502
+            title: Controlled dependency installation through a registry mirror
+            story: As the platform, I want packages installed only inside the sandbox from a controlled mirror with pinned integrity, so that dependency attacks are blocked.
+            priority: P0
+            points: 5
+            sprint: 9
+            lane: BE
+            depends_on: [US-501]
+            tasks:
+              - Run a Verdaccio mirror as the only reachable registry from the install sandbox
+              - +sec Install with lockfiles, integrity hashes and install scripts disabled; pin exact versions
+              - Cache approved packages by hash for reuse
+              - +test Tests proving a package with an install script does not execute it and a tampered tarball is rejected
+            acceptance:
+              - Installation cannot reach any host except the mirror
+              - A hash mismatch aborts installation
+  - id: EP-25
+    name: Autonomous Component Generation
+    goal: Let the agent create new visual capabilities when none exist, safely and reproducibly.
+    depends_on: [EP-18, EP-24]
+    features:
+      - id: FT-25.1
+        name: Generation Pipeline
+        stories:
+          - id: US-503
+            title: Component generation pipeline (generate, check, compile, test render)
+            story: As a creator, I want to ask for an effect such as "a holographic glitch title" and have the AI build it, so that I am not limited to the built-in library.
+            priority: P1
+            points: 8
+            sprint: 9
+            lane: GEN
+            depends_on: [US-401, US-501]
+            tasks:
+              - Add a create_component tool - the LLM writes a TSX component from a strict template (zod props schema, frame-driven animation, allowed libraries react, remotion, @remotion/*, three)
+              - +sec Static analysis with an AST allow-list - no network, eval, Function, process, filesystem, dynamic import or timers; seeded randomness only
+              - Compile and bundle inside the sandbox, then test-render sample frames and a short clip inside the sandbox
+              - Develop against the ISandbox port so work proceeds in parallel with US-501
+              - +test Tests with safe and deliberately malicious generated code
+            acceptance:
+              - A request for a holographic glitch title produces a component that renders in the sandbox and is used in the edit
+              - Code containing banned APIs is rejected before compilation
+          - id: US-504
+            title: Self-repair loop with visual verification
+            story: As the agent, I want to fix my generated component when it fails to compile, crashes or looks wrong, so that generated capabilities become reliable.
+            priority: P1
+            points: 5
+            sprint: 10
+            lane: GEN
+            depends_on: [US-420, US-503]
+            tasks:
+              - Feed compiler errors, runtime errors and rendered frames back to the model with the original specification
+              - Ask the vision model to compare rendered frames with the requested effect and return structured defects
+              - Limit attempts (default 3) and record each attempt in the audit trail
+              - +test Tests with a component that initially fails to compile and is repaired
+            acceptance:
+              - At least 70 percent of the generation test prompts produce a passing component within 3 attempts
+              - Every attempt, error and fix is visible in the audit trail
+      - id: FT-25.2
+        name: Generated Component Registry
+        stories:
+          - id: US-505
+            title: Generated component registry with provenance
+            story: As a creator, I want successful generated components saved with previews and tests, so that I can reuse them in later projects.
+            priority: P1
+            points: 3
+            sprint: 10
+            lane: BE
+            depends_on: [US-401, US-503]
+            tasks:
+              - Store name, version, dependencies, props schema, preview (GIF or MP4 and thumbnail), test results and creation source (prompt, model, prompt version)
+              - Register approved components in the component registry with trust level generated
+              - +test Tests for versioning and reuse across projects
+            acceptance:
+              - A generated component can be reused in another project without regeneration
+              - Every generated component shows its creation prompt and model
+          - id: US-506
+            title: Generated FFmpeg filter chains
+            story: As the agent, I want to compose new FFmpeg filter chains for effects that no tool provides, so that low-level video effects can also be created on demand.
+            priority: P3
+            points: 5
+            sprint: stretch
+            lane: MM
+            depends_on: [US-220, US-501]
+            tasks:
+              - Let the model propose filter graphs as structured data validated against an allow-list of filters and parameter ranges
+              - Execute in the sandbox on a short sample and inspect output frames
+              - +test Tests rejecting disallowed filters and protocols
+            acceptance:
+              - Only allow-listed filters can be used
+              - The generated effect is stored as a reusable tool manifest
+  - id: EP-26
+    name: External Resource Acquisition
+    goal: Search the internet for missing assets and components and integrate them only after license and security validation.
+    depends_on: [EP-20, EP-24]
+    features:
+      - id: FT-26.1
+        name: Asset Providers
+        stories:
+          - id: US-507
+            title: Internet asset providers with quarantine download
+            story: As the agent, I want to search stock providers when the local library has no match, so that I can still find suitable B-roll, music and sound effects.
+            priority: P1
+            points: 5
+            sprint: 9
+            lane: BE
+            depends_on: [US-411]
+            tasks:
+              - Implement IAssetProvider adapters for stock video/image and sound providers with normalized results including license
+              - Apply the search hierarchy local, then internet, then generation (Chain of Responsibility)
+              - Download candidates into a quarantine bucket, never directly into the library
+              - +sec Egress only to allow-listed provider domains through a proxy
+              - +test Contract tests with recorded provider responses
+            acceptance:
+              - When local search has no match, internet results are returned with license data
+              - Downloaded files stay in quarantine until validation passes
+      - id: FT-26.2
+        name: Validation Pipeline
+        stories:
+          - id: US-508
+            title: License and provenance validation
+            story: As a creator, I want the AI to use only assets I am allowed to publish, so that my videos are legally safe.
+            priority: P1
+            points: 3
+            sprint: 10
+            lane: BE
+            depends_on: [US-507]
+            tasks:
+              - Define a license allow-list policy (CC0, provider licenses, CC-BY with attribution) and block unknown licenses
+              - Record provenance (source URL, author, license, retrieval date, hash) and generate a credits list per project
+              - +test Tests for allowed, attribution-required and blocked licenses
+            acceptance:
+              - Assets with unknown or disallowed licenses are never promoted from quarantine
+              - Projects using attribution-required assets list credits automatically
+          - id: US-509
+            title: Media and package security validation
+            story: As the security owner, I want every downloaded file and package scanned and sanitized, so that malware and vulnerable dependencies cannot enter the system.
+            priority: P0
+            points: 5
+            sprint: 10
+            lane: OPS
+            depends_on: [US-502, US-507]
+            tasks:
+              - +sec Scan downloads with ClamAV and re-encode media through the validation pipeline to strip hostile structures and metadata
+              - +sec Check packages for known vulnerabilities (OSV), typosquatting, age, download counts, maintainer changes and install scripts
+              - +sec Verify hashes and signatures where available and record results
+              - +test Tests with the EICAR file, a known-vulnerable package version and a typosquatted name
+            acceptance:
+              - EICAR, the vulnerable version and the typosquat are all rejected with reasons
+              - Validation results are stored with the asset or package record
+      - id: FT-26.3
+        name: External Component Acquisition
+        stories:
+          - id: US-510
+            title: Component acquisition from package registries
+            story: As the agent, I want to find, validate, install and test an external component when I need one that does not exist locally, so that I can expand my toolbox safely (Scenario D).
+            priority: P1
+            points: 5
+            sprint: 10
+            lane: GEN
+            depends_on: [US-502, US-505, US-509]
+            tasks:
+              - Search the registry for Remotion or React animation packages matching the need and rank candidates
+              - Run license, reputation and vulnerability checks, then install in the sandbox from the mirror
+              - Generate an adapter component with a props schema wrapping the package and test-render it in the sandbox
+              - Register it with trust level external and record the full acquisition trail
+              - +test Scenario test with a small known-good package and a rejected one
+              - +doc Write the acquisition pipeline guide (search, validation stages, trust levels, approval)
+            acceptance:
+              - The Scenario D flow (need, search, validate, sandbox install, test render, register, use) completes on staging
+              - A package failing any check is never installed
+  - id: EP-27
+    name: AI Critic and Self-Refinement
+    goal: Evaluate renders like a human editor and iterate until quality stops improving.
+    depends_on: [EP-22]
+    features:
+      - id: FT-27.1
+        name: Multimodal Critique
+        stories:
+          - id: US-511
+            title: Multimodal visual critique
+            story: As the agent, I want a vision model to review contact sheets and key frames against an editing rubric, so that composition problems that rules cannot catch are found.
+            priority: P1
+            points: 5
+            sprint: 10
+            lane: AI
+            depends_on: [US-301, US-419, US-420]
+            tasks:
+              - Define the critic rubric (composition, cropping, face obstruction, object overlap, text legibility, visual consistency) as a versioned prompt
+              - Send contact sheets with layout metadata to IVisionModel and parse structured issues into the QualityReport
+              - Compute a weighted quality score combining deterministic and model findings
+              - +test Evaluation on renders with labelled defects (precision and recall per issue type)
+            acceptance:
+              - Critic precision is at least 0.7 on labelled defects
+              - Model findings and deterministic findings appear in one QualityReport
+          - id: US-512
+            title: Caption, audio and editing quality checks v1
+            story: As the critic, I want checks for spelling, contrast, abrupt audio cuts, pacing, dead air and jump cuts, so that the review covers caption, audio and editing quality.
+            priority: P1
+            points: 5
+            sprint: 9
+            lane: MM
+            depends_on: [US-419]
+            tasks:
+              - Caption checks - spelling against transcript and dictionary per language, contrast ratio against sampled background, line length and position
+              - Audio checks - clipping, abrupt level changes at cuts, speech clarity estimate, background noise level
+              - Editing checks - average shot length, dead air, jump cuts without cover, continuity at cut points
+              - +test Fixture tests with injected defects for each check
+            acceptance:
+              - Each injected defect is reported with type, severity and time range
+              - Every check has a configurable threshold documented in the critic guide
+      - id: FT-27.2
+        name: Iterative Refinement
+        stories:
+          - id: US-513
+            title: Iterative refinement loop controller
+            story: As a creator, I want the AI to render, critique, fix and re-render until the result is good, so that I get the best version without manual review cycles (Scenario F).
+            priority: P1
+            points: 3
+            sprint: 10
+            lane: AI
+            depends_on: [US-421, US-511]
+            tasks:
+              - Generalize the single pass into a loop with a maximum iteration count, minimum score improvement and cost limit
+              - Prevent regressions - reject fixes that introduce new higher-severity issues and roll back
+              - Record every iteration's report, fixes and score in the audit trail
+              - +test Tests for improvement, plateau stop, regression rollback and limit enforcement
+              - +doc Write the critic guide (checks, thresholds, rubric, scoring and loop limits)
+            acceptance:
+              - The loop stops when the score stops improving or limits are reached, whichever comes first
+              - A fix that makes the score worse is rolled back
+  - id: EP-28
+    name: Creative Intelligence
+    goal: Make semantic and creative editorial decisions rather than only low-level processing.
+    depends_on: [EP-14, EP-20]
+    features:
+      - id: FT-28.1
+        name: Narrative Structure
+        stories:
+          - id: US-514
+            title: Hook detection and narrative restructuring
+            story: As a creator, I want the AI to open with the strongest hook and structure the video as Hook, Context, Value and Payoff, so that viewers keep watching.
+            priority: P1
+            points: 8
+            sprint: 9
+            lane: AI
+            depends_on: [US-307]
+            tasks:
+              - Score hook candidates using LLM judgment, prosodic energy and keyword salience
+              - Classify segments into Hook, Context, Value and Payoff roles
+              - Allow non-chronological ordering with coherence checks (no dangling references such as "as I said")
+              - +test Evaluation against human-edited references and a coherence test set
+            acceptance:
+              - The chosen hook matches a human-selected hook in at least 50 percent of evaluation videos
+              - Restructured edits pass the coherence checks
+      - id: FT-28.2
+        name: Emphasis, Rhythm and Pacing
+        stories:
+          - id: US-515
+            title: Keyword emphasis
+            story: As a creator, I want important words emphasized with animated text and zooms, so that key messages stand out.
+            priority: P1
+            points: 3
+            sprint: 10
+            lane: MM
+            depends_on: [US-402, US-409]
+            tasks:
+              - Select keywords using the LLM plus term salience and respect a maximum emphasis density
+              - Apply KeywordPop and zoom consistently with creative memory (font role, intensity)
+              - +test Tests for density limits and consistency
+            acceptance:
+              - Emphasis density never exceeds the configured maximum per 10 seconds
+              - Emphasis style is identical across the video
+          - id: US-516
+            title: Beat detection and beat-synchronized cutting
+            story: As a creator, I want cuts and transitions to land on the music beat, so that the edit feels rhythmic.
+            priority: P1
+            points: 5
+            sprint: 9
+            lane: MM
+            depends_on: [US-414]
+            tasks:
+              - Detect tempo, beats and downbeats (librosa or madmom) and store them with music assets
+              - Snap cut and transition times to nearby beats within a tolerance that never cuts inside a word
+              - +test Tests measuring cut-to-beat offset on fixtures
+            acceptance:
+              - At least 80 percent of eligible cuts fall within 60 ms of a beat
+              - No snapped cut truncates a word
+          - id: US-517
+            title: Mood detection and music matching
+            story: As a creator, I want music chosen to match the emotional tone of my content, so that the soundtrack supports the message.
+            priority: P2
+            points: 3
+            sprint: stretch
+            lane: MM
+            depends_on: [US-414]
+            tasks:
+              - Estimate mood from transcript sentiment and vocal energy per section
+              - Match music by mood tags, BPM and energy curve
+              - +test Tests on labelled mood clips
+            acceptance:
+              - Mood labels agree with human labels on at least 70 percent of sections
+              - Music selection uses the detected mood when the prompt does not specify one
+          - id: US-518
+            title: Pacing control
+            story: As a creator, I want to ask for faster or calmer editing in specific parts, so that the rhythm matches my intent (for example "make it faster after the hook").
+            priority: P1
+            points: 3
+            sprint: 10
+            lane: MM
+            depends_on: [US-307, US-516]
+            tasks:
+              - Define pacing parameters per section (target shot length, pause tolerance, zoom frequency)
+              - Expose set_pacing as a tool usable in initial runs and revisions
+              - +test Tests measuring average shot length before and after a pacing change
+            acceptance:
+              - Requesting faster pacing reduces the average shot length of the targeted section by at least 20 percent
+              - Pacing changes affect only the targeted section
+          - id: US-519
+            title: Semantic visual understanding for clip and B-roll selection
+            story: As the agent, I want captions of what is visible in each shot, so that I select clips and B-roll by visual meaning as well as by words.
+            priority: P2
+            points: 5
+            sprint: stretch
+            lane: AI
+            depends_on: [US-413, US-420]
+            tasks:
+              - Caption keyframes with a vision model and add object detection (YOLO) results to MediaAnalysis
+              - Use visual captions in highlight scoring and B-roll matching
+              - +test Tests comparing selection quality with and without visual captions
+            acceptance:
+              - Visual captions are stored in MediaAnalysis with provenance
+              - B-roll relevance improves on the labelled query set
+      - id: FT-28.3
+        name: Full Autonomous Mode
+        stories:
+          - id: US-520
+            title: Full Autonomous creativity level with approval gates
+            story: As a creator, I want a Full Autonomous mode where the AI may restructure, search, acquire and generate on its own, so that I can hand over the whole edit while keeping control of risky actions.
+            priority: P1
+            points: 3
+            sprint: 10
+            lane: AI
+            depends_on: [US-410, US-503, US-507]
+            tasks:
+              - Extend the creativity policy with acquisition and generation capabilities and a budget per run
+              - Add optional approval gates (install external package, spend above budget) that pause the run for user confirmation
+              - +test Tests proving gates pause the run and that lower levels cannot use Full Autonomous tools
+            acceptance:
+              - In Full Autonomous mode the agent can acquire and generate components within budget
+              - With approval gates enabled, no external package is installed without user confirmation
+  - id: EP-29
+    name: Workspace and Brand Experience
+    goal: Complete the editing workspace and brand management for daily use.
+    depends_on: [EP-19, EP-21]
+    features:
+      - id: FT-29.1
+        name: Brand Kits
+        stories:
+          - id: US-521
+            title: Brand kit model and application
+            story: As a creator with a brand, I want to define fonts, logo, colors, caption style and watermark once, so that every video matches my visual identity.
+            priority: P1
+            points: 5
+            sprint: 10
+            lane: BE
+            depends_on: [US-406, US-409]
+            tasks:
+              - Model BrandKit (fonts per role, logo, palette, caption style, lower-third style, watermark, intro and outro) and attach it to projects
+              - Seed creative memory from the brand kit and pass brand tokens to components
+              - +sec Validate uploaded logos through the media validation pipeline
+              - +test Tests proving brand tokens reach components and memory
+            acceptance:
+              - A project with a brand kit uses its fonts, colors and watermark in the render
+              - Changing the brand kit updates new versions, not existing ones
+          - id: US-522
+            title: Brand kit management UI
+            story: As a creator, I want to create and edit brand kits visually, so that I can set up my identity without technical knowledge.
+            priority: P1
+            points: 3
+            sprint: 10
+            lane: FE
+            depends_on: [US-521]
+            tasks:
+              - Build brand kit editor with live preview of captions and lower thirds
+              - Select a brand kit in the new-project wizard
+              - +test Component tests for editing and selection
+            acceptance:
+              - The live preview reflects brand changes immediately
+              - Brand kits are selectable when creating a project
+      - id: FT-29.2
+        name: Editing Workspace
+        stories:
+          - id: US-523
+            title: Multi-track timeline view
+            story: As a creator, I want to see the edit as tracks and clips, select elements and delete or undo them, so that I understand and control what the AI did.
+            priority: P1
+            points: 5
+            sprint: 9
+            lane: FE
+            depends_on: [US-417, US-418]
+            tasks:
+              - Render video, overlay, graphics, caption and audio tracks with zoom and scrub synced to the preview
+              - Select clips to see properties and delete through commands; undo and redo buttons
+              - +test Component tests and an E2E selection and delete scenario
+            acceptance:
+              - The timeline reflects the current project version exactly
+              - Deleting a clip creates a command that can be undone
+          - id: US-524
+            title: Asset library UI
+            story: As a creator, I want to browse, search and upload assets with their licenses, so that I can curate what the AI may use.
+            priority: P1
+            points: 3
+            sprint: 9
+            lane: FE
+            depends_on: [US-412]
+            tasks:
+              - Build asset browser with category filters, semantic search and license badges
+              - Allow upload with license entry and disable assets for AI use
+              - +test Component tests for search and upload
+            acceptance:
+              - Search results match the API semantic search
+              - Assets without a license cannot be enabled for AI use
+          - id: US-525
+            title: Generated components gallery with approval
+            story: As a creator, I want to review generated and acquired components with previews and approve or reject them, so that I control what enters my library.
+            priority: P1
+            points: 3
+            sprint: 10
+            lane: FE
+            depends_on: [US-505]
+            tasks:
+              - List generated and external components with preview, source, trust level and validation results
+              - Approve, reject or disable components
+              - +test Component tests for approval states
+            acceptance:
+              - Rejected components cannot be used by the agent
+              - Each component shows its provenance and validation report
+          - id: US-526
+            title: Dashboard overview
+            story: As a creator, I want a dashboard with projects, recent renders, assets, fonts, brand kits and generated components, so that I can reach everything from one place.
+            priority: P1
+            points: 3
+            sprint: 10
+            lane: FE
+            depends_on: [US-318]
+            tasks:
+              - Add a dashboard summary endpoint returning counts and recent items in one request
+              - Build dashboard sections with recent items and quick actions
+              - +test Component and E2E navigation tests
+            acceptance:
+              - Every section links to its management page
+              - The dashboard loads in under 2 seconds with 100 projects
+          - id: US-527
+            title: Advanced reference resolution in conversational edits
+            story: As a creator, I want requests like "replace the B-roll at second 21" or "the part after the hook" understood precisely, so that complex revisions work first time.
+            priority: P2
+            points: 3
+            sprint: stretch
+            lane: AI
+            depends_on: [US-415]
+            tasks:
+              - Resolve structural references (hook, sections, nth caption) and relative time expressions
+              - Ask a clarifying question when a reference is ambiguous
+              - +test Extended utterance test set
+            acceptance:
+              - At least 90 percent of the extended utterance set resolves to the correct elements
+              - Ambiguous requests trigger one clarifying question instead of a guess
+          - id: US-528
+            title: Direct timeline manipulation
+            story: As a creator, I want to drag, trim and move clips on the timeline, so that I can fine-tune the AI edit by hand.
+            priority: P3
+            points: 5
+            sprint: stretch
+            lane: FE
+            depends_on: [US-523]
+            tasks:
+              - Implement drag, trim handles and snapping, all emitting commands
+              - Show conflicts when a manual edit invalidates AI-placed captions or B-roll and offer re-alignment
+              - +test E2E tests for drag and trim with undo
+            acceptance:
+              - Every manual edit is undoable and appears in version history
+              - Manual edits and AI revisions can be interleaved

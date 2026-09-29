@@ -1,0 +1,347 @@
+# EditAgent execution roadmap - planning metadata (source of truth).
+# Rendered by tools/roadmap/build_roadmap.py. Text must avoid ": " inside plain scalars (quote if needed).
+
+meta:
+  project: EditAgent
+  sprint_length_weeks: 2
+  velocity: 48
+  capacity_max: 52
+
+phase_files:
+  - phase-1-foundation.yaml
+  - phase-2-perception-editing-core.yaml
+  - phase-3-agent-mvp-alpha.yaml
+  - phase-4-mvp-complete.yaml
+  - phase-5-advanced-autonomy.yaml
+  - phase-6-hardening-release.yaml
+
+lanes:
+  AI: AI / Agent Engineer
+  MM: Multimedia Engineer
+  GEN: Generative Video / Remotion Engineer
+  BE: Backend Engineer
+  FE: Frontend Engineer
+  OPS: DevOps & QA (shared)
+  ALL: Whole team
+
+priorities:
+  P0: {label: Must (MVP-critical), jira: Highest}
+  P1: {label: Should, jira: High}
+  P2: {label: Could (advanced), jira: Medium}
+  P3: {label: Stretch, jira: Low}
+
+task_tags:
+  test: TEST
+  doc: DOC
+  ci: CI/CD
+  sec: SECURITY
+  int: INTEGRATION
+
+sprints:
+  - number: 1
+    phase: PH1
+    title: Inception and Walking Skeleton
+    goal: Baseline requirements and architecture, and prove every layer end-to-end with a walking skeleton that stores an uploaded video and shows its FFprobe metadata.
+    increment: From a fresh clone, `docker compose up` starts web, API, workers, Postgres, Redis and MinIO; a user creates a project, uploads a clip and sees codec, resolution, frame rate and duration. CI is green and required on every pull request.
+    deliverables:
+      - Software Requirements Specification v1.0 with measurable NFRs and the MVP boundary
+      - Use case diagram, user journeys for evaluation scenarios A-G and domain glossary
+      - C4 context/container diagrams and ADR-001..ADR-008
+      - Initial domain model and ER diagram
+      - Technology evaluation report (ASR, rendering, LLM tool-calling spikes)
+      - Risk register and threat model v0
+      - Product backlog imported into the tracker (this roadmap's CSV export)
+      - Monorepo, CI pipeline, Docker Compose environment and walking skeleton
+    risks:
+      - Requirement churn eats the sprint. Mitigation - discovery is time-boxed to days 1-4; open questions become backlog items instead of blocking.
+      - Spikes expand into implementation. Mitigation - each spike has a fixed time box and a written go/no-go question.
+
+  - number: 2
+    phase: PH1
+    title: Reliable Media Ingestion
+    goal: Make ingestion production-grade - authenticated users upload large files resumably, and asynchronous jobs validate, proxy and thumbnail the media with live progress.
+    increment: A user signs up, uploads a 1.5 GB MOV that resumes after a dropped connection, watches validation and proxy jobs progress live, and plays the 540p proxy in the media library. Malformed or disguised files are rejected with a clear reason.
+    deliverables:
+      - Release v0.1 "Ingest" deployed to staging by the CD pipeline
+      - Authentication and per-project authorization
+      - Job queue with explicit job state machine, retries and cancellation
+      - Media validation, proxy, audio extraction and thumbnail pipeline
+      - Supply-chain scanning, SBOM and image publishing in CI
+      - Evaluation dataset (at least 12 licensed videos across 6 categories)
+    risks:
+      - Python worker and Node queue interoperability. Mitigation - queue contract tested in both languages in US-129 before other workers depend on it.
+
+  - number: 3
+    phase: PH2
+    title: Hearing the Footage
+    goal: Transcribe speech with word-level timestamps and analyse silence and loudness, while the timeline domain model and the Remotion render worker are built in parallel.
+    increment: An uploaded video shows a word-synchronized transcript, a speech/silence map and loudness figures in the UI; a hand-written timeline JSON renders to MP4 through the render worker; the timeline domain passes its property-based tests.
+    deliverables:
+      - Faster-Whisper transcription with word timestamps, language detection and VAD
+      - Silence, loudness (EBU R128) and energy analysis
+      - Versioned MediaAnalysis JSON Schema with TypeScript and Python bindings
+      - Timeline domain model with undo/redo commands
+      - Remotion render worker rendering timeline JSON to MP4
+    risks:
+      - GPU availability for CI and developers. Mitigation - CPU int8 fallback model in CI, GPU tests run nightly on a self-hosted runner.
+
+  - number: 4
+    phase: PH2
+    title: First Automated Edit
+    goal: Complete visual perception and the unified MediaAnalysis, ship the Tool SDK with FFmpeg tools, and deliver the first automated (non-AI) edit - one-click silence removal rendered to MP4.
+    increment: A user clicks "Remove silences"; the system turns analysis into timeline commands, executes them through the Tool SDK and renders a downloadable MP4. The analysis view shows shots, face tracks and filler words.
+    deliverables:
+      - Release v0.2 "Understand and Cut"
+      - Shot detection, face detection and tracking, filler-word detection
+      - Tool SDK core (manifest, registry, validation, executor) with the first FFmpeg tools
+      - FFmpeg and Remotion render strategies behind one render interface
+      - Automated E2E test of the silence-removal workflow in CI
+    risks:
+      - Tool SDK design churn blocks the agent in Sprint 5. Mitigation - SDK interfaces reviewed by AI and GEN owners at mid-sprint; frozen at sprint end with a contract test suite.
+
+  - number: 5
+    phase: PH3
+    title: Agent Core
+    goal: Introduce the provider-agnostic LLM layer and the observe-plan-act agent loop that edits the timeline exclusively through Tool SDK tools, with captions and auto-reframing available as tools.
+    increment: In the new-project wizard a user asks "remove silences and filler words, add captions, make it 9:16"; the agent plans, calls tools and produces a reframed, captioned MP4. Every agent decision and tool call is recorded and retrievable through the API.
+    deliverables:
+      - LLM provider port with two adapters and a record/replay fake provider
+      - Versioned prompt registry
+      - AgentRun state machine running in the agent worker with budgets and checkpoints
+      - Captions, reframing and range-removal tools
+      - Tool permission model and injection test suite
+    risks:
+      - LLM output is unreliable. Mitigation - schema-validated structured output, validation feedback loop and deterministic tests using recorded cassettes.
+
+  - number: 6
+    phase: PH3
+    title: "MVP Alpha: Raw Footage + Prompt -> Reel"
+    goal: Deliver the first complete autonomous edit - highlight selection to a target duration, captions, zooms, music with ducking, preview and final renders, and a live agent-run view in the web app.
+    increment: The "45-second professional Reel" prompt runs end-to-end from the web UI on podcast and educational footage and produces a downloadable 9:16 video; evaluation harness v0 reports metrics for 6 dataset videos every night.
+    deliverables:
+      - Release v0.3 "MVP Alpha" and the first recorded end-to-end demo
+      - Highlight selection and short-form generation for TikTok, Reels and Shorts presets
+      - Zoom, audio normalization, music and ducking tools
+      - Preview and final render profiles with output validation
+      - Evaluation harness v0 and MVP end-to-end test in CI
+    risks:
+      - Milestone M3 at risk. Mitigation - Go/No-Go at mid-sprint review; the runs overview (US-318) and zoom tool (US-311) are the first scope to move into Sprint 7, never the end-to-end path.
+
+  - number: 7
+    phase: PH4
+    title: Motion Graphics and Design System
+    goal: Make the agent's output professional and consistent - plugin-based Remotion component library, font registry with Arabic support, creative memory, creativity levels and in-browser preview.
+    increment: The agent adds animated keyword text, lower thirds and a title animation using project-selected fonts (Arabic captions in Cairo, English keywords in Montserrat); the user previews the edit in the browser before rendering and can switch between Conservative, Balanced and Creative modes.
+    deliverables:
+      - Component manifest and plugin registry with the first built-in motion graphics pack
+      - Font registry, project font selection and glyph-coverage checks
+      - Unified local asset registry with starter packs
+      - Creative memory and creativity-level policy
+      - Browser preview with the Remotion Player and visual regression tests in CI
+    risks:
+      - Render time grows with graphics. Mitigation - checkpoint CP4 render budget; preview renders use proxies.
+
+  - number: 8
+    phase: PH4
+    title: MVP Complete
+    goal: Close the MVP boundary - basic B-roll and music from the asset registry, basic self-review with one automatic refinement pass, conversational edits of an existing project, and hardened workers.
+    increment: The agent inserts relevant B-roll and background music, detects a caption overflow and a loudness problem in its own render and fixes them automatically; the user then types "make the captions larger" and receives a new project version without a full re-edit.
+    deliverables:
+      - Release v0.9-mvp covering every capability in the MVP boundary
+      - Semantic asset search and basic B-roll insertion
+      - Critic v0 deterministic quality checks and single refinement pass
+      - Conversational revision mode, chat panel and version history
+      - Hardened, resource-limited worker containers
+      - MVP evaluation report for the mid-project review
+    risks:
+      - Conversational revision quality. Mitigation - start from the five canonical utterances in the plan and extend the test set every sprint.
+
+  - number: 9
+    phase: PH5
+    title: Safe Self-Expansion
+    goal: Enable Level-3 capabilities safely - sandboxed execution, AI-generated Remotion components, internet asset providers, narrative restructuring and beat-aware cutting - and add the timeline view.
+    increment: The user asks for "a holographic glitch title"; the agent generates, compiles and test-renders a new component inside the sandbox and uses it in the edit. The agent restructures a podcast into Hook, Context, Value and Payoff and, when the local library has no match, fetches stock B-roll from a provider API into quarantine (promotion to the library follows in Sprint 10 with license validation).
+    deliverables:
+      - Sandbox runtime passing the escape and resource-limit test suite (CP5)
+      - Component generation pipeline and generated component registry
+      - Internet asset providers with quarantine download
+      - Hook detection, narrative restructuring and beat-synchronized cutting
+      - Timeline view and asset library UI
+    risks:
+      - Sandbox complexity. Mitigation - start with rootless Docker plus gVisor defaults; Firecracker is out of scope.
+
+  - number: 10
+    phase: PH5
+    title: Editor-Grade Intelligence
+    goal: Add the multimodal critic with iterative refinement, component acquisition from package registries with full validation, self-repairing code generation, brand kits and Full Autonomous mode.
+    increment: In Full Autonomous mode the agent edits, renders, critiques its own contact sheet (for example, a caption covering a face), fixes it and re-renders until the score stops improving; it installs a missing component from npm only after license, reputation and vulnerability checks pass in the sandbox.
+    deliverables:
+      - Release v0.95-beta - feature freeze
+      - Multimodal critic, refinement loop controller and quality report UI data
+      - External component acquisition pipeline with license and security validation
+      - Brand kits and Full Autonomous creativity level
+      - Generated components gallery with approval flow
+    risks:
+      - Feature creep before freeze. Mitigation - anything not merged by the Sprint 10 review moves to the stretch backlog.
+
+  - number: 11
+    phase: PH6
+    title: Hardening
+    goal: Harden security, performance and observability, prove extensibility with a plugin-only addition, and stabilize the release candidate.
+    increment: Release candidate v1.0-rc1 on staging with dashboards for jobs, GPU, tokens and cost; the agent run inspector explains every decision; the red-team, sandbox-escape and load suites are green; a new tool and a new LLM provider are added without touching core modules.
+    deliverables:
+      - Security test suite, red-team report and fixed findings
+      - GPU model pooling, parallel analysis DAG and incremental rendering
+      - Metrics, tracing, error tracking dashboards and agent run inspector
+      - Extensibility proof and Tool SDK / component authoring guide
+      - Release candidate v1.0-rc1
+    risks:
+      - Too many late defects. Mitigation - bug bash in week 1 of the sprint; fixes prioritized by severity with a daily triage.
+
+  - number: 12
+    phase: PH6
+    title: Evaluation and Graduation Release
+    goal: Evaluate the system scientifically, finish documentation, freeze v1.0-graduation, verify a fresh deployment and rehearse the graduation demo.
+    increment: On a clean machine the team clones the repository, runs the bootstrap script and executes scenarios A-G live; the evaluation report compares AI edits with human edits; v1.0-graduation is tagged with release notes and SBOM.
+    deliverables:
+      - Evaluation report with metrics, ablations and human acceptance study
+      - Complete documentation set and required diagrams
+      - Scripted scenarios A-G with recorded runs
+      - v1.0-graduation tag, release notes, SBOM and pinned images
+      - Rehearsed graduation demo with before/after comparisons
+    risks:
+      - Demo-day infrastructure failure. Mitigation - recorded backup runs and an offline-capable local deployment.
+
+milestones:
+  - id: M0
+    name: Architecture Baseline and Walking Skeleton
+    type: milestone
+    sprint: 1
+    requires: [US-101, US-103, US-114, US-126]
+    exit_criteria:
+      - SRS v1.0 and MVP boundary signed off by the supervisor
+      - ADRs accepted for architecture style, languages, contracts, queue, storage, LLM abstraction and branching
+      - Walking skeleton upload-to-metadata flow works from a fresh clone and CI is required on main
+    fallback: Carry unresolved requirement questions into Sprint 2 as spikes; do not delay the skeleton.
+  - id: CP1
+    name: Technology Feasibility
+    type: checkpoint
+    sprint: 1
+    requires: [US-105, US-106, US-107]
+    exit_criteria:
+      - Faster-Whisper transcribes 10 minutes of speech in at most 3 minutes on the reference GPU, or a CPU-viable model is selected
+      - Remotion renders 60 seconds of 1080p with captions in at most 5 minutes on the reference machine
+      - The chosen LLM returns schema-valid tool calls for at least 9 of 10 scripted editing requests
+    fallback: Select smaller ASR model, render previews at 720p, or switch the default LLM provider through the adapter layer.
+  - id: M1
+    name: v0.1 Ingest
+    type: milestone
+    sprint: 2
+    requires: [US-127, US-128, US-129]
+    exit_criteria:
+      - Authenticated resumable upload, validation, proxy and thumbnail jobs work on staging
+      - Every job exposes Queued, Running, Completed, Failed, Retrying and Cancelled states
+      - CD deploys main to staging automatically
+  - id: CP2
+    name: Perception Quality Gate
+    type: checkpoint
+    sprint: 3
+    requires: [US-201, US-202, US-204]
+    exit_criteria:
+      - English WER at most 12 percent on the evaluation clips; Arabic WER measured and recorded
+      - Median word-timestamp error at most 100 ms against hand-aligned references
+      - Silence detection F1 at least 0.9 against labelled ranges
+    fallback: Tune VAD and model size in Sprint 4; captions use segment timing until word timing meets the gate.
+  - id: M2
+    name: v0.2 Understand and Cut
+    type: milestone
+    sprint: 4
+    requires: [US-210, US-221, US-223, US-225]
+    exit_criteria:
+      - Every uploaded talking-head video produces a versioned MediaAnalysis (transcript, VAD, silence, loudness, shots, faces)
+      - One-click silence removal renders a correct MP4 through the Tool SDK
+      - Tool SDK contract tests are frozen and green
+  - id: CP3
+    name: Agent Tool-Calling Reliability
+    type: checkpoint
+    sprint: 5
+    requires: [US-305, US-319]
+    exit_criteria:
+      - At least 90 percent of agent tool calls are schema-valid on first attempt and 100 percent after validation feedback
+      - The agent has no path to shell, filesystem or network except through registered tools
+      - Iteration, token and cost budgets stop runaway runs in tests
+    fallback: Constrain the tool set per step and use provider-native structured output; switch provider via adapter.
+  - id: M3
+    name: MVP Alpha - First Autonomous Video
+    type: milestone
+    sprint: 6
+    requires: [US-307, US-308, US-317, US-320, US-321]
+    exit_criteria:
+      - Raw footage plus prompt produces a finished short-form video from the web UI without manual steps
+      - Output meets the platform preset (resolution, aspect ratio, duration within 10 percent of target)
+      - Evaluation harness v0 runs nightly on 6 videos with render success rate at least 90 percent
+    fallback: Go/No-Go at Sprint 6 review. If missed, Sprint 7 starts with a stabilization story and Phase 5 P2 stories move to stretch.
+  - id: CP4
+    name: Render Budget
+    type: checkpoint
+    sprint: 7
+    requires: [US-402, US-425]
+    exit_criteria:
+      - 60-second 1080p render with captions and motion graphics completes in at most 3 minutes on the reference machine
+      - Visual regression suite for built-in components is green in CI
+    fallback: Pull incremental rendering (US-607) forward into Sprint 8 and reduce preview resolution.
+  - id: M4
+    name: MVP Complete - v0.9-mvp
+    type: milestone
+    sprint: 8
+    requires: [US-413, US-414, US-415, US-421, US-426]
+    exit_criteria:
+      - Every capability in the MVP boundary works end-to-end on talking-head, podcast and educational footage
+      - Basic self-review detects and fixes at least caption overflow, loudness and black-frame issues
+      - Conversational edits modify the existing project and create a new version
+      - Mid-project academic review held with the MVP evaluation report
+    fallback: MVP scope is locked; any gap is fixed in Sprint 9 before advanced stories start.
+  - id: CP5
+    name: Sandbox Security Gate
+    type: checkpoint
+    sprint: 9
+    requires: [US-501]
+    exit_criteria:
+      - Sandbox escape, network egress and resource-exhaustion suites pass
+      - Generated or downloaded code cannot run outside the sandbox (verified by tests, not convention)
+    fallback: Generated components and external packages stay disabled outside development until the gate passes.
+  - id: M5
+    name: Feature Freeze - v0.95-beta
+    type: milestone
+    sprint: 10
+    requires: [US-511, US-513, US-520]
+    exit_criteria:
+      - All scheduled P0-P2 stories merged; remaining work moved to the stretch backlog
+      - Scenarios A-G each succeed at least once on staging
+      - Critic refinement loop improves the quality score on at least 60 percent of evaluation videos
+  - id: CP6
+    name: Security and Performance Gate
+    type: checkpoint
+    sprint: 11
+    requires: [US-601, US-602, US-603, US-606]
+    exit_criteria:
+      - No open critical or high vulnerabilities in code, dependencies or images
+      - Prompt-injection and sandbox red-team findings fixed or formally accepted
+      - A 10-minute source becomes a 45-second reel in at most 15 minutes (p95) on the reference GPU
+  - id: M6
+    name: Release Candidate - v1.0-rc1
+    type: milestone
+    sprint: 11
+    requires: [US-608, US-609, US-611]
+    exit_criteria:
+      - No open P0/P1 defects; E2E, integration and evaluation suites green
+      - Dashboards and agent run inspector available on staging
+  - id: M7
+    name: v1.0-graduation Release and Demo
+    type: milestone
+    sprint: 12
+    requires: [US-613, US-615, US-616, US-619, US-620, US-621]
+    exit_criteria:
+      - Fresh deployment from a clean machine succeeds using only documented steps
+      - Evaluation report, documentation set and diagrams complete
+      - v1.0-graduation tagged; demo rehearsed twice with recorded backups
