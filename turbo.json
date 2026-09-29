@@ -1,6 +1,13 @@
 {
   "$schema": "https://turbo.build/schema.json",
   "agentGuidance": false,
+  "globalPassThroughEnv": [
+    "UV_CACHE_DIR",
+    "UV_PYTHON",
+    "UV_PYTHON_INSTALL_DIR",
+    "UV_TOOL_BIN_DIR",
+    "UV_TOOL_DIR"
+  ],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],

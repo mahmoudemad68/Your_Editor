@@ -33,7 +33,7 @@ Node comes from `.nvmrc`. pnpm comes from `packageManager` in the root `package.
 
 The CI job uploads those files as the `coverage` artifact. A failing test fails `pnpm test` and fails the `ci` check. Coverage percentage gates belong to [US-116](../roadmap/phases/phase-1-foundation.md#us-116---test-frameworks-fixtures-and-integration-harness).
 
-Unchanged packages are skipped from the Turborepo cache. CI restores that cache from GitHub Actions (`.turbo`) and also caches the pnpm store and the uv cache. A Vercel remote cache is optional: when the repository secrets `TURBO_TOKEN` and `TURBO_TEAM` are both set, the workflow turns it on. When they are absent, the GitHub Actions cache of `.turbo` is the Turborepo cache. Do not commit tokens.
+Unchanged packages are skipped from the Turborepo cache. CI restores that cache from GitHub Actions (`.turbo`) and also caches the pnpm store and the uv cache. Turborepo passes `UV_CACHE_DIR` through to tasks so `uv sync` writes into the directory `astral-sh/setup-uv` saves. A Vercel remote cache is optional: when the repository secrets `TURBO_TOKEN` and `TURBO_TEAM` are both set, the workflow turns it on. When they are absent, the GitHub Actions cache of `.turbo` is the Turborepo cache. Do not commit tokens.
 
 Supply-chain scanners, image publish, and the staging deploy are [US-113](../roadmap/phases/phase-1-foundation.md#us-113---supply-chain-security-image-publishing-and-cd-to-staging). They are outside this workflow.
 

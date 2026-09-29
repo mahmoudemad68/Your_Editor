@@ -43,6 +43,7 @@ jobs:
         with:
           cache-python: true
           enable-cache: true
+          ignore-nothing-to-cache: true
           python-version: "3.11"
           version: "0.12.20"
 
