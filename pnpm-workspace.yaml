@@ -1,0 +1,8 @@
+packages:
+  - "apps/*"
+  - "workers/*"
+  - "packages/*"
+
+catalog:
+  typescript: "6.0.3"
+  "@types/node": "22.20.4"

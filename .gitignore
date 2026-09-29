@@ -1,0 +1,26 @@
+**/node_modules/**
+# The architecture fixture deliberately resolves to a NestJS-shaped path.
+!tests/architecture/fixtures/domain-imports-framework/node_modules/**
+dist/
+dist-test/
+.next/
+.turbo/
+.venv/
+__pycache__/
+*.py[cod]
+.mypy_cache/
+.ruff_cache/
+.import_linter_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+coverage/
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+.husky/_
+.python-version
+!workers/ai-worker/.python-version

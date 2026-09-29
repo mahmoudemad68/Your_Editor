@@ -1,0 +1,11 @@
+[importlinter]
+root_packages =
+    fixture_violation
+
+[importlinter:contract:1]
+name = Domain does not import infrastructure
+type = forbidden
+source_modules =
+    fixture_violation.domain
+forbidden_modules =
+    fixture_violation.infrastructure

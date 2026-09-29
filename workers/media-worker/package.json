@@ -1,0 +1,21 @@
+{
+  "name": "@editagent/media-worker",
+  "version": "0.0.0",
+  "private": true,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test dist/application/describe.test.js",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@editagent/shared": "workspace:*",
+    "@editagent/media-core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "typescript": "catalog:"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "$id": "https://editagent.local/schemas/worker-health.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "WorkerHealth",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["worker", "status"],
+  "properties": {
+    "worker": { "type": "string", "minLength": 1 },
+    "status": { "enum": ["ok"] }
+  }
+}

@@ -1,0 +1,65 @@
+# Module ownership for review routing.
+#
+# GitHub teams for these modules are not created. This repository belongs to a
+# personal account, so @org/team entries cannot be resolved yet. Do not add
+# guessed personal usernames. The path → module map below is the review map
+# until teams exist. See docs/architecture/modules.md.
+#
+# The @editagent/* tokens are placeholder team slugs, not accounts.
+
+# Identity
+/packages/domain/src/modules/identity/ @editagent/identity
+
+# Projects
+/packages/domain/src/modules/projects/ @editagent/projects
+/docs/architecture/ @editagent/projects
+
+# Media
+/packages/domain/src/modules/media/ @editagent/media
+/packages/media-core/ @editagent/media
+
+# Analysis
+/packages/domain/src/modules/analysis/ @editagent/analysis
+/workers/ai-worker/ @editagent/analysis
+
+# Editing
+/packages/domain/src/modules/editing/ @editagent/editing
+
+# Tools
+/packages/domain/src/modules/tools/ @editagent/tools
+/packages/tool-sdk/ @editagent/tools
+
+# Agent
+/packages/domain/src/modules/agent/ @editagent/agent
+/workers/agent-worker/ @editagent/agent
+
+# Rendering
+/packages/domain/src/modules/rendering/ @editagent/rendering
+/workers/render-worker/ @editagent/rendering
+
+# Assets
+/packages/domain/src/modules/assets/ @editagent/assets
+
+# Components
+/packages/domain/src/modules/components/ @editagent/components
+
+# Critic
+/packages/domain/src/modules/critic/ @editagent/critic
+
+# Jobs
+/packages/domain/src/modules/jobs/ @editagent/jobs
+
+# Shared kernel and contracts. Projects is accountable for the engineering baseline.
+/packages/domain/src/kernel/ @editagent/projects
+/packages/schemas/ @editagent/projects
+/packages/shared/ @editagent/projects
+
+# Processes that host more than one module.
+/apps/api/ @editagent/api
+/apps/web/ @editagent/web
+/workers/media-worker/ @editagent/media @editagent/tools
+
+# Platform runtime, owned by Jobs.
+/infra/ @editagent/jobs
+/tools/architecture/ @editagent/projects
+/tests/architecture/ @editagent/projects

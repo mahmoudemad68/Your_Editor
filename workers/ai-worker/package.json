@@ -1,0 +1,11 @@
+{
+  "name": "@editagent/ai-worker",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "build": "uv sync --frozen",
+    "lint": "uv run ruff check . && uv run ruff format --check . && uv run lint-imports",
+    "typecheck": "uv run mypy",
+    "test": "uv run pytest"
+  }
+}

@@ -1,0 +1,94 @@
+[project]
+name = "editagent-ai-worker"
+version = "0.0.0"
+description = "EditAgent AI worker scaffold. Perception models are later stories."
+requires-python = ">=3.11,<3.12"
+
+[project.scripts]
+editagent-ai-worker = "editagent_ai_worker.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+  "import-linter>=2.1",
+  "mypy>=1.13",
+  "pytest>=8.3",
+  "ruff>=0.8",
+]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+files = ["src", "tests"]
+mypy_path = "src"
+
+[tool.importlinter]
+root_packages = ["editagent_ai_worker"]
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "Clean architecture layers"
+type = "layers"
+layers = [
+  "editagent_ai_worker.composition",
+  "editagent_ai_worker.application",
+  "editagent_ai_worker.domain",
+]
+
+[[tool.importlinter.contracts]]
+name = "Domain does not import outer layers"
+type = "forbidden"
+source_modules = ["editagent_ai_worker.domain"]
+forbidden_modules = [
+  "editagent_ai_worker.application",
+  "editagent_ai_worker.infrastructure",
+  "editagent_ai_worker.composition",
+]
+
+[[tool.importlinter.contracts]]
+name = "Application does not import infrastructure"
+type = "forbidden"
+source_modules = ["editagent_ai_worker.application"]
+forbidden_modules = [
+  "editagent_ai_worker.infrastructure",
+  "editagent_ai_worker.composition",
+]
+
+[[tool.importlinter.contracts]]
+name = "Infrastructure does not import delivery or use cases"
+type = "forbidden"
+source_modules = ["editagent_ai_worker.infrastructure"]
+forbidden_modules = [
+  "editagent_ai_worker.application",
+  "editagent_ai_worker.composition",
+]
+
+[[tool.importlinter.contracts]]
+name = "Domain does not import frameworks"
+type = "forbidden"
+source_modules = ["editagent_ai_worker.domain"]
+forbidden_modules = [
+  "fastapi",
+  "flask",
+  "django",
+  "celery",
+  "redis",
+  "boto3",
+  "torch",
+  "transformers",
+  "faster_whisper",
+]
