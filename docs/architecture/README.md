@@ -6,14 +6,14 @@ Baseline for US-103. This directory is the architecture source of truth. The Agi
 
 ## Navigation
 
-| Document | What it decides |
-|---|---|
-| [modules.md](modules.md) | Bounded-module responsibilities, public interfaces, and the story ownership matrix |
-| [c4-context.md](c4-context.md) | System context diagram |
-| [c4-container.md](c4-container.md) | Container diagram, communication paths, trust boundaries |
-| [layer-rules.md](layer-rules.md) | Clean Architecture dependency direction and the enforced rule names |
-| [ports-and-adapters.md](ports-and-adapters.md) | Port catalogue. Contracts only; adapters are later stories |
-| [adr/README.md](adr/README.md) | ADR index |
+| Document                                       | What it decides                                                                    |
+| ---------------------------------------------- | ---------------------------------------------------------------------------------- |
+| [modules.md](modules.md)                       | Bounded-module responsibilities, public interfaces, and the story ownership matrix |
+| [c4-context.md](c4-context.md)                 | System context diagram                                                             |
+| [c4-container.md](c4-container.md)             | Container diagram, communication paths, trust boundaries                           |
+| [layer-rules.md](layer-rules.md)               | Clean Architecture dependency direction and the enforced rule names                |
+| [ports-and-adapters.md](ports-and-adapters.md) | Port catalogue. Contracts only; adapters are later stories                         |
+| [adr/README.md](adr/README.md)                 | ADR index                                                                          |
 
 ## System architecture
 
@@ -35,20 +35,20 @@ This slice documents those decisions and enforces the dependency direction. It d
 
 Twelve modules own the product. A module has one public interface and one directory under `packages/domain/src/modules/<name>/`. A module may import the shared kernel and its own files. It may not import another module. Cross-module behavior is an application use case.
 
-| Module | Owns |
-|---|---|
-| Identity | Accounts, sessions, roles, and the allow/deny decision |
-| Projects | The Project aggregate, membership, project settings, brand kit, and whole-system governance stories |
-| Media | Source assets, upload, validation, technical metadata, proxies, thumbnails, playback |
-| Analysis | Perception results and the MediaAnalysis contract |
-| Editing | Timeline, clips, edit commands, undo/redo |
-| Tools | Tool manifests, validation, permissions, execution, the FFmpeg command builder |
-| Agent | Model ports, prompts, the agent loop, creative policy, the sandbox port |
-| Rendering | Render requests, strategies, profiles, render cache, render preview |
-| Assets | Asset registry, fonts, search, acquisition, quarantine, licenses |
-| Components | Remotion component manifests, packs, and generated components |
-| Critic | Quality checks, critiques, evaluation datasets and harnesses |
-| Jobs | The job aggregate, the queue port, progress, and platform runtime stories |
+| Module     | Owns                                                                                                |
+| ---------- | --------------------------------------------------------------------------------------------------- |
+| Identity   | Accounts, sessions, roles, and the allow/deny decision                                              |
+| Projects   | The Project aggregate, membership, project settings, brand kit, and whole-system governance stories |
+| Media      | Source assets, upload, validation, technical metadata, proxies, thumbnails, playback                |
+| Analysis   | Perception results and the MediaAnalysis contract                                                   |
+| Editing    | Timeline, clips, edit commands, undo/redo                                                           |
+| Tools      | Tool manifests, validation, permissions, execution, the FFmpeg command builder                      |
+| Agent      | Model ports, prompts, the agent loop, creative policy, the sandbox port                             |
+| Rendering  | Render requests, strategies, profiles, render cache, render preview                                 |
+| Assets     | Asset registry, fonts, search, acquisition, quarantine, licenses                                    |
+| Components | Remotion component manifests, packs, and generated components                                       |
+| Critic     | Quality checks, critiques, evaluation datasets and harnesses                                        |
+| Jobs       | The job aggregate, the queue port, progress, and platform runtime stories                           |
 
 Responsibilities that would otherwise overlap (silence ranges versus the cut versus the FFmpeg tool, caption component versus caption tool, object-storage keys versus the storage adapter) are assigned in [modules.md](modules.md). That assignment is normative.
 
@@ -66,20 +66,20 @@ The engineering lane on the story (BE, FE, OPS, and the others) is not the modul
 
 Other modules call the operations below. They do not read another module's internal types. The names are the contract; the implementations arrive with the stories that own them. The full list, including types, is in [modules.md](modules.md).
 
-| Module | Public operations |
-|---|---|
-| Identity | `authenticate`, `establishSession`, `revokeSession`, `authorize` |
-| Projects | `createProject`, `getProject`, `updateProject`, `archiveProject`, `listProjects`, `updateProjectSettings`, `getBrandKit`, `saveBrandKit` |
-| Media | `beginUpload`, `completeUpload`, `inspectMedia`, `validateMedia`, `createDerivedAssets`, `getPlayback` |
-| Analysis | `startAnalysis`, `getAnalysis`, `getTranscript`, `getSpeechSegments`, `getScenes`, `getFaces` |
-| Editing | `getTimeline`, `applyCommand`, `undo`, `redo`, `restoreVersion` |
-| Tools | `registerTool`, `getTool`, `validateToolCall`, `executeTool` |
-| Agent | `startRun`, `step`, `cancelRun`, `getRun`, `listEvents`, `renderPrompt`, `selectModel` |
-| Rendering | `requestRender`, `getRender`, `selectStrategy` |
-| Assets | `registerAsset`, `searchAssets`, `getAsset`, `quarantineAcquisition`, `promoteAsset` |
-| Components | `registerComponent`, `resolveComponent`, `recordGeneratedComponent` |
-| Critic | `reviewRender`, `requestRefinement`, `recordEvaluation` |
-| Jobs | `enqueue`, `getJob`, `transition`, `publishProgress`, `subscribeProgress` |
+| Module     | Public operations                                                                                                                        |
+| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| Identity   | `authenticate`, `establishSession`, `revokeSession`, `authorize`                                                                         |
+| Projects   | `createProject`, `getProject`, `updateProject`, `archiveProject`, `listProjects`, `updateProjectSettings`, `getBrandKit`, `saveBrandKit` |
+| Media      | `beginUpload`, `completeUpload`, `inspectMedia`, `validateMedia`, `createDerivedAssets`, `getPlayback`                                   |
+| Analysis   | `startAnalysis`, `getAnalysis`, `getTranscript`, `getSpeechSegments`, `getScenes`, `getFaces`                                            |
+| Editing    | `getTimeline`, `applyCommand`, `undo`, `redo`, `restoreVersion`                                                                          |
+| Tools      | `registerTool`, `getTool`, `validateToolCall`, `executeTool`                                                                             |
+| Agent      | `startRun`, `step`, `cancelRun`, `getRun`, `listEvents`, `renderPrompt`, `selectModel`                                                   |
+| Rendering  | `requestRender`, `getRender`, `selectStrategy`                                                                                           |
+| Assets     | `registerAsset`, `searchAssets`, `getAsset`, `quarantineAcquisition`, `promoteAsset`                                                     |
+| Components | `registerComponent`, `resolveComponent`, `recordGeneratedComponent`                                                                      |
+| Critic     | `reviewRender`, `requestRefinement`, `recordEvaluation`                                                                                  |
+| Jobs       | `enqueue`, `getJob`, `transition`, `publishProgress`, `subscribeProgress`                                                                |
 
 ## Layer dependency rules
 
@@ -104,14 +104,14 @@ Recording a port here does not implement it. Redis, PostgreSQL, MinIO, LLM SDKs,
 
 ## Worker responsibilities
 
-| Process | Runtime | Responsibility | Modules it hosts |
-|---|---|---|---|
-| Web | Next.js | Render the UI and call the API. | None. Presentation of several modules. |
-| API | NestJS | Authenticate later, run synchronous use cases, enqueue jobs, sign uploads. | Composition for the modular monolith. |
-| Agent worker | Node.js | Run the agent loop. | Agent |
-| AI worker | Python 3.11 | Run perception adapters. | Analysis |
-| Media worker | Node.js | Prepare media and execute FFmpeg tools. | Media and Tools, as separate modules in one process |
-| Render worker | Node.js | Run render strategies. | Rendering, loading Components manifests |
+| Process       | Runtime     | Responsibility                                                             | Modules it hosts                                    |
+| ------------- | ----------- | -------------------------------------------------------------------------- | --------------------------------------------------- |
+| Web           | Next.js     | Render the UI and call the API.                                            | None. Presentation of several modules.              |
+| API           | NestJS      | Authenticate later, run synchronous use cases, enqueue jobs, sign uploads. | Composition for the modular monolith.               |
+| Agent worker  | Node.js     | Run the agent loop.                                                        | Agent                                               |
+| AI worker     | Python 3.11 | Run perception adapters.                                                   | Analysis                                            |
+| Media worker  | Node.js     | Prepare media and execute FFmpeg tools.                                    | Media and Tools, as separate modules in one process |
+| Render worker | Node.js     | Run render strategies.                                                     | Rendering, loading Components manifests             |
 
 The browser never calls a worker directly. Workers take jobs from the queue and write results through ports.
 
@@ -188,15 +188,15 @@ Communication paths and the five trust boundaries (browser, application zone, da
 
 ## ADR index
 
-| ADR | Title | Status | Date |
-|---|---|---|---|
-| [ADR-001](adr/001-modular-monolith-plus-workers.md) | Modular monolith plus workers | Proposed | 2026-09-29 |
-| [ADR-002](adr/002-typescript-and-python.md) | TypeScript for API, Web, and Node workers; Python for the AI worker | Proposed | 2026-09-29 |
-| [ADR-003](adr/003-json-schema-contract.md) | JSON Schema as the cross-language contract | Proposed | 2026-09-29 |
-| [ADR-004](adr/004-redis-bullmq.md) | Redis and BullMQ | Proposed | 2026-09-29 |
-| [ADR-005](adr/005-postgresql-and-s3.md) | PostgreSQL and S3-compatible object storage | Proposed | 2026-09-29 |
-| [ADR-006](adr/006-llm-provider-abstraction.md) | LLM provider abstraction | Proposed | 2026-09-29 |
-| [ADR-007](adr/007-trunk-based-development.md) | Trunk-based development with short-lived branches | Proposed | 2026-09-29 |
-| [ADR-008](adr/008-integer-time.md) | Time representation as integer microseconds and frames | Proposed | 2026-09-29 |
+| ADR                                                 | Title                                                               | Status   | Date       |
+| --------------------------------------------------- | ------------------------------------------------------------------- | -------- | ---------- |
+| [ADR-001](adr/001-modular-monolith-plus-workers.md) | Modular monolith plus workers                                       | Proposed | 2026-09-29 |
+| [ADR-002](adr/002-typescript-and-python.md)         | TypeScript for API, Web, and Node workers; Python for the AI worker | Proposed | 2026-09-29 |
+| [ADR-003](adr/003-json-schema-contract.md)          | JSON Schema as the cross-language contract                          | Proposed | 2026-09-29 |
+| [ADR-004](adr/004-redis-bullmq.md)                  | Redis and BullMQ                                                    | Proposed | 2026-09-29 |
+| [ADR-005](adr/005-postgresql-and-s3.md)             | PostgreSQL and S3-compatible object storage                         | Proposed | 2026-09-29 |
+| [ADR-006](adr/006-llm-provider-abstraction.md)      | LLM provider abstraction                                            | Proposed | 2026-09-29 |
+| [ADR-007](adr/007-trunk-based-development.md)       | Trunk-based development with short-lived branches                   | Proposed | 2026-09-29 |
+| [ADR-008](adr/008-integer-time.md)                  | Time representation as integer microseconds and frames              | Proposed | 2026-09-29 |
 
 Full records: [adr/README.md](adr/README.md).

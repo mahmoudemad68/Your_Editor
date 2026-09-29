@@ -16,7 +16,7 @@ The shared kernel has to state this before Editing, Analysis, and Rendering each
 - A frame position is a non-negative **integer frame index**.
 - A frame rate is a rational pair of positive integers: `numerator / denominator`. Conversion between frames and microseconds uses that ratio and integer arithmetic. It does not use a binary floating-point frame duration.
 - In TypeScript the in-process types are `bigint`. In Python they are `int`.
-- In JSON the value is a canonical decimal string matching `^(0|[1-9][0-9]*)$`, defined by `packages/schemas/media-time.schema.json`. JSON numbers are not used for media time, because a JSON number is a float in JavaScript.
+- In JSON the value is a canonical decimal string matching `^(0|[1-9][0-9]*)$`, defined by `packages/schemas/src/media-time.schema.json`. JSON numbers are not used for media time, because a JSON number is a float in JavaScript.
 - The domain kernel (`packages/domain/src/kernel/time.ts`) is the TypeScript constructor for these values. Callers outside the kernel do not perform ad-hoc arithmetic on raw `number` timestamps for timeline positions.
 
 Durations use the same microsecond integer. Wall-clock timestamps for logs and audit columns are not media time and are not covered by this decision.

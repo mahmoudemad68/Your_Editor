@@ -49,20 +49,20 @@ Rel(media, assets, "Quarantined downloads", "HTTPS")
 
 ## Communication paths
 
-| Path | Protocol | What crosses | Trust note |
-|---|---|---|---|
-| Creator → Web | HTTPS | UI actions | The browser is outside the application trust zone. |
-| Web → API | HTTPS JSON | Commands and queries | The API authenticates the caller. The web process holds no database credentials. |
-| Web → object storage | HTTPS S3 | File bytes via a presigned URL | The browser never receives storage credentials. The URL is scoped and time-limited. |
-| API → PostgreSQL | SQL | Module metadata | Credentials stay in the API and worker processes. |
-| API → Redis | Redis / BullMQ | Job messages and progress | Job payloads are schema-validated before a worker acts on them. |
-| API → object storage | S3 API | Signing and metadata | The API does not proxy large bodies. |
-| Workers → Redis | BullMQ | Job consumption and progress | Workers do not accept traffic from the browser. |
-| Workers → PostgreSQL | SQL | State for the modules that worker hosts | Shared database of the modular monolith, not a private database per worker. |
-| Workers → object storage | S3 API | Media, derivatives, renders | Credentials are limited to the prefixes that worker owns. |
-| Agent Worker → LLM providers | HTTPS | Prompts, tool schemas, model output | External trust boundary. User text is untrusted. Provider secrets stay in the worker. |
-| API / Media Worker → asset providers | HTTPS | Search and download | External trust boundary. Downloads are untrusted until Assets quarantines them. |
-| Web → workers | none | — | The browser reaches workers only through the API and presigned URLs. |
+| Path                                 | Protocol       | What crosses                            | Trust note                                                                            |
+| ------------------------------------ | -------------- | --------------------------------------- | ------------------------------------------------------------------------------------- |
+| Creator → Web                        | HTTPS          | UI actions                              | The browser is outside the application trust zone.                                    |
+| Web → API                            | HTTPS JSON     | Commands and queries                    | The API authenticates the caller. The web process holds no database credentials.      |
+| Web → object storage                 | HTTPS S3       | File bytes via a presigned URL          | The browser never receives storage credentials. The URL is scoped and time-limited.   |
+| API → PostgreSQL                     | SQL            | Module metadata                         | Credentials stay in the API and worker processes.                                     |
+| API → Redis                          | Redis / BullMQ | Job messages and progress               | Job payloads are schema-validated before a worker acts on them.                       |
+| API → object storage                 | S3 API         | Signing and metadata                    | The API does not proxy large bodies.                                                  |
+| Workers → Redis                      | BullMQ         | Job consumption and progress            | Workers do not accept traffic from the browser.                                       |
+| Workers → PostgreSQL                 | SQL            | State for the modules that worker hosts | Shared database of the modular monolith, not a private database per worker.           |
+| Workers → object storage             | S3 API         | Media, derivatives, renders             | Credentials are limited to the prefixes that worker owns.                             |
+| Agent Worker → LLM providers         | HTTPS          | Prompts, tool schemas, model output     | External trust boundary. User text is untrusted. Provider secrets stay in the worker. |
+| API / Media Worker → asset providers | HTTPS          | Search and download                     | External trust boundary. Downloads are untrusted until Assets quarantines them.       |
+| Web → workers                        | none           | —                                       | The browser reaches workers only through the API and presigned URLs.                  |
 
 ## Trust boundaries
 

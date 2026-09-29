@@ -26,12 +26,12 @@ Rel(editagent, asset_providers, "Search and quarantine download", "HTTPS")
 
 ## Actors
 
-| Actor | Relationship to EditAgent |
-|---|---|
-| Creator | Primary user. Uploads media, describes the result, reviews renders. |
-| Admin | Operates the deployment and is the role that can perform administrative actions defined by Identity. |
-| Web browser | Untrusted client. It is not part of the application trust zone. |
-| LLM providers | External. Prompts are untrusted user content. Provider credentials stay in the application trust zone. |
-| Asset providers | External. Nothing they return is trusted until a later Assets story quarantines and validates it. |
+| Actor           | Relationship to EditAgent                                                                              |
+| --------------- | ------------------------------------------------------------------------------------------------------ |
+| Creator         | Primary user. Uploads media, describes the result, reviews renders.                                    |
+| Admin           | Operates the deployment and is the role that can perform administrative actions defined by Identity.   |
+| Web browser     | Untrusted client. It is not part of the application trust zone.                                        |
+| LLM providers   | External. Prompts are untrusted user content. Provider credentials stay in the application trust zone. |
+| Asset providers | External. Nothing they return is trusted until a later Assets story quarantines and validates it.      |
 
 The AI agent is not a person. It is a secondary actor implemented inside EditAgent by the Agent module.

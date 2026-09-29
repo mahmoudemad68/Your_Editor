@@ -1,0 +1,12 @@
+node_modules
+dist
+dist-test
+.next
+.turbo
+.venv
+.import_linter_cache
+pnpm-lock.yaml
+uv.lock
+docs/roadmap
+tools/roadmap
+coverage

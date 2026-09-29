@@ -1,0 +1,8 @@
+{
+  "$id": "https://editagent.local/schemas/media-time.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "MediaTime",
+  "description": "Non-negative integer microseconds encoded as a canonical decimal string (ADR-008).",
+  "type": "string",
+  "pattern": "^(0|[1-9][0-9]*)$"
+}
