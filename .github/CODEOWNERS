@@ -61,5 +61,8 @@
 
 # Platform runtime, owned by Jobs.
 /infra/ @editagent/jobs
+
+# Security baseline, owned by Projects as a governance record.
+/docs/security/ @editagent/projects
 /tools/architecture/ @editagent/projects
 /tests/architecture/ @editagent/projects

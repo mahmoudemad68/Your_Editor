@@ -3,6 +3,10 @@ name = "editagent-ai-worker"
 version = "0.0.0"
 description = "EditAgent AI worker scaffold. Perception models are later stories."
 requires-python = ">=3.11,<3.12"
+dependencies = [
+  "pydantic>=2.10,<3",
+  "pydantic-settings>=2.7,<3",
+]
 
 [project.scripts]
 editagent-ai-worker = "editagent_ai_worker.__main__:main"
@@ -35,6 +39,7 @@ python_version = "3.11"
 strict = true
 files = ["src", "tests"]
 mypy_path = "src"
+plugins = ["pydantic.mypy"]
 
 [tool.importlinter]
 root_packages = ["editagent_ai_worker"]

@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "tsc -p tsconfig.test.json && node --test dist-test/presentation/product-label.test.js"
+    "test": "tsc -p tsconfig.test.json && node --test dist-test/presentation/product-label.test.js dist-test/infrastructure/config.test.js"
   },
   "dependencies": {
     "@editagent/shared": "workspace:*",

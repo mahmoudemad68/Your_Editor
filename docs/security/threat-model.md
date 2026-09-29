@@ -1,0 +1,109 @@
+# Threat model
+
+Version 0, from the accepted [container diagram](../architecture/c4-container.md). The method is STRIDE on each data flow. Threat IDs are stable. Later tests should name `TM-017` rather than rephrase "command injection".
+
+Nothing in this document is claimed as an implemented control unless the status cell says `Partial`. `Partial` means US-114 did only the slice named there. The threat stays open. Stories in later phases are planned, not done.
+
+## Data flows
+
+| Flow                        | From                | To                       | What crosses                        |
+| --------------------------- | ------------------- | ------------------------ | ----------------------------------- |
+| Media upload                | Browser             | API, then object storage | Presigned upload of untrusted bytes |
+| Web / API boundary          | Web                 | API                      | Commands and queries over JSON      |
+| PostgreSQL                  | API and workers     | PostgreSQL               | Module metadata                     |
+| Redis / queues              | API and workers     | Redis                    | Job messages and progress           |
+| Object storage / MinIO      | API, web, workers   | MinIO                    | Objects and presigned URLs          |
+| Workers                     | Redis               | Worker processes         | Job execution inside the trust zone |
+| External LLM providers      | Agent worker        | Provider                 | Prompts, tool schemas, model output |
+| Future sandbox execution    | Agent               | Sandbox outside the zone | Untrusted generated code            |
+| Future internet acquisition | API or media worker | Asset providers          | Search results and downloaded bytes |
+
+The browser is outside the trust zone. Workers do not accept browser traffic. The future sandbox is outside the application trust zone and is not implemented. External provider responses are untrusted input.
+
+## Required threats
+
+Each threat named in the roadmap has at least one planned control.
+
+| Roadmap threat            | Threat IDs             | Planned control                                                                  |
+| ------------------------- | ---------------------- | -------------------------------------------------------------------------------- |
+| Malicious generated code  | TM-029                 | US-501 sandbox, US-503 AST allow-list, US-603 red-team                           |
+| Malicious packages        | TM-031                 | US-502 pinned mirror, US-509 validation, US-113 image and dependency scanning    |
+| Malicious media           | TM-016                 | US-127 hostile-file defense, US-509 media validation                             |
+| Command injection         | TM-017                 | US-220 argument arrays and filter allow-list, US-221 executor                    |
+| Path traversal            | TM-018                 | US-122 opaque keys, US-601 traversal tests, US-501 sandbox mounts                |
+| Resource exhaustion       | TM-006, TM-021, TM-032 | US-127 limits, US-422 container limits, US-501 sandbox limits, US-603            |
+| Prompt injection          | TM-024                 | US-319 permission and injection tests, US-602 red-team, US-301 schema checks     |
+| Shell access              | TM-030                 | US-501 no host shell, US-220 no shell-built commands, US-221 no shell permission |
+| Dependency / supply-chain | TM-038                 | US-113 scanning, SBOM, and updates; US-502 for sandbox installs                  |
+
+## Threat catalog
+
+| ID     | STRIDE                 | Flow                    | Threat                                                                                                             | Planned control                                                           | Status  |
+| ------ | ---------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------- | ------- |
+| TM-001 | Spoofing               | Web / API               | A caller invokes the API without an authenticated identity.                                                        | US-118, US-119                                                            | Planned |
+| TM-002 | Elevation              | Web / API               | A caller reads or changes another project (IDOR).                                                                  | US-118, US-601                                                            | Planned |
+| TM-003 | Tampering              | Web / API, Redis        | A command or job body is modified before a worker acts.                                                            | US-129, US-221                                                            | Planned |
+| TM-004 | Repudiation            | Web / API               | An edit or agent action cannot be attributed later.                                                                | US-306, US-129                                                            | Planned |
+| TM-005 | Information disclosure | Web / API, PostgreSQL   | Metadata for another project is returned.                                                                          | US-118, US-601                                                            | Planned |
+| TM-006 | Denial of service      | Web / API               | Request volume exhausts the API process.                                                                           | US-601, US-422                                                            | Planned |
+| TM-007 | Spoofing               | PostgreSQL              | A stolen database URL is used as a client.                                                                         | US-113, US-422. US-114 keeps the URL out of images.                       | Partial |
+| TM-008 | Tampering              | PostgreSQL              | Query text is built from user input.                                                                               | US-104, US-120                                                            | Planned |
+| TM-009 | Information disclosure | PostgreSQL              | The development database port is reachable beyond the developer machine.                                           | US-422, US-618                                                            | Planned |
+| TM-010 | Denial of service      | PostgreSQL              | Connection storms exhaust the database.                                                                            | US-422                                                                    | Planned |
+| TM-011 | Tampering              | Redis / queues          | A worker runs a payload that was not schema-validated.                                                             | US-129                                                                    | Planned |
+| TM-012 | Spoofing               | Redis / queues          | An unexpected process consumes jobs.                                                                               | US-422                                                                    | Planned |
+| TM-013 | Information disclosure | Redis / queues          | Job payloads on development Redis are readable without authentication.                                             | US-422, US-618                                                            | Planned |
+| TM-014 | Denial of service      | Redis / queues          | A flood of jobs fills Redis or pins workers.                                                                       | US-129, US-422                                                            | Planned |
+| TM-015 | Elevation              | Workers                 | A tampered job runs with the worker's platform credentials.                                                        | US-129, US-221, US-319                                                    | Planned |
+| TM-016 | Tampering              | Media upload            | Malicious or disguised media reaches a decoder.                                                                    | US-127, US-509                                                            | Planned |
+| TM-017 | Tampering              | Workers                 | User text or a path becomes an extra shell or FFmpeg argument.                                                     | US-220, US-221                                                            | Planned |
+| TM-018 | Tampering              | Object storage, workers | A key or path escapes the caller's prefix or the sandbox workspace.                                                | US-122, US-601, US-501                                                    | Planned |
+| TM-019 | Information disclosure | Media upload            | A presigned URL is broader or longer-lived than the upload requires.                                               | US-122                                                                    | Planned |
+| TM-020 | Information disclosure | Web, images             | Storage or database credentials are baked into an image or given to the web process.                               | US-114 keeps them out of images and out of web. US-122 still scopes URLs. | Partial |
+| TM-021 | Denial of service      | Media upload            | A huge or pathological file exhausts disk, CPU, or a decoder.                                                      | US-123, US-127, US-422                                                    | Planned |
+| TM-022 | Spoofing               | Object storage          | A stolen object-storage key writes or reads objects.                                                               | US-113, US-422. US-114 does not bake the key into images.                 | Partial |
+| TM-023 | Denial of service      | Object storage          | Objects fill the development bucket.                                                                               | US-127, US-422                                                            | Planned |
+| TM-024 | Tampering              | External LLM            | Prompt injection in footage, metadata, or user text steers the agent.                                              | US-319, US-602, US-301                                                    | Planned |
+| TM-025 | Information disclosure | External LLM            | Transcripts or frames are sent to a provider beyond what the run needs.                                            | US-304, US-301                                                            | Planned |
+| TM-026 | Spoofing               | External LLM            | Model output is treated as a plan before schema validation.                                                        | US-301, US-305                                                            | Planned |
+| TM-027 | Denial of service      | External LLM            | Calls continue until the provider bill or the context window is exhausted.                                         | US-107, US-304, US-410                                                    | Planned |
+| TM-028 | Elevation              | External LLM, workers   | A model-issued tool call runs without the manifest permission.                                                     | US-221, US-319, US-305                                                    | Planned |
+| TM-029 | Elevation              | Future sandbox          | Malicious generated code escapes the sandbox onto the host.                                                        | US-501, US-503, US-603                                                    | Planned |
+| TM-030 | Elevation              | Future sandbox, workers | Generated code or a tool gets a host shell.                                                                        | US-501, US-220, US-221                                                    | Planned |
+| TM-031 | Tampering              | Future sandbox          | A malicious or tampered package is installed for generated code.                                                   | US-502, US-509, US-113                                                    | Planned |
+| TM-032 | Denial of service      | Future sandbox, workers | A render or sandbox run exhausts CPU, memory, or time.                                                             | US-422, US-501, US-603                                                    | Planned |
+| TM-033 | Information disclosure | Future sandbox          | Generated code reads host files, the Docker socket, or process secrets.                                            | US-501                                                                    | Planned |
+| TM-034 | Tampering              | Internet acquisition    | A downloaded asset is malicious and is promoted without quarantine.                                                | US-507, US-509, US-127                                                    | Planned |
+| TM-035 | Information disclosure | Internet acquisition    | An asset or media URL causes SSRF.                                                                                 | US-507, US-601, US-127                                                    | Planned |
+| TM-036 | Spoofing               | Internet acquisition    | An asset provider or a license record is not the one the user believes.                                            | US-508, US-411                                                            | Planned |
+| TM-037 | Denial of service      | Internet acquisition    | Downloads are unbounded.                                                                                           | US-507, US-422                                                            | Planned |
+| TM-038 | Tampering              | All images and packages | A dependency or base image is compromised.                                                                         | US-113, US-502                                                            | Planned |
+| TM-039 | Elevation              | Workers                 | Development MinIO and database credentials are shared by API and workers, so one process can use another's prefix. | US-122, US-422. US-114 does not split credentials.                        | Planned |
+
+Thirty-nine IDs: TM-001 through TM-039.
+
+## Controls by phase
+
+| Phase | Planned controls                                                                                                              | Stories                                        |
+| ----- | ----------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
+| 1     | Typed configuration, secrets out of images, authentication, presigned uploads, hostile-media rejection, supply-chain scanning | US-113, US-114, US-118, US-122, US-127         |
+| 2     | FFmpeg argument arrays and a tool executor with permissions and timeouts                                                      | US-220, US-221                                 |
+| 3     | Schema-validated tool calls, token budgets, injection tests, agent audit trail                                                | US-301, US-304, US-305, US-306, US-319         |
+| 4     | Resource-limited worker containers                                                                                            | US-422                                         |
+| 5     | Sandbox, registry mirror, generated-code checks, quarantined downloads, license checks                                        | US-501, US-502, US-503, US-507, US-508, US-509 |
+| 6     | ASVS and abuse tests, prompt-injection red-team, sandbox red-team                                                             | US-601, US-602, US-603                         |
+
+## What US-114 actually changes
+
+US-114 is a runtime and configuration baseline.
+
+- Images do not contain database or object-storage passwords. Compose injects development placeholders at runtime.
+- The web process configuration has no database URL and no object-storage keys.
+- The API refuses to start when `DATABASE_URL` is missing.
+- Development Redis has no password and its port is published for the developer machine. That is TM-013 and it stays open.
+- API, workers, and MinIO share one development access key. Prefix-scoped keys from the container diagram are not implemented. That is TM-039 and it stays open.
+- No authentication, queue consumer, object-storage adapter, FFmpeg, LLM client, or sandbox is implemented here.
+
+## Accepted architecture, unchanged
+
+ADR-004 still selects Redis and BullMQ. This threat model does not add BullMQ. ADR-005 still selects PostgreSQL and MinIO. The development MinIO image is pulled from a community republish because `docker.io/minio/minio` was removed; the product decision is still MinIO. ADR-006 still keeps provider secrets in worker configuration. The agent worker schema has optional provider fields and does not call a provider.

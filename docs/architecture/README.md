@@ -14,6 +14,7 @@ Baseline for US-103. This directory is the architecture source of truth. The Agi
 | [layer-rules.md](layer-rules.md)               | Clean Architecture dependency direction and the enforced rule names                |
 | [ports-and-adapters.md](ports-and-adapters.md) | Port catalogue. Contracts only; adapters are later stories                         |
 | [adr/README.md](adr/README.md)                 | ADR index                                                                          |
+| [../security/README.md](../security/README.md) | Risk register and STRIDE threat model (US-108). Does not change these ADRs.        |
 
 ## System architecture
 
@@ -29,7 +30,7 @@ The domain defines ports. Infrastructure implements them. The composition root o
 
 TypeScript is the language of the API, the web app, and the Node workers. Python 3.11 is the language of the AI worker (ADR-002). Data that crosses a process or a language boundary is a JSON Schema document (ADR-003). Jobs move on Redis through a BullMQ adapter behind `IJobQueue` (ADR-004). Metadata lives in PostgreSQL. Bytes live in S3-compatible object storage, MinIO in development (ADR-005). Model vendors sit behind Agent ports (ADR-006). Media time is an integer number of microseconds, and frame positions are integer frame indexes (ADR-008). Work lands on `main` through short-lived branches (ADR-007).
 
-This slice documents those decisions and enforces the dependency direction. It does not connect Redis, PostgreSQL, MinIO, an LLM, FFmpeg, or Remotion.
+This slice documents those decisions and enforces the dependency direction. Application code does not open Redis, PostgreSQL, MinIO, an LLM, FFmpeg, or Remotion. US-114 starts those platform containers for local development and validates configuration. The adapters that use them remain later stories.
 
 ## Bounded modules
 

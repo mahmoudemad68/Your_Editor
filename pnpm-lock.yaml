@@ -12,6 +12,9 @@ catalogs:
     typescript:
       specifier: 6.0.3
       version: 6.0.3
+    zod:
+      specifier: 4.6.5
+      version: 4.6.5
 
 importers:
 
@@ -56,6 +59,9 @@ importers:
       '@editagent/domain':
         specifier: workspace:*
         version: link:../../packages/domain
+      '@editagent/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
       '@nestjs/common':
         specifier: 12.1.1
         version: 12.1.1(reflect-metadata@0.2.2)(rxjs@7.8.2)
@@ -135,6 +141,10 @@ importers:
         version: 6.0.3
 
   packages/shared:
+    dependencies:
+      zod:
+        specifier: 'catalog:'
+        version: 4.6.5
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
@@ -1863,6 +1873,9 @@ packages:
     resolution: {integrity: sha512-rVksvsnNCdJ/ohGc6xgPwyN8eheCxsiLM8mxuE/t/mOVqJewPuO1miLpTHQiRgTKCLexL4MeAFVagts7HmNZ2Q==}
     engines: {node: '>=10'}
 
+  zod@4.6.5:
+    resolution: {integrity: sha512-v5l/aFXZQeai4awLbOpSoHecE9UiMrnfx75tEXLjNonXVARxQ5mOeipTjROUchszUNCqnE+hqAMujRsRHsut2Q==}
+
 snapshots:
 
   '@babel/code-frame@7.29.7':
@@ -3495,3 +3508,5 @@ snapshots:
       yargs-parser: 22.0.0
 
   yocto-queue@0.1.0: {}
+
+  zod@4.6.5: {}

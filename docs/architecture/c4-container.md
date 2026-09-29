@@ -74,4 +74,4 @@ Rel(media, assets, "Quarantined downloads", "HTTPS")
 
 ## What this diagram does not implement
 
-Redis, BullMQ, PostgreSQL, MinIO, LLM clients, asset providers, and FFmpeg are drawn because they are part of the architecture. Their runtime wiring belongs to later stories (US-112 is not required here; US-114, US-120, US-122, US-126, US-129, and US-301 are explicitly deferred).
+Redis, BullMQ, PostgreSQL, MinIO, LLM clients, asset providers, and FFmpeg are drawn because they are part of the architecture. US-114 provisions PostgreSQL, Redis, and MinIO in Docker Compose and parses their settings. BullMQ, repository adapters, object-storage clients, LLM clients, asset providers, and FFmpeg remain later stories (US-120, US-122, US-126, US-129, and US-301). US-112 is not part of this diagram.
