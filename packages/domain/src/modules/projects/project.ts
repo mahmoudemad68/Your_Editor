@@ -118,7 +118,7 @@ export class Project {
   grantMembership(actorUserId: UserId, memberUserId: UserId, role: string, at: Instant): Project {
     const checkedRole = membershipRole(role);
     this.requireOwner(actorUserId);
-    const when = instant(at);
+    const when = this.requireMonotonicCommandTime(at);
     const existing = this.memberships.find((membership) => membership.userId === memberUserId);
     const next = existing
       ? this.memberships.map((membership) =>
@@ -140,7 +140,8 @@ export class Project {
     if (next.length === this.memberships.length) {
       throw new DomainError("That User is not a member of the Project.");
     }
-    return new Project(this.id, this.name, next, this.createdAt, instant(at), this.deletedAt);
+    const when = this.requireMonotonicCommandTime(at);
+    return new Project(this.id, this.name, next, this.createdAt, when, this.deletedAt);
   }
 
   /** Soft delete. Object-storage bytes are not removed here (US-104, US-120). */
@@ -149,8 +150,22 @@ export class Project {
       throw new DomainError("The Project is already deleted.");
     }
     this.requireOwner(actorUserId);
-    const when = instant(at);
+    const when = this.requireMonotonicCommandTime(at);
     return new Project(this.id, this.name, this.memberships, this.createdAt, when, when);
+  }
+
+  /**
+   * A command may repeat the current updatedAt. It cannot move the aggregate clock backward.
+   * The comparison uses this.updatedAt directly, not membership timestamps.
+   */
+  private requireMonotonicCommandTime(at: Instant): Instant {
+    const when = instant(at);
+    if (when < this.updatedAt) {
+      throw new DomainError(
+        "Project command timestamp cannot be earlier than the current updatedAt.",
+      );
+    }
+    return when;
   }
 
   private requireOwner(actorUserId: UserId): void {

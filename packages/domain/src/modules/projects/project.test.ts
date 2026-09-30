@@ -286,6 +286,111 @@ test("frozen Project fields reject assignment", () => {
   assert.equal(project.name, "Launch");
 });
 
+test("grantMembership rejects a timestamp earlier than Project updatedAt", () => {
+  const project = Project.create(PROJECT, "Launch", OWNER, instant(10n))
+    .grantMembership(OWNER, EDITOR, "editor", instant(20n))
+    .revokeMembership(OWNER, EDITOR, instant(30n));
+  assert.equal(project.updatedAt, 30n);
+  assert.throws(
+    () => project.grantMembership(OWNER, VIEWER, "viewer", instant(25n)),
+    /cannot be earlier than the current updatedAt/,
+  );
+  assert.equal(project.updatedAt, 30n);
+  assert.equal(project.roleOf(VIEWER), null);
+});
+
+test("revokeMembership rejects a timestamp earlier than Project updatedAt", () => {
+  const project = Project.create(PROJECT, "Launch", OWNER, instant(10n)).grantMembership(
+    OWNER,
+    EDITOR,
+    "editor",
+    instant(30n),
+  );
+  assert.throws(
+    () => project.revokeMembership(OWNER, EDITOR, instant(20n)),
+    /cannot be earlier than the current updatedAt/,
+  );
+  assert.equal(project.updatedAt, 30n);
+  assert.equal(project.roleOf(EDITOR), "editor");
+});
+
+test("deleteProject rejects a timestamp earlier than Project updatedAt", () => {
+  const project = Project.create(PROJECT, "Launch", OWNER, instant(10n))
+    .grantMembership(OWNER, EDITOR, "editor", instant(20n))
+    .revokeMembership(OWNER, EDITOR, instant(30n));
+  assert.throws(
+    () => project.deleteProject(OWNER, instant(25n)),
+    /cannot be earlier than the current updatedAt/,
+  );
+  assert.throws(
+    () => project.deleteProject(OWNER, instant(29n)),
+    /cannot be earlier than the current updatedAt/,
+  );
+  assert.equal(project.updatedAt, 30n);
+  assert.equal(project.deletedAt, null);
+});
+
+test("a Project command at the current updatedAt is accepted", () => {
+  const project = Project.create(PROJECT, "Launch", OWNER, instant(10n))
+    .grantMembership(OWNER, EDITOR, "editor", instant(20n))
+    .revokeMembership(OWNER, EDITOR, instant(30n));
+  const granted = project.grantMembership(OWNER, VIEWER, "viewer", instant(30n));
+  assert.equal(granted.updatedAt, 30n);
+  assert.equal(granted.roleOf(VIEWER), "viewer");
+  const deleted = project.deleteProject(OWNER, instant(30n));
+  assert.equal(deleted.updatedAt, 30n);
+  assert.equal(deleted.deletedAt, 30n);
+  assert.equal(deleted.isListed(), false);
+});
+
+test("a later Project command is accepted", () => {
+  const project = Project.create(PROJECT, "Launch", OWNER, instant(10n))
+    .grantMembership(OWNER, EDITOR, "editor", instant(20n))
+    .revokeMembership(OWNER, EDITOR, instant(30n));
+  const granted = project.grantMembership(OWNER, VIEWER, "viewer", instant(40n));
+  assert.equal(granted.updatedAt, 40n);
+  assert.equal(granted.roleOf(VIEWER), "viewer");
+  const deleted = project.deleteProject(OWNER, instant(40n));
+  assert.equal(deleted.updatedAt, 40n);
+  assert.equal(deleted.deletedAt, 40n);
+});
+
+test("removing a membership does not allow a rollback behind Project updatedAt", () => {
+  const project = Project.create(PROJECT, "Launch", OWNER, instant(10n))
+    .grantMembership(OWNER, EDITOR, "editor", instant(30n))
+    .revokeMembership(OWNER, EDITOR, instant(40n));
+  assert.equal(project.roleOf(EDITOR), null);
+  assert.equal(
+    project.memberships.some((membership) => membership.createdAt === 30n),
+    false,
+  );
+  assert.equal(project.updatedAt, 40n);
+  assert.throws(
+    () => project.grantMembership(OWNER, VIEWER, "viewer", instant(35n)),
+    /cannot be earlier than the current updatedAt/,
+  );
+  assert.throws(
+    () => project.deleteProject(OWNER, instant(35n)),
+    /cannot be earlier than the current updatedAt/,
+  );
+  assert.equal(project.updatedAt, 40n);
+  assert.equal(project.deletedAt, null);
+});
+
+test("re-granting the existing Owner at an older timestamp is rejected", () => {
+  const project = Project.create(PROJECT, "Launch", OWNER, instant(10n))
+    .grantMembership(OWNER, EDITOR, "editor", instant(20n))
+    .revokeMembership(OWNER, EDITOR, instant(30n));
+  assert.equal(project.roleOf(EDITOR), null);
+  assert.throws(
+    () => project.grantMembership(OWNER, OWNER, "owner", instant(15n)),
+    /cannot be earlier than the current updatedAt/,
+  );
+  assert.equal(project.updatedAt, 30n);
+  assert.equal(project.roleOf(OWNER), "owner");
+  assert.equal(project.memberships[0]?.createdAt, 10n);
+});
+
 test("placeholder for uuid throws", () => {
   assert.throws(
     () =>
