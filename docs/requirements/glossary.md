@@ -1,6 +1,6 @@
 # Domain glossary
 
-Ubiquitous language for US-102. The twelve names in the canonical table are fixed spellings. US-104 must use those spellings as domain type names. US-104 is not implemented in this pull request, so US-102 AC2 is not fully verified yet. This glossary is the contract that verification will check.
+Ubiquitous language for US-102. The twelve names in the canonical table are fixed spellings. US-104 introduces each of them as a domain class with that exact spelling. The class-name contract is verified. Later stories still own the behavior of Timeline, Track, Clip, Effect, Tool, Component, AgentRun, Critique, BrandKit, and CreativeMemory.
 
 Architecture modules and accepted ADR-001 through ADR-008 decide ownership and technology. A glossary entry does not move a feature into the MVP. Scope for each capability is in the [SRS](srs.md).
 
@@ -10,7 +10,7 @@ These strings are the names US-104 must use. Do not rename them in code, schemas
 
 | Name           | Definition                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| MediaAsset     | One stored source medium owned by a Project: a video, an audio recording, or an image. It has a MediaAssetId, technical metadata, and an object-storage key. The bytes are not a PostgreSQL column (ADR-005). Video, Audio, and Image are subtypes to be modeled in US-104. A proxy, thumbnail, or extracted audio track is not a MediaAsset; it is a DerivedAsset.                                                                                                            |
+| MediaAsset     | One stored source medium owned by a Project: a video, an audio recording, or an image. It has a MediaAssetId, technical metadata, and an object-storage key. The bytes are not a PostgreSQL column (ADR-005). Video, Audio, and Image are the MediaAsset subtypes named by US-104. A proxy, thumbnail, or extracted audio track is not a MediaAsset; it is a DerivedAsset.                                                                                                     |
 | Project        | The root aggregate a Creator works in. It owns membership, the selected platform preset, the target duration, its MediaAssets, its Timelines, its AgentRuns, and its renders. An authenticated User creates a Project and becomes its Owner in that operation. The Owner may delete it. Delete is a soft delete (US-104, US-120): the Project leaves normal listings and the operation does not by itself remove object-storage bytes. There is no separate archive operation. |
 | Timeline       | The ordered composition for one edit of a Project. It contains Tracks. Every placement on a Timeline is an integer number of microseconds from the start of that Timeline (ADR-008). A Project may keep more than one Timeline when version history stores a prior composition.                                                                                                                                                                                                |
 | Track          | One lane of a Timeline. The MVP lanes are video, audio, caption, and overlay. A Track holds Clips in timeline order and does not itself store media bytes.                                                                                                                                                                                                                                                                                                                     |
@@ -20,7 +20,7 @@ These strings are the names US-104 must use. Do not rename them in code, schemas
 | Component      | A Remotion visual unit registered with a ComponentManifest: a props schema and a trust level. Captions, titles, transitions, and zoom treatments that are drawn rather than filtered are Components. A Component is not a React page in `apps/web`.                                                                                                                                                                                                                            |
 | AgentRun       | One execution of the observe-plan-act loop for a Project. It has a lifecycle, a prompt reference, ordered events, and tool calls that were validated against JSON Schema before they ran (ADR-003, ADR-006). It is not a Job, though Jobs may carry its steps.                                                                                                                                                                                                                 |
 | Critique       | The structured result of reviewing one render: the checks that failed, the evidence, and whether a refinement was requested. The Critic module owns it. A Critique does not mutate a Timeline. An AgentRun or an Editing command may do that afterward.                                                                                                                                                                                                                        |
-| BrandKit       | Project-scoped creative settings: colors, font references, and logo references. Projects owns the record. Applying a BrandKit during an edit is Advanced (US-521). The type is named here so US-104 can introduce it without renaming it later.                                                                                                                                                                                                                                |
+| BrandKit       | Project-scoped creative settings: colors, font references, and logo references. Projects owns the record. US-104 names the class. Applying a BrandKit during an edit is still Advanced (US-521) and is not implemented.                                                                                                                                                                                                                                                        |
 | CreativeMemory | Project-scoped record of creative choices the agent must reuse inside that Project, such as a chosen caption style or refrain from a prior AgentRun. The Agent module owns it (US-409). It is not a BrandKit.                                                                                                                                                                                                                                                                  |
 
 ## Related terms
@@ -44,4 +44,21 @@ These names are not in the US-102 mandatory list. They are included so later sto
 
 ## Verification of US-102 AC2
 
-The canonical names above are the contract. Full verification is: when US-104 adds the domain model, each canonical name appears as a type name with that exact spelling. This pull request does not add those types and does not mark AC2 verified.
+US-102 AC2 is satisfied for the class-name contract. Each canonical name is a domain class:
+
+| Canonical name | Class            | Module     |
+| -------------- | ---------------- | ---------- |
+| MediaAsset     | `MediaAsset`     | Media      |
+| Project        | `Project`        | Projects   |
+| Timeline       | `Timeline`       | Editing    |
+| Track          | `Track`          | Editing    |
+| Clip           | `Clip`           | Editing    |
+| Effect         | `Effect`         | Editing    |
+| Tool           | `Tool`           | Tools      |
+| Component      | `Component`      | Components |
+| AgentRun       | `AgentRun`       | Agent      |
+| Critique       | `Critique`       | Critic     |
+| BrandKit       | `BrandKit`       | Projects   |
+| CreativeMemory | `CreativeMemory` | Agent      |
+
+`packages/domain/src/canonical-names.test.ts` asserts those `class.name` values. That test does not claim Timeline editing, tool execution, or the agent loop are implemented.

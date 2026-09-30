@@ -14,6 +14,7 @@ Baseline for US-103. This directory is the architecture source of truth. The Agi
 | [layer-rules.md](layer-rules.md)               | Clean Architecture dependency direction and the enforced rule names                |
 | [ports-and-adapters.md](ports-and-adapters.md) | Port catalogue. Contracts only; adapters are later stories                         |
 | [adr/README.md](adr/README.md)                 | ADR index                                                                          |
+| [data-model.md](data-model.md)                 | Initial domain model and ER design (US-104). No migrations.                        |
 | [../security/README.md](../security/README.md) | Risk register and STRIDE threat model (US-108). Does not change these ADRs.        |
 
 ## System architecture

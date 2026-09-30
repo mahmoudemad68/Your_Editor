@@ -4,6 +4,10 @@ Ports are interfaces owned by an inner layer. Adapters are infrastructure implem
 
 The composition root of a process binds a port to an adapter. Domain and application code receive the port and do not import the adapter.
 
+## Aggregate repositories
+
+US-104 defines one repository interface per initial aggregate. The interfaces live in the domain module that owns the aggregate. They return domain objects and do not mention an ORM, SQL, or a migration. US-120 implements `ProjectRepository` against Postgres. The other adapters wait for their stories. The diagram and the interface list are in [data-model.md](data-model.md).
+
 ## Shared infrastructure ports
 
 | Port             | Owner of the port                                                  | Defined in                                               | Adapter, when it exists                     | Implementing story |
@@ -57,23 +61,24 @@ A chain of providers (local, then internet, then generation) is a later Assets s
 
 Each aggregate has one repository port. ORM types stay in the adapter. The domain package must not import an ORM.
 
-| Port                      | Module     | Aggregate                 |
-| ------------------------- | ---------- | ------------------------- |
-| `IUserRepository`         | Identity   | User                      |
-| `ISessionRepository`      | Identity   | Session                   |
-| `IProjectRepository`      | Projects   | Project                   |
-| `IBrandKitRepository`     | Projects   | BrandKit                  |
-| `IMediaAssetRepository`   | Media      | MediaAsset                |
-| `IDerivedAssetRepository` | Media      | DerivedAsset              |
-| `IAnalysisRepository`     | Analysis   | MediaAnalysis             |
-| `ITimelineRepository`     | Editing    | Timeline                  |
-| `IJobRepository`          | Jobs       | Job                       |
-| `IAgentRunRepository`     | Agent      | AgentRun                  |
-| `IAssetRepository`        | Assets     | Asset                     |
-| `IComponentRepository`    | Components | Component manifest record |
-| `ICritiqueRepository`     | Critic     | Critique                  |
+Names match the domain interfaces. This slice does not use an `I` prefix. A row marked later is a planned port, not an interface in the package yet.
 
-Persistence mapping is an infrastructure concern (US-104 and the story that introduces each aggregate). This slice does not add a database.
+| Port                     | Module     | Aggregate                 | In this slice |
+| ------------------------ | ---------- | ------------------------- | ------------- |
+| `UserRepository`         | Identity   | User                      | Yes           |
+| `ProjectRepository`      | Projects   | Project                   | Yes           |
+| `MediaAssetRepository`   | Media      | MediaAsset                | Yes           |
+| `DerivedAssetRepository` | Media      | DerivedAsset              | Yes           |
+| `JobRepository`          | Jobs       | Job                       | Yes           |
+| `SessionRepository`      | Identity   | Refresh session           | Later, US-118 |
+| `AnalysisRepository`     | Analysis   | MediaAnalysis             | Later         |
+| `TimelineRepository`     | Editing    | Timeline                  | Later         |
+| `AgentRunRepository`     | Agent      | AgentRun                  | Later         |
+| `AssetRepository`        | Assets     | Asset                     | Later         |
+| `ComponentRepository`    | Components | Component manifest record | Later         |
+| `CritiqueRepository`     | Critic     | Critique                  | Later         |
+
+Persistence mapping is an infrastructure concern. US-120 implements `ProjectRepository`. This slice does not add a database.
 
 ## Model ports
 
