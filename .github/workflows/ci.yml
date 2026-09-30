@@ -1,0 +1,128 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - main
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  ci:
+    name: ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TURBO_TELEMETRY_DISABLED: "1"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          cache: pnpm
+          node-version-file: .nvmrc
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v10.2.0
+        with:
+          cache-python: true
+          enable-cache: true
+          ignore-nothing-to-cache: true
+          python-version: "3.11"
+          version: "0.12.20"
+
+      - name: Cache Turborepo
+        uses: actions/cache@v6
+        with:
+          path: .turbo
+          key: ${{ runner.os }}-turbo-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-turbo-
+
+      - name: Enable optional Turborepo remote cache
+        env:
+          TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+          TURBO_TEAM: ${{ secrets.TURBO_TEAM }}
+        run: |
+          if [ -n "${TURBO_TOKEN}" ] && [ -n "${TURBO_TEAM}" ]; then
+            echo "::add-mask::${TURBO_TOKEN}"
+            {
+              echo "TURBO_TOKEN<<EOF"
+              echo "${TURBO_TOKEN}"
+              echo "EOF"
+              echo "TURBO_TEAM<<EOF"
+              echo "${TURBO_TEAM}"
+              echo "EOF"
+            } >> "${GITHUB_ENV}"
+            echo "Turborepo remote cache enabled from repository secrets."
+          else
+            echo "Turborepo remote cache secrets are unset. CI uses the GitHub Actions cache of .turbo."
+          fi
+
+      - name: Check toolchain pins
+        run: |
+          set -eu
+          expected_node="v$(tr -d '[:space:]' < .nvmrc)"
+          actual_node="$(node --version)"
+          expected_pnpm="$(node -p "require('./package.json').packageManager.split('@')[1]")"
+          actual_pnpm="$(pnpm --version)"
+          echo "node ${actual_node}"
+          echo "pnpm ${actual_pnpm}"
+          echo "python $(python3 --version)"
+          echo "uv $(uv --version)"
+          test "${actual_node}" = "${expected_node}"
+          test "${actual_pnpm}" = "${expected_pnpm}"
+          python3 -c 'import sys; raise SystemExit(0 if sys.version_info[:2] == (3, 11) else 1)'
+
+      - name: Install roadmap validator dependency
+        run: python3 -m pip install pyyaml==6.0.1
+
+      - name: Validate roadmap
+        run: python3 tools/roadmap/build_roadmap.py --check
+
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Architecture
+        run: pnpm architecture
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+
+      - name: Upload coverage reports
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage
+          if-no-files-found: ignore
+          path: |
+            coverage/lcov.info
+            apps/*/coverage/lcov.info
+            packages/*/coverage/lcov.info
+            workers/*/coverage/lcov.info
+            workers/ai-worker/coverage.xml
