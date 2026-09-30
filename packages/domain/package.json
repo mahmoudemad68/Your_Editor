@@ -7,7 +7,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node --test dist/kernel/time.test.js"
+    "test": "node ../../tools/test/run-node-tests.mjs dist/kernel/time.test.js"
   },
   "devDependencies": {
     "@types/node": "catalog:",

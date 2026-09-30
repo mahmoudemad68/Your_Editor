@@ -5,7 +5,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node --test dist/application/health.test.js",
+    "test": "node ../../tools/test/run-node-tests.mjs dist/application/health.test.js",
     "start": "node dist/main.js"
   },
   "dependencies": {
