@@ -23,7 +23,8 @@
     "lint": {},
     "test": {
       "dependsOn": ["build"],
-      "outputs": ["coverage/**", "coverage.xml"]
+      "outputs": ["coverage/**", "coverage.xml"],
+      "passThroughEnv": ["DATABASE_URL"]
     }
   }
 }

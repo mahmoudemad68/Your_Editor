@@ -10,10 +10,16 @@ test("the build writes an OpenAPI document for the Project routes", () => {
   assert.equal(document.info.title, "EditAgent API");
   const collection = document.paths["/projects"];
   const item = document.paths["/projects/{projectId}"];
-  assert.ok(collection?.post?.responses?.["201"]);
+  for (const status of ["201", "400", "401", "409"]) {
+    assert.ok(collection?.post?.responses?.[status], `POST /projects ${status}`);
+  }
   assert.ok(collection?.get?.responses?.["200"]);
-  assert.ok(item?.patch?.responses?.["200"]);
-  assert.ok(item?.delete?.responses?.["204"]);
+  for (const status of ["200", "400", "401", "403", "404", "409"]) {
+    assert.ok(item?.patch?.responses?.[status], `PATCH /projects/{projectId} ${status}`);
+  }
+  for (const status of ["204", "400", "401", "403", "404", "409"]) {
+    assert.ok(item?.delete?.responses?.[status], `DELETE /projects/{projectId} ${status}`);
+  }
   const schemas = Object.values(document.components?.schemas ?? {});
   const projectSchema = schemas.find((schema) => {
     if (schema === undefined || !("properties" in schema) || schema.properties === undefined) {
@@ -27,6 +33,7 @@ test("the build writes an OpenAPI document for the Project routes", () => {
     assert.ok(projectSchema.properties["name"]);
     assert.ok(projectSchema.properties["updatedAt"]);
     assert.equal(projectSchema.properties["deleted_at"], undefined);
+    assert.equal(projectSchema.properties["revision"], undefined);
     assert.equal(projectSchema.properties["passwordHash"], undefined);
   }
 });

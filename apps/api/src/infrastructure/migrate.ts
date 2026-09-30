@@ -2,7 +2,11 @@ import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { type Pool } from "pg";
 
-/** Applies SQL files in apps/api/migrations once, in filename order. */
+/**
+ * Applies SQL files in apps/api/migrations once, in filename order.
+ * Two API processes can both see a missing schema_migrations row and apply the
+ * same file. A migration lock is deferred hardening and is not part of US-120.
+ */
 export async function applyMigrations(
   pool: Pool,
   directory = path.resolve(__dirname, "../../migrations"),

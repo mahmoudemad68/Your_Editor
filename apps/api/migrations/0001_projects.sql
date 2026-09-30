@@ -2,6 +2,7 @@
 -- project_memberships.user_id has no foreign key. US-118 owns the User table
 -- and the credential schema. Adding that table here would invent authentication
 -- this story does not implement.
+-- revision is a persistence concurrency token. It is not updated_at.
 
 CREATE TABLE projects (
   id uuid PRIMARY KEY,
@@ -9,9 +10,11 @@ CREATE TABLE projects (
   created_at bigint NOT NULL,
   updated_at bigint NOT NULL,
   deleted_at bigint,
+  revision bigint NOT NULL DEFAULT 0,
   CONSTRAINT projects_name_not_blank CHECK (length(btrim(name)) > 0),
   CONSTRAINT projects_audit_order CHECK (created_at <= updated_at),
-  CONSTRAINT projects_deleted_matches_update CHECK (deleted_at IS NULL OR deleted_at = updated_at)
+  CONSTRAINT projects_deleted_matches_update CHECK (deleted_at IS NULL OR deleted_at = updated_at),
+  CONSTRAINT projects_revision_non_negative CHECK (revision >= 0)
 );
 
 CREATE TABLE project_memberships (

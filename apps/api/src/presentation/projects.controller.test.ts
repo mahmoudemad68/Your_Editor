@@ -2,7 +2,15 @@ import "reflect-metadata";
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
 import { type INestApplication } from "@nestjs/common";
-import { instant, type Instant, projectId, userId } from "@editagent/domain";
+import {
+  instant,
+  type Instant,
+  Project,
+  type ProjectId,
+  projectId,
+  type UserId,
+  userId,
+} from "@editagent/domain";
 import { type Clock, type ProjectIdGenerator } from "../application/clock.js";
 import { InMemoryProjectRepository } from "../application/in-memory-project-repository.js";
 import { createApiApplication } from "../create-api-application.js";
@@ -137,12 +145,13 @@ function describeState(): void {
 
     const loaded = await projects.findById(PROJECT);
     await projects.save(
-      loaded!.grantMembership(OWNER, EDITOR, "editor", instant(10n)),
-      loaded!.updatedAt,
+      loaded!.project.grantMembership(OWNER, EDITOR, "editor", instant(10n)),
+      loaded!.revision,
     );
+    const withEditor = await projects.findById(PROJECT);
     await projects.save(
-      (await projects.findById(PROJECT))!.grantMembership(OWNER, VIEWER, "viewer", instant(10n)),
-      instant(10n),
+      withEditor!.project.grantMembership(OWNER, VIEWER, "viewer", instant(10n)),
+      withEditor!.revision,
     );
 
     const viewer = await fetch(`${base}/projects/${PROJECT}`, {
@@ -176,7 +185,76 @@ function describeState(): void {
     const remaining = (await afterDelete.json()) as { projects: ProjectBody[] };
     assert.deepEqual(remaining.projects, []);
     const stored = await projects.findById(PROJECT);
-    assert.equal(stored?.deletedAt, 10n);
-    assert.equal(stored?.memberships.length, 3);
+    assert.equal(stored?.project.deletedAt, 10n);
+    assert.equal(stored?.project.memberships.length, 3);
   });
 }
+
+test("a stale Project revision returns HTTP 409 from the controller", async () => {
+  const inner = new InMemoryProjectRepository();
+  const repository = {
+    async findById(id: ProjectId) {
+      const loaded = await inner.findById(id);
+      if (loaded === null) {
+        return null;
+      }
+      const raced = loaded.project.rename(OWNER, "Raced", loaded.project.updatedAt);
+      await inner.save(raced, loaded.revision);
+      return loaded;
+    },
+    async listForMember(userId: UserId) {
+      return inner.listForMember(userId);
+    },
+    async save(project: Project, expectedRevision: bigint | null) {
+      return inner.save(project, expectedRevision);
+    },
+  };
+  const app = await createApiApplication(
+    {
+      projects: repository,
+      clock: new ManualClock(instant(10n)),
+      ids: new OneId(),
+    },
+    (use) => {
+      use((request, _response, next) => {
+        const headers = (request as { headers?: Record<string, string | string[] | undefined> })
+          .headers;
+        const header = headers?.["x-test-actor"];
+        if (typeof header === "string") {
+          bindActor(request, userId(header));
+        }
+        next();
+      });
+    },
+  );
+  await app.listen(0, "127.0.0.1");
+  const address = app.getHttpServer().address();
+  if (address === null || typeof address === "string") {
+    throw new Error("Expected the test server to listen on a TCP port.");
+  }
+  const base = `http://127.0.0.1:${address.port}`;
+  try {
+    const created = await fetch(`${base}/projects`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-test-actor": OWNER },
+      body: JSON.stringify({ name: "Launch" }),
+    });
+    assert.equal(created.status, 201);
+    const conflict = await fetch(`${base}/projects/${PROJECT}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json", "x-test-actor": OWNER },
+      body: JSON.stringify({ name: "Lost" }),
+    });
+    const body = (await conflict.json()) as { statusCode: number; message: string };
+    assert.equal(conflict.status, 409);
+    assert.equal(body.statusCode, 409);
+    assert.equal(body.message, "The Project changed since it was loaded.");
+    assert.equal(JSON.stringify(body).toLowerCase().includes("select"), false);
+    assert.equal(JSON.stringify(body).includes("revision"), false);
+    const stored = await inner.findById(PROJECT);
+    assert.equal(stored?.project.name, "Raced");
+    assert.equal(stored?.revision, 1n);
+  } finally {
+    await app.close();
+  }
+});

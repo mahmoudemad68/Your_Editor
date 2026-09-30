@@ -6,6 +6,8 @@ The domain package holds entities, value objects, invariants, and repository int
 
 Audit columns are wall-clock instants: integer Unix epoch milliseconds. They are not media time. Timeline positions and clip boundaries are integer microseconds (ADR-008). Identifiers are UUIDv7. The domain validates that version nibble. A UUID column in a later migration is a storage choice, not a domain type.
 
+`Project.updatedAt` is that audit instant. The Project table also stores `revision`, a persistence concurrency token that increments on every successful write. It is not wall-clock time, media time, or a field on the Project aggregate. HTTP responses do not include it.
+
 ## What this slice implements
 
 These aggregates have one repository interface each, in the owning module:
@@ -75,6 +77,7 @@ erDiagram
     bigint createdAt
     bigint updatedAt
     bigint deletedAt "null while listed"
+    bigint revision "persistence token, not audit time"
   }
 
   ProjectMembership {

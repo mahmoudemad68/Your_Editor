@@ -10,4 +10,4 @@ export type {
   ProjectMembershipSnapshot,
   ProjectSnapshot,
 } from "./project.js";
-export type { ProjectRepository } from "./project-repository.js";
+export type { LoadedProject, ProjectRepository } from "./project-repository.js";

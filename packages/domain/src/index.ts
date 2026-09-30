@@ -76,6 +76,7 @@ export {
   visibleProjects,
 } from "./modules/projects/index.js";
 export type {
+  LoadedProject,
   ProjectMembership,
   ProjectMembershipRole,
   ProjectRepository,

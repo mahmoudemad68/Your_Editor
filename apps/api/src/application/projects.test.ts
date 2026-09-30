@@ -72,7 +72,8 @@ test("CreateProject records the caller as Owner with a UUIDv7", async () => {
   assert.equal(project.updatedAt, 10n);
   assert.equal(project.deletedAt, null);
   const stored = await projects.findById(project.id);
-  assert.equal(stored?.roleOf(OWNER), "owner");
+  assert.equal(stored?.revision, 0n);
+  assert.equal(stored?.project.roleOf(OWNER), "owner");
   await assert.rejects(() => createProject.execute(OWNER, "   "), DomainError);
 });
 
@@ -85,8 +86,8 @@ test("CreateProject saves one aggregate that already contains the Owner", async 
     async listForMember() {
       return [];
     },
-    async save(project: Project, expectedUpdatedAt: Instant | null) {
-      assert.equal(expectedUpdatedAt, null);
+    async save(project: Project, expectedRevision: bigint | null) {
+      assert.equal(expectedRevision, null);
       assert.equal(project.memberships.length, 1);
       assert.equal(project.roleOf(OWNER), "owner");
       saved.push(project);
@@ -105,21 +106,13 @@ test("RenameProject allows Owner and Editor and rejects Viewer without leaking n
   const { createProject, renameProject, projects, clock } = harness();
   const project = await createProject.execute(OWNER, "Launch");
   clock.set(instant(20n));
-  const withEditor = (await projects.findById(project.id))!.grantMembership(
-    OWNER,
-    EDITOR,
-    "editor",
-    instant(20n),
-  );
-  await projects.save(withEditor, project.updatedAt);
+  const created = await projects.findById(project.id);
+  const withEditor = created!.project.grantMembership(OWNER, EDITOR, "editor", instant(20n));
+  await projects.save(withEditor, created!.revision);
   clock.set(instant(30n));
-  const withViewer = (await projects.findById(project.id))!.grantMembership(
-    OWNER,
-    VIEWER,
-    "viewer",
-    instant(30n),
-  );
-  await projects.save(withViewer, withEditor.updatedAt);
+  const edited = await projects.findById(project.id);
+  const withViewer = edited!.project.grantMembership(OWNER, VIEWER, "viewer", instant(30n));
+  await projects.save(withViewer, edited!.revision);
 
   clock.set(instant(40n));
   const byEditor = await renameProject.execute(EDITOR, project.id, "Cut");
@@ -134,7 +127,7 @@ test("RenameProject allows Owner and Editor and rejects Viewer without leaking n
     () => renameProject.execute(VIEWER, project.id, "Nope"),
     ProjectForbiddenError,
   );
-  assert.equal((await projects.findById(project.id))?.name, "Final");
+  assert.equal((await projects.findById(project.id))?.project.name, "Final");
 
   await assert.rejects(
     () => renameProject.execute(ADMIN, project.id, "Nope"),
@@ -148,7 +141,7 @@ test("RenameProject rejects a deleted Project and a backward timestamp", async (
   const project = await createProject.execute(OWNER, "Launch");
   clock.set(instant(5n));
   await assert.rejects(() => renameProject.execute(OWNER, project.id, "Back"), DomainError);
-  assert.equal((await projects.findById(project.id))?.updatedAt, 10n);
+  assert.equal((await projects.findById(project.id))?.project.updatedAt, 10n);
 
   clock.set(instant(10n));
   const same = await renameProject.execute(OWNER, project.id, "Same");
@@ -169,27 +162,43 @@ test("RenameProject rejects a deleted Project and a backward timestamp", async (
 
 test("RenameProject does not overwrite a Project that changed after it was loaded", async () => {
   const visible = Project.create(FIRST, "Launch", OWNER, instant(10n));
-  const stored = visible.rename(OWNER, "Other", instant(15n));
-  let savedExpected: Instant | null = null;
+  let savedExpected: bigint | null = null;
   const repository = {
     async findById() {
-      return visible;
+      return { project: visible, revision: 0n };
     },
     async listForMember() {
       return [];
     },
-    async save(project: Project, expectedUpdatedAt: Instant | null) {
-      savedExpected = expectedUpdatedAt;
-      if (expectedUpdatedAt === null || stored.updatedAt !== expectedUpdatedAt) {
+    async save(project: Project, expectedRevision: bigint | null) {
+      savedExpected = expectedRevision;
+      void project;
+      if (expectedRevision !== 1n) {
         throw new ProjectConflict();
       }
-      void project;
     },
   };
   const renameProject = new RenameProject(repository, new ManualClock(instant(20n)));
   await assert.rejects(() => renameProject.execute(OWNER, FIRST, "Lost"), ProjectConflict);
-  assert.equal(savedExpected, visible.updatedAt);
-  assert.equal(stored.name, "Other");
+  assert.equal(savedExpected, 0n);
+});
+
+test("an in-memory save conflicts when the revision is stale at the same updatedAt", async () => {
+  const projects = new InMemoryProjectRepository();
+  const created = Project.create(FIRST, "Original", OWNER, instant(10n));
+  await projects.save(created, null);
+  const left = await projects.findById(FIRST);
+  const right = await projects.findById(FIRST);
+  const one = left!.project.rename(OWNER, "One", instant(10n));
+  const two = right!.project.rename(OWNER, "Two", instant(10n));
+  assert.equal(one.updatedAt, 10n);
+  assert.equal(two.updatedAt, 10n);
+  await projects.save(one, left!.revision);
+  await assert.rejects(() => projects.save(two, right!.revision), ProjectConflict);
+  const stored = await projects.findById(FIRST);
+  assert.equal(stored?.project.name, "One");
+  assert.equal(stored?.project.updatedAt, 10n);
+  assert.equal(stored?.revision, 1n);
 });
 
 test("ListProjects returns only the caller memberships and hides deleted Projects", async () => {
@@ -197,8 +206,9 @@ test("ListProjects returns only the caller memberships and hides deleted Project
   const owned = await createProject.execute(OWNER, "Owned");
   clock.set(instant(11n));
   const shared = await createProject.execute(EDITOR, "Shared");
-  const granted = shared.grantMembership(EDITOR, OWNER, "viewer", instant(11n));
-  await projects.save(granted, shared.updatedAt);
+  const sharedLoaded = await projects.findById(shared.id);
+  const granted = sharedLoaded!.project.grantMembership(EDITOR, OWNER, "viewer", instant(11n));
+  await projects.save(granted, sharedLoaded!.revision);
 
   const ownerList = await listProjects.execute(OWNER);
   assert.deepEqual(
@@ -219,29 +229,21 @@ test("ListProjects returns only the caller memberships and hides deleted Project
     ["Shared"],
   );
   const hidden = await projects.findById(owned.id);
-  assert.equal(hidden?.deletedAt, 20n);
-  assert.equal(hidden?.isListed(), false);
+  assert.equal(hidden?.project.deletedAt, 20n);
+  assert.equal(hidden?.project.isListed(), false);
 });
 
 test("DeleteProject is a soft delete allowed only for the Owner", async () => {
   const { createProject, deleteProject, listProjects, projects, clock } = harness();
   const project = await createProject.execute(OWNER, "Launch");
   clock.set(instant(20n));
-  const withEditor = (await projects.findById(project.id))!.grantMembership(
-    OWNER,
-    EDITOR,
-    "editor",
-    instant(20n),
-  );
-  await projects.save(withEditor, project.updatedAt);
+  const created = await projects.findById(project.id);
+  const withEditor = created!.project.grantMembership(OWNER, EDITOR, "editor", instant(20n));
+  await projects.save(withEditor, created!.revision);
   clock.set(instant(30n));
-  const withViewer = (await projects.findById(project.id))!.grantMembership(
-    OWNER,
-    VIEWER,
-    "viewer",
-    instant(30n),
-  );
-  await projects.save(withViewer, withEditor.updatedAt);
+  const edited = await projects.findById(project.id);
+  const withViewer = edited!.project.grantMembership(OWNER, VIEWER, "viewer", instant(30n));
+  await projects.save(withViewer, edited!.revision);
 
   await assert.rejects(() => deleteProject.execute(EDITOR, project.id), ProjectForbiddenError);
   await assert.rejects(() => deleteProject.execute(VIEWER, project.id), ProjectForbiddenError);
@@ -251,9 +253,10 @@ test("DeleteProject is a soft delete allowed only for the Owner", async () => {
   clock.set(instant(40n));
   await deleteProject.execute(OWNER, project.id);
   const stored = await projects.findById(project.id);
-  assert.equal(stored?.deletedAt, 40n);
-  assert.equal(stored?.updatedAt, 40n);
-  assert.equal(stored?.memberships.length, 3);
+  assert.equal(stored?.project.deletedAt, 40n);
+  assert.equal(stored?.project.updatedAt, 40n);
+  assert.equal(stored?.project.memberships.length, 3);
+  assert.equal(stored?.revision, 3n);
   assert.deepEqual(await listProjects.execute(OWNER), []);
   await assert.rejects(() => deleteProject.execute(OWNER, project.id), ProjectNotFoundError);
 });

@@ -12,7 +12,9 @@ import {
 } from "@nestjs/common";
 import {
   ApiBadRequestResponse,
+  ApiConflictResponse,
   ApiCreatedResponse,
+  ApiForbiddenResponse,
   ApiNoContentResponse,
   ApiNotFoundResponse,
   ApiOkResponse,
@@ -52,6 +54,7 @@ export class ProjectsController {
   @ApiCreatedResponse({ type: ProjectResponseDto })
   @ApiBadRequestResponse({ description: "The Project name is missing or blank." })
   @ApiUnauthorizedResponse({ description: "Sign in is required." })
+  @ApiConflictResponse({ description: "The Project changed since it was loaded." })
   async create(
     @Body() body: CreateProjectBody,
     @Req() request: object,
@@ -75,8 +78,10 @@ export class ProjectsController {
   @ApiOperation({ summary: "Rename a Project." })
   @ApiOkResponse({ type: ProjectResponseDto })
   @ApiBadRequestResponse({ description: "The id or the name is not valid." })
-  @ApiNotFoundResponse({ description: "The Project is not visible to the caller." })
   @ApiUnauthorizedResponse({ description: "Sign in is required." })
+  @ApiForbiddenResponse({ description: "Only an Owner or Editor can rename a Project." })
+  @ApiNotFoundResponse({ description: "The Project is not visible to the caller." })
+  @ApiConflictResponse({ description: "The Project changed since it was loaded." })
   async rename(
     @Param("projectId") rawProjectId: string,
     @Body() body: RenameProjectBody,
@@ -96,8 +101,10 @@ export class ProjectsController {
   @ApiOperation({ summary: "Soft-delete a Project. Only an Owner may delete." })
   @ApiNoContentResponse()
   @ApiBadRequestResponse({ description: "The id is not a UUIDv7." })
-  @ApiNotFoundResponse({ description: "The Project is not visible to the caller." })
   @ApiUnauthorizedResponse({ description: "Sign in is required." })
+  @ApiForbiddenResponse({ description: "Only an Owner can delete a Project." })
+  @ApiNotFoundResponse({ description: "The Project is not visible to the caller." })
+  @ApiConflictResponse({ description: "The Project changed since it was loaded." })
   async remove(@Param("projectId") rawProjectId: string, @Req() request: object): Promise<void> {
     await this.deleteProject.execute(requireActor(request), parseProjectRouteId(rawProjectId));
   }

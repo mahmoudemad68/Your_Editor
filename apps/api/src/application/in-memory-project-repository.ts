@@ -1,5 +1,5 @@
 import {
-  type Instant,
+  type LoadedProject,
   type Project,
   ProjectConflict,
   type ProjectId,
@@ -7,46 +7,68 @@ import {
   type UserId,
 } from "@editagent/domain";
 
+interface StoredProject {
+  readonly project: Project;
+  readonly revision: bigint;
+}
+
 /** Test double for ProjectRepository. It keeps soft-deleted rows and hides them from lists. */
 export class InMemoryProjectRepository implements ProjectRepository {
-  private readonly rows = new Map<string, Project>();
+  private readonly rows = new Map<string, StoredProject>();
 
-  async findById(id: ProjectId): Promise<Project | null> {
-    return this.rows.get(id) ?? null;
+  async findById(id: ProjectId): Promise<LoadedProject | null> {
+    const stored = this.rows.get(id);
+    if (stored === undefined) {
+      return null;
+    }
+    return { project: stored.project, revision: stored.revision };
   }
 
   async listForMember(userId: UserId): Promise<readonly Project[]> {
+    const seen = new Set<string>();
     return [...this.rows.values()]
-      .filter((project) => project.isListed() && project.roleOf(userId) !== null)
-      .sort((left, right) => {
-        if (left.createdAt < right.createdAt) {
-          return -1;
+      .filter((stored) => {
+        if (seen.has(stored.project.id) || !stored.project.isListed()) {
+          return false;
         }
-        if (left.createdAt > right.createdAt) {
-          return 1;
+        if (stored.project.roleOf(userId) === null) {
+          return false;
         }
-        if (left.id < right.id) {
-          return -1;
-        }
-        if (left.id > right.id) {
-          return 1;
-        }
-        return 0;
-      });
+        seen.add(stored.project.id);
+        return true;
+      })
+      .sort((left, right) => compareProjects(left.project, right.project))
+      .map((stored) => stored.project);
   }
 
-  async save(project: Project, expectedUpdatedAt: Instant | null): Promise<void> {
+  async save(project: Project, expectedRevision: bigint | null): Promise<void> {
     const existing = this.rows.get(project.id) ?? null;
-    if (expectedUpdatedAt === null) {
+    if (expectedRevision === null) {
       if (existing !== null) {
         throw new ProjectConflict();
       }
-      this.rows.set(project.id, project);
+      this.rows.set(project.id, { project, revision: 0n });
       return;
     }
-    if (existing === null || existing.updatedAt !== expectedUpdatedAt) {
+    if (existing === null || existing.revision !== expectedRevision) {
       throw new ProjectConflict();
     }
-    this.rows.set(project.id, project);
+    this.rows.set(project.id, { project, revision: existing.revision + 1n });
   }
+}
+
+function compareProjects(left: Project, right: Project): number {
+  if (left.createdAt < right.createdAt) {
+    return -1;
+  }
+  if (left.createdAt > right.createdAt) {
+    return 1;
+  }
+  if (left.id < right.id) {
+    return -1;
+  }
+  if (left.id > right.id) {
+    return 1;
+  }
+  return 0;
 }

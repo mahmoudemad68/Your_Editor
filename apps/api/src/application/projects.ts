@@ -1,4 +1,10 @@
-import { Project, type ProjectId, type ProjectRepository, type UserId } from "@editagent/domain";
+import {
+  type LoadedProject,
+  Project,
+  type ProjectId,
+  type ProjectRepository,
+  type UserId,
+} from "@editagent/domain";
 import { type Clock, type ProjectIdGenerator } from "./clock.js";
 import { ProjectForbiddenError, ProjectNotFoundError } from "./project-access.js";
 
@@ -11,12 +17,16 @@ async function visibleProject(
   projects: ProjectRepository,
   id: ProjectId,
   actorUserId: UserId,
-): Promise<Project> {
-  const project = await projects.findById(id);
-  if (project === null || !project.isListed() || project.roleOf(actorUserId) === null) {
+): Promise<LoadedProject> {
+  const loaded = await projects.findById(id);
+  if (
+    loaded === null ||
+    !loaded.project.isListed() ||
+    loaded.project.roleOf(actorUserId) === null
+  ) {
     throw new ProjectNotFoundError();
   }
-  return project;
+  return loaded;
 }
 
 export class CreateProject {
@@ -41,13 +51,13 @@ export class RenameProject {
   ) {}
 
   async execute(actorUserId: UserId, id: ProjectId, name: string): Promise<Project> {
-    const current = await visibleProject(this.projects, id, actorUserId);
-    const role = current.roleOf(actorUserId);
+    const loaded = await visibleProject(this.projects, id, actorUserId);
+    const role = loaded.project.roleOf(actorUserId);
     if (role !== "owner" && role !== "editor") {
       throw new ProjectForbiddenError("Only an Owner or Editor can rename a Project.");
     }
-    const renamed = current.rename(actorUserId, name, this.clock.now());
-    await this.projects.save(renamed, current.updatedAt);
+    const renamed = loaded.project.rename(actorUserId, name, this.clock.now());
+    await this.projects.save(renamed, loaded.revision);
     return renamed;
   }
 }
@@ -68,11 +78,11 @@ export class DeleteProject {
   ) {}
 
   async execute(actorUserId: UserId, id: ProjectId): Promise<void> {
-    const current = await visibleProject(this.projects, id, actorUserId);
-    if (current.roleOf(actorUserId) !== "owner") {
+    const loaded = await visibleProject(this.projects, id, actorUserId);
+    if (loaded.project.roleOf(actorUserId) !== "owner") {
       throw new ProjectForbiddenError("Only an Owner can delete a Project.");
     }
-    const deleted = current.deleteProject(actorUserId, this.clock.now());
-    await this.projects.save(deleted, current.updatedAt);
+    const deleted = loaded.project.deleteProject(actorUserId, this.clock.now());
+    await this.projects.save(deleted, loaded.revision);
   }
 }
