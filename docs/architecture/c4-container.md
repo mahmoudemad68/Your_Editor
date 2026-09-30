@@ -49,20 +49,20 @@ Rel(media, assets, "Quarantined downloads", "HTTPS")
 
 ## Communication paths
 
-| Path                                 | Protocol       | What crosses                            | Trust note                                                                            |
-| ------------------------------------ | -------------- | --------------------------------------- | ------------------------------------------------------------------------------------- |
-| Creator → Web                        | HTTPS          | UI actions                              | The browser is outside the application trust zone.                                    |
-| Web → API                            | HTTPS JSON     | Commands and queries                    | The API authenticates the caller. The web process holds no database credentials.      |
-| Web → object storage                 | HTTPS S3       | File bytes via a presigned URL          | The browser never receives storage credentials. The URL is scoped and time-limited.   |
-| API → PostgreSQL                     | SQL            | Module metadata                         | Credentials stay in the API and worker processes.                                     |
-| API → Redis                          | Redis / BullMQ | Job messages and progress               | Job payloads are schema-validated before a worker acts on them.                       |
-| API → object storage                 | S3 API         | Signing and metadata                    | The API does not proxy large bodies.                                                  |
-| Workers → Redis                      | BullMQ         | Job consumption and progress            | Workers do not accept traffic from the browser.                                       |
-| Workers → PostgreSQL                 | SQL            | State for the modules that worker hosts | Shared database of the modular monolith, not a private database per worker.           |
-| Workers → object storage             | S3 API         | Media, derivatives, renders             | Credentials are limited to the prefixes that worker owns.                             |
-| Agent Worker → LLM providers         | HTTPS          | Prompts, tool schemas, model output     | External trust boundary. User text is untrusted. Provider secrets stay in the worker. |
-| API / Media Worker → asset providers | HTTPS          | Search and download                     | External trust boundary. Downloads are untrusted until Assets quarantines them.       |
-| Web → workers                        | none           | —                                       | The browser reaches workers only through the API and presigned URLs.                  |
+| Path                                 | Protocol       | What crosses                            | Trust note                                                                                                  |
+| ------------------------------------ | -------------- | --------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| Creator → Web                        | HTTPS          | UI actions                              | The browser is outside the application trust zone.                                                          |
+| Web → API                            | HTTPS JSON     | Commands and queries                    | The API authenticates the caller. The web process holds no database credentials.                            |
+| Web → object storage                 | HTTPS S3       | File bytes via a presigned URL          | The browser never receives storage credentials. The URL is scoped and time-limited.                         |
+| API → PostgreSQL                     | SQL            | Module metadata                         | Credentials stay in the API and worker processes.                                                           |
+| API → Redis                          | Redis / BullMQ | Job messages and progress               | Job payloads are schema-validated before a worker acts on them.                                             |
+| API → object storage                 | S3 API         | Signing and metadata                    | The API does not proxy large bodies.                                                                        |
+| Workers → Redis                      | BullMQ         | Job consumption and progress            | Workers do not accept traffic from the browser.                                                             |
+| Workers → PostgreSQL                 | SQL            | State for the modules that worker hosts | Shared database of the modular monolith, not a private database per worker.                                 |
+| Workers → object storage             | S3 API         | Media, derivatives, renders             | Target: credentials limited to the prefixes that worker owns. Current baseline does not do this. See below. |
+| Agent Worker → LLM providers         | HTTPS          | Prompts, tool schemas, model output     | External trust boundary. User text is untrusted. Provider secrets stay in the worker.                       |
+| API / Media Worker → asset providers | HTTPS          | Search and download                     | External trust boundary. Downloads are untrusted until Assets quarantines them.                             |
+| Web → workers                        | none           | —                                       | The browser reaches workers only through the API and presigned URLs.                                        |
 
 ## Trust boundaries
 
@@ -71,6 +71,25 @@ Rel(media, assets, "Quarantined downloads", "HTTPS")
 3. **Data stores.** PostgreSQL, Redis, and object storage. They are inside the deployment and outside the application code. Access is through ports (`IObjectStorage`, `IJobQueue`, repository ports).
 4. **External providers.** LLM providers and asset providers. Their responses are untrusted input.
 5. **Future sandbox.** Untrusted generated code will run outside this zone, through the `ISandbox` port owned by Agent. The sandbox is not implemented in this slice.
+
+## Current US-114 development baseline
+
+The diagram is the target container view. The Compose file does not implement every credential boundary drawn above.
+
+| Process       | Database credentials | Redis access | Object-storage credentials             |
+| ------------- | -------------------- | ------------ | -------------------------------------- |
+| Web           | no                   | no           | no                                     |
+| API           | yes                  | no           | no                                     |
+| Agent worker  | yes                  | yes          | no                                     |
+| Media worker  | yes                  | yes          | shared development MinIO root key      |
+| Render worker | yes                  | yes          | same shared development MinIO root key |
+| AI worker     | yes                  | yes          | same shared development MinIO root key |
+
+Media, render, and AI workers use one shared development object-storage key. That is a known risk, recorded as TM-039. This baseline does not claim per-worker prefix-scoped credentials.
+
+## Target later hardening
+
+Scoped object keys, presigned access, and least-privilege worker isolation remain later backlog. US-122 owns server-generated object keys and presigned URLs. US-422 owns resource-limited worker containers. Neither control is implemented here, and this page does not mark them complete.
 
 ## What this diagram does not implement
 

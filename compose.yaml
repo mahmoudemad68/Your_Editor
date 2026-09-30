@@ -238,7 +238,9 @@ services:
       start_period: 10s
     restart: "no"
 
-  # Optional. Requires the NVIDIA container runtime. Not started by `docker compose up`.
+  # Optional GPU profile. `docker compose up` does not start this service.
+  # GPU access is a Compose device reservation. Compose v2.32.4 rejects a scalar
+  # GPU field, so this service uses deploy.resources.reservations.devices.
   ai-worker-gpu:
     profiles: ["gpu"]
     image: editagent-ai-worker:local
@@ -246,8 +248,13 @@ services:
       context: ./workers/ai-worker
       dockerfile: Dockerfile
     container_name: editagent-ai-worker-gpu
-    runtime: nvidia
-    gpus: all
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     environment:
       <<: *ai-environment
       EDITAGENT_AI_DEVICE: cuda
