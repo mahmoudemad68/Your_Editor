@@ -41,7 +41,10 @@ Does not authenticate users and does not own timeline contents.
 
 **Public interface**
 
-- `createProject`, `getProject`, `updateProject`, `archiveProject`, `listProjects`
+- `createProject`, `getProject`, `updateProject`, `deleteProject`, `listProjects`
+
+`deleteProject` is the US-120 operation. US-104 stores it as a soft delete. There is no separate archive operation.
+
 - `updateProjectSettings`
 - `getBrandKit`, `saveBrandKit`
 - Types: `ProjectId`, `Project`, `BrandKit`
