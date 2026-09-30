@@ -84,17 +84,21 @@ export class S3ObjectStorage implements IObjectStorage {
       Key: request.key,
       ContentType: request.contentType,
       ChecksumSHA256: checksum,
+      ...(request.onlyIfAbsent ? { IfNoneMatch: "*" } : {}),
     });
     const url = await getSignedUrl(this.publicClient, command, {
       expiresIn: request.expiresInSeconds,
+      signableHeaders: new Set(["content-type", "if-none-match"]),
+      unhoistableHeaders: new Set(["x-amz-checksum-sha256"]),
     });
-    return {
-      url,
-      requiredHeaders: {
-        "Content-Type": request.contentType,
-        "x-amz-checksum-sha256": checksum,
-      },
+    const requiredHeaders: Record<string, string> = {
+      "Content-Type": request.contentType,
+      "x-amz-checksum-sha256": checksum,
     };
+    if (request.onlyIfAbsent) {
+      requiredHeaders["If-None-Match"] = "*";
+    }
+    return { url, requiredHeaders };
   }
 
   async presignGet(key: string, expiresInSeconds: number): Promise<PresignedGet> {

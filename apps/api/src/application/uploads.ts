@@ -120,14 +120,13 @@ export class BeginMediaUpload {
   ): Promise<BeginUploadResult> {
     await requireUploader(this.projects, projectId, actorUserId);
     const checked = checkDeclaration(projectId, input);
-    const presigned = await withStorage(() =>
-      this.objects.presignPut({
-        key: checked.storageKey,
-        contentType: checked.mimeType,
-        checksumSha256Hex: checked.sha256,
-        expiresInSeconds: this.presignTtlSeconds,
-      }),
-    );
+    const presigned = await this.objects.presignPut({
+      key: checked.storageKey,
+      contentType: checked.mimeType,
+      checksumSha256Hex: checked.sha256,
+      expiresInSeconds: this.presignTtlSeconds,
+      onlyIfAbsent: true,
+    });
     return {
       uploadUrl: presigned.url,
       storageKey: checked.storageKey,
@@ -162,7 +161,6 @@ export class CompleteMediaUpload {
       stat.contentType === checked.mimeType &&
       stat.checksumSha256Hex === checked.sha256;
     if (!matches) {
-      await discardObject(this.objects, checked.storageKey);
       throw new UploadObjectMismatch();
     }
     const asset = MediaAsset.createUploaded({
@@ -176,13 +174,5 @@ export class CompleteMediaUpload {
     });
     await this.media.save(asset);
     return asset;
-  }
-}
-
-async function discardObject(objects: IObjectStorage, key: string): Promise<void> {
-  try {
-    await objects.delete(key);
-  } catch {
-    // The MediaAsset is still not created. Cleanup is best effort.
   }
 }

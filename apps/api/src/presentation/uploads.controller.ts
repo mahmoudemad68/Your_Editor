@@ -32,7 +32,8 @@ export class UploadsController {
   @Post()
   @HttpCode(201)
   @ApiOperation({
-    summary: "Begin a direct media upload. The browser PUTs bytes to object storage.",
+    summary:
+      "Begin a direct media upload. The browser PUTs bytes to object storage. A 403 or 412 from that PUT comes from object storage, not this API.",
   })
   @ApiCreatedResponse({ type: BeginUploadResponseDto })
   @ApiBadRequestResponse({
@@ -41,7 +42,6 @@ export class UploadsController {
   @ApiUnauthorizedResponse({ description: "Sign in is required." })
   @ApiForbiddenResponse({ description: "Only an Owner or Editor can upload media." })
   @ApiNotFoundResponse({ description: "The Project is not visible to the caller." })
-  @ApiResponse({ status: 502, description: "Object storage is unavailable." })
   async begin(
     @Param("projectId") rawProjectId: string,
     @Body() body: UploadDeclarationBody,

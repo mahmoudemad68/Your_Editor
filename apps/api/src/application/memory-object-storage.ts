@@ -44,6 +44,7 @@ export class MemoryObjectStorage implements IObjectStorage {
       requiredHeaders: {
         "Content-Type": request.contentType,
         "x-amz-checksum-sha256": request.checksumSha256Hex,
+        ...(request.onlyIfAbsent ? { "If-None-Match": "*" } : {}),
       },
     };
   }

@@ -23,7 +23,7 @@ Operations the adapter must provide:
 
 - `put(key, body, contentType, checksumSha256) → stored object`
 - `get(key) → body`
-- `presignPut(key, contentType, checksumSha256, expiresIn) → URL and required headers`
+- `presignPut(key, contentType, checksumSha256, expiresIn, onlyIfAbsent) → URL and required headers`
 - `presignGet(key, expiresIn) → URL`
 - `stat(key) → size, content type, and SHA-256 when the object exists`
 - `delete(key)`

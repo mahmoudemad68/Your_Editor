@@ -91,6 +91,8 @@ test("BeginMediaUpload allows Owner and Editor and hides everyone else", async (
   assert.equal(ownerUpload.uploadUrl.includes("lecture"), false);
   assert.equal(ownerUpload.uploadUrl.includes(".."), false);
   assert.equal(ownerUpload.requiredHeaders["Content-Type"], "video/mp4");
+  assert.equal(ownerUpload.requiredHeaders["If-None-Match"], "*");
+  assert.equal(typeof ownerUpload.requiredHeaders["x-amz-checksum-sha256"], "string");
   assert.equal(ownerUpload.expiresAt, 20n + 900n * 1000n);
   const editorUpload = await begin.execute(EDITOR, PROJECT, declaration);
   assert.equal(editorUpload.storageKey, ownerUpload.storageKey);
@@ -186,6 +188,7 @@ test("CompleteMediaUpload persists a verified object and rejects mismatches", as
       }),
     UploadObjectMismatch,
   );
-  assert.equal(objects.objects.has(mismatchKey), false);
+  assert.equal(objects.objects.has(mismatchKey), true);
+  assert.equal(objects.objects.get(mismatchKey)?.contentType, "video/webm");
   assert.equal((await media.listByProject(PROJECT)).length, 1);
 });

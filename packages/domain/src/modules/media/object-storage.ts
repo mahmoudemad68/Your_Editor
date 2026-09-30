@@ -8,6 +8,8 @@ export interface PresignPutRequest {
   readonly contentType: string;
   readonly checksumSha256Hex: string;
   readonly expiresInSeconds: number;
+  /** When true, the upload must fail if an object already exists at the key. */
+  readonly onlyIfAbsent: boolean;
 }
 
 export interface PresignedPut {

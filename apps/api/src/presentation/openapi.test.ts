@@ -22,9 +22,10 @@ test("the build writes an OpenAPI document for the Project routes", () => {
   }
   const uploads = document.paths["/projects/{projectId}/uploads"];
   const complete = document.paths["/projects/{projectId}/uploads/complete"];
-  for (const status of ["201", "400", "401", "403", "404", "502"]) {
+  for (const status of ["201", "400", "401", "403", "404"]) {
     assert.ok(uploads?.post?.responses?.[status], `POST /projects/{projectId}/uploads ${status}`);
   }
+  assert.equal(uploads?.post?.responses?.["502"], undefined);
   for (const status of ["201", "400", "401", "403", "404", "409", "502"]) {
     assert.ok(
       complete?.post?.responses?.[status],
