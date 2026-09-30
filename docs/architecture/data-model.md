@@ -1,6 +1,6 @@
 # Domain model and ER design
 
-US-104 records the initial domain model. Persistence migrations are not in this document. US-120 owns the Project Postgres repository and its migrations. Later stories own the other adapters.
+US-104 records the initial domain model. US-120 adds the Project and ProjectMembership migration in `apps/api/migrations`. `project_memberships.user_id` is a UUID without a foreign key. The User table and that foreign key wait for US-118, so this story does not create the authentication schema. Later stories own the other adapters.
 
 The domain package holds entities, value objects, invariants, and repository interfaces. It does not import an ORM, a database driver, or infrastructure. No ORM product is selected here. When a story adds a repository, the mapping lives in that story's infrastructure adapter and the domain interface stays free of column decorators.
 
@@ -30,7 +30,7 @@ Creating a Project takes the authenticated User id and records exactly one Owner
 
 ## Sprint 1 and Sprint 2 persistence plan
 
-No migration is committed. Columns marked **planned** are the durable shape later stories will map. They are not fields on the domain classes in this pull request, except where a class already stores that fact (`kind`, `duration`, membership, soft delete, job status and subject).
+Project and ProjectMembership are migrated by US-120. Columns marked **planned** are the durable shape later stories will map. They are not fields on the domain classes in this pull request, except where a class already stores that fact (`kind`, `duration`, membership, soft delete, job status and subject).
 
 Platform preset and target duration are future Project settings (later product stories). They are not implemented here.
 

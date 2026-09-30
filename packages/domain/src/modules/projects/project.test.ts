@@ -391,6 +391,35 @@ test("re-granting the existing Owner at an older timestamp is rejected", () => {
   assert.equal(project.memberships[0]?.createdAt, 10n);
 });
 
+test("rename allows Owner and Editor and keeps the aggregate clock monotonic", () => {
+  const stranger = userId("018f6b6e-7c3a-7444-8d3e-9c0b1a2d3e4f");
+  const created = Project.create(PROJECT, "Launch", OWNER, instant(10n));
+  const withEditor = created.grantMembership(OWNER, EDITOR, "editor", instant(20n));
+  const withViewer = withEditor.grantMembership(OWNER, VIEWER, "viewer", instant(30n));
+
+  const byEditor = withViewer.rename(EDITOR, "  Cut  ", instant(30n));
+  assert.equal(byEditor.name, "Cut");
+  assert.equal(byEditor.updatedAt, 30n);
+  assert.equal(byEditor.roleOf(EDITOR), "editor");
+  assert.equal(withViewer.name, "Launch");
+  assert.equal(withViewer.updatedAt, 30n);
+
+  const byOwner = byEditor.rename(OWNER, "Final", instant(40n));
+  assert.equal(byOwner.name, "Final");
+  assert.equal(byOwner.updatedAt, 40n);
+  assert.equal(byOwner.memberships[0]?.createdAt, 10n);
+
+  assert.throws(() => byOwner.rename(VIEWER, "Nope", instant(50n)), /Owner or Editor/);
+  assert.throws(() => byOwner.rename(stranger, "Nope", instant(50n)), /Owner or Editor/);
+  assert.throws(() => byOwner.rename(OWNER, "   ", instant(50n)), /name is required/);
+  assert.throws(() => byOwner.rename(OWNER, "Back", instant(15n)), /cannot be earlier/);
+  assert.equal(byOwner.name, "Final");
+
+  const deleted = byOwner.deleteProject(OWNER, instant(50n));
+  assert.throws(() => deleted.rename(OWNER, "Again", instant(60n)), /cannot be renamed/);
+  assert.throws(() => deleted.rename(EDITOR, "Again", instant(60n)), /cannot be renamed/);
+});
+
 test("placeholder for uuid throws", () => {
   assert.throws(
     () =>

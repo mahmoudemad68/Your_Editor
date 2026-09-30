@@ -2,7 +2,7 @@ import { Project, type ProjectRepository } from "@editagent/domain";
 
 /**
  * Compile-time and runtime proof that a workspace package can import the domain
- * root. US-120 will implement ProjectRepository. This file is not a repository.
+ * root. PostgresProjectRepository is the US-120 adapter. This file is not one.
  */
 export type ProjectPersistencePort = ProjectRepository;
 
