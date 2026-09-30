@@ -43,6 +43,7 @@ erDiagram
   Project ||--o{ UploadSession : "starts"
   User ||--o{ UploadSession : "initiates"
   UploadSession |o--o| MediaAsset : "completes into"
+  UploadSession ||--o{ UploadPart : "records"
   MediaAsset ||--o{ DerivedAsset : "yields"
   Project ||--o{ Job : "may be the subject"
   MediaAsset ||--o{ Job : "may be the subject"
@@ -119,10 +120,19 @@ erDiagram
     string storageKey
     string multipartUploadId
     string status
-    int completedPartCount
+    int completedPartCount "derived cache only, not the source of truth"
     bigint expiresAt
     bigint createdAt
     bigint updatedAt
+  }
+
+  UploadPart {
+    uuidv7 uploadSessionId PK_FK
+    int partNumber PK
+    string etag
+    bigint byteSize
+    string checksum "nullable provider checksum"
+    bigint completedAt
   }
 
   DerivedAsset {
@@ -163,45 +173,45 @@ erDiagram
 
 `RefreshSession` is the persisted refresh/rotation record for US-118. An access JWT is not stored. `secretHash` is the stored secret, not the token the browser holds. `revokedAt` and `rotatedFromId` are the revocation and rotation state. `expiresAt` is the session expiry.
 
-`UploadSession` is the durable multipart/resumable upload for US-123. The storage key is server-generated. `displayFilename` on `MediaAsset` is metadata only and is never the key. `completedPartCount` is the progress that lets a reload resume. The S3 multipart API is not implemented here.
+`UploadSession` stores the overall multipart upload for US-123: who started it, the server storage key, the provider upload id, status, and expiry. `UploadPart` stores each successful part. The key is `(uploadSessionId, partNumber)`. `etag` is what completion must send back, in part-number order. A failed part is simply absent, so parts 1, 2, and 4 can be stored while part 3 is not. A reload reads those rows and does not resend them. `completedPartCount` may be cached for display. It is not the source of truth. The S3 multipart API is not implemented here.
 
 `JobAttempt` is the Postgres history US-129 asks for so the UI and audit can show attempts. This slice does not implement the state machine. US-130 progress fan-out is Redis pub/sub and does not add a table.
 
 ## Sprint 1 and Sprint 2 traceability
 
-| Story                                 | Persistence                                                               |
-| ------------------------------------- | ------------------------------------------------------------------------- |
-| US-101 SRS                            | No application table.                                                     |
-| US-102 Glossary and journeys          | No application table.                                                     |
-| US-103 Architecture                   | No application table.                                                     |
-| US-104 Domain model                   | This document. Classes and repository interfaces only.                    |
-| US-105 ASR spike                      | No application table. Research record.                                    |
-| US-106 Render spike                   | No application table. Research record.                                    |
-| US-107 LLM spike                      | No application table. Research record.                                    |
-| US-108 Risk and threat model          | No application table.                                                     |
-| US-109 Backlog                        | No application table.                                                     |
-| US-110 Evaluation dataset             | No product table. Licensed files and a manifest, not a runtime aggregate. |
-| US-111 Monorepo                       | No application table.                                                     |
-| US-112 CI                             | No application table.                                                     |
-| US-113 Supply chain and image publish | No application table.                                                     |
-| US-114 Compose                        | No application table.                                                     |
-| US-115 Logging and health             | No application table. Logs are not these rows.                            |
-| US-116 Test harness                   | No application table.                                                     |
-| US-117 Walking-skeleton E2E           | No new table. Uses Project and MediaAsset once those stories exist.       |
-| US-118 Authentication                 | `User.email`, `User.passwordHash`, and `RefreshSession`.                  |
-| US-119 Web sign-in                    | Reuses `User` and `RefreshSession`.                                       |
-| US-120 Project CRUD                   | `Project` and `ProjectMembership`.                                        |
-| US-121 Dashboard                      | Reuses `Project`.                                                         |
-| US-122 Direct upload                  | `MediaAsset` storage key, display filename, MIME, size, upload state.     |
-| US-123 Resumable upload               | `UploadSession`.                                                          |
-| US-124 Upload page                    | Reuses `MediaAsset`.                                                      |
-| US-125 Media library                  | Reuses `MediaAsset` and `DerivedAsset`.                                   |
-| US-126 Technical metadata             | Planned columns on `MediaAsset`.                                          |
-| US-127 Validation                     | `MediaAsset.validationState` and `rejection`.                             |
-| US-128 Proxies and thumbnails         | `DerivedAsset` storage key and parameter signature.                       |
-| US-129 Job queue and history          | `Job` and `JobAttempt`.                                                   |
-| US-130 Live progress                  | No table. Redis pub/sub.                                                  |
-| US-131 Progress UI                    | Reuses `Job` and `JobAttempt`.                                            |
+| Story                                 | Persistence                                                                           |
+| ------------------------------------- | ------------------------------------------------------------------------------------- |
+| US-101 SRS                            | No application table.                                                                 |
+| US-102 Glossary and journeys          | No application table.                                                                 |
+| US-103 Architecture                   | No application table.                                                                 |
+| US-104 Domain model                   | This document. Classes and repository interfaces only.                                |
+| US-105 ASR spike                      | No application table. Research record.                                                |
+| US-106 Render spike                   | No application table. Research record.                                                |
+| US-107 LLM spike                      | No application table. Research record.                                                |
+| US-108 Risk and threat model          | No application table.                                                                 |
+| US-109 Backlog                        | No application table.                                                                 |
+| US-110 Evaluation dataset             | No product table. Licensed files and a manifest, not a runtime aggregate.             |
+| US-111 Monorepo                       | No application table.                                                                 |
+| US-112 CI                             | No application table.                                                                 |
+| US-113 Supply chain and image publish | No application table.                                                                 |
+| US-114 Compose                        | No application table.                                                                 |
+| US-115 Logging and health             | No application table. Logs are not these rows.                                        |
+| US-116 Test harness                   | No application table.                                                                 |
+| US-117 Walking-skeleton E2E           | No new table. Uses Project and MediaAsset once those stories exist.                   |
+| US-118 Authentication                 | `User.email`, `User.passwordHash`, and `RefreshSession`.                              |
+| US-119 Web sign-in                    | Reuses `User` and `RefreshSession`.                                                   |
+| US-120 Project CRUD                   | `Project` and `ProjectMembership`.                                                    |
+| US-121 Dashboard                      | Reuses `Project`.                                                                     |
+| US-122 Direct upload                  | `MediaAsset` storage key, display filename, MIME, size, upload state.                 |
+| US-123 Resumable upload               | `UploadSession` for the upload, `UploadPart` for each completed part number and ETag. |
+| US-124 Upload page                    | Reuses `MediaAsset`.                                                                  |
+| US-125 Media library                  | Reuses `MediaAsset` and `DerivedAsset`.                                               |
+| US-126 Technical metadata             | Planned columns on `MediaAsset`.                                                      |
+| US-127 Validation                     | `MediaAsset.validationState` and `rejection`.                                         |
+| US-128 Proxies and thumbnails         | `DerivedAsset` storage key and parameter signature.                                   |
+| US-129 Job queue and history          | `Job` and `JobAttempt`.                                                               |
+| US-130 Live progress                  | No table. Redis pub/sub.                                                              |
+| US-131 Progress UI                    | Reuses `Job` and `JobAttempt`.                                                        |
 
 ## Canonical names reserved for later stories
 

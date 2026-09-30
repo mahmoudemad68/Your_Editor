@@ -5,7 +5,7 @@
  * restore rebuilds a persisted Project without replaying commands.
  */
 
-import { type Instant, instant } from "../../kernel/clock.js";
+import { type Instant, instant, requireAuditOrder } from "../../kernel/clock.js";
 import { DomainError } from "../../kernel/error.js";
 import { type ProjectId, projectId, type UserId, userId } from "../../kernel/id.js";
 
@@ -55,6 +55,9 @@ export class Project {
     this.createdAt = created;
     this.updatedAt = instant(updatedAt);
     this.deletedAt = deletedAt == null ? null : instant(deletedAt);
+    requireAuditOrder(this.createdAt, this.updatedAt);
+    requireMembershipChronology(this.createdAt, this.updatedAt, this.memberships);
+    requireDeletionChronology(this.createdAt, this.updatedAt, this.deletedAt);
     requireOneOwner(this.memberships);
     Object.freeze(this);
   }
@@ -190,6 +193,33 @@ function sealMemberships(
     });
   });
   return Object.freeze(sealed);
+}
+
+function requireMembershipChronology(
+  createdAt: Instant,
+  updatedAt: Instant,
+  memberships: readonly ProjectMembership[],
+): void {
+  for (const membership of memberships) {
+    if (membership.createdAt < createdAt || membership.createdAt > updatedAt) {
+      throw new DomainError(
+        "A membership timestamp must be between Project createdAt and updatedAt.",
+      );
+    }
+  }
+}
+
+function requireDeletionChronology(
+  createdAt: Instant,
+  updatedAt: Instant,
+  deletedAt: Instant | null,
+): void {
+  if (deletedAt === null) {
+    return;
+  }
+  if (deletedAt < createdAt || deletedAt !== updatedAt) {
+    throw new DomainError("A deleted Project must record deletedAt equal to updatedAt.");
+  }
 }
 
 function requireOneOwner(memberships: readonly ProjectMembership[]): void {

@@ -3,7 +3,7 @@
  * Applying it during an edit is a later story (US-521). This type does not render.
  */
 
-import { type Instant, instant } from "../../kernel/clock.js";
+import { type Instant, instant, requireAuditOrder } from "../../kernel/clock.js";
 import { type BrandKitId, brandKitId, type ProjectId, projectId } from "../../kernel/id.js";
 
 export class BrandKit {
@@ -23,6 +23,7 @@ export class BrandKit {
     this.projectId = projectId(String(projectIdValue));
     this.createdAt = created;
     this.updatedAt = updatedAt == null ? created : instant(updatedAt);
+    requireAuditOrder(this.createdAt, this.updatedAt);
     Object.freeze(this);
   }
 

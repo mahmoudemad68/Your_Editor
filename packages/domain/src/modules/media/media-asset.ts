@@ -4,7 +4,7 @@
  * behavior belong to later Media stories.
  */
 
-import { type Instant, instant } from "../../kernel/clock.js";
+import { type Instant, instant, requireAuditOrder } from "../../kernel/clock.js";
 import { DomainError } from "../../kernel/error.js";
 import { mediaAssetId, type MediaAssetId, projectId, type ProjectId } from "../../kernel/id.js";
 import { microseconds, type Microseconds } from "../../kernel/time.js";
@@ -46,6 +46,7 @@ export class MediaAsset {
     this.kind = mediaKind(kind);
     this.createdAt = created;
     this.updatedAt = updated;
+    requireAuditOrder(this.createdAt, this.updatedAt);
     this.duration = duration == null ? null : mediaDuration(duration);
     if (new.target === MediaAsset) {
       Object.freeze(this);

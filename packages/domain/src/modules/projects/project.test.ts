@@ -74,6 +74,15 @@ test("grantMembership rejects admin and other non-membership roles at runtime", 
   const project = Project.create(PROJECT, "Launch", OWNER, NOW);
   assert.throws(() => project.grantMembership(OWNER, EDITOR, "admin", LATER), /not a Project role/);
   assert.throws(() => project.grantMembership(OWNER, EDITOR, "creator", LATER), DomainError);
+  assert.throws(
+    () => project.grantMembership(OWNER, EDITOR, "anything", LATER),
+    /not a Project role/,
+  );
+  const withViewer = project.grantMembership(OWNER, VIEWER, "viewer", LATER);
+  assert.throws(
+    () => withViewer.grantMembership(VIEWER, OWNER, "editor", LATER),
+    /Only an Owner can manage Project membership/,
+  );
 });
 
 test("the last Owner cannot be removed or demoted", () => {
@@ -112,11 +121,11 @@ test("restore rebuilds a soft-deleted Project with several memberships", () => {
     ],
     createdAt: 1n,
     updatedAt: 4n,
-    deletedAt: 5n,
+    deletedAt: 4n,
   });
   assert.equal(restored.createdAt, 1n);
   assert.equal(restored.updatedAt, 4n);
-  assert.equal(restored.deletedAt, 5n);
+  assert.equal(restored.deletedAt, 4n);
   assert.equal(restored.isListed(), false);
   assert.deepEqual(
     restored.memberships.map((membership) => membership.role),
@@ -162,6 +171,122 @@ test("restore rebuilds a soft-deleted Project with several memberships", () => {
       }),
     /two memberships/,
   );
+});
+
+test("restore preserves an exact soft-deleted history and rejects impossible order", () => {
+  const restored = Project.restore({
+    id: PROJECT,
+    name: "Launch",
+    memberships: [
+      { userId: OWNER, role: "owner", createdAt: "10" },
+      { userId: EDITOR, role: "editor", createdAt: "20" },
+      { userId: VIEWER, role: "viewer", createdAt: "30" },
+    ],
+    createdAt: "10",
+    updatedAt: "40",
+    deletedAt: "40",
+  });
+  assert.equal(restored.createdAt, 10n);
+  assert.equal(restored.memberships[0]?.createdAt, 10n);
+  assert.equal(restored.memberships[1]?.createdAt, 20n);
+  assert.equal(restored.memberships[2]?.createdAt, 30n);
+  assert.equal(restored.updatedAt, 40n);
+  assert.equal(restored.deletedAt, 40n);
+  const again = Project.restore(restored.toSnapshot());
+  assert.equal(again.deletedAt, 40n);
+  assert.equal(again.memberships[2]?.createdAt, 30n);
+
+  const active = Project.restore({
+    id: PROJECT,
+    name: "Launch",
+    memberships: [
+      { userId: OWNER, role: "owner", createdAt: 10n },
+      { userId: EDITOR, role: "editor", createdAt: 20n },
+    ],
+    createdAt: 10n,
+    updatedAt: 20n,
+    deletedAt: null,
+  });
+  assert.equal(active.deletedAt, null);
+  assert.equal(active.memberships[1]?.createdAt, 20n);
+
+  const base = {
+    id: PROJECT,
+    name: "Launch",
+    memberships: [{ userId: OWNER, role: "owner", createdAt: 10n }],
+    createdAt: 10n,
+    updatedAt: 10n,
+    deletedAt: null,
+  };
+  assert.throws(() => Project.restore({ ...base, updatedAt: 9n }), /createdAt must be less than/);
+  assert.throws(
+    () =>
+      Project.restore({
+        ...base,
+        memberships: [{ userId: OWNER, role: "owner", createdAt: 9n }],
+      }),
+    /between Project createdAt and updatedAt/,
+  );
+  assert.throws(
+    () =>
+      Project.restore({
+        ...base,
+        updatedAt: 30n,
+        memberships: [{ userId: OWNER, role: "owner", createdAt: 40n }],
+      }),
+    /between Project createdAt and updatedAt/,
+  );
+  assert.throws(
+    () => Project.restore({ ...base, updatedAt: 20n, deletedAt: 15n }),
+    /deletedAt equal to updatedAt/,
+  );
+  assert.throws(
+    () => Project.restore({ ...base, updatedAt: 20n, deletedAt: 25n }),
+    /deletedAt equal to updatedAt/,
+  );
+  assert.throws(
+    () => Project.restore({ ...base, updatedAt: 20n, deletedAt: 5n }),
+    /deletedAt equal to updatedAt/,
+  );
+});
+
+test("mutating a snapshot does not change the Project", () => {
+  const project = Project.create(PROJECT, "Launch", OWNER, NOW);
+  const snapshot = project.toSnapshot();
+  const mutable = snapshot as unknown as {
+    name: string;
+    createdAt: bigint;
+    updatedAt: bigint;
+    deletedAt: bigint | null;
+    memberships: { role: string }[];
+  };
+  mutable.name = "Hacked";
+  mutable.createdAt = 0n;
+  mutable.updatedAt = 0n;
+  mutable.deletedAt = 1n;
+  mutable.memberships[0]!.role = "viewer";
+  assert.equal(project.name, "Launch");
+  assert.equal(project.createdAt, NOW);
+  assert.equal(project.updatedAt, NOW);
+  assert.equal(project.deletedAt, null);
+  assert.equal(project.roleOf(OWNER), "owner");
+});
+
+test("frozen Project fields reject assignment", () => {
+  const project = Project.create(PROJECT, "Launch", OWNER, NOW);
+  assert.throws(() => {
+    (project as { name: string }).name = "Hacked";
+  }, TypeError);
+  assert.throws(() => {
+    (project as { createdAt: bigint }).createdAt = 0n;
+  }, TypeError);
+  assert.throws(() => {
+    (project as { updatedAt: bigint }).updatedAt = 0n;
+  }, TypeError);
+  assert.equal(project.name, "Launch");
+});
+
+test("placeholder for uuid throws", () => {
   assert.throws(
     () =>
       Project.restore({

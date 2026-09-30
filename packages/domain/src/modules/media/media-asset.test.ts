@@ -58,7 +58,20 @@ test("direct Video, Audio, and Image constructors enforce the duration invariant
     assert.throws(() => new Subtype(ASSET, PROJECT, NOW, "1.5"));
     assert.throws(() => new Subtype(ASSET, PROJECT, -1n, null));
     assert.throws(() => new Subtype(ASSET, PROJECT, "1.5", null));
+    assert.throws(() => new Subtype(ASSET, PROJECT, 20n, null, 10n), /createdAt must be less than/);
   }
+  assert.throws(
+    () =>
+      MediaAsset.restore({
+        id: ASSET,
+        projectId: PROJECT,
+        kind: "video",
+        duration: null,
+        createdAt: "20",
+        updatedAt: "10",
+      }),
+    /createdAt must be less than/,
+  );
 });
 
 test("MediaAsset restore keeps subtype, duration, and distinct audit timestamps", () => {
@@ -119,5 +132,20 @@ test("DerivedAsset is not created as a MediaAsset kind", () => {
         updatedAt: 9n,
       }),
     DomainError,
+  );
+  assert.throws(
+    () => new DerivedAsset(derived.id, ASSET, "proxy", 20n, 10n),
+    /createdAt must be less than/,
+  );
+  assert.throws(
+    () =>
+      DerivedAsset.restore({
+        id: derived.id,
+        mediaAssetId: ASSET,
+        kind: "proxy",
+        createdAt: "20",
+        updatedAt: "10",
+      }),
+    /createdAt must be less than/,
   );
 });

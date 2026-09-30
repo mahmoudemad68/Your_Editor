@@ -4,6 +4,8 @@
  * Timeline positions stay in integer microseconds (ADR-008).
  */
 
+import { DomainError } from "./error.js";
+
 const CANONICAL_INTEGER = /^(0|[1-9][0-9]*)$/;
 
 export type Instant = bigint;
@@ -29,6 +31,13 @@ export interface SoftDeletion {
 
 export function isNotDeleted(record: SoftDeletion): boolean {
   return record.deletedAt === null;
+}
+
+/** Audit history cannot move backwards. Both values must already be instants. */
+export function requireAuditOrder(createdAt: Instant, updatedAt: Instant): void {
+  if (createdAt > updatedAt) {
+    throw new DomainError("createdAt must be less than or equal to updatedAt.");
+  }
 }
 
 function parseCanonicalInteger(value: string): bigint {

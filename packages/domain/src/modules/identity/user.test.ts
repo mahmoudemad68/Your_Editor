@@ -19,4 +19,9 @@ test("User restore keeps the operator role and distinct audit timestamps", () =>
   assert.deepEqual(User.restore(user.toSnapshot()).toSnapshot(), user.toSnapshot());
   assert.throws(() => new User(ID, "owner", 10n, 40n), DomainError);
   assert.throws(() => new User(ID, null, -1n, 40n));
+  assert.throws(() => new User(ID, null, 10n, 9n), /createdAt must be less than/);
+  assert.throws(
+    () => User.restore({ id: ID, operatorRole: null, createdAt: "10", updatedAt: "9" }),
+    /createdAt must be less than/,
+  );
 });

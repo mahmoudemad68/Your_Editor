@@ -3,7 +3,7 @@
  * The constructor validates kind and timestamps. Storage adapters are later stories.
  */
 
-import { type Instant, instant } from "../../kernel/clock.js";
+import { type Instant, instant, requireAuditOrder } from "../../kernel/clock.js";
 import { DomainError } from "../../kernel/error.js";
 import {
   derivedAssetId,
@@ -42,6 +42,7 @@ export class DerivedAsset {
     this.kind = derivedAssetKind(kind);
     this.createdAt = created;
     this.updatedAt = updatedAt == null ? created : instant(updatedAt);
+    requireAuditOrder(this.createdAt, this.updatedAt);
     Object.freeze(this);
   }
 

@@ -31,4 +31,19 @@ test("a new Job is Queued and references work without embedding the other aggreg
   assert.equal(restored.updatedAt, 8n);
   assert.equal(restored.subject.kind, "media-asset");
   assert.throws(() => new Job(job.id, job.subject, "archived", 2n, 8n), DomainError);
+  assert.throws(
+    () => new Job(job.id, job.subject, "Queued", 10n, 9n),
+    /createdAt must be less than/,
+  );
+  assert.throws(
+    () =>
+      Job.restore({
+        id: job.id,
+        subject: { kind: "project", projectId: "018f6b6e-7c3a-7111-8d3e-9c0b1a2d3e4f" },
+        status: "Queued",
+        createdAt: "10",
+        updatedAt: "9",
+      }),
+    /createdAt must be less than/,
+  );
 });
