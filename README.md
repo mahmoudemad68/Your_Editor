@@ -49,6 +49,35 @@ pnpm check
 
 That runs the roadmap validator, then build, lint, typecheck, and test.
 
+## Local runtime
+
+Docker Compose starts PostgreSQL, Redis, MinIO, the web app, the API, and the four workers. Application adapters are not implemented yet. The processes load typed configuration and stay up. Workers do not consume jobs.
+
+```bash
+docker compose up
+```
+
+The same stack, waiting until health checks pass:
+
+```bash
+make up
+```
+
+Copy `.env.example` to `.env` only when you need to override a development placeholder. `.env` is git-ignored. The placeholders are not production credentials.
+
+| Command       | What it does                                                                 |
+| ------------- | ---------------------------------------------------------------------------- |
+| `make up`     | `docker compose up -d --wait`                                                |
+| `make down`   | Stop the stack                                                               |
+| `make logs`   | Follow logs                                                                  |
+| `make test`   | `pnpm test`                                                                  |
+| `make seed`   | Check Postgres and Redis, and create the development bucket if it is missing |
+| `make up-gpu` | Start the stack with the NVIDIA profile for the AI worker                    |
+
+`make up-gpu` needs the NVIDIA container runtime. The default `docker compose up` path does not. Details are in [infra/README.md](infra/README.md).
+
+The API exits immediately when `DATABASE_URL` is missing. The risk register and threat model are in [docs/security](docs/security/README.md).
+
 ## Commands
 
 | Command             | What it does                                                   |
@@ -94,9 +123,10 @@ packages/schemas         JSON Schema contracts
 packages/tool-sdk        Tools package marker
 packages/media-core      FFmpeg adapter package marker
 packages/shared          Cross-cutting utilities
-infra/                   Deployment home (Compose is a later story)
+infra/                   Compose stack, MinIO image, seed script
 tests/architecture       Dependency-rule tests and violating fixtures
 docs/architecture        Architecture baseline and ADRs
+docs/security            Risk register and STRIDE threat model
 docs/roadmap             Agile backlog
 tools/architecture       dependency-cruiser rule set
 tools/roadmap            Roadmap generator
@@ -107,4 +137,4 @@ tools/test               Node test coverage runner
 
 Pull requests that target `main` run the checks in [docs/process/pull-requests.md](docs/process/pull-requests.md).
 
-Project CRUD, the web dashboard, authentication, Docker Compose, Redis, BullMQ, PostgreSQL, MinIO, LLM providers, FFmpeg, and Remotion are later Sprint 1 stories. The directories exist so those stories have a place to land. They are not implemented here.
+Project CRUD, the web dashboard, authentication, BullMQ, database repositories, object-storage uploads, LLM providers, FFmpeg, and Remotion are later stories. Compose starts PostgreSQL, Redis, and MinIO for development. The application does not connect them yet.
