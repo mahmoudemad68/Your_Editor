@@ -4,6 +4,10 @@ Ports are interfaces owned by an inner layer. Adapters are infrastructure implem
 
 The composition root of a process binds a port to an adapter. Domain and application code receive the port and do not import the adapter.
 
+## Aggregate repositories
+
+US-104 defines one repository interface per initial aggregate. The interfaces live in the domain module that owns the aggregate. They return domain objects and do not mention an ORM, SQL, or a migration. US-120 implements `ProjectRepository` against Postgres. The other adapters wait for their stories. The diagram and the interface list are in [data-model.md](data-model.md).
+
 ## Shared infrastructure ports
 
 | Port             | Owner of the port                                                  | Defined in                                               | Adapter, when it exists                     | Implementing story |
