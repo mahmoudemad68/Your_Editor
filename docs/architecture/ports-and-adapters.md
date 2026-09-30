@@ -78,7 +78,7 @@ Names match the domain interfaces. This slice does not use an `I` prefix. A row 
 | `ComponentRepository`    | Components | Component manifest record | Later         |
 | `CritiqueRepository`     | Critic     | Critique                  | Later         |
 
-Persistence mapping is an infrastructure concern. US-120 implements `ProjectRepository`. This slice does not add a database.
+Persistence mapping is an infrastructure concern. `PostgresProjectRepository` in the API infrastructure layer implements `ProjectRepository` and restores rows with `Project.restore`. `project_memberships.user_id` does not reference a User table until US-118.
 
 ## Model ports
 

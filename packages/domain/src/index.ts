@@ -68,8 +68,15 @@ export type {
   MediaAssetSnapshot,
   MediaKind,
 } from "./modules/media/index.js";
-export { BrandKit, membershipRole, Project, visibleProjects } from "./modules/projects/index.js";
+export {
+  BrandKit,
+  membershipRole,
+  Project,
+  ProjectConflict,
+  visibleProjects,
+} from "./modules/projects/index.js";
 export type {
+  LoadedProject,
   ProjectMembership,
   ProjectMembershipRole,
   ProjectRepository,

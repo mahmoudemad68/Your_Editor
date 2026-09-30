@@ -70,7 +70,7 @@ const forbidden = [
     comment: "Application depends inward. Adapters and delivery frameworks stay outside.",
     from: { path: "(^|/)application/", pathNot: "node_modules" },
     to: {
-      path: "(^|/)infrastructure/|(^|/)presentation/|(^|/)packages/media-core/|(^|/)packages/tool-sdk/|node_modules/(@nestjs/|next/|react/|react-dom/|express/|bullmq/|typeorm/)",
+      path: "(^|/)infrastructure/|(^|/)presentation/|(^|/)packages/media-core/|(^|/)packages/tool-sdk/|node_modules/(@nestjs/|next/|react/|react-dom/|express/|bullmq/|typeorm/|pg/)",
     },
   },
   {

@@ -2,6 +2,7 @@
 export const projectsModule = "projects" as const;
 
 export { BrandKit } from "./brand-kit.js";
+export { ProjectConflict } from "./project-repository.js";
 export { membershipRole, Project, visibleProjects } from "./project.js";
 export type {
   ProjectMembership,
@@ -9,4 +10,4 @@ export type {
   ProjectMembershipSnapshot,
   ProjectSnapshot,
 } from "./project.js";
-export type { ProjectRepository } from "./project-repository.js";
+export type { LoadedProject, ProjectRepository } from "./project-repository.js";

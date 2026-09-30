@@ -20,6 +20,21 @@ jobs:
     timeout-minutes: 20
     env:
       TURBO_TELEMETRY_DISABLED: "1"
+      DATABASE_URL: postgresql://editagent:editagent-dev-password@localhost:5432/editagent
+    services:
+      postgres:
+        image: postgres:16.10-alpine
+        env:
+          POSTGRES_USER: editagent
+          POSTGRES_PASSWORD: editagent-dev-password
+          POSTGRES_DB: editagent
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U editagent -d editagent"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
     steps:
       - name: Check out repository
         uses: actions/checkout@v7

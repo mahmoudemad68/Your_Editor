@@ -115,6 +115,22 @@ export class Project {
     return this.memberships.find((membership) => membership.userId === memberId)?.role ?? null;
   }
 
+  /**
+   * Owner and Editor may rename. A Viewer, a non-member, and a deleted Project may not.
+   * The command time is compared with this.updatedAt and cannot move it backward.
+   */
+  rename(actorUserId: UserId, newName: string, at: Instant): Project {
+    if (this.deletedAt !== null) {
+      throw new DomainError("A deleted Project cannot be renamed.");
+    }
+    const role = this.roleOf(actorUserId);
+    if (role !== "owner" && role !== "editor") {
+      throw new DomainError("Only an Owner or Editor can rename a Project.");
+    }
+    const when = this.requireMonotonicCommandTime(at);
+    return new Project(this.id, newName, this.memberships, this.createdAt, when, null);
+  }
+
   grantMembership(actorUserId: UserId, memberUserId: UserId, role: string, at: Instant): Project {
     const checkedRole = membershipRole(role);
     this.requireOwner(actorUserId);
