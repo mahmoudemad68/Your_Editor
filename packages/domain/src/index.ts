@@ -51,22 +51,37 @@ export { Job, jobStatus } from "./modules/jobs/index.js";
 export type { JobRepository, JobSnapshot, JobStatus, JobSubject } from "./modules/jobs/index.js";
 export {
   Audio,
+  assertMediaStorageKey,
+  contentSha256,
   DerivedAsset,
   derivedAssetKind,
+  displayFilename,
   Image,
+  MAX_MEDIA_BYTES,
   MAX_MEDIA_DURATION,
+  mediaByteSize,
   mediaDuration,
   mediaKind,
+  mediaStorageKey,
   MediaAsset,
+  MediaAssetConflict,
   Video,
+  videoMimeType,
 } from "./modules/media/index.js";
 export type {
   DerivedAssetKind,
   DerivedAssetRepository,
   DerivedAssetSnapshot,
+  IObjectStorage,
   MediaAssetRepository,
   MediaAssetSnapshot,
   MediaKind,
+  MediaUploadMetadata,
+  ObjectStat,
+  PresignedGet,
+  PresignedPut,
+  PresignPutRequest,
+  VideoMimeType,
 } from "./modules/media/index.js";
 export {
   BrandKit,

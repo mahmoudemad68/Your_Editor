@@ -22,6 +22,16 @@ const storageEnv = {
   S3_REGION: "us-east-1",
 };
 
+const apiStorageEnv = {
+  DATABASE_URL: databaseUrl,
+  S3_ENDPOINT: "http://minio:9000",
+  S3_PUBLIC_ENDPOINT: "http://localhost:9000",
+  S3_BUCKET: "editagent",
+  S3_ACCESS_KEY_ID: "editagent",
+  S3_SECRET_ACCESS_KEY: "editagent-dev-secret",
+  S3_REGION: "us-east-1",
+};
+
 function assertConfigError(run: () => unknown, field: string): void {
   assert.throws(run, (error: unknown) => {
     if (!(error instanceof ConfigurationError)) {
@@ -49,21 +59,37 @@ test("API config fails when DATABASE_URL is not a postgres URL", () => {
 });
 
 test("API config fails when PORT is not a port number", () => {
-  assertConfigError(() => parseApiConfig({ DATABASE_URL: databaseUrl, PORT: "0" }), "PORT");
-  assertConfigError(() => parseApiConfig({ DATABASE_URL: databaseUrl, PORT: "nope" }), "PORT");
+  assertConfigError(() => parseApiConfig({ ...apiStorageEnv, PORT: "0" }), "PORT");
+  assertConfigError(() => parseApiConfig({ ...apiStorageEnv, PORT: "nope" }), "PORT");
 });
 
 test("API config parses a database URL and applies port and host defaults", () => {
-  const config = parseApiConfig({ DATABASE_URL: databaseUrl, PATH: "/usr/bin" });
+  const config = parseApiConfig({ ...apiStorageEnv, PATH: "/usr/bin" });
   assert.equal(config.databaseUrl, databaseUrl);
   assert.equal(config.port, 3001);
   assert.equal(config.host, "0.0.0.0");
+  assert.equal(config.objectStorage.endpoint, "http://minio:9000");
+  assert.equal(config.objectStorage.publicEndpoint, "http://localhost:9000");
+  assert.equal(config.objectStorage.presignTtlSeconds, 900);
 });
 
 test("API config accepts an explicit port and host", () => {
-  const config = parseApiConfig({ DATABASE_URL: databaseUrl, PORT: "3001", HOST: "127.0.0.1" });
+  const config = parseApiConfig({ ...apiStorageEnv, PORT: "3001", HOST: "127.0.0.1" });
   assert.equal(config.port, 3001);
   assert.equal(config.host, "127.0.0.1");
+});
+
+test("API config rejects a missing public object-storage endpoint and a bad presign TTL", () => {
+  const { S3_PUBLIC_ENDPOINT: _ignored, ...withoutPublic } = apiStorageEnv;
+  assertConfigError(() => parseApiConfig(withoutPublic), "S3_PUBLIC_ENDPOINT");
+  assertConfigError(
+    () => parseApiConfig({ ...apiStorageEnv, S3_PRESIGN_TTL_SECONDS: "0" }),
+    "S3_PRESIGN_TTL_SECONDS",
+  );
+  assertConfigError(
+    () => parseApiConfig({ ...apiStorageEnv, S3_PRESIGN_TTL_SECONDS: "59" }),
+    "S3_PRESIGN_TTL_SECONDS",
+  );
 });
 
 test("Web config fails when API_BASE_URL is missing or not http", () => {

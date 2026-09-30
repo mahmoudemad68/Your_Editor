@@ -5,14 +5,21 @@ import { type INestApplication } from "@nestjs/common";
 import {
   instant,
   type Instant,
+  mediaAssetId,
   Project,
   type ProjectId,
   projectId,
   type UserId,
   userId,
 } from "@editagent/domain";
-import { type Clock, type ProjectIdGenerator } from "../application/clock.js";
+import {
+  type Clock,
+  type MediaAssetIdGenerator,
+  type ProjectIdGenerator,
+} from "../application/clock.js";
+import { InMemoryMediaAssetRepository } from "../application/in-memory-media-repository.js";
 import { InMemoryProjectRepository } from "../application/in-memory-project-repository.js";
+import { MemoryObjectStorage } from "../application/memory-object-storage.js";
 import { createApiApplication } from "../create-api-application.js";
 import { bindActor } from "./actor.js";
 
@@ -36,6 +43,21 @@ class OneId implements ProjectIdGenerator {
   }
 }
 
+class FixedMediaId implements MediaAssetIdGenerator {
+  next(): ReturnType<MediaAssetIdGenerator["next"]> {
+    return mediaAssetId("018f6b6e-7c3a-7b2c-8d3e-9c0b1a2d3e4f");
+  }
+}
+
+function uploadDependencies() {
+  return {
+    media: new InMemoryMediaAssetRepository(),
+    objects: new MemoryObjectStorage(),
+    mediaIds: new FixedMediaId(),
+    presignTtlSeconds: 900,
+  };
+}
+
 interface ProjectBody {
   id: string;
   name: string;
@@ -57,6 +79,7 @@ function describeState(): void {
         projects,
         clock: new ManualClock(instant(10n)),
         ids: new OneId(),
+        ...uploadDependencies(),
       },
       (use) => {
         use((request, _response, next) => {
@@ -214,6 +237,7 @@ test("a stale Project revision returns HTTP 409 from the controller", async () =
       projects: repository,
       clock: new ManualClock(instant(10n)),
       ids: new OneId(),
+      ...uploadDependencies(),
     },
     (use) => {
       use((request, _response, next) => {

@@ -12,5 +12,23 @@ export {
   MediaAsset,
   Video,
 } from "./media-asset.js";
-export type { MediaAssetSnapshot, MediaKind } from "./media-asset.js";
+export type { MediaAssetSnapshot, MediaKind, MediaUploadMetadata } from "./media-asset.js";
+export { MediaAssetConflict } from "./media-repository.js";
 export type { DerivedAssetRepository, MediaAssetRepository } from "./media-repository.js";
+export {
+  assertMediaStorageKey,
+  contentSha256,
+  displayFilename,
+  MAX_MEDIA_BYTES,
+  mediaByteSize,
+  mediaStorageKey,
+  videoMimeType,
+} from "./media-upload.js";
+export type { VideoMimeType } from "./media-upload.js";
+export type {
+  IObjectStorage,
+  ObjectStat,
+  PresignedGet,
+  PresignedPut,
+  PresignPutRequest,
+} from "./object-storage.js";

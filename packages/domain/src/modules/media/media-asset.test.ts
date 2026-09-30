@@ -101,6 +101,68 @@ test("MediaAsset restore keeps subtype, duration, and distinct audit timestamps"
   );
 });
 
+test("createUploaded records upload metadata without using the filename as a path", () => {
+  const hash = "ab".repeat(32);
+  const asset = MediaAsset.createUploaded({
+    id: ASSET,
+    projectId: PROJECT,
+    createdAt: NOW,
+    displayFilename: "../../etc/passwd",
+    mimeType: "video/mp4",
+    byteSize: 4n * 1024n * 1024n * 1024n,
+    contentSha256: hash,
+  });
+  assert.equal(asset.kind, "video");
+  assert.equal(asset.duration, null);
+  assert.equal(asset.uploadState, "uploaded");
+  assert.equal(asset.displayFilename, "../../etc/passwd");
+  assert.equal(asset.byteSize, 4n * 1024n * 1024n * 1024n);
+  assert.equal(asset.storageKey, `projects/${PROJECT}/media/sha256/${hash}`);
+  assert.equal(asset.storageKey?.includes(".."), false);
+  assert.equal(asset.storageKey?.includes("passwd"), false);
+  const again = MediaAsset.restore(asset.toSnapshot());
+  assert.equal(again.storageKey, asset.storageKey);
+  assert.throws(
+    () =>
+      MediaAsset.createUploaded({
+        id: ASSET,
+        projectId: PROJECT,
+        createdAt: NOW,
+        displayFilename: "../../etc/passwd",
+        mimeType: "video/mp4",
+        byteSize: 4n * 1024n * 1024n * 1024n + 1n,
+        contentSha256: hash,
+      }),
+    /4 GiB/,
+  );
+  assert.throws(
+    () =>
+      MediaAsset.createUploaded({
+        id: ASSET,
+        projectId: PROJECT,
+        createdAt: NOW,
+        displayFilename: "video.mp4",
+        mimeType: "video/x-msvideo",
+        byteSize: 10,
+        contentSha256: hash,
+      }),
+    /MIME type/,
+  );
+  assert.throws(
+    () =>
+      MediaAsset.createUploaded({
+        id: ASSET,
+        projectId: PROJECT,
+        createdAt: NOW,
+        displayFilename: "bad\u0000name.mp4",
+        mimeType: "video/mp4",
+        byteSize: 10,
+        contentSha256: hash,
+      }),
+    /control characters/,
+  );
+});
+
 test("DerivedAsset is not created as a MediaAsset kind", () => {
   const derived = DerivedAsset.create(
     derivedAssetId("018f6b6e-7c3a-7444-8d3e-9c0b1a2d3e4f"),

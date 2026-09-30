@@ -90,10 +90,14 @@ services:
       DATABASE_URL: *database-url
       PORT: "3001"
       HOST: "0.0.0.0"
+      <<: *object-storage
+      S3_PUBLIC_ENDPOINT: http://localhost:${MINIO_PORT:-9000}
     ports:
       - "${API_PORT:-3001}:3001"
     depends_on:
       postgres:
+        condition: service_healthy
+      minio:
         condition: service_healthy
     healthcheck:
       test:

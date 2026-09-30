@@ -21,13 +21,14 @@ US-104 defines one repository interface per initial aggregate. The interfaces li
 
 Operations the adapter must provide:
 
-- `put(key, body, contentType) → stored object`
+- `put(key, body, contentType, checksumSha256) → stored object`
 - `get(key) → body`
-- `presignPut(key, expiresAt) → URL`
-- `presignGet(key, expiresAt) → URL`
+- `presignPut(key, contentType, checksumSha256, expiresIn) → URL and required headers`
+- `presignGet(key, expiresIn) → URL`
+- `stat(key) → size, content type, and SHA-256 when the object exists`
 - `delete(key)`
 
-Keys are opaque strings allocated by the owning module. The adapter does not interpret module identity. The browser receives a presigned URL and never receives credentials.
+Keys are opaque strings allocated by the owning module. The adapter does not interpret module identity. The browser receives a presigned URL and never receives credentials. US-122 implements this port as `S3ObjectStorage`. Presigned URLs use `S3_PUBLIC_ENDPOINT`. API calls use `S3_ENDPOINT`.
 
 ### `IJobQueue`
 

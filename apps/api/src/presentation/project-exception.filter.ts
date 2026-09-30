@@ -1,6 +1,12 @@
 import { type ArgumentsHost, Catch, type ExceptionFilter, HttpException } from "@nestjs/common";
-import { DomainError, ProjectConflict } from "@editagent/domain";
+import { DomainError, MediaAssetConflict, ProjectConflict } from "@editagent/domain";
 import { ProjectForbiddenError, ProjectNotFoundError } from "../application/project-access.js";
+import {
+  ObjectStorageUnavailable,
+  UploadObjectMismatch,
+  UploadObjectMissing,
+  UploadPolicyError,
+} from "../application/upload-errors.js";
 
 interface HttpReply {
   status(code: number): { json(body: unknown): void };
@@ -23,8 +29,20 @@ export class ProjectExceptionFilter implements ExceptionFilter {
       response.status(403).json({ statusCode: 403, message: exception.message });
       return;
     }
-    if (exception instanceof ProjectConflict) {
+    if (exception instanceof ProjectConflict || exception instanceof MediaAssetConflict) {
       response.status(409).json({ statusCode: 409, message: exception.message });
+      return;
+    }
+    if (exception instanceof UploadPolicyError) {
+      response.status(400).json({ statusCode: 400, message: exception.message });
+      return;
+    }
+    if (exception instanceof UploadObjectMissing || exception instanceof UploadObjectMismatch) {
+      response.status(409).json({ statusCode: 409, message: exception.message });
+      return;
+    }
+    if (exception instanceof ObjectStorageUnavailable) {
+      response.status(502).json({ statusCode: 502, message: exception.message });
       return;
     }
     if (exception instanceof DomainError) {
