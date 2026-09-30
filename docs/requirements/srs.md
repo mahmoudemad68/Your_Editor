@@ -1,15 +1,17 @@
 # Software Requirements Specification
 
-| Field    | Value                                                 |
-| -------- | ----------------------------------------------------- |
-| Product  | EditAgent                                             |
-| Document | SRS                                                   |
-| Version  | 1.0                                                   |
-| Date     | 2026-09-29                                            |
-| Status   | Baseline drafted. Supervisor approval is not granted. |
-| Approval | PENDING HUMAN/SUPERVISOR APPROVAL                     |
+| Field         | Value      |
+| ------------- | ---------- |
+| Product       | EditAgent  |
+| Document      | SRS        |
+| Version       | 1.0        |
+| Date          | 2026-09-29 |
+| Status        | APPROVED   |
+| Approval      | APPROVED   |
+| Approved by   | Supervisor |
+| Approval date | 2026-09-30 |
 
-US-101 AC3 stays pending until a supervisor records approval in the document history below. This pull request does not record that approval.
+The Supervisor approved SRS v1.0 and the MVP boundary on 2026-09-30. That approval is recorded here and satisfies US-101 AC3. No personal name is recorded. The approval does not change the requirements in this version.
 
 ## 1. Purpose
 
@@ -19,9 +21,10 @@ Sequencing stays in the Agile roadmap. Technology stays in accepted ADR-001 thro
 
 ## 2. Document history
 
-| Version | Date       | Change                       | Approval                          |
-| ------- | ---------- | ---------------------------- | --------------------------------- |
-| 1.0     | 2026-09-29 | Initial baseline for US-101. | PENDING HUMAN/SUPERVISOR APPROVAL |
+| Version | Date       | Change                                                                                 | Approval                           |
+| ------- | ---------- | -------------------------------------------------------------------------------------- | ---------------------------------- |
+| 1.0     | 2026-09-29 | Initial baseline for US-101.                                                           | Drafted, then APPROVED             |
+| 1.0     | 2026-09-30 | Supervisor approved SRS v1.0 and the MVP boundary. No text change to the requirements. | APPROVED. Approved by: Supervisor. |
 
 ## 3. Product context
 

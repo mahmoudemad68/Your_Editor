@@ -12,7 +12,7 @@ milestones and ready-to-import CSV files for Jira, Linear and GitHub Projects.
 
 ## Requirements
 
-The Sprint 1 requirements baseline (US-101, US-102) lives in [docs/requirements](docs/requirements/README.md). SRS v1.0 is waiting for supervisor approval.
+The Sprint 1 requirements baseline (US-101, US-102) lives in [docs/requirements](docs/requirements/README.md). The Supervisor approved SRS v1.0 and the MVP boundary on 2026-09-30.
 
 ## Architecture
 
