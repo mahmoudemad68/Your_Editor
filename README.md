@@ -41,7 +41,9 @@ pnpm typecheck
 ```
 
 `pnpm build` also runs `uv sync --frozen` in `workers/ai-worker`, which creates that package's virtual environment
-and installs Ruff, mypy, pytest, and import-linter. Run the Python tools through the package scripts (`pnpm --filter @editagent/ai-worker test`) or from that directory with `uv run`.
+and installs Ruff, mypy, pytest, pytest-cov, and import-linter. Run the Python tools through the package scripts (`pnpm --filter @editagent/ai-worker test`) or from that directory with `uv run`.
+
+`pnpm test` writes coverage reports (`coverage/lcov.info` for TypeScript, `workers/ai-worker/coverage.xml` for the AI worker) and fails if a report is missing. It does not enforce a coverage percentage.
 
 One aggregate check:
 
@@ -51,13 +53,42 @@ pnpm check
 
 That runs the roadmap validator, then build, lint, typecheck, and test.
 
+## Local runtime
+
+Docker Compose starts PostgreSQL, Redis, MinIO, the web app, the API, and the four workers. Application adapters are not implemented yet. The processes load typed configuration and stay up. Workers do not consume jobs.
+
+```bash
+docker compose up
+```
+
+The same stack, waiting until health checks pass:
+
+```bash
+make up
+```
+
+Copy `.env.example` to `.env` only when you need to override a development placeholder. `.env` is git-ignored. The placeholders are not production credentials.
+
+| Command       | What it does                                                                 |
+| ------------- | ---------------------------------------------------------------------------- |
+| `make up`     | `docker compose up -d --wait`                                                |
+| `make down`   | Stop the stack                                                               |
+| `make logs`   | Follow logs                                                                  |
+| `make test`   | `pnpm test`                                                                  |
+| `make seed`   | Check Postgres and Redis, and create the development bucket if it is missing |
+| `make up-gpu` | Start the stack with the NVIDIA profile for the AI worker                    |
+
+`make up-gpu` needs the NVIDIA container runtime. The default `docker compose up` path does not. Details are in [infra/README.md](infra/README.md).
+
+The API exits immediately when `DATABASE_URL` is missing. The risk register and threat model are in [docs/security](docs/security/README.md).
+
 ## Commands
 
 | Command             | What it does                                                   |
 | ------------------- | -------------------------------------------------------------- |
 | `pnpm install`      | Install TypeScript workspace dependencies and set up Git hooks |
 | `pnpm build`        | Build every app, package, and worker                           |
-| `pnpm test`         | Unit tests, plus the architecture-rule tests                   |
+| `pnpm test`         | Unit tests, architecture-rule tests, and coverage reports      |
 | `pnpm lint`         | ESLint, Prettier, dependency-cruiser, Ruff, and import-linter  |
 | `pnpm typecheck`    | `tsc --noEmit` and mypy                                        |
 | `pnpm architecture` | dependency-cruiser and the AI worker's import-linter contracts |
@@ -72,7 +103,7 @@ Git hooks (Husky) run lint-staged on commit and Conventional Commits on the comm
 ```bash
 cd workers/ai-worker
 uv sync --frozen
-uv run pytest
+uv run pytest  # writes coverage.xml
 uv run ruff check .
 uv run ruff format --check .
 uv run mypy
@@ -96,14 +127,18 @@ packages/schemas         JSON Schema contracts
 packages/tool-sdk        Tools package marker
 packages/media-core      FFmpeg adapter package marker
 packages/shared          Cross-cutting utilities
-infra/                   Deployment home (Compose is a later story)
+infra/                   Compose stack, MinIO image, seed script
 tests/architecture       Dependency-rule tests and violating fixtures
 docs/architecture        Architecture baseline and ADRs
+docs/security            Risk register and STRIDE threat model
 docs/roadmap             Agile backlog
 tools/architecture       dependency-cruiser rule set
 tools/roadmap            Roadmap generator
+tools/test               Node test coverage runner
 ```
 
 ## What this scaffold does not include
 
-Project CRUD, the web dashboard, authentication, Docker Compose, the CI pipeline, Redis, BullMQ, PostgreSQL, MinIO, LLM providers, FFmpeg, and Remotion are later Sprint 1 stories. The directories exist so those stories have a place to land. They are not implemented here.
+Pull requests that target `main` run the checks in [docs/process/pull-requests.md](docs/process/pull-requests.md).
+
+Project CRUD, the web dashboard, authentication, BullMQ, database repositories, object-storage uploads, LLM providers, FFmpeg, and Remotion are later stories. Compose starts PostgreSQL, Redis, and MinIO for development. The application does not connect them yet.

@@ -10,3 +10,6 @@ uv.lock
 docs/roadmap
 tools/roadmap
 coverage
+coverage.xml
+.coverage
+htmlcov

@@ -5,11 +5,12 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node --test dist/application/health.test.js",
+    "test": "node ../../tools/test/run-node-tests.mjs dist/application/health.test.js dist/infrastructure/config.test.js",
     "start": "node dist/main.js"
   },
   "dependencies": {
     "@editagent/domain": "workspace:*",
+    "@editagent/shared": "workspace:*",
     "@nestjs/common": "12.1.1",
     "@nestjs/core": "12.1.1",
     "@nestjs/platform-express": "12.1.1",

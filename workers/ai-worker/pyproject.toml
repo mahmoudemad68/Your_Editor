@@ -3,6 +3,10 @@ name = "editagent-ai-worker"
 version = "0.0.0"
 description = "EditAgent AI worker scaffold. Perception models are later stories."
 requires-python = ">=3.11,<3.12"
+dependencies = [
+  "pydantic>=2.10,<3",
+  "pydantic-settings>=2.7,<3",
+]
 
 [project.scripts]
 editagent-ai-worker = "editagent_ai_worker.__main__:main"
@@ -16,6 +20,7 @@ dev = [
   "import-linter>=2.1",
   "mypy>=1.13",
   "pytest>=8.3",
+  "pytest-cov>=6",
   "ruff>=0.8",
 ]
 
@@ -29,12 +34,22 @@ select = ["E", "F", "I", "UP", "B"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Emit a report. Do not set --cov-fail-under here; US-116 owns percentage gates.
+addopts = "--cov --cov-report=term-missing --cov-report=xml"
+
+[tool.coverage.run]
+branch = true
+source = ["editagent_ai_worker"]
+
+[tool.coverage.xml]
+output = "coverage.xml"
 
 [tool.mypy]
 python_version = "3.11"
 strict = true
 files = ["src", "tests"]
 mypy_path = "src"
+plugins = ["pydantic.mypy"]
 
 [tool.importlinter]
 root_packages = ["editagent_ai_worker"]

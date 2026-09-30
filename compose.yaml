@@ -1,0 +1,285 @@
+# EditAgent local runtime (US-114).
+# Development placeholders only. Real credentials stay in an untracked .env.
+# `docker compose up` starts the non-GPU stack. The NVIDIA runtime is opt-in:
+#   docker compose --profile gpu up --scale ai-worker=0
+# or `make up-gpu`.
+
+name: editagent
+
+x-database-url: &database-url postgresql://${POSTGRES_USER:-editagent}:${POSTGRES_PASSWORD:-editagent-dev-password}@postgres:5432/${POSTGRES_DB:-editagent}
+
+x-object-storage: &object-storage
+  S3_ENDPOINT: http://minio:9000
+  S3_BUCKET: ${S3_BUCKET:-editagent}
+  S3_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-editagent}
+  S3_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-editagent-dev-secret}
+  S3_REGION: ${S3_REGION:-us-east-1}
+
+x-ai-environment: &ai-environment
+  DATABASE_URL: *database-url
+  REDIS_URL: redis://redis:6379/0
+  <<: *object-storage
+  EDITAGENT_AI_DEVICE: cpu
+
+services:
+  postgres:
+    image: postgres:16.10-alpine
+    container_name: editagent-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-editagent}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-editagent-dev-password}
+      POSTGRES_DB: ${POSTGRES_DB:-editagent}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", 'pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+
+  redis:
+    image: redis:7.4-alpine
+    container_name: editagent-redis
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    restart: unless-stopped
+
+  minio:
+    build:
+      context: .
+      dockerfile: infra/minio/Dockerfile
+    image: editagent-minio:local
+    container_name: editagent-minio
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-editagent}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-editagent-dev-secret}
+    command: ["server", "/data", "--console-address", ":9001"]
+    ports:
+      - "${MINIO_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    image: editagent-api:local
+    container_name: editagent-api
+    environment:
+      DATABASE_URL: *database-url
+      PORT: "3001"
+      HOST: "0.0.0.0"
+    ports:
+      - "${API_PORT:-3001}:3001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3001/health').then((response)=>process.exit(response.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    restart: "no"
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    image: editagent-web:local
+    container_name: editagent-web
+    environment:
+      API_BASE_URL: http://api:3001
+      PORT: "3000"
+      HOSTNAME: "0.0.0.0"
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/').then((response)=>process.exit(response.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    restart: "no"
+
+  agent-worker:
+    build:
+      context: .
+      dockerfile: workers/agent-worker/Dockerfile
+    image: editagent-agent-worker:local
+    container_name: editagent-agent-worker
+    environment:
+      DATABASE_URL: *database-url
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('node:fs').accessSync('/tmp/editagent.ready')"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    restart: "no"
+
+  media-worker:
+    build:
+      context: .
+      dockerfile: workers/media-worker/Dockerfile
+    image: editagent-media-worker:local
+    container_name: editagent-media-worker
+    environment:
+      DATABASE_URL: *database-url
+      REDIS_URL: redis://redis:6379/0
+      <<: *object-storage
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('node:fs').accessSync('/tmp/editagent.ready')"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    restart: "no"
+
+  render-worker:
+    build:
+      context: .
+      dockerfile: workers/render-worker/Dockerfile
+    image: editagent-render-worker:local
+    container_name: editagent-render-worker
+    environment:
+      DATABASE_URL: *database-url
+      REDIS_URL: redis://redis:6379/0
+      <<: *object-storage
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('node:fs').accessSync('/tmp/editagent.ready')"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    restart: "no"
+
+  ai-worker:
+    build:
+      context: ./workers/ai-worker
+      dockerfile: Dockerfile
+    image: editagent-ai-worker:local
+    container_name: editagent-ai-worker
+    environment: *ai-environment
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "/app/.venv/bin/python",
+          "-c",
+          "import os,sys; sys.exit(0 if os.path.isfile('/tmp/editagent.ready') else 1)",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    restart: "no"
+
+  # Optional GPU profile. `docker compose up` does not start this service.
+  # GPU access is a Compose device reservation. Compose v2.32.4 rejects a scalar
+  # GPU field, so this service uses deploy.resources.reservations.devices.
+  ai-worker-gpu:
+    profiles: ["gpu"]
+    image: editagent-ai-worker:local
+    build:
+      context: ./workers/ai-worker
+      dockerfile: Dockerfile
+    container_name: editagent-ai-worker-gpu
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    environment:
+      <<: *ai-environment
+      EDITAGENT_AI_DEVICE: cuda
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "/app/.venv/bin/python",
+          "-c",
+          "import os,sys; sys.exit(0 if os.path.isfile('/tmp/editagent.ready') else 1)",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    restart: "no"
+
+volumes:
+  postgres-data:
+  redis-data:
+  minio-data:
