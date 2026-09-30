@@ -2,5 +2,5 @@
 export const identityModule = "identity" as const;
 
 export { operatorRole, User } from "./user.js";
-export type { OperatorRole } from "./user.js";
+export type { OperatorRole, UserSnapshot } from "./user.js";
 export type { UserRepository } from "./user-repository.js";

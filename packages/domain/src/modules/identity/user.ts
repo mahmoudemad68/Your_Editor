@@ -1,14 +1,22 @@
 /**
- * Identity aggregate. Credentials and sessions are US-118.
+ * Identity aggregate. Password hashes and refresh sessions are planned in the ER
+ * for US-118. They are not fields on this class yet.
  * The Admin operator role does not create a Project membership.
  */
 
-import { type AuditStamp, type Instant, instant } from "../../kernel/clock.js";
+import { type Instant, instant } from "../../kernel/clock.js";
 import { DomainError } from "../../kernel/error.js";
-import { type UserId } from "../../kernel/id.js";
+import { type UserId, userId } from "../../kernel/id.js";
 
 /** Operator role. It is not Owner, Editor, or Viewer. */
 export type OperatorRole = "admin";
+
+export interface UserSnapshot {
+  readonly id: string;
+  readonly operatorRole: string | null;
+  readonly createdAt: bigint | string;
+  readonly updatedAt: bigint | string;
+}
 
 export class User {
   readonly id: UserId;
@@ -16,16 +24,40 @@ export class User {
   readonly createdAt: Instant;
   readonly updatedAt: Instant;
 
-  private constructor(id: UserId, operatorRole: OperatorRole | null, audit: AuditStamp) {
-    this.id = id;
-    this.operatorRole = operatorRole;
-    this.createdAt = audit.createdAt;
-    this.updatedAt = audit.updatedAt;
+  constructor(
+    id: UserId | string,
+    operatorRoleValue: OperatorRole | string | null,
+    createdAt: Instant | string | bigint,
+    updatedAt?: Instant | string | bigint,
+  ) {
+    const created = instant(createdAt);
+    this.id = userId(String(id));
+    this.operatorRole = operatorRole(operatorRoleValue);
+    this.createdAt = created;
+    this.updatedAt = updatedAt == null ? created : instant(updatedAt);
+    Object.freeze(this);
   }
 
-  static create(id: UserId, createdAt: Instant, operatorRole: OperatorRole | null = null): User {
-    const stamp = instant(createdAt);
-    return new User(id, operatorRole, { createdAt: stamp, updatedAt: stamp });
+  static create(
+    id: UserId,
+    createdAt: Instant,
+    operatorRoleValue: OperatorRole | null = null,
+  ): User {
+    return new User(id, operatorRoleValue, createdAt, createdAt);
+  }
+
+  /** Rebuild a persisted User. Does not replay registration. */
+  static restore(snapshot: UserSnapshot): User {
+    return new User(snapshot.id, snapshot.operatorRole, snapshot.createdAt, snapshot.updatedAt);
+  }
+
+  toSnapshot(): UserSnapshot {
+    return {
+      id: this.id,
+      operatorRole: this.operatorRole,
+      createdAt: this.createdAt,
+      updatedAt: this.updatedAt,
+    };
   }
 
   isAdmin(): boolean {

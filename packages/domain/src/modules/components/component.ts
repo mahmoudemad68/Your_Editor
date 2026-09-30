@@ -1,12 +1,13 @@
 /** Canonical Component name. Remotion manifests and packs are later Components stories. */
 
-import { type ComponentId } from "../../kernel/id.js";
+import { type ComponentId, componentId } from "../../kernel/id.js";
 
 export class Component {
   readonly id: ComponentId;
 
-  private constructor(id: ComponentId) {
-    this.id = id;
+  constructor(id: ComponentId | string) {
+    this.id = componentId(String(id));
+    Object.freeze(this);
   }
 
   static create(id: ComponentId): Component {

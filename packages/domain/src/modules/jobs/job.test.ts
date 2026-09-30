@@ -16,4 +16,19 @@ test("a new Job is Queued and references work without embedding the other aggreg
   assert.equal(Job.name, "Job");
   assert.equal(jobStatus("Failed"), "Failed");
   assert.throws(() => jobStatus("archived"), DomainError);
+  const restored = Job.restore({
+    id: job.id,
+    subject: {
+      kind: "media-asset",
+      mediaAssetId: job.subject.kind === "media-asset" ? job.subject.mediaAssetId : "",
+    },
+    status: "Failed",
+    createdAt: 2n,
+    updatedAt: 8n,
+  });
+  assert.equal(restored.status, "Failed");
+  assert.equal(restored.createdAt, 2n);
+  assert.equal(restored.updatedAt, 8n);
+  assert.equal(restored.subject.kind, "media-asset");
+  assert.throws(() => new Job(job.id, job.subject, "archived", 2n, 8n), DomainError);
 });

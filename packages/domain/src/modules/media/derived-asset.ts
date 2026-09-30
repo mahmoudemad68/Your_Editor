@@ -1,12 +1,26 @@
 /**
  * A product of a MediaAsset. It is not itself a MediaAsset.
+ * The constructor validates kind and timestamps. Storage adapters are later stories.
  */
 
 import { type Instant, instant } from "../../kernel/clock.js";
 import { DomainError } from "../../kernel/error.js";
-import { type DerivedAssetId, type MediaAssetId } from "../../kernel/id.js";
+import {
+  derivedAssetId,
+  type DerivedAssetId,
+  mediaAssetId,
+  type MediaAssetId,
+} from "../../kernel/id.js";
 
 export type DerivedAssetKind = "proxy" | "extracted-audio" | "thumbnail";
+
+export interface DerivedAssetSnapshot {
+  readonly id: string;
+  readonly mediaAssetId: string;
+  readonly kind: string;
+  readonly createdAt: bigint | string;
+  readonly updatedAt: bigint | string;
+}
 
 export class DerivedAsset {
   readonly id: DerivedAssetId;
@@ -15,26 +29,50 @@ export class DerivedAsset {
   readonly createdAt: Instant;
   readonly updatedAt: Instant;
 
-  private constructor(
-    id: DerivedAssetId,
-    mediaAssetId: MediaAssetId,
-    kind: DerivedAssetKind,
-    createdAt: Instant,
+  constructor(
+    id: DerivedAssetId | string,
+    mediaAssetIdValue: MediaAssetId | string,
+    kind: string,
+    createdAt: Instant | string | bigint,
+    updatedAt?: Instant | string | bigint,
   ) {
-    this.id = id;
-    this.mediaAssetId = mediaAssetId;
-    this.kind = kind;
-    this.createdAt = createdAt;
-    this.updatedAt = createdAt;
+    const created = instant(createdAt);
+    this.id = derivedAssetId(String(id));
+    this.mediaAssetId = mediaAssetId(String(mediaAssetIdValue));
+    this.kind = derivedAssetKind(kind);
+    this.createdAt = created;
+    this.updatedAt = updatedAt == null ? created : instant(updatedAt);
+    Object.freeze(this);
   }
 
   static create(
     id: DerivedAssetId,
-    mediaAssetId: MediaAssetId,
+    mediaAssetIdValue: MediaAssetId,
     kind: string,
     createdAt: Instant,
   ): DerivedAsset {
-    return new DerivedAsset(id, mediaAssetId, derivedAssetKind(kind), instant(createdAt));
+    return new DerivedAsset(id, mediaAssetIdValue, kind, createdAt, createdAt);
+  }
+
+  /** Rebuild a persisted DerivedAsset. Does not regenerate bytes. */
+  static restore(snapshot: DerivedAssetSnapshot): DerivedAsset {
+    return new DerivedAsset(
+      snapshot.id,
+      snapshot.mediaAssetId,
+      snapshot.kind,
+      snapshot.createdAt,
+      snapshot.updatedAt,
+    );
+  }
+
+  toSnapshot(): DerivedAssetSnapshot {
+    return {
+      id: this.id,
+      mediaAssetId: this.mediaAssetId,
+      kind: this.kind,
+      createdAt: this.createdAt,
+      updatedAt: this.updatedAt,
+    };
   }
 }
 

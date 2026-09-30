@@ -50,6 +50,44 @@ test("MediaAsset rejects an unknown subtype and an over-limit duration", () => {
   assert.equal(atLimit.duration, 1_800_000_000n);
 });
 
+test("direct Video, Audio, and Image constructors enforce the duration invariant", () => {
+  for (const Subtype of [Video, Audio, Image]) {
+    assert.equal(new Subtype(ASSET, PROJECT, NOW, 1_800_000_000n).duration, 1_800_000_000n);
+    assert.throws(() => new Subtype(ASSET, PROJECT, NOW, 1_800_000_001n), DomainError);
+    assert.throws(() => new Subtype(ASSET, PROJECT, NOW, -1n));
+    assert.throws(() => new Subtype(ASSET, PROJECT, NOW, "1.5"));
+    assert.throws(() => new Subtype(ASSET, PROJECT, -1n, null));
+    assert.throws(() => new Subtype(ASSET, PROJECT, "1.5", null));
+  }
+});
+
+test("MediaAsset restore keeps subtype, duration, and distinct audit timestamps", () => {
+  const restored = MediaAsset.restore({
+    id: ASSET,
+    projectId: PROJECT,
+    kind: "audio",
+    duration: 1500n,
+    createdAt: 10n,
+    updatedAt: 25n,
+  });
+  assert.equal(restored instanceof Audio, true);
+  assert.equal(restored.duration, 1500n);
+  assert.equal(restored.createdAt, 10n);
+  assert.equal(restored.updatedAt, 25n);
+  assert.throws(
+    () =>
+      MediaAsset.restore({
+        id: ASSET,
+        projectId: PROJECT,
+        kind: "video",
+        duration: 1_800_000_001n,
+        createdAt: NOW,
+        updatedAt: NOW,
+      }),
+    DomainError,
+  );
+});
+
 test("DerivedAsset is not created as a MediaAsset kind", () => {
   const derived = DerivedAsset.create(
     derivedAssetId("018f6b6e-7c3a-7444-8d3e-9c0b1a2d3e4f"),
@@ -60,4 +98,26 @@ test("DerivedAsset is not created as a MediaAsset kind", () => {
   assert.equal(derived.kind, "thumbnail");
   assert.equal(DerivedAsset.name, "DerivedAsset");
   assert.throws(() => DerivedAsset.create(derived.id, ASSET, "video", NOW), DomainError);
+  assert.throws(() => new DerivedAsset(derived.id, ASSET, "video", NOW), DomainError);
+  const restored = DerivedAsset.restore({
+    id: derived.id,
+    mediaAssetId: ASSET,
+    kind: "proxy",
+    createdAt: 3n,
+    updatedAt: 9n,
+  });
+  assert.equal(restored.kind, "proxy");
+  assert.equal(restored.createdAt, 3n);
+  assert.equal(restored.updatedAt, 9n);
+  assert.throws(
+    () =>
+      DerivedAsset.restore({
+        id: derived.id,
+        mediaAssetId: ASSET,
+        kind: "clip",
+        createdAt: 3n,
+        updatedAt: 9n,
+      }),
+    DomainError,
+  );
 });

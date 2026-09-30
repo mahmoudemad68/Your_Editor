@@ -1,16 +1,22 @@
 /**
  * Canonical Editing names. Command application, undo, and the timeline UI are later stories.
  * Positions are integer microseconds (ADR-008). There is no floating-point timeline time.
+ * Constructors validate their own arguments so a JavaScript caller cannot skip the factory.
  */
 
 import { type Instant, instant } from "../../kernel/clock.js";
 import { DomainError } from "../../kernel/error.js";
 import {
   type ClipId,
+  clipId,
   type EffectId,
+  effectId,
   type ProjectId,
+  projectId,
   type TimelineId,
+  timelineId,
   type TrackId,
+  trackId,
 } from "../../kernel/id.js";
 import { microseconds, type Microseconds } from "../../kernel/time.js";
 
@@ -19,14 +25,19 @@ export class Timeline {
   readonly projectId: ProjectId;
   readonly createdAt: Instant;
 
-  private constructor(id: TimelineId, projectId: ProjectId, createdAt: Instant) {
-    this.id = id;
-    this.projectId = projectId;
-    this.createdAt = createdAt;
+  constructor(
+    id: TimelineId | string,
+    projectIdValue: ProjectId | string,
+    createdAt: Instant | string | bigint,
+  ) {
+    this.id = timelineId(String(id));
+    this.projectId = projectId(String(projectIdValue));
+    this.createdAt = instant(createdAt);
+    Object.freeze(this);
   }
 
-  static create(id: TimelineId, projectId: ProjectId, createdAt: Instant): Timeline {
-    return new Timeline(id, projectId, instant(createdAt));
+  static create(id: TimelineId, projectIdValue: ProjectId, createdAt: Instant): Timeline {
+    return new Timeline(id, projectIdValue, createdAt);
   }
 }
 
@@ -34,13 +45,14 @@ export class Track {
   readonly id: TrackId;
   readonly timelineId: TimelineId;
 
-  private constructor(id: TrackId, timelineId: TimelineId) {
-    this.id = id;
-    this.timelineId = timelineId;
+  constructor(id: TrackId | string, timelineIdValue: TimelineId | string) {
+    this.id = trackId(String(id));
+    this.timelineId = timelineId(String(timelineIdValue));
+    Object.freeze(this);
   }
 
-  static create(id: TrackId, timelineId: TimelineId): Track {
-    return new Track(id, timelineId);
+  static create(id: TrackId, timelineIdValue: TimelineId): Track {
+    return new Track(id, timelineIdValue);
   }
 }
 
@@ -50,19 +62,12 @@ export class Clip {
   readonly inPoint: Microseconds;
   readonly outPoint: Microseconds;
 
-  private constructor(id: ClipId, trackId: TrackId, inPoint: Microseconds, outPoint: Microseconds) {
-    this.id = id;
-    this.trackId = trackId;
-    this.inPoint = inPoint;
-    this.outPoint = outPoint;
-  }
-
-  static create(
-    id: ClipId,
-    trackId: TrackId,
-    inPoint: bigint | string,
-    outPoint: bigint | string,
-  ): Clip {
+  constructor(
+    id: ClipId | string,
+    trackIdValue: TrackId | string,
+    inPoint: Microseconds | bigint | string,
+    outPoint: Microseconds | bigint | string,
+  ) {
     const start = microseconds(inPoint);
     const end = microseconds(outPoint);
     if (end <= start) {
@@ -70,7 +75,20 @@ export class Clip {
         "Clip out-point must be greater than its in-point, in integer microseconds.",
       );
     }
-    return new Clip(id, trackId, start, end);
+    this.id = clipId(String(id));
+    this.trackId = trackId(String(trackIdValue));
+    this.inPoint = start;
+    this.outPoint = end;
+    Object.freeze(this);
+  }
+
+  static create(
+    id: ClipId,
+    trackIdValue: TrackId,
+    inPoint: bigint | string,
+    outPoint: bigint | string,
+  ): Clip {
+    return new Clip(id, trackIdValue, inPoint, outPoint);
   }
 }
 
@@ -78,12 +96,13 @@ export class Effect {
   readonly id: EffectId;
   readonly clipId: ClipId;
 
-  private constructor(id: EffectId, clipId: ClipId) {
-    this.id = id;
-    this.clipId = clipId;
+  constructor(id: EffectId | string, clipIdValue: ClipId | string) {
+    this.id = effectId(String(id));
+    this.clipId = clipId(String(clipIdValue));
+    Object.freeze(this);
   }
 
-  static create(id: EffectId, clipId: ClipId): Effect {
-    return new Effect(id, clipId);
+  static create(id: EffectId, clipIdValue: ClipId): Effect {
+    return new Effect(id, clipIdValue);
   }
 }

@@ -3,21 +3,33 @@
  */
 
 import { type Instant, instant } from "../../kernel/clock.js";
-import { type AgentRunId, type CreativeMemoryId, type ProjectId } from "../../kernel/id.js";
+import {
+  type AgentRunId,
+  agentRunId,
+  type CreativeMemoryId,
+  creativeMemoryId,
+  type ProjectId,
+  projectId,
+} from "../../kernel/id.js";
 
 export class AgentRun {
   readonly id: AgentRunId;
   readonly projectId: ProjectId;
   readonly createdAt: Instant;
 
-  private constructor(id: AgentRunId, projectId: ProjectId, createdAt: Instant) {
-    this.id = id;
-    this.projectId = projectId;
-    this.createdAt = createdAt;
+  constructor(
+    id: AgentRunId | string,
+    projectIdValue: ProjectId | string,
+    createdAt: Instant | string | bigint,
+  ) {
+    this.id = agentRunId(String(id));
+    this.projectId = projectId(String(projectIdValue));
+    this.createdAt = instant(createdAt);
+    Object.freeze(this);
   }
 
-  static create(id: AgentRunId, projectId: ProjectId, createdAt: Instant): AgentRun {
-    return new AgentRun(id, projectId, instant(createdAt));
+  static create(id: AgentRunId, projectIdValue: ProjectId, createdAt: Instant): AgentRun {
+    return new AgentRun(id, projectIdValue, createdAt);
   }
 }
 
@@ -25,12 +37,13 @@ export class CreativeMemory {
   readonly id: CreativeMemoryId;
   readonly projectId: ProjectId;
 
-  private constructor(id: CreativeMemoryId, projectId: ProjectId) {
-    this.id = id;
-    this.projectId = projectId;
+  constructor(id: CreativeMemoryId | string, projectIdValue: ProjectId | string) {
+    this.id = creativeMemoryId(String(id));
+    this.projectId = projectId(String(projectIdValue));
+    Object.freeze(this);
   }
 
-  static create(id: CreativeMemoryId, projectId: ProjectId): CreativeMemory {
-    return new CreativeMemory(id, projectId);
+  static create(id: CreativeMemoryId, projectIdValue: ProjectId): CreativeMemory {
+    return new CreativeMemory(id, projectIdValue);
   }
 }

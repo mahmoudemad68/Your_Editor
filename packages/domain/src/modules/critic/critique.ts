@@ -1,17 +1,18 @@
 /** Canonical Critique name. Quality checks and refinement are later Critic stories. */
 
-import { type CritiqueId, type ProjectId } from "../../kernel/id.js";
+import { type CritiqueId, critiqueId, type ProjectId, projectId } from "../../kernel/id.js";
 
 export class Critique {
   readonly id: CritiqueId;
   readonly projectId: ProjectId;
 
-  private constructor(id: CritiqueId, projectId: ProjectId) {
-    this.id = id;
-    this.projectId = projectId;
+  constructor(id: CritiqueId | string, projectIdValue: ProjectId | string) {
+    this.id = critiqueId(String(id));
+    this.projectId = projectId(String(projectIdValue));
+    Object.freeze(this);
   }
 
-  static create(id: CritiqueId, projectId: ProjectId): Critique {
-    return new Critique(id, projectId);
+  static create(id: CritiqueId, projectIdValue: ProjectId): Critique {
+    return new Critique(id, projectIdValue);
   }
 }

@@ -2,7 +2,7 @@
 export const mediaModule = "media" as const;
 
 export { DerivedAsset, derivedAssetKind } from "./derived-asset.js";
-export type { DerivedAssetKind } from "./derived-asset.js";
+export type { DerivedAssetKind, DerivedAssetSnapshot } from "./derived-asset.js";
 export {
   Audio,
   Image,
@@ -12,5 +12,5 @@ export {
   MediaAsset,
   Video,
 } from "./media-asset.js";
-export type { MediaKind } from "./media-asset.js";
+export type { MediaAssetSnapshot, MediaKind } from "./media-asset.js";
 export type { DerivedAssetRepository, MediaAssetRepository } from "./media-repository.js";

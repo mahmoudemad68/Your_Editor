@@ -61,23 +61,24 @@ A chain of providers (local, then internet, then generation) is a later Assets s
 
 Each aggregate has one repository port. ORM types stay in the adapter. The domain package must not import an ORM.
 
-| Port                      | Module     | Aggregate                 |
-| ------------------------- | ---------- | ------------------------- |
-| `IUserRepository`         | Identity   | User                      |
-| `ISessionRepository`      | Identity   | Session                   |
-| `IProjectRepository`      | Projects   | Project                   |
-| `IBrandKitRepository`     | Projects   | BrandKit                  |
-| `IMediaAssetRepository`   | Media      | MediaAsset                |
-| `IDerivedAssetRepository` | Media      | DerivedAsset              |
-| `IAnalysisRepository`     | Analysis   | MediaAnalysis             |
-| `ITimelineRepository`     | Editing    | Timeline                  |
-| `IJobRepository`          | Jobs       | Job                       |
-| `IAgentRunRepository`     | Agent      | AgentRun                  |
-| `IAssetRepository`        | Assets     | Asset                     |
-| `IComponentRepository`    | Components | Component manifest record |
-| `ICritiqueRepository`     | Critic     | Critique                  |
+Names match the domain interfaces. This slice does not use an `I` prefix. A row marked later is a planned port, not an interface in the package yet.
 
-Persistence mapping is an infrastructure concern (US-104 and the story that introduces each aggregate). This slice does not add a database.
+| Port                     | Module     | Aggregate                 | In this slice |
+| ------------------------ | ---------- | ------------------------- | ------------- |
+| `UserRepository`         | Identity   | User                      | Yes           |
+| `ProjectRepository`      | Projects   | Project                   | Yes           |
+| `MediaAssetRepository`   | Media      | MediaAsset                | Yes           |
+| `DerivedAssetRepository` | Media      | DerivedAsset              | Yes           |
+| `JobRepository`          | Jobs       | Job                       | Yes           |
+| `SessionRepository`      | Identity   | Refresh session           | Later, US-118 |
+| `AnalysisRepository`     | Analysis   | MediaAnalysis             | Later         |
+| `TimelineRepository`     | Editing    | Timeline                  | Later         |
+| `AgentRunRepository`     | Agent      | AgentRun                  | Later         |
+| `AssetRepository`        | Assets     | Asset                     | Later         |
+| `ComponentRepository`    | Components | Component manifest record | Later         |
+| `CritiqueRepository`     | Critic     | Critique                  | Later         |
+
+Persistence mapping is an infrastructure concern. US-120 implements `ProjectRepository`. This slice does not add a database.
 
 ## Model ports
 

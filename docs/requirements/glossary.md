@@ -1,6 +1,6 @@
 # Domain glossary
 
-Ubiquitous language for US-102. The twelve names in the canonical table are fixed spellings. US-104 must use those spellings as domain type names. US-104 is not implemented in this pull request, so US-102 AC2 is not fully verified yet. This glossary is the contract that verification will check.
+Ubiquitous language for US-102. The twelve names in the canonical table are fixed spellings. US-104 introduces each of them as a domain class with that exact spelling. The class-name contract is verified. Later stories still own the behavior of Timeline, Track, Clip, Effect, Tool, Component, AgentRun, Critique, BrandKit, and CreativeMemory.
 
 Architecture modules and accepted ADR-001 through ADR-008 decide ownership and technology. A glossary entry does not move a feature into the MVP. Scope for each capability is in the [SRS](srs.md).
 
@@ -44,4 +44,21 @@ These names are not in the US-102 mandatory list. They are included so later sto
 
 ## Verification of US-102 AC2
 
-The canonical names above are the contract. Full verification is: when US-104 adds the domain model, each canonical name appears as a type name with that exact spelling. This pull request does not add those types and does not mark AC2 verified.
+US-102 AC2 is satisfied for the class-name contract. Each canonical name is a domain class:
+
+| Canonical name | Class            | Module     |
+| -------------- | ---------------- | ---------- |
+| MediaAsset     | `MediaAsset`     | Media      |
+| Project        | `Project`        | Projects   |
+| Timeline       | `Timeline`       | Editing    |
+| Track          | `Track`          | Editing    |
+| Clip           | `Clip`           | Editing    |
+| Effect         | `Effect`         | Editing    |
+| Tool           | `Tool`           | Tools      |
+| Component      | `Component`      | Components |
+| AgentRun       | `AgentRun`       | Agent      |
+| Critique       | `Critique`       | Critic     |
+| BrandKit       | `BrandKit`       | Projects   |
+| CreativeMemory | `CreativeMemory` | Agent      |
+
+`packages/domain/src/canonical-names.test.ts` asserts those `class.name` values. That test does not claim Timeline editing, tool execution, or the agent loop are implemented.
