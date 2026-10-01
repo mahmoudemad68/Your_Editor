@@ -1,7 +1,7 @@
 "use client";
 
 import { useParams } from "next/navigation";
-import { hashFileInWorker } from "../../upload-hash";
+import { hashFileInWorker } from "../../../presentation/upload-hash";
 import { browserProjectApi } from "../../../presentation/browser-project-api";
 import { ProjectScreen } from "../../../presentation/project-screen";
 import { AppShell } from "../../../presentation/shell";

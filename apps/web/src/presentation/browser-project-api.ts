@@ -28,21 +28,24 @@ export const browserProjectApi: ProjectApi = {
     }),
   deleteProject: (projectId) =>
     request<void>(`/api/projects/${encodeURIComponent(projectId)}`, { method: "DELETE" }),
-  beginUpload: (projectId, body) =>
+  beginUpload: (projectId, body, options) =>
     request<BeginUpload>(`/api/projects/${encodeURIComponent(projectId)}/uploads`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
+      signal: options?.signal,
     }),
-  completeUpload: (projectId, body) =>
+  completeUpload: (projectId, body, options) =>
     request<MediaAssetRecord>(`/api/projects/${encodeURIComponent(projectId)}/uploads/complete`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
+      signal: options?.signal,
     }),
-  getMediaDetails: (projectId, mediaAssetId) =>
+  getMediaDetails: (projectId, mediaAssetId, options) =>
     request<MediaDetails>(
       `/api/projects/${encodeURIComponent(projectId)}/media/${encodeURIComponent(mediaAssetId)}`,
+      { signal: options?.signal },
     ),
 };
 

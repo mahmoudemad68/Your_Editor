@@ -1,4 +1,4 @@
-import { hashBlob } from "../presentation/sha256-file";
+import { hashBlob } from "./sha256-file";
 
 interface WorkerScope {
   onmessage: ((event: MessageEvent<{ file: Blob }>) => void) | null;

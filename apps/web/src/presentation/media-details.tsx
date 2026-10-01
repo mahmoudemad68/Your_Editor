@@ -7,22 +7,33 @@ import { Button } from "./ui/button";
 export function MediaDetailsPanel({
   details,
   refreshing,
+  refreshError,
   onRefresh,
 }: {
   details: MediaDetails;
   refreshing: boolean;
+  refreshError?: string | null;
   onRefresh: () => void;
 }) {
   const pending = details.inspectionStatus === "pending";
   const failed = details.inspectionStatus === "failed";
   return (
-    <section className="mt-6 min-w-0 rounded-lg border border-line bg-panel p-4" aria-live="polite">
+    <section
+      className="mt-6 min-w-0 rounded-lg border border-line bg-panel p-4"
+      aria-live="polite"
+      data-media-id={details.id}
+    >
       <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
         <h2 className="text-lg font-semibold">Media details</h2>
-        <Button variant="secondary" onClick={onRefresh} disabled={refreshing}>
-          {refreshing ? "Refreshing…" : "Refresh details"}
+        <Button variant="secondary" onClick={onRefresh} aria-busy={refreshing}>
+          Refresh details
         </Button>
       </div>
+      {refreshError ? (
+        <p className="mt-2 text-sm text-danger" role="alert">
+          {refreshError}
+        </p>
+      ) : null}
       <p className="overflow-anywhere mt-2 text-sm text-muted">
         {details.displayFilename ?? "Unavailable"}
       </p>

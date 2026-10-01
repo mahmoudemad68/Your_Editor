@@ -1,8 +1,9 @@
-import { hashBlob, type HashOptions } from "../presentation/sha256-file";
+import { hashBlob, type HashOptions } from "./sha256-file";
 
 /**
- * Hashes a file off the UI thread. Falls back to chunked hashing in this
- * thread if the worker cannot start. US-118 does not change this step.
+ * Hashes a file off the UI thread. The bundler turns this URL into a JavaScript
+ * worker chunk. If that chunk cannot start, hashing falls back to the same
+ * chunked function on this thread.
  */
 export function hashFileInWorker(file: Blob, options: HashOptions = {}): Promise<string> {
   if (typeof Worker === "undefined") {
@@ -47,7 +48,8 @@ export function hashFileInWorker(file: Blob, options: HashOptions = {}): Promise
       if (data.type === "progress" && data.loaded !== undefined && data.total !== undefined) {
         options.onProgress?.(data.loaded, data.total);
       } else if (data.type === "done" && typeof data.hex === "string") {
-        finish(() => resolve(data.hex as string));
+        const hex = data.hex;
+        finish(() => resolve(hex));
       } else if (data.type === "error") {
         finish(() => reject(new Error(data.message ?? "Hashing failed.")));
       }

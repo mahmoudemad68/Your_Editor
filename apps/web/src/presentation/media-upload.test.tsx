@@ -1,7 +1,7 @@
 import "./dom-setup";
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { MediaDetails, ProjectApi, ProjectRecord } from "../project-contract";
 import { MediaDetailsPanel } from "./media-details";
 import { MediaWorkspace } from "./media-upload";
@@ -395,4 +395,371 @@ test("a viewer cannot upload and a long filename wraps", async () => {
   assert.ok(shown.className.includes("overflow-anywhere"));
   assert.ok(screen.getByText("Drop a video here").parentElement?.className.includes("min-w-0"));
   cleanup();
+});
+
+const ID_A = "018f6b6e-7c3a-7b2c-8d3e-9c0b1a2d3e4f";
+const ID_B = "018f6b6e-7c3a-7b2d-8d3e-9c0b1a2d3e4f";
+
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve: (value: T) => void = () => undefined;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+function recorded(id: string, name: string) {
+  return {
+    id,
+    projectId: PROJECT,
+    kind: "video" as const,
+    displayFilename: name,
+    mimeType: "video/mp4",
+    byteSize: "3",
+    createdAt: "1700000000000",
+  };
+}
+
+test("a delayed refresh for the previous asset cannot replace the new asset", async () => {
+  cleanup();
+  const reads = [] as Array<
+    ReturnType<typeof deferred<Awaited<ReturnType<ProjectApi["getMediaDetails"]>>>>
+  >;
+  let completed = 0;
+  render(
+    <MediaWorkspace
+      project={project("owner")}
+      api={workspaceApi({
+        begin: async () => ({
+          ok: true,
+          data: {
+            uploadUrl: "http://storage.test/put",
+            storageKey: "key",
+            expiresAt: "1",
+            requiredHeaders: HEADERS,
+          },
+        }),
+        complete: async () => {
+          completed += 1;
+          const id = completed === 1 ? ID_A : ID_B;
+          const name = completed === 1 ? "alpha.mp4" : "beta.mp4";
+          return { ok: true, data: recorded(id, name) };
+        },
+        details: () => {
+          const pending = deferred<Awaited<ReturnType<ProjectApi["getMediaDetails"]>>>();
+          reads.push(pending);
+          return pending.promise;
+        },
+      })}
+      hashFile={async () => "ab".repeat(32)}
+      putObject={async () => ({ ok: true, status: 200 })}
+    />,
+  );
+  fireEvent.change(screen.getByLabelText("Choose a video"), {
+    target: { files: [video("alpha.mp4", "video/mp4")] },
+  });
+  await waitFor(() => assert.equal(reads.length, 1));
+  reads[0]!.resolve({
+    ok: true,
+    data: details("pending", { id: ID_A, displayFilename: "alpha.mp4" }),
+  });
+  await waitFor(() =>
+    assert.equal(document.querySelector("[data-media-id]")?.getAttribute("data-media-id"), ID_A),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Refresh details" }));
+  await waitFor(() => assert.equal(reads.length, 2));
+  fireEvent.change(screen.getByLabelText("Choose a video"), {
+    target: { files: [video("beta.mp4", "video/mp4")] },
+  });
+  await waitFor(() => assert.equal(reads.length, 3));
+  reads[2]!.resolve({
+    ok: true,
+    data: details("completed", {
+      id: ID_B,
+      displayFilename: "beta.mp4",
+      videoCodec: "h264",
+    }),
+  });
+  await waitFor(() =>
+    assert.equal(document.querySelector("[data-media-id]")?.getAttribute("data-media-id"), ID_B),
+  );
+  reads[1]!.resolve({
+    ok: true,
+    data: details("completed", {
+      id: ID_A,
+      displayFilename: "alpha.mp4",
+      videoCodec: "vp9",
+    }),
+  });
+  await act(async () => {
+    await Promise.resolve();
+  });
+  assert.equal(document.querySelector("[data-media-id]")?.getAttribute("data-media-id"), ID_B);
+  assert.ok(screen.getAllByText(/beta\.mp4/).length >= 1);
+  assert.equal(screen.queryAllByText(/alpha\.mp4/).length, 0);
+  assert.equal(screen.queryAllByText("vp9").length, 0);
+  assert.ok(screen.getAllByText("h264").length >= 1);
+  cleanup();
+});
+
+test("an older pending response cannot revert a completed inspection", async () => {
+  cleanup();
+  const reads = [] as Array<
+    ReturnType<typeof deferred<Awaited<ReturnType<ProjectApi["getMediaDetails"]>>>>
+  >;
+  render(
+    <MediaWorkspace
+      project={project("owner")}
+      api={workspaceApi({
+        begin: async () => ({
+          ok: true,
+          data: {
+            uploadUrl: "http://storage.test/put",
+            storageKey: "key",
+            expiresAt: "1",
+            requiredHeaders: HEADERS,
+          },
+        }),
+        complete: async () => ({ ok: true, data: recorded(ID_A, "clip.mp4") }),
+        details: () => {
+          const pending = deferred<Awaited<ReturnType<ProjectApi["getMediaDetails"]>>>();
+          reads.push(pending);
+          return pending.promise;
+        },
+      })}
+      hashFile={async () => "ab".repeat(32)}
+      putObject={async () => ({ ok: true, status: 200 })}
+    />,
+  );
+  fireEvent.change(screen.getByLabelText("Choose a video"), {
+    target: { files: [video("clip.mp4", "video/mp4")] },
+  });
+  await waitFor(() => assert.equal(reads.length, 1));
+  reads[0]!.resolve({
+    ok: true,
+    data: details("pending", { id: ID_A, displayFilename: "clip.mp4" }),
+  });
+  await screen.findByText("pending");
+  fireEvent.click(screen.getByRole("button", { name: "Refresh details" }));
+  fireEvent.click(screen.getByRole("button", { name: "Refresh details" }));
+  await waitFor(() => assert.equal(reads.length, 3));
+  reads[2]!.resolve({
+    ok: true,
+    data: details("completed", { id: ID_A, displayFilename: "clip.mp4", videoCodec: "h264" }),
+  });
+  await screen.findByText("h264");
+  reads[1]!.resolve({
+    ok: true,
+    data: details("pending", { id: ID_A, displayFilename: "clip.mp4" }),
+  });
+  await act(async () => {
+    await Promise.resolve();
+  });
+  assert.equal(screen.getByText("completed").textContent, "completed");
+  assert.ok(screen.getAllByText("h264").length >= 1);
+  assert.equal(screen.queryByText("pending"), null);
+  cleanup();
+});
+
+test("a late hashing progress event cannot revive a cancelled upload", async () => {
+  cleanup();
+  let begins = 0;
+  render(
+    <MediaWorkspace
+      project={project("owner")}
+      api={workspaceApi({
+        begin: async () => {
+          begins += 1;
+          return { ok: false, status: 401, message: "Sign in is required." };
+        },
+      })}
+      hashFile={(file, options) => {
+        if (!(file instanceof File) || file.name !== "late.mp4") {
+          return Promise.resolve("cd".repeat(32));
+        }
+        return new Promise((_resolve, reject) => {
+          options?.signal?.addEventListener("abort", () => {
+            setTimeout(() => {
+              options.onProgress?.(4, 4);
+              reject(new DOMException("The hash was cancelled.", "AbortError"));
+            }, 0);
+          });
+        });
+      }}
+    />,
+  );
+  fireEvent.change(screen.getByLabelText("Choose a video"), {
+    target: { files: [video("late.mp4", "video/mp4")] },
+  });
+  await screen.findByText("Calculating SHA-256.");
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  await screen.findByText(/was cancelled/);
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  });
+  assert.equal(screen.queryByText(/late\.mp4/), null);
+  assert.equal(screen.queryByText("Calculating SHA-256."), null);
+  assert.equal(begins, 0);
+  fireEvent.change(screen.getByLabelText("Choose a video"), {
+    target: { files: [video("next.mp4", "video/mp4")] },
+  });
+  await screen.findByText("Sign in is required.");
+  assert.equal(begins, 1);
+  assert.equal(screen.queryByText(/late\.mp4/), null);
+  assert.equal(screen.queryByText("Calculating SHA-256."), null);
+  assert.equal(
+    screen.getByText("The file was not uploaded.").textContent,
+    "The file was not uploaded.",
+  );
+  cleanup();
+});
+
+test("only one upload starts when two files are chosen in the same turn", async () => {
+  cleanup();
+  let hashes = 0;
+  render(
+    <MediaWorkspace
+      project={project("owner")}
+      api={workspaceApi({})}
+      hashFile={() => {
+        hashes += 1;
+        return new Promise(() => undefined);
+      }}
+    />,
+  );
+  const input = screen.getByLabelText("Choose a video");
+  fireEvent.change(input, { target: { files: [video("one.mp4", "video/mp4")] } });
+  fireEvent.change(input, { target: { files: [video("two.mp4", "video/mp4")] } });
+  assert.equal(hashes, 1);
+  assert.ok(screen.getByText(/one\.mp4/));
+  assert.equal(screen.queryByText(/two\.mp4/), null);
+  cleanup();
+});
+
+test("late begin, complete, and details results do not update an unmounted page", async () => {
+  cleanup();
+  const warnings: string[] = [];
+  const original = console.error;
+  console.error = (...args: unknown[]) => {
+    warnings.push(args.map((item) => String(item)).join(" "));
+  };
+  try {
+    const begin = deferred<Awaited<ReturnType<ProjectApi["beginUpload"]>>>();
+    const complete = deferred<Awaited<ReturnType<ProjectApi["completeUpload"]>>>();
+    const detailsRead = deferred<Awaited<ReturnType<ProjectApi["getMediaDetails"]>>>();
+    const view = render(
+      <MediaWorkspace
+        project={project("owner")}
+        api={workspaceApi({
+          begin: () => begin.promise,
+          complete: () => complete.promise,
+          details: () => detailsRead.promise,
+        })}
+        hashFile={async () => "ab".repeat(32)}
+        putObject={async () => ({ ok: true, status: 200 })}
+      />,
+    );
+    fireEvent.change(screen.getByLabelText("Choose a video"), {
+      target: { files: [video("clip.mp4", "video/mp4")] },
+    });
+    await screen.findByText("Requesting an upload URL.");
+    view.unmount();
+    begin.resolve({
+      ok: true,
+      data: {
+        uploadUrl: "http://storage.test/put",
+        storageKey: "key",
+        expiresAt: "1",
+        requiredHeaders: HEADERS,
+      },
+    });
+    complete.resolve({ ok: true, data: recorded(ID_A, "clip.mp4") });
+    detailsRead.resolve({
+      ok: true,
+      data: details("completed", { id: ID_A, videoCodec: "h264" }),
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    assert.equal(document.body.textContent?.includes("h264"), false);
+    assert.equal(document.body.textContent?.includes("Upload complete"), false);
+    assert.equal(
+      warnings.some((warning) => warning.includes("unmounted")),
+      false,
+    );
+
+    const completeWait = deferred<Awaited<ReturnType<ProjectApi["completeUpload"]>>>();
+    const completing = render(
+      <MediaWorkspace
+        project={project("owner")}
+        api={workspaceApi({
+          begin: async () => ({
+            ok: true,
+            data: {
+              uploadUrl: "http://storage.test/put",
+              storageKey: "key",
+              expiresAt: "1",
+              requiredHeaders: HEADERS,
+            },
+          }),
+          complete: () => completeWait.promise,
+          details: async () => ({ ok: true, data: details("pending", { id: ID_A }) }),
+        })}
+        hashFile={async () => "ab".repeat(32)}
+        putObject={async () => ({ ok: true, status: 200 })}
+      />,
+    );
+    fireEvent.change(screen.getByLabelText("Choose a video"), {
+      target: { files: [video("clip.mp4", "video/mp4")] },
+    });
+    await screen.findByText("Confirming the stored object.");
+    completing.unmount();
+    completeWait.resolve({ ok: true, data: recorded(ID_A, "clip.mp4") });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    assert.equal(document.body.textContent?.includes("Upload complete"), false);
+
+    const detailsWait = deferred<Awaited<ReturnType<ProjectApi["getMediaDetails"]>>>();
+    const loading = render(
+      <MediaWorkspace
+        project={project("owner")}
+        api={workspaceApi({
+          begin: async () => ({
+            ok: true,
+            data: {
+              uploadUrl: "http://storage.test/put",
+              storageKey: "key",
+              expiresAt: "1",
+              requiredHeaders: HEADERS,
+            },
+          }),
+          complete: async () => ({ ok: true, data: recorded(ID_A, "clip.mp4") }),
+          details: () => detailsWait.promise,
+        })}
+        hashFile={async () => "ab".repeat(32)}
+        putObject={async () => ({ ok: true, status: 200 })}
+      />,
+    );
+    fireEvent.change(screen.getByLabelText("Choose a video"), {
+      target: { files: [video("clip.mp4", "video/mp4")] },
+    });
+    await screen.findByText("Confirming the stored object.");
+    loading.unmount();
+    detailsWait.resolve({
+      ok: true,
+      data: details("completed", { id: ID_A, videoCodec: "h264" }),
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    assert.equal(document.body.textContent?.includes("h264"), false);
+    assert.equal(
+      warnings.some((warning) => warning.includes("unmounted")),
+      false,
+    );
+  } finally {
+    console.error = original;
+    cleanup();
+  }
 });

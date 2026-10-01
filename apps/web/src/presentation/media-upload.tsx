@@ -23,8 +23,6 @@ type Phase =
   | { status: "error"; message: string }
   | { status: "cancelled" };
 
-const BUSY = new Set(["hashing", "requesting-upload", "uploading", "completing"]);
-
 export function MediaWorkspace({
   project,
   api,
@@ -38,19 +36,66 @@ export function MediaWorkspace({
 }) {
   const [phase, setPhase] = useState<Phase>({ status: "idle" });
   const [refreshing, setRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
-  const abortRef = useRef<AbortController | null>(null);
+  const mountedRef = useRef(true);
+  // Identifies the upload that may change visible state. Cancel, unmount, and a new
+  // file increment it synchronously so an older async result cannot render.
+  const generationRef = useRef(0);
   const busyRef = useRef(false);
+  const abortRef = useRef<AbortController | null>(null);
+  const detailsAbortRef = useRef<AbortController | null>(null);
+  // Orders media-detail responses. A slower older response must not replace a newer one.
+  const detailsSeqRef = useRef(0);
   const canUpload = project.role === "owner" || project.role === "editor";
-  busyRef.current = BUSY.has(phase.status);
   const pendingAssetId =
     phase.status === "uploaded" && phase.details.inspectionStatus === "pending"
       ? phase.details.id
       : null;
 
+  function isCurrent(generation: number): boolean {
+    return mountedRef.current && generationRef.current === generation;
+  }
+
+  function applyPhase(generation: number, update: Phase | ((current: Phase) => Phase)): void {
+    if (!isCurrent(generation)) {
+      return;
+    }
+    setPhase(update);
+  }
+
+  function applyProgress(
+    generation: number,
+    signal: AbortSignal,
+    allowed: "hashing" | "uploading",
+    next: Phase,
+  ): void {
+    if (!isCurrent(generation) || signal.aborted) {
+      return;
+    }
+    setPhase((current) => {
+      if (!isCurrent(generation) || signal.aborted || current.status !== allowed) {
+        return current;
+      }
+      return next;
+    });
+  }
+
+  function abortDetails(): void {
+    detailsAbortRef.current?.abort();
+    detailsAbortRef.current = null;
+  }
+
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
+      mountedRef.current = false;
+      generationRef.current += 1;
+      busyRef.current = false;
       abortRef.current?.abort();
+      abortRef.current = null;
+      detailsAbortRef.current?.abort();
+      detailsAbortRef.current = null;
     };
   }, []);
 
@@ -58,50 +103,77 @@ export function MediaWorkspace({
     if (pendingAssetId === null) {
       return;
     }
-    let attempts = 0;
-    const timer = setInterval(() => {
-      attempts += 1;
-      if (attempts > 8) {
-        clearInterval(timer);
-        return;
+    const generation = generationRef.current;
+    let stopped = false;
+    void (async () => {
+      for (let attempt = 1; attempt <= 8 && !stopped; attempt += 1) {
+        await wait(2000);
+        if (stopped || !isCurrent(generation)) {
+          return;
+        }
+        await refresh(pendingAssetId, generation);
       }
-      void refresh(pendingAssetId);
-    }, 2000);
-    return () => clearInterval(timer);
+    })();
+    return () => {
+      stopped = true;
+    };
   }, [pendingAssetId]);
 
-  async function refresh(mediaAssetId: string): Promise<void> {
-    setRefreshing(true);
-    const result = await api.getMediaDetails(project.id, mediaAssetId);
-    setRefreshing(false);
-    if (!result.ok) {
+  async function refresh(mediaAssetId: string, generation: number): Promise<void> {
+    abortDetails();
+    const seq = ++detailsSeqRef.current;
+    const controller = new AbortController();
+    detailsAbortRef.current = controller;
+    if (isCurrent(generation)) {
+      setRefreshing(true);
+      setRefreshError(null);
+    }
+    const result = await api.getMediaDetails(project.id, mediaAssetId, {
+      signal: controller.signal,
+    });
+    if (
+      !mountedRef.current ||
+      generationRef.current !== generation ||
+      seq !== detailsSeqRef.current
+    ) {
       return;
     }
-    setPhase((current) =>
-      current.status === "uploaded"
-        ? { status: "uploaded", name: current.name, details: result.data }
-        : current,
-    );
+    setRefreshing(false);
+    if (!result.ok) {
+      setRefreshError("Details could not be refreshed.");
+      return;
+    }
+    setPhase((current) => {
+      if (current.status !== "uploaded" || current.details.id !== mediaAssetId) {
+        return current;
+      }
+      return { status: "uploaded", name: current.name, details: result.data };
+    });
   }
 
   async function acceptFile(file: File | undefined): Promise<void> {
     if (file === undefined || !canUpload || busyRef.current) {
       return;
     }
-    const validation = validateMediaFile(file);
-    if ("error" in validation) {
-      setPhase({ status: "error", message: validation.error });
-      return;
-    }
+    busyRef.current = true;
+    const generation = ++generationRef.current;
+    abortRef.current?.abort();
+    abortDetails();
     const controller = new AbortController();
     abortRef.current = controller;
+    const validation = validateMediaFile(file);
+    if ("error" in validation) {
+      release(generation);
+      applyPhase(generation, { status: "error", message: validation.error });
+      return;
+    }
     const declarationBase = {
       filename: file.name,
       mimeType: validation.mimeType,
       byteSize: file.size,
     };
     try {
-      setPhase({
+      applyPhase(generation, {
         status: "hashing",
         name: file.name,
         size: file.size,
@@ -111,21 +183,29 @@ export function MediaWorkspace({
       const sha256 = await hashFile(file, {
         signal: controller.signal,
         onProgress: (loaded, total) => {
-          setPhase({ status: "hashing", name: file.name, size: file.size, loaded, total });
+          applyProgress(generation, controller.signal, "hashing", {
+            status: "hashing",
+            name: file.name,
+            size: file.size,
+            loaded,
+            total,
+          });
         },
       });
-      if (controller.signal.aborted) {
-        setPhase({ status: "cancelled" });
+      if (!isCurrent(generation) || controller.signal.aborted) {
         return;
       }
       const declaration: UploadDeclaration = { ...declarationBase, sha256 };
-      setPhase({ status: "requesting-upload", name: file.name, size: file.size });
-      const started = await api.beginUpload(project.id, declaration);
-      if (!started.ok) {
-        setPhase({ status: "error", message: started.message });
+      applyPhase(generation, { status: "requesting-upload", name: file.name, size: file.size });
+      const started = await api.beginUpload(project.id, declaration, { signal: controller.signal });
+      if (!isCurrent(generation) || controller.signal.aborted) {
         return;
       }
-      setPhase({
+      if (!started.ok) {
+        applyPhase(generation, { status: "error", message: started.message });
+        return;
+      }
+      applyPhase(generation, {
         status: "uploading",
         name: file.name,
         size: file.size,
@@ -138,7 +218,7 @@ export function MediaWorkspace({
         body: file,
         signal: controller.signal,
         onProgress: (loaded, total) => {
-          setPhase({
+          applyProgress(generation, controller.signal, "uploading", {
             status: "uploading",
             name: file.name,
             size: file.size,
@@ -147,39 +227,48 @@ export function MediaWorkspace({
           });
         },
       });
+      if (!isCurrent(generation) || controller.signal.aborted) {
+        return;
+      }
       if (put.status === 412) {
-        await finishAfterConditionalPut(declaration, file.name);
+        await finishAfterConditionalPut(declaration, file.name, generation, controller.signal);
         return;
       }
       if (!put.ok) {
-        setPhase({ status: "error", message: putFailure(put.status) });
+        applyPhase(generation, { status: "error", message: putFailure(put.status) });
         return;
       }
-      await finishUpload(declaration, file.name);
+      await finishUpload(declaration, file.name, generation, controller.signal);
     } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") {
-        setPhase({ status: "cancelled" });
+      if (!isCurrent(generation)) {
         return;
       }
-      setPhase({
+      if (error instanceof DOMException && error.name === "AbortError") {
+        applyPhase(generation, { status: "cancelled" });
+        return;
+      }
+      applyPhase(generation, {
         status: "error",
         message: error instanceof Error ? error.message : "The upload failed.",
       });
     } finally {
-      if (abortRef.current === controller) {
-        abortRef.current = null;
-      }
+      release(generation);
     }
   }
 
   async function finishAfterConditionalPut(
     declaration: UploadDeclaration,
     name: string,
+    generation: number,
+    signal: AbortSignal,
   ): Promise<void> {
-    setPhase({ status: "completing", name, size: declaration.byteSize });
-    const completed = await api.completeUpload(project.id, declaration);
+    applyPhase(generation, { status: "completing", name, size: declaration.byteSize });
+    const completed = await api.completeUpload(project.id, declaration, { signal });
+    if (!isCurrent(generation) || signal.aborted) {
+      return;
+    }
     if (!completed.ok) {
-      setPhase({
+      applyPhase(generation, {
         status: "error",
         message:
           completed.status === 409
@@ -188,37 +277,76 @@ export function MediaWorkspace({
       });
       return;
     }
-    await loadDetails(completed.data.id, name);
+    await loadDetails(completed.data.id, name, generation, signal);
   }
 
-  async function finishUpload(declaration: UploadDeclaration, name: string): Promise<void> {
-    setPhase({ status: "completing", name, size: declaration.byteSize });
-    const completed = await api.completeUpload(project.id, declaration);
+  async function finishUpload(
+    declaration: UploadDeclaration,
+    name: string,
+    generation: number,
+    signal: AbortSignal,
+  ): Promise<void> {
+    applyPhase(generation, { status: "completing", name, size: declaration.byteSize });
+    const completed = await api.completeUpload(project.id, declaration, { signal });
+    if (!isCurrent(generation) || signal.aborted) {
+      return;
+    }
     if (!completed.ok) {
-      setPhase({ status: "error", message: completed.message });
+      applyPhase(generation, { status: "error", message: completed.message });
       return;
     }
-    await loadDetails(completed.data.id, name);
+    await loadDetails(completed.data.id, name, generation, signal);
   }
 
-  async function loadDetails(mediaAssetId: string, name: string): Promise<void> {
-    const details = await api.getMediaDetails(project.id, mediaAssetId);
-    if (!details.ok) {
-      setPhase({ status: "error", message: details.message });
+  async function loadDetails(
+    mediaAssetId: string,
+    name: string,
+    generation: number,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const seq = ++detailsSeqRef.current;
+    const details = await api.getMediaDetails(project.id, mediaAssetId, { signal });
+    if (!isCurrent(generation) || signal.aborted || seq !== detailsSeqRef.current) {
       return;
     }
-    setPhase({ status: "uploaded", name, details: details.data });
+    setRefreshing(false);
+    if (!details.ok) {
+      applyPhase(generation, { status: "error", message: details.message });
+      return;
+    }
+    if (details.data.id !== mediaAssetId) {
+      return;
+    }
+    applyPhase(generation, { status: "uploaded", name, details: details.data });
+  }
+
+  function release(generation: number): void {
+    if (generationRef.current !== generation) {
+      return;
+    }
+    busyRef.current = false;
+    if (abortRef.current !== null) {
+      abortRef.current = null;
+    }
   }
 
   function cancel(): void {
+    generationRef.current += 1;
     abortRef.current?.abort();
+    abortRef.current = null;
+    abortDetails();
+    busyRef.current = false;
+    if (mountedRef.current) {
+      setPhase({ status: "cancelled" });
+      setRefreshing(false);
+    }
   }
 
   return (
     <div className="mt-6 min-w-0">
       {canUpload ? (
         <UploadDropZone
-          busy={BUSY.has(phase.status)}
+          busy={busyRef.current || isBusy(phase)}
           dragOver={dragOver}
           onDragOver={(event) => {
             event.preventDefault();
@@ -244,11 +372,27 @@ export function MediaWorkspace({
         <MediaDetailsPanel
           details={phase.details}
           refreshing={refreshing}
-          onRefresh={() => void refresh(phase.details.id)}
+          refreshError={refreshError}
+          onRefresh={() => void refresh(phase.details.id, generationRef.current)}
         />
       ) : null}
     </div>
   );
+}
+
+function isBusy(phase: Phase): boolean {
+  return (
+    phase.status === "hashing" ||
+    phase.status === "requesting-upload" ||
+    phase.status === "uploading" ||
+    phase.status === "completing"
+  );
+}
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }
 
 function UploadDropZone({

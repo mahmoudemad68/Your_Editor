@@ -1,5 +1,5 @@
 import { createGeneratedClient } from "../generated/client";
-import type { ApiResult, ProjectApi, UploadDeclaration } from "../project-contract";
+import type { ApiResult, ProjectApi, RequestOptions, UploadDeclaration } from "../project-contract";
 
 export interface ProjectApiOptions {
   readonly baseUrl: string;
@@ -63,11 +63,12 @@ export function createHttpProjectApi(options: ProjectApiOptions): ProjectApi {
         return unreachable();
       }
     },
-    async beginUpload(projectId: string, body: UploadDeclaration) {
+    async beginUpload(projectId: string, body: UploadDeclaration, options?: RequestOptions) {
       try {
         const result = await client.POST("/projects/{projectId}/uploads", {
           params: { path: { projectId } },
           body,
+          signal: options?.signal,
         });
         if (result.response.ok && result.data !== undefined) {
           return { ok: true, data: result.data };
@@ -77,11 +78,12 @@ export function createHttpProjectApi(options: ProjectApiOptions): ProjectApi {
         return unreachable();
       }
     },
-    async completeUpload(projectId: string, body: UploadDeclaration) {
+    async completeUpload(projectId: string, body: UploadDeclaration, options?: RequestOptions) {
       try {
         const result = await client.POST("/projects/{projectId}/uploads/complete", {
           params: { path: { projectId } },
           body,
+          signal: options?.signal,
         });
         if (result.response.ok && result.data !== undefined) {
           return { ok: true, data: result.data };
@@ -91,10 +93,11 @@ export function createHttpProjectApi(options: ProjectApiOptions): ProjectApi {
         return unreachable();
       }
     },
-    async getMediaDetails(projectId: string, mediaAssetId: string) {
+    async getMediaDetails(projectId: string, mediaAssetId: string, options?: RequestOptions) {
       try {
         const result = await client.GET("/projects/{projectId}/media/{mediaAssetId}", {
           params: { path: { projectId, mediaAssetId } },
+          signal: options?.signal,
         });
         if (result.response.ok && result.data !== undefined) {
           return { ok: true, data: result.data };
