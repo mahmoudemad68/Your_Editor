@@ -144,6 +144,10 @@ importers:
         version: 6.0.3
 
   packages/media-core:
+    dependencies:
+      '@editagent/domain':
+        specifier: workspace:*
+        version: link:../domain
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
@@ -203,16 +207,28 @@ importers:
 
   workers/media-worker:
     dependencies:
+      '@aws-sdk/client-s3':
+        specifier: 3.1144.0
+        version: 3.1144.0
+      '@editagent/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
       '@editagent/media-core':
         specifier: workspace:*
         version: link:../../packages/media-core
       '@editagent/shared':
         specifier: workspace:*
         version: link:../../packages/shared
+      pg:
+        specifier: 8.23.1
+        version: 8.23.1
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
         version: 22.20.4
+      '@types/pg':
+        specifier: 8.23.1
+        version: 8.23.1
       typescript:
         specifier: 'catalog:'
         version: 6.0.3

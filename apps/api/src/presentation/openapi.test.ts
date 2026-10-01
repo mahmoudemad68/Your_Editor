@@ -32,6 +32,24 @@ test("the build writes an OpenAPI document for the Project routes", () => {
       `POST /projects/{projectId}/uploads/complete ${status}`,
     );
   }
+  const media = document.paths["/projects/{projectId}/media/{mediaAssetId}"];
+  for (const status of ["200", "400", "401", "404"]) {
+    assert.ok(media?.get?.responses?.[status], `GET media details ${status}`);
+  }
+  assert.equal(media?.get?.responses?.["403"], undefined);
+  const mediaSchema = document.components?.schemas?.["MediaDetailsResponseDto"];
+  assert.ok(mediaSchema && "properties" in mediaSchema && mediaSchema.properties);
+  if (mediaSchema && "properties" in mediaSchema && mediaSchema.properties) {
+    assert.ok(mediaSchema.properties["inspectionStatus"]);
+    assert.ok(mediaSchema.properties["duration"]);
+    assert.ok(mediaSchema.properties["displayWidth"]);
+    assert.ok(mediaSchema.properties["displayHeight"]);
+    assert.ok(mediaSchema.properties["frameRateNumerator"]);
+    assert.ok(mediaSchema.properties["inspectionError"]);
+    assert.equal(mediaSchema.properties["storageKey"], undefined);
+    assert.equal(mediaSchema.properties["secretAccessKey"], undefined);
+    assert.equal(mediaSchema.properties["stderr"], undefined);
+  }
   const schemas = Object.values(document.components?.schemas ?? {});
   const projectSchema = schemas.find((schema) => {
     if (schema === undefined || !("properties" in schema) || schema.properties === undefined) {

@@ -25,6 +25,25 @@ export default tseslint.config(
     },
   },
   {
+    files: ["packages/media-core/fixtures/**/*.js"],
+    languageOptions: {
+      globals: {
+        process: "readonly",
+        setInterval: "readonly",
+      },
+    },
+  },
+  {
+    files: ["tests/**/*.mjs"],
+    languageOptions: {
+      globals: {
+        URL: "readonly",
+        fetch: "readonly",
+        process: "readonly",
+      },
+    },
+  },
+  {
     files: ["**/*.cjs"],
     languageOptions: {
       sourceType: "commonjs",

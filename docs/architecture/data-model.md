@@ -8,7 +8,7 @@ Audit columns are wall-clock instants: integer Unix epoch milliseconds. They are
 
 `Project.updatedAt` is that audit instant. The Project table also stores `revision`, a persistence concurrency token that increments on every successful write. It is not wall-clock time, media time, or a field on the Project aggregate. HTTP responses do not include it.
 
-US-122 migrates the MediaAsset upload columns: storage key, display filename, MIME type, byte size, SHA-256, and upload state `uploaded`. Duration stays null until US-126. The storage key is `projects/<projectId>/media/sha256/<sha256>`. The display filename is metadata and is not part of that key.
+US-122 migrates the MediaAsset upload columns: storage key, display filename, MIME type, byte size, SHA-256, and upload state `uploaded`. The storage key is `projects/<projectId>/media/sha256/<sha256>`. The display filename is metadata and is not part of that key. US-126 adds inspection columns in `0003_media_probe_metadata.sql`. Duration stays null after upload and is set, in integer microseconds, only when inspection succeeds. Inspection status is `pending`, `completed`, or `failed`. It is not the US-127 validation state. `0004_media_inspection_revision.sql` adds `inspection_revision`, a persistence concurrency token that starts at zero and increments on each successful inspection write. It is not media time, not `updated_at`, and not a field on the MediaAsset aggregate. HTTP responses do not include it.
 
 ## What this slice implements
 
@@ -98,19 +98,25 @@ erDiagram
     string mimeType "planned"
     bigint byteSize "planned"
     string uploadState "planned"
-    string container "planned US-126"
-    string videoCodec "planned"
-    string audioCodec "planned"
-    int width "planned"
-    int height "planned"
-    int rotation "planned"
-    int frameRateNumerator "planned"
-    int frameRateDenominator "planned"
-    boolean variableFrameRate "planned"
+    string container "null until inspection"
+    string videoCodec "null when unknown"
+    string audioCodec "null when unknown"
+    int width "stored width"
+    int height "stored height"
+    int displayWidth "rotation-oriented"
+    int displayHeight "rotation-oriented"
+    int rotation "0 90 180 270 or null"
+    bigint frameRateNumerator "null when unknown"
+    bigint frameRateDenominator "null when unknown"
+    string frameRateMode "constant variable unknown or null"
     bigint duration "microseconds or null"
-    string colorSpace "planned"
-    int audioChannels "planned"
-    int sampleRate "planned"
+    string colorSpace "null when unreported"
+    int audioChannels "null when unreported"
+    int sampleRate "null when unreported"
+    jsonb streams "video and audio streams or null"
+    string inspectionStatus "pending completed or failed"
+    string inspectionError "safe code or null"
+    bigint inspectionRevision "persistence token, not audit time"
     string validationState "planned US-127"
     string rejection "planned structured reason"
     bigint createdAt
@@ -184,39 +190,39 @@ erDiagram
 
 ## Sprint 1 and Sprint 2 traceability
 
-| Story                                 | Persistence                                                                           |
-| ------------------------------------- | ------------------------------------------------------------------------------------- |
-| US-101 SRS                            | No application table.                                                                 |
-| US-102 Glossary and journeys          | No application table.                                                                 |
-| US-103 Architecture                   | No application table.                                                                 |
-| US-104 Domain model                   | This document. Classes and repository interfaces only.                                |
-| US-105 ASR spike                      | No application table. Research record.                                                |
-| US-106 Render spike                   | No application table. Research record.                                                |
-| US-107 LLM spike                      | No application table. Research record.                                                |
-| US-108 Risk and threat model          | No application table.                                                                 |
-| US-109 Backlog                        | No application table.                                                                 |
-| US-110 Evaluation dataset             | No product table. Licensed files and a manifest, not a runtime aggregate.             |
-| US-111 Monorepo                       | No application table.                                                                 |
-| US-112 CI                             | No application table.                                                                 |
-| US-113 Supply chain and image publish | No application table.                                                                 |
-| US-114 Compose                        | No application table.                                                                 |
-| US-115 Logging and health             | No application table. Logs are not these rows.                                        |
-| US-116 Test harness                   | No application table.                                                                 |
-| US-117 Walking-skeleton E2E           | No new table. Uses Project and MediaAsset once those stories exist.                   |
-| US-118 Authentication                 | `User.email`, `User.passwordHash`, and `RefreshSession`.                              |
-| US-119 Web sign-in                    | Reuses `User` and `RefreshSession`.                                                   |
-| US-120 Project CRUD                   | `Project` and `ProjectMembership`.                                                    |
-| US-121 Dashboard                      | Reuses `Project`.                                                                     |
-| US-122 Direct upload                  | `MediaAsset` storage key, display filename, MIME, size, upload state.                 |
-| US-123 Resumable upload               | `UploadSession` for the upload, `UploadPart` for each completed part number and ETag. |
-| US-124 Upload page                    | Reuses `MediaAsset`.                                                                  |
-| US-125 Media library                  | Reuses `MediaAsset` and `DerivedAsset`.                                               |
-| US-126 Technical metadata             | Planned columns on `MediaAsset`.                                                      |
-| US-127 Validation                     | `MediaAsset.validationState` and `rejection`.                                         |
-| US-128 Proxies and thumbnails         | `DerivedAsset` storage key and parameter signature.                                   |
-| US-129 Job queue and history          | `Job` and `JobAttempt`.                                                               |
-| US-130 Live progress                  | No table. Redis pub/sub.                                                              |
-| US-131 Progress UI                    | Reuses `Job` and `JobAttempt`.                                                        |
+| Story                                 | Persistence                                                                                                                      |
+| ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| US-101 SRS                            | No application table.                                                                                                            |
+| US-102 Glossary and journeys          | No application table.                                                                                                            |
+| US-103 Architecture                   | No application table.                                                                                                            |
+| US-104 Domain model                   | This document. Classes and repository interfaces only.                                                                           |
+| US-105 ASR spike                      | No application table. Research record.                                                                                           |
+| US-106 Render spike                   | No application table. Research record.                                                                                           |
+| US-107 LLM spike                      | No application table. Research record.                                                                                           |
+| US-108 Risk and threat model          | No application table.                                                                                                            |
+| US-109 Backlog                        | No application table.                                                                                                            |
+| US-110 Evaluation dataset             | No product table. Licensed files and a manifest, not a runtime aggregate.                                                        |
+| US-111 Monorepo                       | No application table.                                                                                                            |
+| US-112 CI                             | No application table.                                                                                                            |
+| US-113 Supply chain and image publish | No application table.                                                                                                            |
+| US-114 Compose                        | No application table.                                                                                                            |
+| US-115 Logging and health             | No application table. Logs are not these rows.                                                                                   |
+| US-116 Test harness                   | No application table.                                                                                                            |
+| US-117 Walking-skeleton E2E           | No new table. Uses Project and MediaAsset once those stories exist.                                                              |
+| US-118 Authentication                 | `User.email`, `User.passwordHash`, and `RefreshSession`.                                                                         |
+| US-119 Web sign-in                    | Reuses `User` and `RefreshSession`.                                                                                              |
+| US-120 Project CRUD                   | `Project` and `ProjectMembership`.                                                                                               |
+| US-121 Dashboard                      | Reuses `Project`.                                                                                                                |
+| US-122 Direct upload                  | `MediaAsset` storage key, display filename, MIME, size, upload state.                                                            |
+| US-123 Resumable upload               | `UploadSession` for the upload, `UploadPart` for each completed part number and ETag.                                            |
+| US-124 Upload page                    | Reuses `MediaAsset`.                                                                                                             |
+| US-125 Media library                  | Reuses `MediaAsset` and `DerivedAsset`.                                                                                          |
+| US-126 Technical metadata             | `media_assets` inspection columns in `0003_media_probe_metadata.sql`. Duration is integer microseconds after a successful probe. |
+| US-127 Validation                     | `MediaAsset.validationState` and `rejection`.                                                                                    |
+| US-128 Proxies and thumbnails         | `DerivedAsset` storage key and parameter signature.                                                                              |
+| US-129 Job queue and history          | `Job` and `JobAttempt`.                                                                                                          |
+| US-130 Live progress                  | No table. Redis pub/sub.                                                                                                         |
+| US-131 Progress UI                    | Reuses `Job` and `JobAttempt`.                                                                                                   |
 
 ## Canonical names reserved for later stories
 

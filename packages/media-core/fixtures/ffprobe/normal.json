@@ -1,0 +1,139 @@
+{
+  "frames": [
+    {
+      "media_type": "video",
+      "best_effort_timestamp_time": "0.000000",
+      "pkt_duration": 512,
+      "side_data_list": [{}]
+    },
+    {
+      "media_type": "audio",
+      "best_effort_timestamp_time": "0.000000",
+      "pkt_duration": 1024
+    },
+    {
+      "media_type": "audio",
+      "best_effort_timestamp_time": "0.021333",
+      "pkt_duration": 1024
+    },
+    {
+      "media_type": "video",
+      "best_effort_timestamp_time": "0.040000",
+      "pkt_duration": 512
+    },
+    {
+      "media_type": "audio",
+      "best_effort_timestamp_time": "0.042667",
+      "pkt_duration": 1024
+    },
+    {
+      "media_type": "audio",
+      "best_effort_timestamp_time": "0.064000",
+      "pkt_duration": 1024
+    },
+    {
+      "media_type": "video",
+      "best_effort_timestamp_time": "0.080000",
+      "pkt_duration": 512
+    },
+    {
+      "media_type": "audio",
+      "best_effort_timestamp_time": "0.085333",
+      "pkt_duration": 1024
+    },
+    {
+      "media_type": "audio",
+      "best_effort_timestamp_time": "0.106667",
+      "pkt_duration": 1024
+    },
+    {
+      "media_type": "video",
+      "best_effort_timestamp_time": "0.120000",
+      "pkt_duration": 512
+    },
+    {
+      "media_type": "video",
+      "best_effort_timestamp_time": "0.160000",
+      "pkt_duration": 512
+    }
+  ],
+  "programs": [],
+  "streams": [
+    {
+      "codec_name": "h264",
+      "codec_type": "video",
+      "width": 320,
+      "height": 240,
+      "r_frame_rate": "25/1",
+      "avg_frame_rate": "25/1",
+      "time_base": "1/12800",
+      "disposition": {
+        "default": 1,
+        "dub": 0,
+        "original": 0,
+        "comment": 0,
+        "lyrics": 0,
+        "karaoke": 0,
+        "forced": 0,
+        "hearing_impaired": 0,
+        "visual_impaired": 0,
+        "clean_effects": 0,
+        "attached_pic": 0,
+        "timed_thumbnails": 0,
+        "non_diegetic": 0,
+        "captions": 0,
+        "descriptions": 0,
+        "metadata": 0,
+        "dependent": 0,
+        "still_image": 0
+      },
+      "tags": {
+        "language": "und",
+        "handler_name": "VideoHandler",
+        "vendor_id": "[0][0][0][0]",
+        "encoder": "Lavc60.31.102 libx264"
+      }
+    },
+    {
+      "codec_name": "aac",
+      "codec_type": "audio",
+      "sample_rate": "48000",
+      "channels": 1,
+      "r_frame_rate": "0/0",
+      "avg_frame_rate": "0/0",
+      "time_base": "1/48000",
+      "disposition": {
+        "default": 1,
+        "dub": 0,
+        "original": 0,
+        "comment": 0,
+        "lyrics": 0,
+        "karaoke": 0,
+        "forced": 0,
+        "hearing_impaired": 0,
+        "visual_impaired": 0,
+        "clean_effects": 0,
+        "attached_pic": 0,
+        "timed_thumbnails": 0,
+        "non_diegetic": 0,
+        "captions": 0,
+        "descriptions": 0,
+        "metadata": 0,
+        "dependent": 0,
+        "still_image": 0
+      },
+      "tags": {
+        "language": "und",
+        "handler_name": "SoundHandler",
+        "vendor_id": "[0][0][0][0]"
+      }
+    }
+  ],
+  "format": {
+    "format_name": "mov,mp4,m4a,3gp,3g2,mj2",
+    "duration": "1.000000",
+    "tags": {
+      "major_brand": "isom"
+    }
+  }
+}

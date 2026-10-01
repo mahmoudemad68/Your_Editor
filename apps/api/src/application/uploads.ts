@@ -163,6 +163,7 @@ export class CompleteMediaUpload {
     if (!matches) {
       throw new UploadObjectMismatch();
     }
+    // FFprobe runs in media-worker. This command does not inspect the object.
     const asset = MediaAsset.createUploaded({
       id: this.ids.next(this.clock.now()),
       projectId,

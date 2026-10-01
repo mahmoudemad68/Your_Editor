@@ -149,6 +149,12 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
+      - name: Install FFmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          ffprobe -version
+
       - name: Test
         run: pnpm test
 

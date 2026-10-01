@@ -4,7 +4,10 @@ import {
   type MediaAssetId,
   type MediaAssetRepository,
   mediaAssetId,
+  MediaInspectionConflict,
+  type LoadedMediaInspection,
   type MediaAssetSnapshot,
+  type MediaStreamMetadata,
   type ProjectId,
 } from "@editagent/domain";
 import { type Pool } from "pg";
@@ -22,25 +25,41 @@ interface MediaAssetRow {
   duration: string | null;
   created_at: string;
   updated_at: string;
+  inspection_status: string;
+  container: string | null;
+  video_codec: string | null;
+  audio_codec: string | null;
+  width: number | null;
+  height: number | null;
+  display_width: number | null;
+  display_height: number | null;
+  rotation: number | null;
+  frame_rate_numerator: string | null;
+  frame_rate_denominator: string | null;
+  frame_rate_mode: string | null;
+  color_space: string | null;
+  audio_channels: number | null;
+  sample_rate: number | null;
+  streams: unknown;
+  inspection_error: string | null;
+  inspection_revision: string;
 }
 
 const SELECT_COLUMNS = `id::text AS id, project_id::text AS project_id, kind, storage_key,
   display_filename, mime_type, byte_size::text AS byte_size, content_sha256, upload_state,
-  duration::text AS duration, created_at::text AS created_at, updated_at::text AS updated_at`;
+  duration::text AS duration, created_at::text AS created_at, updated_at::text AS updated_at,
+  inspection_status, container, video_codec, audio_codec, width, height, display_width,
+  display_height, rotation, frame_rate_numerator::text AS frame_rate_numerator,
+  frame_rate_denominator::text AS frame_rate_denominator, frame_rate_mode, color_space,
+  audio_channels, sample_rate, streams, inspection_error,
+  inspection_revision::text AS inspection_revision`;
 
 export class PostgresMediaAssetRepository implements MediaAssetRepository {
   constructor(private readonly pool: Pool) {}
 
   async findById(id: MediaAssetId): Promise<MediaAsset | null> {
-    const result = await this.pool.query<MediaAssetRow>(
-      `SELECT ${SELECT_COLUMNS} FROM media_assets WHERE id = $1`,
-      [id],
-    );
-    const row = result.rows[0];
-    if ((result.rowCount ?? 0) === 0 || row === undefined) {
-      return null;
-    }
-    return MediaAsset.restore(toSnapshot(row));
+    const row = await this.findRow(id);
+    return row === null ? null : MediaAsset.restore(toSnapshot(row));
   }
 
   async listByProject(projectId: ProjectId): Promise<readonly MediaAsset[]> {
@@ -91,6 +110,61 @@ export class PostgresMediaAssetRepository implements MediaAssetRepository {
       throw error;
     }
   }
+
+  async loadForInspection(id: MediaAssetId): Promise<LoadedMediaInspection | null> {
+    const row = await this.findRow(id);
+    if (row === null) {
+      return null;
+    }
+    return {
+      asset: MediaAsset.restore(toSnapshot(row)),
+      revision: BigInt(row.inspection_revision),
+    };
+  }
+
+  async saveInspection(asset: MediaAsset, expectedRevision: bigint): Promise<void> {
+    const snapshot = asset.toSnapshot();
+    const result = await this.pool.query(
+      `UPDATE media_assets SET
+         inspection_revision = inspection_revision + 1,
+         duration = $2,
+         updated_at = $3,
+         inspection_status = $4,
+         container = $5,
+         video_codec = $6,
+         audio_codec = $7,
+         width = $8,
+         height = $9,
+         display_width = $10,
+         display_height = $11,
+         rotation = $12,
+         frame_rate_numerator = $13,
+         frame_rate_denominator = $14,
+         frame_rate_mode = $15,
+         color_space = $16,
+         audio_channels = $17,
+         sample_rate = $18,
+         streams = $19::jsonb,
+         inspection_error = $20
+       WHERE id = $1 AND inspection_revision = $21`,
+      inspectionParameters(snapshot, expectedRevision),
+    );
+    if ((result.rowCount ?? 0) !== 1) {
+      throw new MediaInspectionConflict();
+    }
+  }
+
+  private async findRow(id: MediaAssetId): Promise<MediaAssetRow | null> {
+    const result = await this.pool.query<MediaAssetRow>(
+      `SELECT ${SELECT_COLUMNS} FROM media_assets WHERE id = $1`,
+      [id],
+    );
+    const row = result.rows[0];
+    if ((result.rowCount ?? 0) === 0 || row === undefined) {
+      return null;
+    }
+    return row;
+  }
 }
 
 function toSnapshot(row: MediaAssetRow): MediaAssetSnapshot {
@@ -107,7 +181,60 @@ function toSnapshot(row: MediaAssetRow): MediaAssetSnapshot {
     byteSize: row.byte_size,
     contentSha256: row.content_sha256,
     uploadState: row.upload_state,
+    inspectionStatus: row.inspection_status,
+    container: row.container,
+    videoCodec: row.video_codec,
+    audioCodec: row.audio_codec,
+    width: row.width,
+    height: row.height,
+    displayWidth: row.display_width,
+    displayHeight: row.display_height,
+    rotation: row.rotation,
+    frameRateNumerator: row.frame_rate_numerator,
+    frameRateDenominator: row.frame_rate_denominator,
+    frameRateMode: row.frame_rate_mode,
+    colorSpace: row.color_space,
+    audioChannels: row.audio_channels,
+    sampleRate: row.sample_rate,
+    streams: streamsFromRow(row.streams),
+    inspectionError: row.inspection_error,
   };
+}
+
+function inspectionParameters(snapshot: MediaAssetSnapshot, expectedRevision: bigint): unknown[] {
+  return [
+    snapshot.id,
+    snapshot.duration === null ? null : instantText(snapshot.duration),
+    instantText(snapshot.updatedAt),
+    snapshot.inspectionStatus ?? "pending",
+    snapshot.container ?? null,
+    snapshot.videoCodec ?? null,
+    snapshot.audioCodec ?? null,
+    snapshot.width ?? null,
+    snapshot.height ?? null,
+    snapshot.displayWidth ?? null,
+    snapshot.displayHeight ?? null,
+    snapshot.rotation ?? null,
+    snapshot.frameRateNumerator == null ? null : instantText(snapshot.frameRateNumerator),
+    snapshot.frameRateDenominator == null ? null : instantText(snapshot.frameRateDenominator),
+    snapshot.frameRateMode ?? null,
+    snapshot.colorSpace ?? null,
+    snapshot.audioChannels ?? null,
+    snapshot.sampleRate ?? null,
+    snapshot.streams == null ? null : JSON.stringify(snapshot.streams),
+    snapshot.inspectionError ?? null,
+    expectedRevision.toString(),
+  ];
+}
+
+function streamsFromRow(value: unknown): readonly MediaStreamMetadata[] | null {
+  if (value == null) {
+    return null;
+  }
+  if (!Array.isArray(value)) {
+    throw new Error("MediaAsset stream metadata is not an array.");
+  }
+  return value as readonly MediaStreamMetadata[];
 }
 
 function instantText(value: bigint | string): string {

@@ -5,7 +5,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json && node dist/write-openapi.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node ../../tools/test/run-node-tests.mjs dist/application/health.test.js dist/application/projects.test.js dist/application/uploads.test.js dist/infrastructure/config.test.js dist/infrastructure/node-project-id-generator.test.js dist/infrastructure/postgres-project-repository.test.js dist/infrastructure/media-upload.integration.test.js dist/presentation/openapi.test.js dist/presentation/projects.controller.test.js",
+    "test": "node ../../tools/test/run-node-tests.mjs dist/application/health.test.js dist/application/projects.test.js dist/application/uploads.test.js dist/application/media-details.test.js dist/application/in-memory-media-repository.test.js dist/infrastructure/config.test.js dist/infrastructure/node-project-id-generator.test.js dist/infrastructure/postgres-project-repository.test.js dist/infrastructure/media-upload.integration.test.js dist/presentation/openapi.test.js dist/presentation/projects.controller.test.js dist/presentation/media.controller.test.js",
     "start": "node dist/main.js"
   },
   "dependencies": {
