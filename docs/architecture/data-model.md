@@ -8,6 +8,8 @@ Audit columns are wall-clock instants: integer Unix epoch milliseconds. They are
 
 `Project.updatedAt` is that audit instant. The Project table also stores `revision`, a persistence concurrency token that increments on every successful write. It is not wall-clock time, media time, or a field on the Project aggregate. HTTP responses do not include it.
 
+US-122 migrates the MediaAsset upload columns: storage key, display filename, MIME type, byte size, SHA-256, and upload state `uploaded`. Duration stays null until US-126. The storage key is `projects/<projectId>/media/sha256/<sha256>`. The display filename is metadata and is not part of that key.
+
 ## What this slice implements
 
 These aggregates have one repository interface each, in the owning module:

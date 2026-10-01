@@ -21,6 +21,12 @@ jobs:
     env:
       TURBO_TELEMETRY_DISABLED: "1"
       DATABASE_URL: postgresql://editagent:editagent-dev-password@localhost:5432/editagent
+      S3_ENDPOINT: http://127.0.0.1:9000
+      S3_PUBLIC_ENDPOINT: http://127.0.0.1:9000
+      S3_BUCKET: editagent
+      S3_ACCESS_KEY_ID: editagent
+      S3_SECRET_ACCESS_KEY: editagent-dev-secret
+      S3_REGION: us-east-1
     services:
       postgres:
         image: postgres:16.10-alpine
@@ -38,6 +44,23 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
+
+      - name: Start MinIO
+        run: |
+          set -eu
+          docker build -t editagent-minio:ci -f infra/minio/Dockerfile .
+          docker run -d --name editagent-minio-ci -p 9000:9000 \
+            -e MINIO_ROOT_USER=editagent \
+            -e MINIO_ROOT_PASSWORD=editagent-dev-secret \
+            editagent-minio:ci
+          for _ in $(seq 1 40); do
+            if curl -fsS http://127.0.0.1:9000/minio/health/live >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs editagent-minio-ci
+          exit 1
 
       - name: Install pnpm
         uses: pnpm/action-setup@v6

@@ -69,7 +69,7 @@ describe("Postgres ProjectRepository", { concurrency: 1 }, () => {
 
   test("migrations apply on a clean database and defer the User foreign key", async () => {
     const applied = await applyMigrations(pool);
-    assert.deepEqual(applied, ["0001_projects.sql"]);
+    assert.deepEqual(applied, ["0001_projects.sql", "0002_media_assets.sql"]);
     const again = await applyMigrations(pool);
     assert.deepEqual(again, []);
     const tables = await pool.query<{ table_name: string }>(

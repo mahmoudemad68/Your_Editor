@@ -14,10 +14,21 @@ export class ConfigurationError extends Error {
   }
 }
 
+export interface ApiObjectStorageConfig {
+  readonly endpoint: string;
+  readonly publicEndpoint: string;
+  readonly bucket: string;
+  readonly accessKeyId: string;
+  readonly secretAccessKey: string;
+  readonly region: string;
+  readonly presignTtlSeconds: number;
+}
+
 export interface ApiConfig {
   readonly databaseUrl: string;
   readonly port: number;
   readonly host: string;
+  readonly objectStorage: ApiObjectStorageConfig;
 }
 
 export interface WebConfig {
@@ -148,16 +159,67 @@ function optionalProviderName(name: string) {
   );
 }
 
+function presignTtlSeconds() {
+  return z
+    .string()
+    .optional()
+    .refine(
+      (value) => {
+        if (value === undefined) {
+          return true;
+        }
+        if (!/^[1-9][0-9]*$/.test(value)) {
+          return false;
+        }
+        const parsed = Number(value);
+        return parsed >= 60 && parsed <= 3600;
+      },
+      { error: "S3_PRESIGN_TTL_SECONDS must be an integer from 60 through 3600." },
+    )
+    .transform((value) => (value === undefined ? 900 : Number(value)));
+}
+
 const apiSchema = z
   .object({
     DATABASE_URL: databaseUrl(),
     PORT: portField(3001),
     HOST: hostField(),
+    S3_ENDPOINT: httpUrl(
+      "S3_ENDPOINT",
+      "Set it to the S3-compatible endpoint the API uses, for example http://minio:9000.",
+    ),
+    S3_PUBLIC_ENDPOINT: httpUrl(
+      "S3_PUBLIC_ENDPOINT",
+      "Set it to the S3 endpoint the browser can reach, for example http://localhost:9000.",
+    ),
+    S3_BUCKET: requiredString("S3_BUCKET", "Set it to the private media bucket name."),
+    S3_ACCESS_KEY_ID: requiredString(
+      "S3_ACCESS_KEY_ID",
+      "Set it to the object-storage access key. It stays on the API.",
+    ),
+    S3_SECRET_ACCESS_KEY: requiredString(
+      "S3_SECRET_ACCESS_KEY",
+      "Set it to the object-storage secret key. It stays on the API.",
+    ),
+    S3_REGION: requiredString(
+      "S3_REGION",
+      "Set it to the object-storage region, for example us-east-1.",
+    ),
+    S3_PRESIGN_TTL_SECONDS: presignTtlSeconds(),
   })
   .transform((env): ApiConfig => ({
     databaseUrl: env.DATABASE_URL,
     port: env.PORT,
     host: env.HOST,
+    objectStorage: {
+      endpoint: env.S3_ENDPOINT,
+      publicEndpoint: env.S3_PUBLIC_ENDPOINT,
+      bucket: env.S3_BUCKET,
+      accessKeyId: env.S3_ACCESS_KEY_ID,
+      secretAccessKey: env.S3_SECRET_ACCESS_KEY,
+      region: env.S3_REGION,
+      presignTtlSeconds: env.S3_PRESIGN_TTL_SECONDS,
+    },
   }));
 
 const webSchema = z

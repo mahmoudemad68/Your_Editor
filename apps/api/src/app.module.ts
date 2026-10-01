@@ -1,19 +1,33 @@
 import { type DynamicModule, Module } from "@nestjs/common";
-import { type Clock, type ProjectIdGenerator } from "./application/clock.js";
+import {
+  type IObjectStorage,
+  type MediaAssetRepository,
+  type ProjectRepository,
+} from "@editagent/domain";
+import {
+  type Clock,
+  type MediaAssetIdGenerator,
+  type ProjectIdGenerator,
+} from "./application/clock.js";
 import {
   CreateProject,
   DeleteProject,
   ListProjects,
   RenameProject,
 } from "./application/projects.js";
-import { type ProjectRepository } from "@editagent/domain";
+import { BeginMediaUpload, CompleteMediaUpload } from "./application/uploads.js";
 import { HealthController } from "./presentation/health.controller.js";
 import { ProjectsController } from "./presentation/projects.controller.js";
+import { UploadsController } from "./presentation/uploads.controller.js";
 
 export interface ApiComposition {
   readonly projects: ProjectRepository;
   readonly clock: Clock;
   readonly ids: ProjectIdGenerator;
+  readonly media: MediaAssetRepository;
+  readonly objects: IObjectStorage;
+  readonly mediaIds: MediaAssetIdGenerator;
+  readonly presignTtlSeconds: number;
 }
 
 /** Composition root. It wires use cases to a repository. It does not contain Project rules. */
@@ -22,7 +36,7 @@ export class AppModule {
   static register(composition: ApiComposition): DynamicModule {
     return {
       module: AppModule,
-      controllers: [HealthController, ProjectsController],
+      controllers: [HealthController, ProjectsController, UploadsController],
       providers: [
         {
           provide: CreateProject,
@@ -39,6 +53,25 @@ export class AppModule {
         {
           provide: DeleteProject,
           useValue: new DeleteProject(composition.projects, composition.clock),
+        },
+        {
+          provide: BeginMediaUpload,
+          useValue: new BeginMediaUpload(
+            composition.projects,
+            composition.objects,
+            composition.clock,
+            composition.presignTtlSeconds,
+          ),
+        },
+        {
+          provide: CompleteMediaUpload,
+          useValue: new CompleteMediaUpload(
+            composition.projects,
+            composition.media,
+            composition.objects,
+            composition.mediaIds,
+            composition.clock,
+          ),
         },
       ],
     };

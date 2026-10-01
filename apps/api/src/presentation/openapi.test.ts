@@ -20,6 +20,18 @@ test("the build writes an OpenAPI document for the Project routes", () => {
   for (const status of ["204", "400", "401", "403", "404", "409"]) {
     assert.ok(item?.delete?.responses?.[status], `DELETE /projects/{projectId} ${status}`);
   }
+  const uploads = document.paths["/projects/{projectId}/uploads"];
+  const complete = document.paths["/projects/{projectId}/uploads/complete"];
+  for (const status of ["201", "400", "401", "403", "404"]) {
+    assert.ok(uploads?.post?.responses?.[status], `POST /projects/{projectId}/uploads ${status}`);
+  }
+  assert.equal(uploads?.post?.responses?.["502"], undefined);
+  for (const status of ["201", "400", "401", "403", "404", "409", "502"]) {
+    assert.ok(
+      complete?.post?.responses?.[status],
+      `POST /projects/{projectId}/uploads/complete ${status}`,
+    );
+  }
   const schemas = Object.values(document.components?.schemas ?? {});
   const projectSchema = schemas.find((schema) => {
     if (schema === undefined || !("properties" in schema) || schema.properties === undefined) {
