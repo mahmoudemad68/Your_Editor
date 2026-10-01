@@ -2,9 +2,9 @@ import { spawn, spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import {
-  SANDBOX_DISABLE_FLAGS,
   classifyChromiumSandbox,
   readLiveChromiumArgv,
+  readProcessStartTime,
 } from "./chromium-sandbox.mjs";
 import { benchmarkRoot } from "./load-spec.mjs";
 import { probeFile } from "./probe.mjs";
@@ -24,17 +24,19 @@ const rendered = spawn("node", ["scripts/remotion-render.mjs", output, "warm"], 
   cwd: root,
   stdio: "inherit",
 });
-let latestObservation = { inspected: false, reason: "no Chromium process was observed" };
-const disablingFlagCount = (argv) =>
-  SANDBOX_DISABLE_FLAGS.filter((flag) => argv.includes(flag)).length;
+const rendererPid = Number.isInteger(rendered.pid) ? rendered.pid : null;
+const rendererStartTime = rendererPid === null ? null : readProcessStartTime(rendererPid);
+let latestObservation = {
+  inspected: false,
+  rendererPid: rendererPid ?? undefined,
+  reason:
+    rendererPid === null
+      ? "renderer PID is unavailable"
+      : "no Chromium process descending from the renderer was observed",
+};
 const watcher = setInterval(() => {
-  const observation = readLiveChromiumArgv();
-  if (observation.inspected !== true) {
-    return;
-  }
-  const previousCount =
-    latestObservation.inspected === true ? disablingFlagCount(latestObservation.argv) : -1;
-  if (disablingFlagCount(observation.argv) >= previousCount) {
+  const observation = readLiveChromiumArgv({ rendererPid, rendererStartTime });
+  if (observation.inspected === true) {
     latestObservation = observation;
   }
 }, 200);
