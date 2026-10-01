@@ -100,5 +100,5 @@ These are part of the architecture and are checked in review. They are not fully
 
 - Controllers, page components, and worker entry points contain no business decisions. They call an application use case.
 - A use case depends on a port, not on a concrete adapter class.
-- FFmpeg is invoked only from `packages/media-core` once media execution exists. The scaffold does not invoke it.
+- FFmpeg and FFprobe are invoked only from `packages/media-core`. The `IMediaProbe` contract lives in the domain Media module. US-126 inspection runs from `workers/media-worker`, not from the API process.
 - Adding a dependency edge that is not in the allowed-direction table requires a change to this document and to the matching enforced rule in the same pull request.

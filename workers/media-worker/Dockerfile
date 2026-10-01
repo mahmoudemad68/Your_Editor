@@ -27,6 +27,7 @@ RUN pnpm install --frozen-lockfile --ignore-scripts
 FROM deps AS build
 COPY tsconfig.base.json ./
 COPY workers/media-worker workers/media-worker
+COPY packages/domain packages/domain
 COPY packages/shared packages/shared
 COPY packages/media-core packages/media-core
 RUN pnpm --filter @editagent/media-worker... build \
@@ -35,7 +36,12 @@ RUN pnpm --filter @editagent/media-worker... build \
     && rm -f /out/node_modules/.pnpm/node_modules/@editagent/media-worker
 
 FROM node:22.23.2-bookworm-slim AS runtime
-RUN groupadd --system --gid 10001 editagent \
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg=7:5.1.9-0+deb12u1 \
+    && rm -rf /var/lib/apt/lists/* \
+    && ffprobe -version \
+    && ffprobe -version | head -n 1 > /etc/editagent-ffprobe-release \
+    && groupadd --system --gid 10001 editagent \
     && useradd --system --uid 10001 --gid 10001 --home-dir /home/editagent --create-home --shell /usr/sbin/nologin editagent
 WORKDIR /app
 COPY --from=build --chown=10001:10001 /out/ ./

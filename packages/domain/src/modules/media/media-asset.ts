@@ -1,13 +1,27 @@
 /**
  * Media aggregate. Video, Audio, and Image are subtypes of MediaAsset.
- * Every constructor validates duration and timestamps. Inspection and upload
- * behavior belong to later Media stories.
+ * Every constructor validates duration and timestamps.
+ * Upload metadata is US-122. Technical inspection is US-126.
+ * Hostile-file validation state belongs to US-127 and is not stored here.
  */
 
 import { type Instant, instant, requireAuditOrder } from "../../kernel/clock.js";
 import { DomainError } from "../../kernel/error.js";
 import { mediaAssetId, type MediaAssetId, projectId, type ProjectId } from "../../kernel/id.js";
 import { microseconds, type Microseconds } from "../../kernel/time.js";
+import {
+  completedInspection,
+  failedInspection,
+  type FrameRateMode,
+  type InspectionFailureCode,
+  type InspectionState,
+  inspectionFailureCode,
+  inspectionFromSnapshot,
+  type MediaStreamMetadata,
+  pendingInspection,
+  probeDuration,
+  type ProbeResult,
+} from "./media-probe.js";
 import {
   assertMediaStorageKey,
   contentSha256,
@@ -44,6 +58,23 @@ export interface MediaAssetSnapshot {
   readonly byteSize?: bigint | string | null;
   readonly contentSha256?: string | null;
   readonly uploadState?: string | null;
+  readonly inspectionStatus?: string | null;
+  readonly container?: string | null;
+  readonly videoCodec?: string | null;
+  readonly audioCodec?: string | null;
+  readonly width?: number | null;
+  readonly height?: number | null;
+  readonly displayWidth?: number | null;
+  readonly displayHeight?: number | null;
+  readonly rotation?: number | null;
+  readonly frameRateNumerator?: bigint | string | null;
+  readonly frameRateDenominator?: bigint | string | null;
+  readonly frameRateMode?: string | null;
+  readonly colorSpace?: string | null;
+  readonly audioChannels?: number | null;
+  readonly sampleRate?: number | null;
+  readonly streams?: readonly MediaStreamMetadata[] | null;
+  readonly inspectionError?: string | null;
 }
 
 export class MediaAsset {
@@ -59,6 +90,23 @@ export class MediaAsset {
   readonly byteSize: bigint | null;
   readonly contentSha256: string | null;
   readonly uploadState: "uploaded" | null;
+  readonly inspectionStatus: InspectionState["status"];
+  readonly container: string | null;
+  readonly videoCodec: string | null;
+  readonly audioCodec: string | null;
+  readonly width: number | null;
+  readonly height: number | null;
+  readonly displayWidth: number | null;
+  readonly displayHeight: number | null;
+  readonly rotation: number | null;
+  readonly frameRateNumerator: bigint | null;
+  readonly frameRateDenominator: bigint | null;
+  readonly frameRateMode: FrameRateMode | null;
+  readonly colorSpace: string | null;
+  readonly audioChannels: number | null;
+  readonly sampleRate: number | null;
+  readonly streams: readonly MediaStreamMetadata[] | null;
+  readonly inspectionError: InspectionFailureCode | null;
 
   protected constructor(
     id: MediaAssetId | string,
@@ -68,6 +116,7 @@ export class MediaAsset {
     duration: Microseconds | bigint | string | null,
     updatedAt?: Instant | string | bigint,
     upload?: MediaUploadMetadata | null,
+    inspection?: InspectionState | null,
   ) {
     const created = instant(createdAt);
     const updated = updatedAt == null ? created : instant(updatedAt);
@@ -85,6 +134,24 @@ export class MediaAsset {
     this.byteSize = recorded?.byteSize ?? null;
     this.contentSha256 = recorded?.contentSha256 ?? null;
     this.uploadState = recorded?.uploadState ?? null;
+    const inspected = inspection ?? pendingInspection();
+    this.inspectionStatus = inspected.status;
+    this.container = inspected.container;
+    this.videoCodec = inspected.videoCodec;
+    this.audioCodec = inspected.audioCodec;
+    this.width = inspected.width;
+    this.height = inspected.height;
+    this.displayWidth = inspected.displayWidth;
+    this.displayHeight = inspected.displayHeight;
+    this.rotation = inspected.rotation;
+    this.frameRateNumerator = inspected.frameRateNumerator;
+    this.frameRateDenominator = inspected.frameRateDenominator;
+    this.frameRateMode = inspected.frameRateMode;
+    this.colorSpace = inspected.colorSpace;
+    this.audioChannels = inspected.audioChannels;
+    this.sampleRate = inspected.sampleRate;
+    this.streams = inspected.streams;
+    this.inspectionError = inspected.error;
     if (new.target === MediaAsset) {
       Object.freeze(this);
     }
@@ -145,6 +212,7 @@ export class MediaAsset {
   static restore(snapshot: MediaAssetSnapshot): Video | Audio | Image {
     const kind = mediaKind(snapshot.kind);
     const upload = uploadFromSnapshot(snapshot);
+    const inspection = inspectionFromSnapshot(snapshot);
     if (kind === "video") {
       return new Video(
         snapshot.id,
@@ -153,6 +221,7 @@ export class MediaAsset {
         snapshot.duration,
         snapshot.updatedAt,
         upload,
+        inspection,
       );
     }
     if (kind === "audio") {
@@ -163,6 +232,7 @@ export class MediaAsset {
         snapshot.duration,
         snapshot.updatedAt,
         upload,
+        inspection,
       );
     }
     return new Image(
@@ -172,6 +242,32 @@ export class MediaAsset {
       snapshot.duration,
       snapshot.updatedAt,
       upload,
+      inspection,
+    );
+  }
+
+  /** Successful technical inspection. Duration changes only when the probe has one. */
+  recordInspection(result: ProbeResult, at: Instant | string | bigint): Video | Audio | Image {
+    const updated = this.inspectionInstant(at);
+    const inspection = completedInspection(result);
+    const duration = probeDuration(result.duration) ?? this.duration;
+    return MediaAsset.restore(this.snapshotWith(duration, updated, inspection));
+  }
+
+  /**
+   * Records a failed inspection without inventing metadata.
+   * A completed inspection is left unchanged.
+   */
+  recordInspectionFailure(
+    code: InspectionFailureCode,
+    at: Instant | string | bigint,
+  ): Video | Audio | Image {
+    if (this.inspectionStatus === "completed") {
+      return this.asSubtype();
+    }
+    const updated = this.inspectionInstant(at);
+    return MediaAsset.restore(
+      this.snapshotWith(this.duration, updated, failedInspection(inspectionFailureCode(code))),
     );
   }
 
@@ -189,7 +285,68 @@ export class MediaAsset {
       byteSize: this.byteSize,
       contentSha256: this.contentSha256,
       uploadState: this.uploadState,
+      inspectionStatus: this.inspectionStatus,
+      container: this.container,
+      videoCodec: this.videoCodec,
+      audioCodec: this.audioCodec,
+      width: this.width,
+      height: this.height,
+      displayWidth: this.displayWidth,
+      displayHeight: this.displayHeight,
+      rotation: this.rotation,
+      frameRateNumerator: this.frameRateNumerator,
+      frameRateDenominator: this.frameRateDenominator,
+      frameRateMode: this.frameRateMode,
+      colorSpace: this.colorSpace,
+      audioChannels: this.audioChannels,
+      sampleRate: this.sampleRate,
+      streams: this.streams,
+      inspectionError: this.inspectionError,
     };
+  }
+
+  private inspectionInstant(at: Instant | string | bigint): Instant {
+    const updated = instant(at);
+    if (updated < this.updatedAt) {
+      throw new DomainError("Inspection time cannot move backwards.");
+    }
+    return updated;
+  }
+
+  private snapshotWith(
+    duration: Microseconds | null,
+    updatedAt: Instant,
+    inspection: InspectionState,
+  ): MediaAssetSnapshot {
+    return {
+      ...this.toSnapshot(),
+      duration,
+      updatedAt,
+      inspectionStatus: inspection.status,
+      container: inspection.container,
+      videoCodec: inspection.videoCodec,
+      audioCodec: inspection.audioCodec,
+      width: inspection.width,
+      height: inspection.height,
+      displayWidth: inspection.displayWidth,
+      displayHeight: inspection.displayHeight,
+      rotation: inspection.rotation,
+      frameRateNumerator: inspection.frameRateNumerator,
+      frameRateDenominator: inspection.frameRateDenominator,
+      frameRateMode: inspection.frameRateMode,
+      colorSpace: inspection.colorSpace,
+      audioChannels: inspection.audioChannels,
+      sampleRate: inspection.sampleRate,
+      streams: inspection.streams,
+      inspectionError: inspection.error,
+    };
+  }
+
+  private asSubtype(): Video | Audio | Image {
+    if (this instanceof Video || this instanceof Audio || this instanceof Image) {
+      return this;
+    }
+    return MediaAsset.restore(this.toSnapshot());
   }
 }
 
@@ -203,8 +360,9 @@ export class Video extends MediaAsset {
     duration: Microseconds | bigint | string | null,
     updatedAt?: Instant | string | bigint,
     upload?: MediaUploadMetadata | null,
+    inspection?: InspectionState | null,
   ) {
-    super(id, projectIdValue, "video", createdAt, duration, updatedAt, upload);
+    super(id, projectIdValue, "video", createdAt, duration, updatedAt, upload, inspection);
     Object.freeze(this);
   }
 }
@@ -219,8 +377,9 @@ export class Audio extends MediaAsset {
     duration: Microseconds | bigint | string | null,
     updatedAt?: Instant | string | bigint,
     upload?: MediaUploadMetadata | null,
+    inspection?: InspectionState | null,
   ) {
-    super(id, projectIdValue, "audio", createdAt, duration, updatedAt, upload);
+    super(id, projectIdValue, "audio", createdAt, duration, updatedAt, upload, inspection);
     Object.freeze(this);
   }
 }
@@ -235,8 +394,9 @@ export class Image extends MediaAsset {
     duration: Microseconds | bigint | string | null,
     updatedAt?: Instant | string | bigint,
     upload?: MediaUploadMetadata | null,
+    inspection?: InspectionState | null,
   ) {
-    super(id, projectIdValue, "image", createdAt, duration, updatedAt, upload);
+    super(id, projectIdValue, "image", createdAt, duration, updatedAt, upload, inspection);
     Object.freeze(this);
   }
 }

@@ -13,8 +13,24 @@ export {
   Video,
 } from "./media-asset.js";
 export type { MediaAssetSnapshot, MediaKind, MediaUploadMetadata } from "./media-asset.js";
-export { MediaAssetConflict } from "./media-repository.js";
+export { MediaAssetConflict, MediaInspectionConflict } from "./media-repository.js";
 export type { DerivedAssetRepository, MediaAssetRepository } from "./media-repository.js";
+export {
+  completedInspection,
+  failedInspection,
+  inspectionFailureCode,
+  MediaProbeError,
+  pendingInspection,
+} from "./media-probe.js";
+export type {
+  FrameRateMode,
+  IMediaProbe,
+  InspectionFailureCode,
+  InspectionStatus,
+  MediaStreamMetadata,
+  ProbeInput,
+  ProbeResult,
+} from "./media-probe.js";
 export {
   assertMediaStorageKey,
   contentSha256,

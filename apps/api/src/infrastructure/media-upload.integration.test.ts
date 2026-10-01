@@ -159,6 +159,8 @@ describe("direct media upload against PostgreSQL and MinIO", { concurrency: 1 },
     const stored = await media.findById(asset.id);
     assert.equal(stored?.contentSha256, hash);
     assert.equal(stored?.duration, null);
+    assert.equal(stored?.inspectionStatus, "pending");
+    assert.equal(stored?.videoCodec, null);
     const stat = await objects.stat(started.storageKey);
     assert.equal(stat?.byteSize, BigInt(body.byteLength));
     assert.equal(stat?.checksumSha256Hex, hash);

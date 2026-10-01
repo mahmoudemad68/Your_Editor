@@ -1,8 +1,10 @@
 import {
+  type Instant,
   type MediaAsset,
   MediaAssetConflict,
   type MediaAssetId,
   type MediaAssetRepository,
+  MediaInspectionConflict,
   type ProjectId,
 } from "@editagent/domain";
 
@@ -25,6 +27,14 @@ export class InMemoryMediaAssetRepository implements MediaAssetRepository {
       if (existing.projectId === asset.projectId && existing.storageKey === asset.storageKey) {
         throw new MediaAssetConflict();
       }
+    }
+    this.rows.set(asset.id, asset);
+  }
+
+  async saveInspection(asset: MediaAsset, expectedUpdatedAt: Instant): Promise<void> {
+    const current = this.rows.get(asset.id);
+    if (current === undefined || current.updatedAt !== expectedUpdatedAt) {
+      throw new MediaInspectionConflict();
     }
     this.rows.set(asset.id, asset);
   }

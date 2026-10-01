@@ -15,8 +15,10 @@ import {
   ListProjects,
   RenameProject,
 } from "./application/projects.js";
+import { GetMediaDetails } from "./application/media-details.js";
 import { BeginMediaUpload, CompleteMediaUpload } from "./application/uploads.js";
 import { HealthController } from "./presentation/health.controller.js";
+import { MediaController } from "./presentation/media.controller.js";
 import { ProjectsController } from "./presentation/projects.controller.js";
 import { UploadsController } from "./presentation/uploads.controller.js";
 
@@ -36,7 +38,7 @@ export class AppModule {
   static register(composition: ApiComposition): DynamicModule {
     return {
       module: AppModule,
-      controllers: [HealthController, ProjectsController, UploadsController],
+      controllers: [HealthController, ProjectsController, UploadsController, MediaController],
       providers: [
         {
           provide: CreateProject,
@@ -62,6 +64,10 @@ export class AppModule {
             composition.clock,
             composition.presignTtlSeconds,
           ),
+        },
+        {
+          provide: GetMediaDetails,
+          useValue: new GetMediaDetails(composition.projects, composition.media),
         },
         {
           provide: CompleteMediaUpload,

@@ -110,7 +110,7 @@ Each adapter writes its section of `MediaAnalysis`. The schema itself is a JSON 
 
 ## Media processing ports
 
-Owned by Media (inspection and derivatives) and Tools (editing commands). Implementations live in `packages/media-core`. The scaffold package exists and contains no FFmpeg invocation.
+Owned by Media (inspection and derivatives) and Tools (editing commands). Implementations live in `packages/media-core`.
 
 | Port                   | Owner | Capability                                                       |
 | ---------------------- | ----- | ---------------------------------------------------------------- |
@@ -118,7 +118,9 @@ Owned by Media (inspection and derivatives) and Tools (editing commands). Implem
 | `IMediaCommandBuilder` | Tools | Build an FFmpeg argument vector. No string-built shell commands. |
 | `IMediaProcessor`      | Tools | Execute a built command with a timeout and captured streams      |
 
-Only `packages/media-core` may call FFmpeg or FFprobe once those stories exist.
+`IMediaProbe` is declared in `packages/domain/src/modules/media`. The roadmap task that names `packages/media-core` as the port location is reconciled here: application code cannot import `media-core` (`application-no-outer-layers`), so the contract stays in the Media module and the FFprobe adapter stays in `packages/media-core`. Only that package spawns FFprobe. The adapter uses an argument array with `shell: false`, a finite timeout, and `-protocol_whitelist file`. That restriction is not the hostile-media validation required by US-127.
+
+US-126 inspection is not automatic. `CompleteMediaUpload` and `GET /projects/:projectId/media/:mediaAssetId` do not run FFprobe. `workers/media-worker` exposes `inspectMediaAsset` and `node dist/inspect.js <mediaAssetId>` for a stored asset. US-129 will call `inspectMediaAsset` from the job handler. There is no queue in this story.
 
 ## Rendering port
 

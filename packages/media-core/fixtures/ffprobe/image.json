@@ -1,0 +1,45 @@
+{
+  "frames": [
+    {
+      "media_type": "video",
+      "best_effort_timestamp_time": "0.000000",
+      "pkt_duration": 1
+    }
+  ],
+  "programs": [],
+  "streams": [
+    {
+      "codec_name": "png",
+      "codec_type": "video",
+      "width": 64,
+      "height": 48,
+      "color_space": "gbr",
+      "r_frame_rate": "25/1",
+      "avg_frame_rate": "25/1",
+      "time_base": "1/25",
+      "disposition": {
+        "default": 0,
+        "dub": 0,
+        "original": 0,
+        "comment": 0,
+        "lyrics": 0,
+        "karaoke": 0,
+        "forced": 0,
+        "hearing_impaired": 0,
+        "visual_impaired": 0,
+        "clean_effects": 0,
+        "attached_pic": 0,
+        "timed_thumbnails": 0,
+        "non_diegetic": 0,
+        "captions": 0,
+        "descriptions": 0,
+        "metadata": 0,
+        "dependent": 0,
+        "still_image": 0
+      }
+    }
+  ],
+  "format": {
+    "format_name": "png_pipe"
+  }
+}

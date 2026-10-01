@@ -54,4 +54,50 @@ test("media-worker configuration accepts a complete development environment", ()
   });
   assert.equal(config.databaseUrl, databaseUrl);
   assert.equal(config.objectStorage.bucket, "editagent");
+  assert.equal(config.ffprobePath, "ffprobe");
+  assert.equal(config.ffprobeTimeoutMs, 30_000);
+  assert.equal(config.probeTmpDir, null);
+  const configured = loadMediaWorkerConfig({
+    DATABASE_URL: databaseUrl,
+    REDIS_URL: redisUrl,
+    S3_ENDPOINT: "http://minio:9000",
+    S3_BUCKET: "editagent",
+    S3_ACCESS_KEY_ID: "editagent",
+    S3_SECRET_ACCESS_KEY: "editagent-dev-secret",
+    S3_REGION: "us-east-1",
+    FFPROBE_PATH: "/usr/bin/ffprobe",
+    FFPROBE_TIMEOUT_MS: "15000",
+    PROBE_TMPDIR: "/tmp/editagent-probe",
+  });
+  assert.equal(configured.ffprobePath, "/usr/bin/ffprobe");
+  assert.equal(configured.ffprobeTimeoutMs, 15_000);
+  assert.equal(configured.probeTmpDir, "/tmp/editagent-probe");
+  assert.throws(
+    () =>
+      loadMediaWorkerConfig({
+        DATABASE_URL: databaseUrl,
+        REDIS_URL: redisUrl,
+        S3_ENDPOINT: "http://minio:9000",
+        S3_BUCKET: "editagent",
+        S3_ACCESS_KEY_ID: "editagent",
+        S3_SECRET_ACCESS_KEY: "editagent-dev-secret",
+        S3_REGION: "us-east-1",
+        FFPROBE_TIMEOUT_MS: "0",
+      }),
+    ConfigurationError,
+  );
+  assert.throws(
+    () =>
+      loadMediaWorkerConfig({
+        DATABASE_URL: databaseUrl,
+        REDIS_URL: redisUrl,
+        S3_ENDPOINT: "http://minio:9000",
+        S3_BUCKET: "editagent",
+        S3_ACCESS_KEY_ID: "editagent",
+        S3_SECRET_ACCESS_KEY: "editagent-dev-secret",
+        S3_REGION: "us-east-1",
+        PROBE_TMPDIR: "relative",
+      }),
+    /absolute path/,
+  );
 });
