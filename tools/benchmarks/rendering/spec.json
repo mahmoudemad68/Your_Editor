@@ -1,0 +1,20 @@
+{
+  "id": "spike-60",
+  "width": 1080,
+  "height": 1920,
+  "fps": 30,
+  "durationSeconds": 60,
+  "videoCodec": "h264",
+  "pixelFormat": "yuv420p",
+  "audioCodec": "aac",
+  "audioSampleRate": 48000,
+  "audioBitrate": "128k",
+  "crf": 23,
+  "x264Preset": "veryfast",
+  "encoder": "libx264",
+  "hardwareAcceleration": false,
+  "remotionConcurrency": 2,
+  "title": "EditAgent",
+  "fontFile": "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+  "fontFamily": "DejaVu Sans, sans-serif"
+}

@@ -1,0 +1,30 @@
+{
+  "exitCode": 0,
+  "wallSeconds": 212.335628165,
+  "metrics": {
+    "wallSeconds": 211.723208088,
+    "bundleSeconds": 5.932873184,
+    "renderSeconds": 205.526245708,
+    "firstFrameSeconds": 0.670316352,
+    "startupSeconds": 6.603189536,
+    "browserExecutable": "/bench/node_modules/.remotion/chrome-headless-shell/linux64/chrome-headless-shell-linux64/chrome-headless-shell",
+    "peakRssBytes": 7398510592,
+    "browserPeakRssBytes": 1953988608,
+    "cpuSeconds": 379.23
+  },
+  "validation": {
+    "ok": true,
+    "problems": [],
+    "durationSeconds": 60.011,
+    "width": 1080,
+    "height": 1920,
+    "frameRate": "30/1",
+    "videoCodec": "h264",
+    "pixelFormat": "yuvj420p",
+    "audioCodec": "aac",
+    "sizeBytes": 46096928,
+    "bitrateBps": 6145130
+  },
+  "user": 10001,
+  "sandboxDisabled": false
+}

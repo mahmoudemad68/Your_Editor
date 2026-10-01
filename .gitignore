@@ -23,5 +23,11 @@ coverage.xml
 *.log
 .DS_Store
 .husky/_
+tools/benchmarks/rendering/node_modules/
+tools/benchmarks/rendering/fixtures/*.mp4
+tools/benchmarks/rendering/fixtures/segments/
+tools/benchmarks/rendering/public/*.mp4
+tools/benchmarks/rendering/out/
+tools/benchmarks/rendering/.remotion/
 .python-version
 !workers/ai-worker/.python-version
