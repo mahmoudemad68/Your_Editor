@@ -1,6 +1,9 @@
 # syntax=docker/dockerfile:1
-# Isolated Remotion benchmark image. It is not the production render-worker.
-# Chromium sandbox stays on. The container runs as a non-root user.
+# Isolated benchmark image only. It is not the production render-worker and
+# it is not a production security baseline.
+# The process runs as non-root uid 10001. That does not sandbox Chromium.
+# Remotion 4.0.532's renderer adds --no-sandbox and --disable-setuid-sandbox
+# when it launches Chrome Headless Shell.
 
 FROM node:22.23.2-bookworm-slim
 

@@ -177,7 +177,13 @@ Host render observation: Chrome Headless Shell 149.0.7790.0 launched with those 
 
 The isolated image `tools/benchmarks/rendering/docker/Dockerfile` installs the shared libraries named in the Remotion Docker document (`libnss3`, `libatk1.0-0`, `libgbm1`, `libasound2`, `libxrandr2`, `libxkbcommon0`, `libxfixes3`, `libxcomposite1`, `libxdamage1`, `libcups2`, Pango, Cairo), plus FFmpeg and DejaVu fonts. It installs Chrome Headless Shell at build time and drops to uid 10001. It was run with `--shm-size=1g`.
 
-That container run completed as uid 10001. Wall time was 212.336 seconds, including fixture generation. The inner `renderMedia()` call was 211.723 seconds, peak RSS 7,398,510,592 bytes, browser peak RSS 1,953,988,608 bytes. `ffprobe` accepted the file: 60.011 seconds, 1080×1920, 30/1, h264, `yuvj420p`, aac. The Dockerfile does not pass `--no-sandbox`. Remotion's launcher still did, as on the host. `results/docker.json` records the field `sandboxDisabled: false` to mean the spike script did not add a sandbox-disable flag. It does not mean the Chromium process ran with the sandbox enabled.
+That container run completed as uid 10001. Wall time was 212.336 seconds, including fixture generation. The inner `renderMedia()` call was 211.723 seconds, peak RSS 7,398,510,592 bytes, browser peak RSS 1,953,988,608 bytes. `ffprobe` accepted the file: 60.011 seconds, 1080×1920, 30/1, h264, `yuvj420p`, aac. Those numbers stay the recorded Docker performance measurement. They are not replaced by the later sandbox-observation run, and they do not change the FFmpeg or Remotion medians in section 9.
+
+Non-root execution and Chromium process sandboxing are different. The image drops to uid 10001, and the Dockerfile does not pass a sandbox flag. Remotion 4.0.532's launcher still adds `--no-sandbox` and `--disable-setuid-sandbox`. Running as uid 10001 does not mean Chromium is sandboxed. The image is an isolated benchmark only. It is not a production security baseline, and it is not a reason to add those flags to the production render worker.
+
+`scripts/docker-render.mjs` reads `/proc/<pid>/cmdline` while the render is in progress and writes `chromiumSandbox` from the arguments it sees. It does not infer that the sandbox is enabled because the benchmark script itself omitted a disabling flag. If no Chromium process can be inspected, the status is `UNVERIFIED`.
+
+A later container run, recorded in `results/docker.json`, is the sandbox observation. It does not replace the timings above. It completed as uid 10001 with exit code 0. Wall time was 207.493 seconds. `ffprobe` accepted the file: 60.011 seconds, 1080×1920, 30/1, h264, `yuvj420p`, aac. While Chrome Headless Shell was running, its process arguments included `--no-sandbox` and `--disable-setuid-sandbox`. `chromiumSandbox.status` is `DISABLED`, and `observedFlags` lists those two flags.
 
 The image is not published and is not wired into Compose.
 
@@ -185,7 +191,7 @@ The image is not published and is not wired into Compose.
 
 Checked 2026-10-01.
 
-The benchmark depends on Remotion 4.0.532. The license text shipped for the current line is [LICENSE.md](https://github.com/remotion-dev/remotion/blob/main/LICENSE.md), also published at [remotion.dev/license](https://www.remotion.dev/license).
+The benchmark depends on Remotion 4.0.532. The license for that version is [LICENSE.md at v4.0.532](https://github.com/remotion-dev/remotion/blob/v4.0.532/LICENSE.md). The same text is published at [remotion.dev/license](https://www.remotion.dev/license).
 
 Free License eligibility in that text:
 
@@ -234,7 +240,7 @@ On this VM the median of three measured Remotion runs is 139.644 seconds, which 
 
 - The CPU model string is the generic hypervisor name `Intel(R) Xeon(R) Processor`. It is not a specific SKU.
 - About 12 GiB of the 15.6 GiB RAM was already in use before the spike. The Remotion peak still fit, and another concurrent job on the same VM could change the number.
-- Remotion disables the Chromium sandbox in its own launcher. A sandboxed non-root container was not shown.
+- Remotion 4.0.532 disables the Chromium sandbox in its own launcher. The benchmark container runs as uid 10001, and the observed Chrome Headless Shell arguments still include `--no-sandbox` and `--disable-setuid-sandbox`. A sandboxed Chromium process was not shown.
 - `yuvj420p` versus `yuv420p` means the Remotion file is full-range 4:2:0. It is not a 10-bit or 4:4:4 file. Players still show the captions.
 - Cut-and-concat must not be quoted as the cost of drawing captions.
 - GitHub-hosted CI runners are not used as a performance gate.
@@ -245,6 +251,6 @@ On this VM the median of three measured Remotion runs is 139.644 seconds, which 
 - NFR-PERF-01 in `docs/requirements/srs.md` (180 seconds, later checkpoint CP4; not the CP1 300-second gate)
 - Remotion `renderMedia()`: https://www.remotion.dev/docs/renderer/render-media
 - Remotion Docker notes: https://www.remotion.dev/docs/docker
-- Remotion license, checked 2026-10-01: https://github.com/remotion-dev/remotion/blob/main/LICENSE.md
+- Remotion 4.0.532 license, checked 2026-10-01: https://github.com/remotion-dev/remotion/blob/v4.0.532/LICENSE.md
 - Remotion 5.0 terms, not yet in effect for 4.0.532: https://www.remotion.dev/docs/terms
 - Raw measurements: `tools/benchmarks/rendering/results/summary.json`

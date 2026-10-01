@@ -1,16 +1,16 @@
 {
   "exitCode": 0,
-  "wallSeconds": 212.335628165,
+  "wallSeconds": 207.493372191,
   "metrics": {
-    "wallSeconds": 211.723208088,
-    "bundleSeconds": 5.932873184,
-    "renderSeconds": 205.526245708,
-    "firstFrameSeconds": 0.670316352,
-    "startupSeconds": 6.603189536,
+    "wallSeconds": 206.944444679,
+    "bundleSeconds": 5.994157775,
+    "renderSeconds": 200.696446192,
+    "firstFrameSeconds": 0.685395458,
+    "startupSeconds": 6.679553233,
     "browserExecutable": "/bench/node_modules/.remotion/chrome-headless-shell/linux64/chrome-headless-shell-linux64/chrome-headless-shell",
-    "peakRssBytes": 7398510592,
-    "browserPeakRssBytes": 1953988608,
-    "cpuSeconds": 379.23
+    "peakRssBytes": 6891491328,
+    "browserPeakRssBytes": 1975615488,
+    "cpuSeconds": 369.04
   },
   "validation": {
     "ok": true,
@@ -26,5 +26,9 @@
     "bitrateBps": 6145130
   },
   "user": 10001,
-  "sandboxDisabled": false
+  "chromiumSandbox": {
+    "status": "DISABLED",
+    "observationMethod": "live Chromium process arguments",
+    "observedFlags": ["--no-sandbox", "--disable-setuid-sandbox"]
+  }
 }
