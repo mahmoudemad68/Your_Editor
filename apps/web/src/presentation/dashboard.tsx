@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ApiResult, ProjectApi, ProjectRecord } from "../project-contract";
 import { productLabel } from "./product-label";
 import { Button } from "./ui/button";
@@ -16,6 +16,13 @@ export function Dashboard({ api }: { api: ProjectApi }) {
   const [state, setState] = useState<LoadState>({ status: "loading" });
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState<ProjectRecord | null>(null);
+  const createFocus = useRef<HTMLElement | null>(null);
+  const deleteFocus = useRef<HTMLElement | null>(null);
+
+  function beginCreate(trigger: HTMLElement): void {
+    createFocus.current = trigger;
+    setCreating(true);
+  }
 
   async function load(): Promise<void> {
     setState({ status: "loading" });
@@ -28,21 +35,21 @@ export function Dashboard({ api }: { api: ProjectApi }) {
   }, [api]);
 
   return (
-    <main className="px-4 py-6 md:px-8">
-      <header className="flex flex-wrap items-center justify-between gap-3 border-b border-line pb-4">
+    <main className="min-w-0 px-4 py-6 md:px-8">
+      <header className="flex min-w-0 flex-wrap items-center justify-between gap-3 border-b border-line pb-4">
         <div>
           <p className="text-sm text-muted">{productLabel()}</p>
           <h1 className="text-2xl font-semibold tracking-tight">Projects</h1>
         </div>
         <Button
           variant="primary"
-          onClick={() => setCreating(true)}
+          onClick={(event) => beginCreate(event.currentTarget)}
           disabled={state.status === "loading" || state.status === "unauthorized"}
         >
           Create project
         </Button>
       </header>
-      <section className="mt-6" aria-live="polite">
+      <section className="mt-6 min-w-0" aria-live="polite">
         {state.status === "loading" ? <p aria-busy="true">Loading projects…</p> : null}
         {state.status === "unauthorized" ? (
           <StatusPanel
@@ -65,14 +72,20 @@ export function Dashboard({ api }: { api: ProjectApi }) {
             title="No projects yet"
             body="Create a project to give an edit its own workspace."
             actionLabel="Create project"
-            onAction={() => setCreating(true)}
+            onAction={(trigger) => beginCreate(trigger)}
           />
         ) : null}
         {state.status === "ready" && state.projects.length > 0 ? (
-          <ul className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          <ul className="grid min-w-0 gap-4 sm:grid-cols-2 xl:grid-cols-3">
             {state.projects.map((project) => (
-              <li key={project.id}>
-                <ProjectCard project={project} onDelete={() => setDeleting(project)} />
+              <li key={project.id} className="min-w-0">
+                <ProjectCard
+                  project={project}
+                  onDelete={(trigger) => {
+                    deleteFocus.current = trigger;
+                    setDeleting(project);
+                  }}
+                />
               </li>
             ))}
           </ul>
@@ -82,6 +95,7 @@ export function Dashboard({ api }: { api: ProjectApi }) {
         open={creating}
         api={api}
         onOpenChange={setCreating}
+        restoreFocus={() => createFocus.current?.focus()}
         onCreated={(project) => {
           setState((current) => {
             if (current.status !== "ready") {
@@ -99,6 +113,7 @@ export function Dashboard({ api }: { api: ProjectApi }) {
             setDeleting(null);
           }
         }}
+        restoreFocus={() => deleteFocus.current?.focus()}
         onDeleted={(projectId) => {
           setDeleting(null);
           setState((current) => {
@@ -126,10 +141,16 @@ function fromList(result: ApiResult<readonly ProjectRecord[]>): LoadState {
   return { status: "error", message: result.message };
 }
 
-function ProjectCard({ project, onDelete }: { project: ProjectRecord; onDelete: () => void }) {
+function ProjectCard({
+  project,
+  onDelete,
+}: {
+  project: ProjectRecord;
+  onDelete: (trigger: HTMLElement) => void;
+}) {
   return (
-    <article className="flex h-full flex-col rounded-lg border border-line bg-panel p-4">
-      <h2 className="text-lg font-semibold">{project.name}</h2>
+    <article className="flex h-full min-w-0 flex-col overflow-x-clip rounded-lg border border-line bg-panel p-4">
+      <h2 className="min-w-0 overflow-anywhere text-lg font-semibold">{project.name}</h2>
       <p className="mt-2 text-sm text-muted">
         Role <span className="text-paper">{roleLabel(project.role)}</span>
       </p>
@@ -142,7 +163,7 @@ function ProjectCard({ project, onDelete }: { project: ProjectRecord; onDelete: 
           Open project
         </a>
         {project.role === "owner" ? (
-          <Button variant="danger" onClick={onDelete}>
+          <Button variant="danger" onClick={(event) => onDelete(event.currentTarget)}>
             Delete
           </Button>
         ) : null}
@@ -156,11 +177,13 @@ function CreateProjectDialog({
   api,
   onOpenChange,
   onCreated,
+  restoreFocus,
 }: {
   open: boolean;
   api: ProjectApi;
   onOpenChange: (open: boolean) => void;
   onCreated: (project: ProjectRecord) => void;
+  restoreFocus?: () => void;
 }) {
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -196,6 +219,7 @@ function CreateProjectDialog({
       }}
       title="Create project"
       description="The name is stored after the Project service accepts it."
+      restoreFocus={restoreFocus}
     >
       <form
         onSubmit={(event) => {
@@ -208,13 +232,13 @@ function CreateProjectDialog({
         </label>
         <input
           id="project-name"
-          className="mt-2 w-full rounded-md border border-line bg-ink px-3 py-2"
+          className="mt-2 w-full min-w-0 rounded-md border border-line bg-ink px-3 py-2"
           value={name}
           onChange={(event) => setName(event.target.value)}
           autoComplete="off"
         />
         {error ? (
-          <p className="mt-2 text-sm text-danger" role="alert">
+          <p className="overflow-anywhere mt-2 text-sm text-danger" role="alert">
             {error}
           </p>
         ) : null}
@@ -241,11 +265,13 @@ function DeleteProjectDialog({
   api,
   onOpenChange,
   onDeleted,
+  restoreFocus,
 }: {
   project: ProjectRecord | null;
   api: ProjectApi;
   onOpenChange: (open: boolean) => void;
   onDeleted: (projectId: string) => void;
+  restoreFocus?: () => void;
 }) {
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
@@ -275,6 +301,7 @@ function DeleteProjectDialog({
         }
       }}
       title="Delete project"
+      restoreFocus={restoreFocus}
       description={
         project === null
           ? undefined
@@ -282,7 +309,7 @@ function DeleteProjectDialog({
       }
     >
       {error ? (
-        <p className="text-sm text-danger" role="alert">
+        <p className="overflow-anywhere text-sm text-danger" role="alert">
           {error}
         </p>
       ) : null}
@@ -312,13 +339,17 @@ function StatusPanel({
   title: string;
   body: string;
   actionLabel: string;
-  onAction: () => void;
+  onAction: (trigger: HTMLElement) => void;
 }) {
   return (
-    <div className="rounded-lg border border-dashed border-line p-6">
-      <h2 className="text-lg font-semibold">{title}</h2>
-      <p className="mt-2 max-w-xl text-sm text-muted">{body}</p>
-      <Button className="mt-4" variant="secondary" onClick={onAction}>
+    <div className="min-w-0 rounded-lg border border-dashed border-line p-6">
+      <h2 className="overflow-anywhere text-lg font-semibold">{title}</h2>
+      <p className="overflow-anywhere mt-2 max-w-xl text-sm text-muted">{body}</p>
+      <Button
+        className="mt-4"
+        variant="secondary"
+        onClick={(event) => onAction(event.currentTarget)}
+      >
         {actionLabel}
       </Button>
     </div>

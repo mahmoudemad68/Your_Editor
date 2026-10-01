@@ -6,6 +6,8 @@ Production sign-in is not implemented. US-118 will authenticate the API transpor
 
 `GET /projects/:projectId` does not exist. Opening a project reads `GET /projects` and selects the matching id.
 
+Same-origin `/api/projects` responses stay HTTP 200 with the typed JSON envelope. Every response, including a 401 envelope, sends `Cache-Control: private, no-store`.
+
 Regenerate the client after the API OpenAPI document changes:
 
 ```bash

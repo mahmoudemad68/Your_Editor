@@ -9,7 +9,7 @@ export default function ProjectPage() {
   const params = useParams<{ projectId: string }>();
   const projectId = params.projectId;
   return (
-    <AppShell>
+    <AppShell currentPath={`/projects/${projectId}`}>
       <ProjectScreen projectId={projectId} api={browserProjectApi} />
     </AppShell>
   );

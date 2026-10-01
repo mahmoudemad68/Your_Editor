@@ -9,7 +9,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "generate:api": "node scripts/generate-api-client.mjs",
     "check:api-client": "node scripts/check-api-client.mjs",
-    "test": "tsc -p tsconfig.test.json && node ../../tools/test/run-node-tests.mjs dist-test/presentation/product-label.test.js dist-test/presentation/dashboard.test.js dist-test/infrastructure/config.test.js dist-test/infrastructure/project-api.test.js"
+    "test": "tsc -p tsconfig.test.json && node ../../tools/test/run-node-tests.mjs dist-test/presentation/product-label.test.js dist-test/presentation/dashboard.test.js dist-test/infrastructure/config.test.js dist-test/infrastructure/project-api.test.js dist-test/composition/project-response.test.js"
   },
   "dependencies": {
     "@editagent/shared": "workspace:*",

@@ -12,7 +12,9 @@
     "src/presentation/**/*.tsx",
     "src/infrastructure/**/*.ts",
     "src/generated/**/*.ts",
-    "src/project-contract.ts"
+    "src/project-contract.ts",
+    "src/composition/project-response.ts",
+    "src/composition/project-response.test.ts"
   ],
   "exclude": ["node_modules"]
 }

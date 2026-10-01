@@ -6,7 +6,7 @@ import { AppShell } from "../presentation/shell";
 
 export default function HomePage() {
   return (
-    <AppShell>
+    <AppShell currentPath="/">
       <Dashboard api={browserProjectApi} />
     </AppShell>
   );

@@ -4,7 +4,10 @@ import { test } from "node:test";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ApiResult, ProjectApi, ProjectRecord } from "../project-contract";
 import { Dashboard } from "./dashboard";
+import { ProjectScreen } from "./project-screen";
 import { AppShell } from "./shell";
+
+const LONG_NAME = `项目${"字".repeat(420)}`;
 
 const OWNER_PROJECT = project("018f6b6e-7c3a-7b2a-8d3e-9c0b1a2d3e4f", "Launch", "owner");
 const EDITOR_PROJECT = project("018f6b6e-7c3a-7b2c-8d3e-9c0b1a2d3e4f", "Assembly", "editor");
@@ -195,7 +198,71 @@ test("mobile navigation can be opened from the header", () => {
     screen.getByRole("button", { name: "Close navigation" }).getAttribute("aria-expanded"),
     "true",
   );
-  assert.ok(screen.getByRole("link", { name: "Projects" }));
+  assert.equal(screen.getByRole("link", { name: "Projects" }).getAttribute("aria-current"), "page");
+  cleanup();
+});
+
+test("the projects link is current only on the dashboard route", () => {
+  render(
+    <AppShell currentPath="/projects/018f6b6e-7c3a-7b2a-8d3e-9c0b1a2d3e4f">
+      <p>Workspace</p>
+    </AppShell>,
+  );
+  assert.equal(screen.getByRole("link", { name: "Projects" }).getAttribute("aria-current"), null);
+  cleanup();
+});
+
+test("a long uninterrupted project name wraps in the card and delete dialog", async () => {
+  const record = project("018f6b6e-7c3a-7b2d-8d3e-9c0b1a2d3e4f", LONG_NAME, "owner");
+  render(<Dashboard api={fakeApi({ list: async () => ({ ok: true, data: [record] }) })} />);
+  const heading = await screen.findByRole("heading", { name: LONG_NAME });
+  assert.ok(heading.className.includes("min-w-0"));
+  assert.ok(heading.className.includes("overflow-anywhere"));
+  assert.ok(heading.closest("li")?.classList.contains("min-w-0"));
+  assert.ok(heading.closest("article")?.classList.contains("min-w-0"));
+  const opener = screen.getByRole("button", { name: "Delete" });
+  opener.focus();
+  fireEvent.click(opener);
+  const shown = screen.getAllByText(LONG_NAME, { exact: false });
+  assert.ok(shown.length >= 2);
+  for (const element of shown) {
+    assert.ok(element.className.includes("overflow-anywhere"), element.className);
+  }
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  await waitFor(() => {
+    if (document.activeElement !== opener) {
+      throw new Error("focus did not return to the delete button");
+    }
+  });
+  cleanup();
+});
+
+test("a long project name wraps on the project page", async () => {
+  const record = project("018f6b6e-7c3a-7b2d-8d3e-9c0b1a2d3e4f", LONG_NAME, "editor");
+  render(
+    <ProjectScreen
+      projectId={record.id}
+      api={fakeApi({ list: async () => ({ ok: true, data: [record] }) })}
+    />,
+  );
+  const heading = await screen.findByRole("heading", { name: LONG_NAME });
+  assert.ok(heading.className.includes("overflow-anywhere"));
+  assert.equal(screen.queryByRole("button", { name: "Delete" }), null);
+  cleanup();
+});
+
+test("cancelling create returns focus to the button that opened it", async () => {
+  render(<Dashboard api={fakeApi({ list: async () => ({ ok: true, data: [] }) })} />);
+  await screen.findByRole("heading", { name: "No projects yet" });
+  const opener = screen.getAllByRole("button", { name: "Create project" })[0]!;
+  opener.focus();
+  fireEvent.click(opener);
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  await waitFor(() => {
+    if (document.activeElement !== opener) {
+      throw new Error("focus did not return to the create button");
+    }
+  });
   cleanup();
 });
 

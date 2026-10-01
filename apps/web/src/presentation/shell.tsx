@@ -6,8 +6,15 @@ import { useState } from "react";
 import { productLabel } from "./product-label";
 import { Button } from "./ui/button";
 
-export function AppShell({ children }: { children: ReactNode }) {
+export function AppShell({
+  children,
+  currentPath = "/",
+}: {
+  children: ReactNode;
+  currentPath?: string;
+}) {
   const [navOpen, setNavOpen] = useState(false);
+  const onProjects = currentPath === "/";
   return (
     <div className="min-h-screen bg-ink text-paper">
       <header className="flex items-center justify-between gap-3 border-b border-line px-4 py-3">
@@ -26,7 +33,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         </div>
         <p className="text-xs text-muted">Sign-in arrives with authentication</p>
       </header>
-      <div className="md:grid md:grid-cols-[16rem_1fr]">
+      <div className="min-w-0 md:grid md:grid-cols-[16rem_minmax(0,1fr)]">
         <aside
           id="app-nav"
           className={`${navOpen ? "block" : "hidden"} border-line bg-panel md:block md:border-r`}
@@ -34,7 +41,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           <nav className="px-3 py-4" aria-label="Application">
             <a
               href="/"
-              aria-current="page"
+              {...(onProjects ? { "aria-current": "page" as const } : {})}
               className="block rounded-md bg-panel-raised px-3 py-2 text-sm font-medium text-paper"
             >
               Projects

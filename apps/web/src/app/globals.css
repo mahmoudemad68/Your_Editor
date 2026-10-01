@@ -23,3 +23,10 @@ body {
   outline: 2px solid var(--color-accent);
   outline-offset: 2px;
 }
+
+/* Unbroken Unicode names must wrap inside cards, details, and dialogs. */
+.overflow-anywhere {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}

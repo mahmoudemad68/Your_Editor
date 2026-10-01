@@ -1,5 +1,5 @@
-import { NextResponse } from "next/server";
 import { deleteProject, renameProject } from "../../../../composition/project-actions";
+import { projectApiResponse } from "../../../../composition/project-response";
 
 export const dynamic = "force-dynamic";
 
@@ -10,7 +10,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ proje
     typeof body === "object" && body !== null && "name" in body && typeof body.name === "string"
       ? body.name
       : "";
-  return NextResponse.json(await renameProject(projectId, name));
+  return projectApiResponse(await renameProject(projectId, name));
 }
 
 export async function DELETE(
@@ -18,5 +18,5 @@ export async function DELETE(
   context: { params: Promise<{ projectId: string }> },
 ) {
   const { projectId } = await context.params;
-  return NextResponse.json(await deleteProject(projectId));
+  return projectApiResponse(await deleteProject(projectId));
 }

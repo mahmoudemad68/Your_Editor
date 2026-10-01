@@ -1,10 +1,10 @@
-import { NextResponse } from "next/server";
 import { createProject, listProjects } from "../../../composition/project-actions";
+import { projectApiResponse } from "../../../composition/project-response";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  return NextResponse.json(await listProjects());
+  return projectApiResponse(await listProjects());
 }
 
 export async function POST(request: Request) {
@@ -13,5 +13,5 @@ export async function POST(request: Request) {
     typeof body === "object" && body !== null && "name" in body && typeof body.name === "string"
       ? body.name
       : "";
-  return NextResponse.json(await createProject(name));
+  return projectApiResponse(await createProject(name));
 }

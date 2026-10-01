@@ -35,7 +35,7 @@ export function ProjectScreen({ projectId, api }: { projectId: string; api: Proj
   }, [api, projectId]);
 
   return (
-    <main className="px-4 py-6 md:px-8">
+    <main className="min-w-0 px-4 py-6 md:px-8">
       <a className="text-sm text-muted" href="/">
         Back to projects
       </a>
@@ -45,7 +45,7 @@ export function ProjectScreen({ projectId, api }: { projectId: string; api: Proj
         </p>
       ) : null}
       {state.status === "unauthorized" ? (
-        <section className="mt-6">
+        <section className="mt-6 min-w-0">
           <h1 className="text-2xl font-semibold">Sign-in is required</h1>
           <p className="mt-2 max-w-xl text-sm text-muted">
             Production sign-in is not available yet. The Project service requires an authenticated
@@ -54,16 +54,16 @@ export function ProjectScreen({ projectId, api }: { projectId: string; api: Proj
         </section>
       ) : null}
       {state.status === "error" ? (
-        <section className="mt-6">
+        <section className="mt-6 min-w-0">
           <h1 className="text-2xl font-semibold">Project could not be opened</h1>
-          <p className="mt-2 text-sm text-muted">{state.message}</p>
+          <p className="overflow-anywhere mt-2 text-sm text-muted">{state.message}</p>
           <Button className="mt-4" onClick={() => void load()}>
             Retry
           </Button>
         </section>
       ) : null}
       {state.status === "missing" ? (
-        <section className="mt-6">
+        <section className="mt-6 min-w-0">
           <h1 className="text-2xl font-semibold">Project is not available</h1>
           <p className="mt-2 text-sm text-muted">
             It is not in the project list returned for this caller.
@@ -71,9 +71,9 @@ export function ProjectScreen({ projectId, api }: { projectId: string; api: Proj
         </section>
       ) : null}
       {state.status === "ready" ? (
-        <section className="mt-6">
+        <section className="mt-6 min-w-0">
           <p className="text-sm text-muted">{roleName(state.project.role)}</p>
-          <h1 className="text-2xl font-semibold">{state.project.name}</h1>
+          <h1 className="min-w-0 overflow-anywhere text-2xl font-semibold">{state.project.name}</h1>
           <p className="mt-3 max-w-xl text-sm text-muted">
             Upload and media details will be added on this page later. This shell only identifies
             the project.
