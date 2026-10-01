@@ -46,6 +46,8 @@ export default tseslint.config(
     languageOptions: {
       globals: {
         URL: "readonly",
+        Buffer: "readonly",
+        File: "readonly",
         Headers: "readonly",
         Request: "readonly",
         Response: "readonly",

@@ -6,7 +6,13 @@ Production sign-in is not implemented. US-118 will authenticate the API transpor
 
 `GET /projects/:projectId` does not exist. Opening a project reads `GET /projects` and selects the matching id.
 
-Same-origin `/api/projects` responses stay HTTP 200 with the typed JSON envelope. Every response, including a 401 envelope, sends `Cache-Control: private, no-store`.
+Same-origin `/api/projects` responses stay HTTP 200 with the typed JSON envelope. Every response, including a 401 envelope, sends `Cache-Control: private, no-store`. Upload begin, upload complete, and media details use the same envelope and cache header. The video bytes are PUT to the presigned URL. They are not proxied.
+
+There is no media list endpoint. After a full page reload, earlier uploads are not shown. That avoids storing media ids in the browser.
+
+Inspection stays pending until a worker records it. Automatic inspection is US-129. This page can refresh details; it does not run FFprobe.
+
+Local MinIO accepts the signed PUT preflight for `content-type`, `x-amz-checksum-sha256`, and `if-none-match`. A production S3 bucket needs an explicit CORS rule for those headers and PUT. CORS does not make objects public. Anonymous reads stay denied.
 
 Regenerate the client after the API OpenAPI document changes:
 

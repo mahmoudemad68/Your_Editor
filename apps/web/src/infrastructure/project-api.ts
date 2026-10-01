@@ -1,5 +1,5 @@
 import { createGeneratedClient } from "../generated/client";
-import type { ApiResult, ProjectApi } from "../project-contract";
+import type { ApiResult, ProjectApi, UploadDeclaration } from "../project-contract";
 
 export interface ProjectApiOptions {
   readonly baseUrl: string;
@@ -63,6 +63,47 @@ export function createHttpProjectApi(options: ProjectApiOptions): ProjectApi {
         return unreachable();
       }
     },
+    async beginUpload(projectId: string, body: UploadDeclaration) {
+      try {
+        const result = await client.POST("/projects/{projectId}/uploads", {
+          params: { path: { projectId } },
+          body,
+        });
+        if (result.response.ok && result.data !== undefined) {
+          return { ok: true, data: result.data };
+        }
+        return failureResult(result.response, result.error);
+      } catch {
+        return unreachable();
+      }
+    },
+    async completeUpload(projectId: string, body: UploadDeclaration) {
+      try {
+        const result = await client.POST("/projects/{projectId}/uploads/complete", {
+          params: { path: { projectId } },
+          body,
+        });
+        if (result.response.ok && result.data !== undefined) {
+          return { ok: true, data: result.data };
+        }
+        return failureResult(result.response, result.error);
+      } catch {
+        return unreachable();
+      }
+    },
+    async getMediaDetails(projectId: string, mediaAssetId: string) {
+      try {
+        const result = await client.GET("/projects/{projectId}/media/{mediaAssetId}", {
+          params: { path: { projectId, mediaAssetId } },
+        });
+        if (result.response.ok && result.data !== undefined) {
+          return { ok: true, data: result.data };
+        }
+        return failureResult(result.response, result.error);
+      } catch {
+        return unreachable();
+      }
+    },
   };
 }
 
@@ -71,6 +112,10 @@ function failureResult(response: Response, error: unknown): ApiResult<never> {
     return { ok: false, status: 401, message: "Sign in is required." };
   }
   if (response.status >= 500) {
+    const message = readMessage(error);
+    if (message === "Object storage is unavailable.") {
+      return { ok: false, status: response.status, message };
+    }
     return { ok: false, status: response.status, message: "The Project service is unavailable." };
   }
   const message = readMessage(error);

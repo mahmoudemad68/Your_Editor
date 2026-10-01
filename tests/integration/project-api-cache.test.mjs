@@ -50,12 +50,30 @@ test("same-origin project routes send private no-store, including 401", async ()
       ["POST", "/api/projects"],
       ["PATCH", "/api/projects/018f6b6e-7c3a-7b2a-8d3e-9c0b1a2d3e4f"],
       ["DELETE", "/api/projects/018f6b6e-7c3a-7b2a-8d3e-9c0b1a2d3e4f"],
+      ["POST", "/api/projects/018f6b6e-7c3a-7b2a-8d3e-9c0b1a2d3e4f/uploads"],
+      ["POST", "/api/projects/018f6b6e-7c3a-7b2a-8d3e-9c0b1a2d3e4f/uploads/complete"],
+      [
+        "GET",
+        "/api/projects/018f6b6e-7c3a-7b2a-8d3e-9c0b1a2d3e4f/media/018f6b6e-7c3a-7b2c-8d3e-9c0b1a2d3e4f",
+      ],
     ];
     for (const [method, pathname] of denied) {
       const response = await fetch(`http://127.0.0.1:${webPort}${pathname}`, {
         method,
         headers: { "content-type": "application/json" },
-        body: method === "GET" || method === "DELETE" ? undefined : JSON.stringify({ name: "Cut" }),
+        body:
+          method === "GET" || method === "DELETE"
+            ? undefined
+            : JSON.stringify(
+                pathname.includes("/uploads")
+                  ? {
+                      filename: "clip.mp4",
+                      mimeType: "video/mp4",
+                      byteSize: 3,
+                      sha256: "ab".repeat(32),
+                    }
+                  : { name: "Cut" },
+              ),
       });
       assert.equal(response.status, 200, `${method} ${logs}`);
       assert.equal(response.headers.get("cache-control"), "private, no-store", method);
