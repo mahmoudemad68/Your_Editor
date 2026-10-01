@@ -18,10 +18,39 @@ export function Dashboard({ api }: { api: ProjectApi }) {
   const [deleting, setDeleting] = useState<ProjectRecord | null>(null);
   const createFocus = useRef<HTMLElement | null>(null);
   const deleteFocus = useRef<HTMLElement | null>(null);
+  const headerCreateRef = useRef<HTMLButtonElement | null>(null);
+  const deleteConfirmed = useRef(false);
 
   function beginCreate(trigger: HTMLElement): void {
     createFocus.current = trigger;
     setCreating(true);
+  }
+
+  function focusHeaderCreate(): void {
+    const button = headerCreateRef.current;
+    if (button !== null && button.isConnected && !button.disabled) {
+      button.focus();
+      return;
+    }
+    const fallback = document.querySelector<HTMLElement>("a[href='/']");
+    if (fallback !== null && fallback.isConnected) {
+      fallback.focus();
+    }
+  }
+
+  function restoreAfterDelete(): void {
+    const succeeded = deleteConfirmed.current;
+    deleteConfirmed.current = false;
+    if (succeeded) {
+      focusHeaderCreate();
+      return;
+    }
+    const trigger = deleteFocus.current;
+    if (trigger !== null && trigger.isConnected) {
+      trigger.focus();
+      return;
+    }
+    focusHeaderCreate();
   }
 
   async function load(): Promise<void> {
@@ -42,6 +71,8 @@ export function Dashboard({ api }: { api: ProjectApi }) {
           <h1 className="text-2xl font-semibold tracking-tight">Projects</h1>
         </div>
         <Button
+          ref={headerCreateRef}
+          id="create-project"
           variant="primary"
           onClick={(event) => beginCreate(event.currentTarget)}
           disabled={state.status === "loading" || state.status === "unauthorized"}
@@ -82,6 +113,7 @@ export function Dashboard({ api }: { api: ProjectApi }) {
                 <ProjectCard
                   project={project}
                   onDelete={(trigger) => {
+                    deleteConfirmed.current = false;
                     deleteFocus.current = trigger;
                     setDeleting(project);
                   }}
@@ -113,8 +145,9 @@ export function Dashboard({ api }: { api: ProjectApi }) {
             setDeleting(null);
           }
         }}
-        restoreFocus={() => deleteFocus.current?.focus()}
+        restoreFocus={restoreAfterDelete}
         onDeleted={(projectId) => {
+          deleteConfirmed.current = true;
           setDeleting(null);
           setState((current) => {
             if (current.status !== "ready") {
@@ -275,6 +308,13 @@ function DeleteProjectDialog({
 }) {
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+  const confirmRef = useRef<HTMLButtonElement | null>(null);
+
+  useEffect(() => {
+    if (error !== null) {
+      confirmRef.current?.focus();
+    }
+  }, [error]);
 
   async function confirm(): Promise<void> {
     if (project === null) {
@@ -322,7 +362,13 @@ function DeleteProjectDialog({
         >
           Cancel
         </Button>
-        <Button type="button" variant="danger" disabled={pending} onClick={() => void confirm()}>
+        <Button
+          ref={confirmRef}
+          type="button"
+          variant="danger"
+          disabled={pending}
+          onClick={() => void confirm()}
+        >
           {pending ? "Deleting…" : "Delete project"}
         </Button>
       </div>

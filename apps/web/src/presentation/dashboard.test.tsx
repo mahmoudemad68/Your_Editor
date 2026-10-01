@@ -1,7 +1,7 @@
 import "./dom-setup";
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ApiResult, ProjectApi, ProjectRecord } from "../project-contract";
 import { Dashboard } from "./dashboard";
 import { ProjectScreen } from "./project-screen";
@@ -264,6 +264,147 @@ test("cancelling create returns focus to the button that opened it", async () =>
     }
   });
   cleanup();
+});
+
+const BETA = project("018f6b6e-7c3a-7b2e-8d3e-9c0b1a2d3e4f", "Beta", "owner");
+
+function headerCreate(): HTMLButtonElement {
+  const button = document.getElementById("create-project");
+  if (!(button instanceof HTMLButtonElement)) {
+    throw new Error("header Create project button is missing");
+  }
+  return button;
+}
+
+function assertUsableFocus(element: HTMLElement): void {
+  if (document.activeElement !== element) {
+    throw new Error("focus is not on the expected control");
+  }
+  assert.equal(element.isConnected, true);
+  assert.notEqual(element, document.body);
+  if (element instanceof HTMLButtonElement) {
+    assert.equal(element.disabled, false);
+  }
+  assert.equal(element.hidden, false);
+  assert.notEqual(element.getAttribute("aria-hidden"), "true");
+}
+
+async function openDelete(name: string): Promise<HTMLElement> {
+  const heading = await screen.findByRole("heading", { name });
+  const card = heading.closest("article");
+  if (card === null) {
+    throw new Error("project card is missing");
+  }
+  const opener = within(card).getByRole("button", { name: "Delete" });
+  opener.focus();
+  fireEvent.click(opener);
+  await screen.findByRole("heading", { name: "Delete project" });
+  return opener;
+}
+
+test("cancelling deletion returns focus to the original delete button", async () => {
+  render(<Dashboard api={fakeApi({ list: async () => ({ ok: true, data: [OWNER_PROJECT] }) })} />);
+  const opener = await openDelete("Launch");
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  await waitFor(() => assertUsableFocus(opener));
+  cleanup();
+});
+
+test("escape returns focus to the original delete button", async () => {
+  render(<Dashboard api={fakeApi({ list: async () => ({ ok: true, data: [OWNER_PROJECT] }) })} />);
+  const opener = await openDelete("Launch");
+  fireEvent.keyDown(document, { key: "Escape", code: "Escape" });
+  await waitFor(() => assertUsableFocus(opener));
+  assert.equal(screen.queryByRole("heading", { name: "Delete project" }), null);
+  cleanup();
+});
+
+test("successful deletion moves focus to the header create button", async () => {
+  render(
+    <Dashboard
+      api={fakeApi({
+        list: async () => ({ ok: true, data: [OWNER_PROJECT, BETA] }),
+        remove: async () => ({ ok: true, data: undefined }),
+      })}
+    />,
+  );
+  await openDelete("Launch");
+  fireEvent.click(screen.getByRole("button", { name: "Delete project" }));
+  await screen.findByRole("heading", { name: "Beta" });
+  assert.equal(screen.queryByRole("heading", { name: "Launch" }), null);
+  await waitFor(() => assertUsableFocus(headerCreate()));
+  cleanup();
+});
+
+test("deleting the last card focuses header create and shows the empty state", async () => {
+  render(
+    <Dashboard
+      api={fakeApi({
+        list: async () => ({ ok: true, data: [OWNER_PROJECT] }),
+        remove: async () => ({ ok: true, data: undefined }),
+      })}
+    />,
+  );
+  await openDelete("Launch");
+  fireEvent.click(screen.getByRole("button", { name: "Delete project" }));
+  await screen.findByRole("heading", { name: "No projects yet" });
+  await waitFor(() => assertUsableFocus(headerCreate()));
+  const creates = screen.getAllByRole("button", { name: "Create project" });
+  assert.equal(document.activeElement, creates[0]);
+  assert.ok(creates.length > 1);
+  cleanup();
+});
+
+test("a later cancelled delete still restores the new delete button", async () => {
+  render(
+    <Dashboard
+      api={fakeApi({
+        list: async () => ({ ok: true, data: [OWNER_PROJECT, BETA] }),
+        remove: async () => ({ ok: true, data: undefined }),
+      })}
+    />,
+  );
+  await openDelete("Launch");
+  fireEvent.click(screen.getByRole("button", { name: "Delete project" }));
+  await screen.findByRole("heading", { name: "Beta" });
+  await waitFor(() => assertUsableFocus(headerCreate()));
+  const opener = await openDelete("Beta");
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  await waitFor(() => assertUsableFocus(opener));
+  cleanup();
+});
+
+test("a refused delete keeps the dialog, the card, and focus", async () => {
+  for (const status of [403, 409]) {
+    const message =
+      status === 403
+        ? "Only an Owner can delete a Project."
+        : "The Project changed since it was loaded.";
+    render(
+      <Dashboard
+        api={fakeApi({
+          list: async () => ({ ok: true, data: [OWNER_PROJECT] }),
+          remove: async () => ({ ok: false, status, message }),
+        })}
+      />,
+    );
+    await openDelete("Launch");
+    const confirm = screen.getByRole("button", { name: "Delete project" });
+    confirm.focus();
+    fireEvent.click(confirm);
+    await screen.findByRole("alert");
+    assert.equal(screen.getByRole("alert").textContent, message);
+    assert.ok(screen.getByRole("heading", { name: "Launch" }));
+    await waitFor(() => assertUsableFocus(screen.getByRole("button", { name: "Delete project" })));
+    const dialog = screen.getByRole("dialog");
+    if (
+      !(document.activeElement instanceof HTMLElement) ||
+      !dialog.contains(document.activeElement)
+    ) {
+      throw new Error("focus left the confirmation dialog");
+    }
+    cleanup();
+  }
 });
 
 function fakeApi(handlers: {
