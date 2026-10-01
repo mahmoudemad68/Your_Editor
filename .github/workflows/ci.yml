@@ -140,6 +140,9 @@ jobs:
       - name: Build
         run: pnpm build
 
+      - name: Check generated API client
+        run: pnpm --filter @editagent/web check:api-client
+
       - name: Lint
         run: pnpm lint
 

@@ -1,10 +1,13 @@
-import { productLabel } from "../presentation/product-label";
+"use client";
+
+import { browserProjectApi } from "../presentation/browser-project-api";
+import { Dashboard } from "../presentation/dashboard";
+import { AppShell } from "../presentation/shell";
 
 export default function HomePage() {
   return (
-    <main>
-      <h1>{productLabel()}</h1>
-      <p>Foundation scaffold. Project UI arrives in a later story.</p>
-    </main>
+    <AppShell>
+      <Dashboard api={browserProjectApi} />
+    </AppShell>
   );
 }

@@ -4,8 +4,15 @@
     "outDir": "dist-test",
     "rootDir": "src",
     "jsx": "react-jsx",
-    "lib": ["ES2022"]
+    "lib": ["DOM", "ES2022"],
+    "exactOptionalPropertyTypes": false
   },
-  "include": ["src/presentation/**/*.ts", "src/infrastructure/**/*.ts"],
+  "include": [
+    "src/presentation/**/*.ts",
+    "src/presentation/**/*.tsx",
+    "src/infrastructure/**/*.ts",
+    "src/generated/**/*.ts",
+    "src/project-contract.ts"
+  ],
   "exclude": ["node_modules"]
 }
