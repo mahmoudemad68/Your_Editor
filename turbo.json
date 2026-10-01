@@ -23,7 +23,7 @@
     "lint": {},
     "test": {
       "dependsOn": ["build"],
-      "outputs": ["coverage/**", "coverage.xml"],
+      "outputs": ["coverage/**", "coverage.xml", "dist-test/**"],
       "passThroughEnv": [
         "DATABASE_URL",
         "S3_ENDPOINT",

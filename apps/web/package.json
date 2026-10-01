@@ -9,10 +9,11 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "generate:api": "node scripts/generate-api-client.mjs",
     "check:api-client": "node scripts/check-api-client.mjs",
-    "test": "tsc -p tsconfig.test.json && node ../../tools/test/run-node-tests.mjs dist-test/presentation/product-label.test.js dist-test/presentation/dashboard.test.js dist-test/infrastructure/config.test.js dist-test/infrastructure/project-api.test.js dist-test/composition/project-response.test.js"
+    "test": "tsc -p tsconfig.test.json && node ../../tools/test/run-node-tests.mjs dist-test/presentation/product-label.test.js dist-test/presentation/dashboard.test.js dist-test/presentation/sha256-file.test.js dist-test/presentation/media-upload.test.js dist-test/infrastructure/config.test.js dist-test/infrastructure/project-api.test.js dist-test/composition/project-response.test.js"
   },
   "dependencies": {
     "@editagent/shared": "workspace:*",
+    "@noble/hashes": "1.8.0",
     "@radix-ui/react-dialog": "^1.1.23",
     "@radix-ui/react-slot": "^1.3.3",
     "class-variance-authority": "^0.7.1",

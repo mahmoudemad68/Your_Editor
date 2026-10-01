@@ -16,5 +16,9 @@
     "src/composition/project-response.ts",
     "src/composition/project-response.test.ts"
   ],
-  "exclude": ["node_modules"]
+  "exclude": [
+    "node_modules",
+    "src/presentation/upload-hash.ts",
+    "src/presentation/sha256.worker.ts"
+  ]
 }

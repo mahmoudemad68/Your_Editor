@@ -2,6 +2,9 @@
 
 import { useEffect, useState } from "react";
 import type { ProjectApi, ProjectRecord } from "../project-contract";
+import { MediaWorkspace } from "./media-upload";
+import type { HashOptions } from "./sha256-file";
+import type { SignedPutRequest, SignedPutResult } from "./signed-upload";
 import { Button } from "./ui/button";
 
 type ScreenState =
@@ -12,7 +15,17 @@ type ScreenState =
   | { status: "ready"; project: ProjectRecord };
 
 /** Project shell for a later upload page. It reuses the project list. There is no get-by-id route. */
-export function ProjectScreen({ projectId, api }: { projectId: string; api: ProjectApi }) {
+export function ProjectScreen({
+  projectId,
+  api,
+  hashFile,
+  putObject,
+}: {
+  projectId: string;
+  api: ProjectApi;
+  hashFile?: (file: Blob, options?: HashOptions) => Promise<string>;
+  putObject?: (request: SignedPutRequest) => Promise<SignedPutResult>;
+}) {
   const [state, setState] = useState<ScreenState>({ status: "loading" });
 
   async function load(): Promise<void> {
@@ -74,10 +87,12 @@ export function ProjectScreen({ projectId, api }: { projectId: string; api: Proj
         <section className="mt-6 min-w-0">
           <p className="text-sm text-muted">{roleName(state.project.role)}</p>
           <h1 className="min-w-0 overflow-anywhere text-2xl font-semibold">{state.project.name}</h1>
-          <p className="mt-3 max-w-xl text-sm text-muted">
-            Upload and media details will be added on this page later. This shell only identifies
-            the project.
-          </p>
+          <MediaWorkspace
+            project={state.project}
+            api={api}
+            {...(hashFile === undefined ? {} : { hashFile })}
+            {...(putObject === undefined ? {} : { putObject })}
+          />
         </section>
       ) : null}
     </main>

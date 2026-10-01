@@ -1,4 +1,11 @@
-import type { ApiResult, ProjectApi, ProjectRecord } from "../project-contract";
+import type {
+  ApiResult,
+  BeginUpload,
+  MediaAssetRecord,
+  MediaDetails,
+  ProjectApi,
+  ProjectRecord,
+} from "../project-contract";
 
 /**
  * Browser transport for the dashboard.
@@ -21,11 +28,30 @@ export const browserProjectApi: ProjectApi = {
     }),
   deleteProject: (projectId) =>
     request<void>(`/api/projects/${encodeURIComponent(projectId)}`, { method: "DELETE" }),
+  beginUpload: (projectId, body, options) =>
+    request<BeginUpload>(`/api/projects/${encodeURIComponent(projectId)}/uploads`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+      signal: options?.signal,
+    }),
+  completeUpload: (projectId, body, options) =>
+    request<MediaAssetRecord>(`/api/projects/${encodeURIComponent(projectId)}/uploads/complete`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+      signal: options?.signal,
+    }),
+  getMediaDetails: (projectId, mediaAssetId, options) =>
+    request<MediaDetails>(
+      `/api/projects/${encodeURIComponent(projectId)}/media/${encodeURIComponent(mediaAssetId)}`,
+      { signal: options?.signal },
+    ),
 };
 
 async function request<T>(url: string, init?: RequestInit): Promise<ApiResult<T>> {
   try {
-    const response = await fetch(url, init);
+    const response = await fetch(url, { ...init, cache: "no-store" });
     const body: unknown = await response.json();
     if (isResult<T>(body)) {
       return body;

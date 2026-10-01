@@ -419,5 +419,8 @@ function fakeApi(handlers: {
     renameProject: async () => ({ ok: false, status: 500, message: "not used" }),
     deleteProject:
       handlers.remove ?? (async () => ({ ok: false, status: 500, message: "not used" })),
+    beginUpload: async () => ({ ok: false, status: 500, message: "not used" }),
+    completeUpload: async () => ({ ok: false, status: 500, message: "not used" }),
+    getMediaDetails: async () => ({ ok: false, status: 500, message: "not used" }),
   };
 }
