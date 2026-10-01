@@ -1,0 +1,32 @@
+@import "tailwindcss";
+
+@theme {
+  --color-ink: #12171e;
+  --color-panel: #1c2430;
+  --color-panel-raised: #243140;
+  --color-line: #334155;
+  --color-paper: #f6f3ec;
+  --color-muted: #b7c0cc;
+  --color-accent: #e0a34a;
+  --color-accent-ink: #2a1c08;
+  --color-danger: #e06a5c;
+  --font-sans: "Avenir Next", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+}
+
+body {
+  background: var(--color-ink);
+  color: var(--color-paper);
+  font-family: var(--font-sans);
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+/* Unbroken Unicode names must wrap inside cards, details, and dialogs. */
+.overflow-anywhere {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
