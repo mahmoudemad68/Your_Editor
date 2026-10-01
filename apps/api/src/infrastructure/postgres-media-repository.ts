@@ -1,11 +1,11 @@
 import {
-  type Instant,
   MediaAsset,
   MediaAssetConflict,
   type MediaAssetId,
   type MediaAssetRepository,
   mediaAssetId,
   MediaInspectionConflict,
+  type LoadedMediaInspection,
   type MediaAssetSnapshot,
   type MediaStreamMetadata,
   type ProjectId,
@@ -42,6 +42,7 @@ interface MediaAssetRow {
   sample_rate: number | null;
   streams: unknown;
   inspection_error: string | null;
+  inspection_revision: string;
 }
 
 const SELECT_COLUMNS = `id::text AS id, project_id::text AS project_id, kind, storage_key,
@@ -50,21 +51,15 @@ const SELECT_COLUMNS = `id::text AS id, project_id::text AS project_id, kind, st
   inspection_status, container, video_codec, audio_codec, width, height, display_width,
   display_height, rotation, frame_rate_numerator::text AS frame_rate_numerator,
   frame_rate_denominator::text AS frame_rate_denominator, frame_rate_mode, color_space,
-  audio_channels, sample_rate, streams, inspection_error`;
+  audio_channels, sample_rate, streams, inspection_error,
+  inspection_revision::text AS inspection_revision`;
 
 export class PostgresMediaAssetRepository implements MediaAssetRepository {
   constructor(private readonly pool: Pool) {}
 
   async findById(id: MediaAssetId): Promise<MediaAsset | null> {
-    const result = await this.pool.query<MediaAssetRow>(
-      `SELECT ${SELECT_COLUMNS} FROM media_assets WHERE id = $1`,
-      [id],
-    );
-    const row = result.rows[0];
-    if ((result.rowCount ?? 0) === 0 || row === undefined) {
-      return null;
-    }
-    return MediaAsset.restore(toSnapshot(row));
+    const row = await this.findRow(id);
+    return row === null ? null : MediaAsset.restore(toSnapshot(row));
   }
 
   async listByProject(projectId: ProjectId): Promise<readonly MediaAsset[]> {
@@ -116,10 +111,22 @@ export class PostgresMediaAssetRepository implements MediaAssetRepository {
     }
   }
 
-  async saveInspection(asset: MediaAsset, expectedUpdatedAt: Instant): Promise<void> {
+  async loadForInspection(id: MediaAssetId): Promise<LoadedMediaInspection | null> {
+    const row = await this.findRow(id);
+    if (row === null) {
+      return null;
+    }
+    return {
+      asset: MediaAsset.restore(toSnapshot(row)),
+      revision: BigInt(row.inspection_revision),
+    };
+  }
+
+  async saveInspection(asset: MediaAsset, expectedRevision: bigint): Promise<void> {
     const snapshot = asset.toSnapshot();
     const result = await this.pool.query(
       `UPDATE media_assets SET
+         inspection_revision = inspection_revision + 1,
          duration = $2,
          updated_at = $3,
          inspection_status = $4,
@@ -139,12 +146,24 @@ export class PostgresMediaAssetRepository implements MediaAssetRepository {
          sample_rate = $18,
          streams = $19::jsonb,
          inspection_error = $20
-       WHERE id = $1 AND updated_at = $21`,
-      inspectionParameters(snapshot, expectedUpdatedAt),
+       WHERE id = $1 AND inspection_revision = $21`,
+      inspectionParameters(snapshot, expectedRevision),
     );
     if ((result.rowCount ?? 0) !== 1) {
       throw new MediaInspectionConflict();
     }
+  }
+
+  private async findRow(id: MediaAssetId): Promise<MediaAssetRow | null> {
+    const result = await this.pool.query<MediaAssetRow>(
+      `SELECT ${SELECT_COLUMNS} FROM media_assets WHERE id = $1`,
+      [id],
+    );
+    const row = result.rows[0];
+    if ((result.rowCount ?? 0) === 0 || row === undefined) {
+      return null;
+    }
+    return row;
   }
 }
 
@@ -182,7 +201,7 @@ function toSnapshot(row: MediaAssetRow): MediaAssetSnapshot {
   };
 }
 
-function inspectionParameters(snapshot: MediaAssetSnapshot, expectedUpdatedAt: Instant): unknown[] {
+function inspectionParameters(snapshot: MediaAssetSnapshot, expectedRevision: bigint): unknown[] {
   return [
     snapshot.id,
     snapshot.duration === null ? null : instantText(snapshot.duration),
@@ -204,7 +223,7 @@ function inspectionParameters(snapshot: MediaAssetSnapshot, expectedUpdatedAt: I
     snapshot.sampleRate ?? null,
     snapshot.streams == null ? null : JSON.stringify(snapshot.streams),
     snapshot.inspectionError ?? null,
-    instantText(expectedUpdatedAt),
+    expectedRevision.toString(),
   ];
 }
 

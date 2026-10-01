@@ -1,5 +1,5 @@
 import {
-  type Instant,
+  type LoadedMediaInspection,
   MediaAsset,
   type MediaAssetId,
   mediaAssetId,
@@ -40,6 +40,7 @@ interface MediaAssetRow {
   sample_rate: number | null;
   streams: unknown;
   inspection_error: string | null;
+  inspection_revision: string;
 }
 
 const SELECT_COLUMNS = `id::text AS id, project_id::text AS project_id, kind, storage_key,
@@ -48,7 +49,8 @@ const SELECT_COLUMNS = `id::text AS id, project_id::text AS project_id, kind, st
   inspection_status, container, video_codec, audio_codec, width, height, display_width,
   display_height, rotation, frame_rate_numerator::text AS frame_rate_numerator,
   frame_rate_denominator::text AS frame_rate_denominator, frame_rate_mode, color_space,
-  audio_channels, sample_rate, streams, inspection_error`;
+  audio_channels, sample_rate, streams, inspection_error,
+  inspection_revision::text AS inspection_revision`;
 
 /** Worker-owned inspection store. It does not import the API repository. */
 export class PostgresMediaInspectionRepository implements MediaInspectionRepository {
@@ -66,7 +68,22 @@ export class PostgresMediaInspectionRepository implements MediaInspectionReposit
     return MediaAsset.restore(toSnapshot(row));
   }
 
-  async saveInspection(asset: MediaAsset, expectedUpdatedAt: Instant): Promise<void> {
+  async loadForInspection(id: MediaAssetId): Promise<LoadedMediaInspection | null> {
+    const result = await this.pool.query<MediaAssetRow>(
+      `SELECT ${SELECT_COLUMNS} FROM media_assets WHERE id = $1`,
+      [id],
+    );
+    const row = result.rows[0];
+    if ((result.rowCount ?? 0) === 0 || row === undefined) {
+      return null;
+    }
+    return {
+      asset: MediaAsset.restore(toSnapshot(row)),
+      revision: BigInt(row.inspection_revision),
+    };
+  }
+
+  async saveInspection(asset: MediaAsset, expectedRevision: bigint): Promise<void> {
     const snapshot = asset.toSnapshot();
     const parameters: unknown[] = [
       snapshot.id,
@@ -89,10 +106,11 @@ export class PostgresMediaInspectionRepository implements MediaInspectionReposit
       snapshot.sampleRate ?? null,
       snapshot.streams == null ? null : JSON.stringify(snapshot.streams),
       snapshot.inspectionError ?? null,
-      text(expectedUpdatedAt),
+      expectedRevision.toString(),
     ];
     const result = await this.pool.query(
       `UPDATE media_assets SET
+         inspection_revision = inspection_revision + 1,
          duration = $2,
          updated_at = $3,
          inspection_status = $4,
@@ -112,7 +130,7 @@ export class PostgresMediaInspectionRepository implements MediaInspectionReposit
          sample_rate = $18,
          streams = $19::jsonb,
          inspection_error = $20
-       WHERE id = $1 AND updated_at = $21`,
+       WHERE id = $1 AND inspection_revision = $21`,
       parameters,
     );
     if ((result.rowCount ?? 0) !== 1) {

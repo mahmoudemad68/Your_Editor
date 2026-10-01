@@ -8,6 +8,7 @@ import {
   type IMediaProbe,
   type InspectionFailureCode,
   type Instant,
+  type LoadedMediaInspection,
   type MediaAsset,
   type MediaAssetId,
   MediaInspectionConflict,
@@ -29,8 +30,8 @@ export interface MediaObjectStaging {
 }
 
 export interface MediaInspectionRepository {
-  findById(id: MediaAssetId): Promise<MediaAsset | null>;
-  saveInspection(asset: MediaAsset, expectedUpdatedAt: Instant): Promise<void>;
+  loadForInspection(id: MediaAssetId): Promise<LoadedMediaInspection | null>;
+  saveInspection(asset: MediaAsset, expectedRevision: bigint): Promise<void>;
 }
 
 export async function inspectMediaAsset(
@@ -42,18 +43,22 @@ export async function inspectMediaAsset(
     readonly clock: InspectionClock;
   },
 ): Promise<MediaAsset> {
-  const asset = await dependencies.media.findById(mediaAssetId);
-  if (asset === null || asset.storageKey === null) {
+  const loaded = await dependencies.media.loadForInspection(mediaAssetId);
+  if (loaded === null || loaded.asset.storageKey === null) {
     throw new DomainError("MediaAsset was not found.");
   }
-  const observed = asset.updatedAt;
+  const asset = loaded.asset;
+  const storageKey = asset.storageKey;
+  if (storageKey === null) {
+    throw new DomainError("MediaAsset was not found.");
+  }
+  const expectedRevision = loaded.revision;
   let staged: StagedMediaFile | undefined;
+  let inspected: MediaAsset | undefined;
   try {
-    staged = await dependencies.staging.stage(asset.storageKey);
+    staged = await dependencies.staging.stage(storageKey);
     const result = await dependencies.probe.inspect({ filePath: staged.filePath });
-    const next = asset.recordInspection(result, dependencies.clock.now());
-    await dependencies.media.saveInspection(next, observed);
-    return next;
+    inspected = asset.recordInspection(result, dependencies.clock.now());
   } catch (error) {
     if (error instanceof MediaInspectionConflict) {
       throw error;
@@ -62,11 +67,13 @@ export async function inspectMediaAsset(
     if (failed === asset) {
       return asset;
     }
-    await dependencies.media.saveInspection(failed, observed);
+    await dependencies.media.saveInspection(failed, expectedRevision);
     return failed;
   } finally {
     await staged?.release();
   }
+  await dependencies.media.saveInspection(inspected, expectedRevision);
+  return inspected;
 }
 
 function failureCode(error: unknown): InspectionFailureCode {

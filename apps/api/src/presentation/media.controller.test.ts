@@ -109,7 +109,7 @@ test("media details read persisted metadata and enforce membership", async () =>
     },
     instant(1_700_000_000_040n),
   );
-  await media.saveInspection(completed, pending.updatedAt);
+  await media.saveInspection(completed, 0n);
 
   const app = await listen(projects, media);
   try {
@@ -132,6 +132,8 @@ test("media details read persisted metadata and enforce membership", async () =>
     assert.equal(body["frameRateNumerator"], "30000");
     assert.equal(body["frameRateDenominator"], "1001");
     assert.equal(body["storageKey"], undefined);
+    assert.equal(body["inspectionRevision"], undefined);
+    assert.equal(body["revision"], undefined);
     assert.equal(body["secretAccessKey"], undefined);
     assert.equal(body["stderr"], undefined);
     assert.equal(JSON.stringify(body).includes("ffprobe"), false);

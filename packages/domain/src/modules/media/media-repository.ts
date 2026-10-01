@@ -1,4 +1,3 @@
-import { type Instant } from "../../kernel/clock.js";
 import { DomainError } from "../../kernel/error.js";
 import { type MediaAssetId, type ProjectId } from "../../kernel/id.js";
 import { type DerivedAsset } from "./derived-asset.js";
@@ -20,16 +19,26 @@ export class MediaInspectionConflict extends DomainError {
   }
 }
 
+/**
+ * MediaAsset plus the inspection persistence token.
+ * The revision is not media time and is not part of the MediaAsset aggregate.
+ */
+export interface LoadedMediaInspection {
+  readonly asset: MediaAsset;
+  readonly revision: bigint;
+}
+
 /** Persistence port. Object storage and Postgres adapters are later Media stories. */
 export interface MediaAssetRepository {
   findById(id: MediaAssetId): Promise<MediaAsset | null>;
   listByProject(projectId: ProjectId): Promise<readonly MediaAsset[]>;
   save(asset: MediaAsset): Promise<void>;
+  loadForInspection(id: MediaAssetId): Promise<LoadedMediaInspection | null>;
   /**
-   * Stores inspection metadata only when updatedAt still matches the value
-   * observed before the probe started.
+   * Stores inspection metadata only when inspection_revision still matches the
+   * value observed before the probe started, then increments that revision.
    */
-  saveInspection(asset: MediaAsset, expectedUpdatedAt: Instant): Promise<void>;
+  saveInspection(asset: MediaAsset, expectedRevision: bigint): Promise<void>;
 }
 
 export interface DerivedAssetRepository {

@@ -44,20 +44,46 @@ test("staging writes a server-named file and deletes it on release", async () =>
   assert.deepEqual(await leftovers(root), []);
 });
 
+test("a temp-directory failure destroys the opened object stream", async () => {
+  const stream = Readable.from([Buffer.from("video-bytes")]);
+  let opened = false;
+  const stager = new FileObjectStager({
+    source: {
+      async open() {
+        opened = true;
+        return { stream, contentLength: 11n };
+      },
+    },
+    rootDir: "/tmp/editagent-missing-probe-root/does-not-exist",
+  });
+  await assert.rejects(
+    () => stager.stage("projects/asset"),
+    (error: unknown) => {
+      return (
+        error instanceof MediaProbeError &&
+        error.code === "interrupted" &&
+        error.message === "Media inspection failed." &&
+        !error.message.includes("ENOENT")
+      );
+    },
+  );
+  assert.equal(opened, true);
+  assert.equal(stream.destroyed, true);
+});
+
 test("download and storage failures delete the temporary directory", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "editagent-stage-"));
+  let interruptedStream: Readable | undefined;
   const interrupted = new FileObjectStager({
     source: {
       async open() {
-        return {
-          stream: Readable.from(
-            (async function* () {
-              yield Buffer.from("partial");
-              throw new Error("connection reset");
-            })(),
-          ),
-          contentLength: 20n,
-        };
+        interruptedStream = Readable.from(
+          (async function* () {
+            yield Buffer.from("partial");
+            throw new Error("connection reset");
+          })(),
+        );
+        return { stream: interruptedStream, contentLength: 20n };
       },
     },
     rootDir: root,
@@ -65,24 +91,29 @@ test("download and storage failures delete the temporary directory", async () =>
   await assert.rejects(
     () => interrupted.stage("projects/asset"),
     (error: unknown) => {
-      return error instanceof MediaProbeError && error.code === "interrupted";
+      return (
+        error instanceof MediaProbeError &&
+        error.code === "interrupted" &&
+        error.message === "Media inspection failed." &&
+        !error.message.includes("connection reset")
+      );
     },
   );
+  assert.equal(interruptedStream?.destroyed, true);
 
+  let fullStream: Readable | undefined;
   const fullDisk = new FileObjectStager({
     source: {
       async open() {
-        return {
-          stream: Readable.from(
-            (async function* () {
-              yield Buffer.from("partial");
-              const error = new Error("no space") as NodeJS.ErrnoException;
-              error.code = "ENOSPC";
-              throw error;
-            })(),
-          ),
-          contentLength: 20n,
-        };
+        fullStream = Readable.from(
+          (async function* () {
+            yield Buffer.from("partial");
+            const error = new Error("no space") as NodeJS.ErrnoException;
+            error.code = "ENOSPC";
+            throw error;
+          })(),
+        );
+        return { stream: fullStream, contentLength: 20n };
       },
     },
     rootDir: root,
@@ -93,9 +124,48 @@ test("download and storage failures delete the temporary directory", async () =>
       return error instanceof MediaProbeError && error.code === "insufficient_storage";
     },
   );
+  assert.equal(fullStream?.destroyed, true);
 
+  let capped: Readable | undefined;
+  const tooLarge = new FileObjectStager({
+    source: {
+      async open() {
+        capped = Readable.from([Buffer.from("0123456789")]);
+        return { stream: capped, contentLength: 10n };
+      },
+    },
+    rootDir: root,
+    maxBytes: 4n,
+  });
+  await assert.rejects(
+    () => tooLarge.stage("projects/asset"),
+    (error: unknown) => error instanceof MediaProbeError && error.code === "invalid_result",
+  );
+  assert.equal(capped?.destroyed, true);
+
+  let unknownLength: Readable | undefined;
+  const unknown = new FileObjectStager({
+    source: {
+      async open() {
+        unknownLength = Readable.from([Buffer.from("video-bytes")]);
+        return { stream: unknownLength, contentLength: null };
+      },
+    },
+    rootDir: root,
+  });
+  const stagedUnknown = await unknown.stage("projects/asset");
+  assert.equal(await readFile(stagedUnknown.filePath, "utf8"), "video-bytes");
+  await stagedUnknown.release();
+  assert.equal(unknownLength?.destroyed, true);
+
+  let noRoomStream: Readable | undefined;
   const noRoom = new FileObjectStager({
-    source: bytes(Buffer.from("video-bytes")),
+    source: {
+      async open() {
+        noRoomStream = Readable.from([Buffer.from("video-bytes")]);
+        return { stream: noRoomStream, contentLength: 11n };
+      },
+    },
     rootDir: root,
     freeBytes: async () => 0n,
   });
@@ -109,6 +179,7 @@ test("download and storage failures delete the temporary directory", async () =>
       );
     },
   );
+  assert.equal(noRoomStream?.destroyed, true);
   assert.deepEqual(await leftovers(root), []);
 
   const missing = new FileObjectStager({

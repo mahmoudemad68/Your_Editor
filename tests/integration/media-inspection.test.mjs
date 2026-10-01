@@ -206,6 +206,7 @@ describe("FFprobe inspection against PostgreSQL and MinIO", { concurrency: 1 }, 
       await freshPool.end();
     }
 
+    const beforeRead = await media.loadForInspection(normal.id);
     const owner = await readMedia(OWNER, PROJECT, normal.id);
     assert.equal(owner.status, 200);
     const body = await owner.json();
@@ -225,6 +226,10 @@ describe("FFprobe inspection against PostgreSQL and MinIO", { concurrency: 1 }, 
     assert.equal(body.sampleRate, 48000);
     assert.equal(body.inspectionStatus, "completed");
     assert.equal(body.storageKey, undefined);
+    assert.equal(body.inspectionRevision, undefined);
+    assert.equal(body.revision, undefined);
+    const afterRead = await media.loadForInspection(normal.id);
+    assert.equal(afterRead.revision, beforeRead.revision);
 
     const portrait = await (await readMedia(EDITOR, PROJECT, rotated.id)).json();
     assert.equal(portrait.displayWidth, 240);
@@ -300,13 +305,14 @@ describe("FFprobe inspection against PostgreSQL and MinIO", { concurrency: 1 }, 
         updatedAt: domain.instant(BigInt(Date.now())),
       });
       await assert.rejects(
-        () => workerMedia.saveInspection(stale, domain.instant(1_700_000_000_000n)),
+        () => workerMedia.saveInspection(stale, 0n),
         domain.MediaInspectionConflict,
       );
       const unchanged = await new PostgresMediaAssetRepository(workerPool).findById(normal.id);
       assert.equal(unchanged.videoCodec, "h264");
       assert.equal(unchanged.duration, 1_000_000n);
-      const latest = await media.findById(normal.id);
+      const latestLoaded = await media.loadForInspection(normal.id);
+      const latest = latestLoaded.asset;
       const rewritten = latest.recordInspection(
         {
           container: latest.container,
@@ -333,11 +339,12 @@ describe("FFprobe inspection against PostgreSQL and MinIO", { concurrency: 1 }, 
         },
         domain.instant(BigInt(Date.now())),
       );
-      await media.saveInspection(rewritten, latest.updatedAt);
-      const throughApi = await media.findById(normal.id);
-      assert.equal(throughApi.videoCodec, "h264");
-      assert.equal(throughApi.duration, 1_000_000n);
-      assert.equal(throughApi.frameRateNumerator, 25n);
+      await media.saveInspection(rewritten, latestLoaded.revision);
+      const throughApi = await media.loadForInspection(normal.id);
+      assert.equal(throughApi.revision, latestLoaded.revision + 1n);
+      assert.equal(throughApi.asset.videoCodec, "h264");
+      assert.equal(throughApi.asset.duration, 1_000_000n);
+      assert.equal(throughApi.asset.frameRateNumerator, 25n);
     } finally {
       await workerPool.end();
     }

@@ -79,6 +79,7 @@ export type {
   IObjectStorage,
   InspectionFailureCode,
   InspectionStatus,
+  LoadedMediaInspection,
   MediaAssetRepository,
   MediaAssetSnapshot,
   MediaKind,

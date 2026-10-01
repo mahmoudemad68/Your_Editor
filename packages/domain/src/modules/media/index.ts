@@ -14,7 +14,11 @@ export {
 } from "./media-asset.js";
 export type { MediaAssetSnapshot, MediaKind, MediaUploadMetadata } from "./media-asset.js";
 export { MediaAssetConflict, MediaInspectionConflict } from "./media-repository.js";
-export type { DerivedAssetRepository, MediaAssetRepository } from "./media-repository.js";
+export type {
+  DerivedAssetRepository,
+  LoadedMediaInspection,
+  MediaAssetRepository,
+} from "./media-repository.js";
 export {
   completedInspection,
   failedInspection,

@@ -1,5 +1,5 @@
 import {
-  type Instant,
+  type LoadedMediaInspection,
   type MediaAsset,
   MediaAssetConflict,
   type MediaAssetId,
@@ -10,6 +10,7 @@ import {
 
 export class InMemoryMediaAssetRepository implements MediaAssetRepository {
   private readonly rows = new Map<string, MediaAsset>();
+  private readonly revisions = new Map<string, bigint>();
 
   async findById(id: MediaAssetId): Promise<MediaAsset | null> {
     return this.rows.get(id) ?? null;
@@ -29,13 +30,23 @@ export class InMemoryMediaAssetRepository implements MediaAssetRepository {
       }
     }
     this.rows.set(asset.id, asset);
+    this.revisions.set(asset.id, 0n);
   }
 
-  async saveInspection(asset: MediaAsset, expectedUpdatedAt: Instant): Promise<void> {
-    const current = this.rows.get(asset.id);
-    if (current === undefined || current.updatedAt !== expectedUpdatedAt) {
+  async loadForInspection(id: MediaAssetId): Promise<LoadedMediaInspection | null> {
+    const asset = this.rows.get(id);
+    if (asset === undefined) {
+      return null;
+    }
+    return { asset, revision: this.revisions.get(id) ?? 0n };
+  }
+
+  async saveInspection(asset: MediaAsset, expectedRevision: bigint): Promise<void> {
+    const current = this.revisions.get(asset.id);
+    if (current === undefined || current !== expectedRevision) {
       throw new MediaInspectionConflict();
     }
     this.rows.set(asset.id, asset);
+    this.revisions.set(asset.id, current + 1n);
   }
 }

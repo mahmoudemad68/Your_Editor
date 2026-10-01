@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   instant,
-  type Instant,
   MediaAsset,
   mediaAssetId,
   MediaInspectionConflict,
@@ -60,21 +59,23 @@ function probeResult(): ProbeResult {
 
 function repository(initial: MediaAsset): {
   readonly saves: MediaAsset[];
-  findById(): Promise<MediaAsset | null>;
-  saveInspection(asset: MediaAsset, expectedUpdatedAt: Instant): Promise<void>;
+  loadForInspection(): Promise<{ asset: MediaAsset; revision: bigint }>;
+  saveInspection(asset: MediaAsset, expectedRevision: bigint): Promise<void>;
 } {
   let current = initial;
+  let revision = 0n;
   const saves: MediaAsset[] = [];
   return {
     saves,
-    async findById() {
-      return current;
+    async loadForInspection() {
+      return { asset: current, revision };
     },
-    async saveInspection(asset, expectedUpdatedAt) {
-      if (current.updatedAt !== expectedUpdatedAt) {
+    async saveInspection(asset, expectedRevision) {
+      if (revision !== expectedRevision) {
         throw new MediaInspectionConflict();
       }
       current = asset;
+      revision += 1n;
       saves.push(asset);
     },
   };
@@ -197,4 +198,27 @@ test("a stale inspection conflict is reported and the temporary file is released
   );
   assert.equal(released.value, true);
   assert.equal(media.saves.length, 0);
+});
+
+test("a persistence error is not reported as a probe failure", async () => {
+  const media = repository(uploaded());
+  const released = { value: false };
+  media.saveInspection = async () => {
+    throw new Error("connection reset");
+  };
+  await assert.rejects(
+    () =>
+      inspectMediaAsset(ASSET, {
+        media,
+        staging: staging(released),
+        probe: {
+          async inspect() {
+            return probeResult();
+          },
+        },
+        clock: { now: () => LATER },
+      }),
+    (error: unknown) => error instanceof Error && error.message === "connection reset",
+  );
+  assert.equal(released.value, true);
 });

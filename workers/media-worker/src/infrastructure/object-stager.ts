@@ -34,27 +34,41 @@ export class FileObjectStager implements MediaObjectStaging {
 
   async stage(storageKey: string): Promise<StagedMediaFile> {
     const opened = await this.source.open(storageKey);
-    if (opened.contentLength !== null && opened.contentLength > this.maxBytes) {
-      opened.stream.destroy();
-      throw new MediaProbeError("invalid_result");
-    }
-    const directory = await mkdtemp(path.join(this.rootDir, "editagent-probe-"));
-    const filePath = path.join(directory, "source.bin");
+    let directory: string | undefined;
     try {
+      if (opened.contentLength !== null && opened.contentLength > this.maxBytes) {
+        throw new MediaProbeError("invalid_result");
+      }
+      try {
+        directory = await mkdtemp(path.join(this.rootDir, "editagent-probe-"));
+      } catch (error) {
+        throw isNoSpace(error)
+          ? new MediaProbeError("insufficient_storage")
+          : new MediaProbeError("interrupted");
+      }
+      const filePath = path.join(directory, "source.bin");
       const free = await this.freeBytes(directory);
       const needed = opened.contentLength ?? 1n;
       if (free < needed) {
         throw new MediaProbeError("insufficient_storage");
       }
       await pipeline(opened.stream, capBytes(this.maxBytes), createWriteStream(filePath));
+      const created = directory;
+      directory = undefined;
       return {
         filePath,
         release: async () => {
-          await rm(directory, { recursive: true, force: true });
+          await rm(created, { recursive: true, force: true });
         },
       };
     } catch (error) {
-      await rm(directory, { recursive: true, force: true });
+      opened.stream.destroy();
+      if (directory !== undefined) {
+        await rm(directory, { recursive: true, force: true });
+      }
+      if (error instanceof MediaProbeError) {
+        throw error;
+      }
       throw asProbeError(error);
     }
   }

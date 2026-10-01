@@ -8,7 +8,7 @@ Audit columns are wall-clock instants: integer Unix epoch milliseconds. They are
 
 `Project.updatedAt` is that audit instant. The Project table also stores `revision`, a persistence concurrency token that increments on every successful write. It is not wall-clock time, media time, or a field on the Project aggregate. HTTP responses do not include it.
 
-US-122 migrates the MediaAsset upload columns: storage key, display filename, MIME type, byte size, SHA-256, and upload state `uploaded`. The storage key is `projects/<projectId>/media/sha256/<sha256>`. The display filename is metadata and is not part of that key. US-126 adds inspection columns in `0003_media_probe_metadata.sql`. Duration stays null after upload and is set, in integer microseconds, only when inspection succeeds. Inspection status is `pending`, `completed`, or `failed`. It is not the US-127 validation state.
+US-122 migrates the MediaAsset upload columns: storage key, display filename, MIME type, byte size, SHA-256, and upload state `uploaded`. The storage key is `projects/<projectId>/media/sha256/<sha256>`. The display filename is metadata and is not part of that key. US-126 adds inspection columns in `0003_media_probe_metadata.sql`. Duration stays null after upload and is set, in integer microseconds, only when inspection succeeds. Inspection status is `pending`, `completed`, or `failed`. It is not the US-127 validation state. `0004_media_inspection_revision.sql` adds `inspection_revision`, a persistence concurrency token that starts at zero and increments on each successful inspection write. It is not media time, not `updated_at`, and not a field on the MediaAsset aggregate. HTTP responses do not include it.
 
 ## What this slice implements
 
@@ -116,6 +116,7 @@ erDiagram
     jsonb streams "video and audio streams or null"
     string inspectionStatus "pending completed or failed"
     string inspectionError "safe code or null"
+    bigint inspectionRevision "persistence token, not audit time"
     string validationState "planned US-127"
     string rejection "planned structured reason"
     bigint createdAt
