@@ -46,7 +46,10 @@ const { fetchWithTestActor } = await import("./test-actor-fetch.mjs");
 
 const DATABASE = "editagent_us124";
 const OWNER = "018f6b6e-7c3a-7111-8d3e-9c0b1a2d3e4f";
-const PROJECT = "018f6b6e-7c3a-7b2a-8d3e-9c0b1a2d3e4f";
+// Distinct from the US-126 project id. Both suites upload normal.mp4, and the
+// object key is projects/{projectId}/media/sha256/{hash}. A shared id lets one
+// suite delete the object while the other is inspecting it.
+const PROJECT = "018f6b6e-7c3a-7b2e-8d3e-9c0b1a2d3e4f";
 
 after(() => {
   cleanup();
