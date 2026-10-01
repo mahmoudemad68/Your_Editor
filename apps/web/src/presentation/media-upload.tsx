@@ -139,7 +139,7 @@ export function MediaWorkspace({
       return;
     }
     setRefreshing(false);
-    if (!result.ok) {
+    if (!result.ok || result.data.id !== mediaAssetId) {
       setRefreshError("Details could not be refreshed.");
       return;
     }
