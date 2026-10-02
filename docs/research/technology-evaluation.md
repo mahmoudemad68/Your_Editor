@@ -289,7 +289,7 @@ Schema-valid tool calls, correct abstentions, semantic correctness, latency, tok
 
 Formal CP1 LLM status: **NOT_VERIFIED**. A provider report can record PASS or FAIL only after a real live run sends all ten primary requests. Mocks, dry-runs, and this repository checkout do not do that. A comparison needs live results from at least two hosted providers. Live execution is **LIVE_READY_PENDING_AUTHORIZATION**. No paid call was made.
 
-Prepared comparison, not yet run: OpenAI `gpt-5.6` (Chat Completions function-calling guide; the model card says this id routes to GPT-5.6 Sol) and DeepSeek `deepseek-flash` (tool calls on Chat Completions). Prices and context limits copied on 2026-10-02 are in `pricing.json` and `context_windows.json`. GPT-6 Astra remains unsupported on this Chat Completions adapter.
+Prepared comparison, not yet run: OpenAI `gpt-5.6-sol` and DeepSeek `deepseek-flash`. The explicit Sol id is the OpenAI model for this benchmark. The `gpt-5.6` alias remains in the price and context files and is not the live command. Prices and context limits copied on 2026-10-02 are in `pricing.json` and `context_windows.json`. GPT-6 Astra remains unsupported on this Chat Completions adapter.
 
 ### Reproduction
 

@@ -75,19 +75,19 @@ Status: **LIVE_READY_PENDING_AUTHORIZATION**. Do not put API keys in the reposit
 
 The first pair is OpenAI and DeepSeek. Both match this adapter's Chat Completions tool calls. Prices and context limits copied on 2026-10-02:
 
-| Provider | Model id                                                                                           | Input / 1M | Output / 1M | Context tokens | Source                                                                                                                       |
-| -------- | -------------------------------------------------------------------------------------------------- | ---------- | ----------- | -------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| openai   | `gpt-5.6` (the function-calling guide's Chat Completions example; the model card routes it to Sol) | 4          | 20          | 1050000        | https://developers.openai.com/api/docs/guides/function-calling and https://developers.openai.com/api/docs/models/gpt-5.6-sol |
-| deepseek | `deepseek-flash`                                                                                   | 0.3        | 1.2         | 1000000        | https://api-docs.deepseek.com/quick_start/pricing and https://api-docs.deepseek.com/guides/tool_calls                        |
+| Provider | Model id                                                                       | Input / 1M | Output / 1M | Context tokens | Source                                                                                                |
+| -------- | ------------------------------------------------------------------------------ | ---------- | ----------- | -------------- | ----------------------------------------------------------------------------------------------------- |
+| openai   | `gpt-5.6-sol` (the explicit Sol id; the `gpt-5.6` alias is not the live model) | 4          | 20          | 1050000        | https://developers.openai.com/api/docs/models/gpt-5.6-sol                                             |
+| deepseek | `deepseek-flash`                                                               | 0.3        | 1.2         | 1000000        | https://api-docs.deepseek.com/quick_start/pricing and https://api-docs.deepseek.com/guides/tool_calls |
 
-DeepSeek's row is the peak cache-miss input rate and the peak output rate. Off-peak is half, and a cache hit is cheaper. OpenAI's row is the standard text rate on the Sol card. That card says the promotional price lasts at least through 2026-11-21. Prompts over 272000 input tokens are priced higher; this transcript is not in that band. GPT-6 Astra still requires the Responses API for tool calling and stays unsupported here. `gpt-5.6` requests send `reasoning_effort: "none"` because Chat Completions function tools do not support the omitted `medium` default. `deepseek-flash` still omits the thinking fields, so the documented default stays enabled at effort `high`, and the body sends `tool_choice: "auto"` plus `max_tokens` 800. Those defaults are documentation, not a live measurement.
+DeepSeek's row is the peak cache-miss input rate and the peak output rate. Off-peak is half, and a cache hit is cheaper. OpenAI's row is the standard text rate on the Sol card. That card says the promotional price lasts at least through 2026-11-21. Prompts over 272000 input tokens are priced higher; this transcript is not in that band. GPT-6 Astra still requires the Responses API for tool calling and stays unsupported here. `gpt-5.6-sol` requests send `reasoning_effort: "none"` because Chat Completions function tools do not support the omitted `medium` default. The `gpt-5.6` alias is kept in the price and context files, and it is not the model this live command calls. `deepseek-flash` still omits the thinking fields, so the documented default stays enabled at effort `high`, and the body sends `tool_choice: "auto"` plus `max_tokens` 800. Those defaults are documentation, not a live measurement.
 
 See the reservation before any paid call. This dry-run does not use a key:
 
 ```bash
 python3 tools/benchmarks/llm/runner.py \
   --provider openai \
-  --model gpt-5.6 \
+  --model gpt-5.6-sol \
   --commit-sha "$(git rev-parse HEAD)" \
   --output /tmp/llm-out
 python3 tools/benchmarks/llm/runner.py \
@@ -105,7 +105,7 @@ When you authorize a live run, export the key in that shell and add `--live`:
 export OPENAI_API_KEY
 python3 tools/benchmarks/llm/runner.py \
   --provider openai \
-  --model gpt-5.6 \
+  --model gpt-5.6-sol \
   --live \
   --commit-sha "$(git rev-parse HEAD)" \
   --output /tmp/llm-out

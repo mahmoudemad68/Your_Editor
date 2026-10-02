@@ -7,6 +7,12 @@
       "source_url": "https://developers.openai.com/api/docs/models/gpt-5.6-sol",
       "accessed": "2026-10-02"
     },
+    "gpt-5.6-sol": {
+      "limit_tokens": 1050000,
+      "source_url": "https://developers.openai.com/api/docs/models/gpt-5.6-sol",
+      "accessed": "2026-10-02",
+      "note": "The Sol model card states a 1,050,000-token context window. This is the id selected for the live benchmark."
+    },
     "deepseek-flash": {
       "limit_tokens": 1000000,
       "source_url": "https://api-docs.deepseek.com/quick_start/pricing",

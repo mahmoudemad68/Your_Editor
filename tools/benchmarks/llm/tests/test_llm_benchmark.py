@@ -257,6 +257,40 @@ class ThinkingMetadataTests(unittest.TestCase):
         self.assertEqual(meta["output_token_cap"], 800)
         self.assertEqual(meta["output_token_cap_field"], "max_completion_tokens")
 
+    def test_gpt_56_sol_is_the_priced_live_model_and_sends_reasoning_none(self) -> None:
+        body = registry()["openai"].build_request(
+            "gpt-5.6-sol",
+            "hello",
+            {"openai_reasoning_effort": "medium"},
+        )
+        self.assertEqual(body["model"], "gpt-5.6-sol")
+        self.assertEqual(body["reasoning_effort"], "none")
+        self.assertEqual(body["max_completion_tokens"], 800)
+        pricing = json.loads((ROOT / "pricing.json").read_text(encoding="utf-8"))
+        context = json.loads(
+            (ROOT / "context_windows.json").read_text(encoding="utf-8")
+        )
+        sol = pricing["models"]["openai:gpt-5.6-sol"]
+        alias = pricing["models"]["openai:gpt-5.6"]
+        self.assertEqual(sol["input_per_million_usd"], 4)
+        self.assertEqual(sol["output_per_million_usd"], 20)
+        self.assertEqual(alias["input_per_million_usd"], 4)
+        self.assertIn("deepseek:deepseek-flash", pricing["models"])
+        self.assertEqual(context["models"]["gpt-5.6-sol"]["limit_tokens"], 1050000)
+        self.assertEqual(context["models"]["gpt-5.6"]["limit_tokens"], 1050000)
+        self.assertIn("deepseek-flash", context["models"])
+        reservation = runner.maximum_local_reservation_usd(
+            "openai",
+            "gpt-5.6-sol",
+            runner.load_benchmark(ROOT),
+            transcript.load_transcript(),
+            pricing,
+            {},
+        )
+        self.assertIsNotNone(reservation)
+        self.assertGreater(reservation or 0, 0)
+        self.assertLess(reservation or 0, 1)
+
     def test_explicit_openai_effort_is_not_labeled_as_the_default(self) -> None:
         body = registry()["openai"].build_request(
             "gpt-5.6-terra",
@@ -368,7 +402,10 @@ class ThinkingMetadataTests(unittest.TestCase):
                 return _empty_openai({"prompt_tokens": 4, "completion_tokens": 1})
             return _empty_openai({"prompt_tokens": 4, "completion_tokens": 1})
 
-        for provider, model in (("openai", "gpt-5.6"), ("deepseek", "deepseek-flash")):
+        for provider, model in (
+            ("openai", "gpt-5.6-sol"),
+            ("deepseek", "deepseek-flash"),
+        ):
             result = runner.run_case(
                 provider,
                 model,
