@@ -8,7 +8,9 @@ multimedia toolset (FFmpeg, Remotion, Faster-Whisper, computer vision and plugga
 
 The 24-week graduation plan is organized as an Agile/Scrum backlog in [docs/roadmap](docs/roadmap/README.md):
 6 phases, 12 two-week sprints, epics, features, user stories with acceptance criteria, technical tasks, dependencies,
-milestones and ready-to-import CSV files for Jira, Linear and GitHub Projects.
+milestones and ready-to-import CSV files for Jira, Linear and GitHub Projects. Working agreements and the Jira import
+runbook are in [docs/process](docs/process/README.md). The Jira board import and team approval for those agreements
+are still pending.
 
 ## Requirements
 

@@ -205,6 +205,11 @@ implements them as adapters. The rule is enforced by dependency-cruiser and impo
 
 ## 6. Scrum process
 
+The same cadence, Definition of Ready, and Definition of Done are written for the team in
+[docs/process/working-agreements.md](../process/working-agreements.md), with the Jira import runbook and the empty
+approval record beside it. That page does not change the rules below. Team approval of the written agreements is still
+pending, and the Jira import has not been observed.
+
 ### Sprint cadence (10 working days)
 
 | Day | Event |
@@ -303,6 +308,10 @@ Exit criteria, required stories and fallbacks are listed in [milestones.md](mile
 | Team member unavailability | Lane blocked | Review buddies per lane, pairing, documentation in every story | ALL |
 
 ## 10. Importing into a tracker
+
+Follow [docs/process/tracker-import.md](../process/tracker-import.md) before importing. Validate the CSV with
+`python3 tools/roadmap/check_tracker_export.py`. Import once. If the Jira project already contains these issue ids,
+stop. As of US-109 the Jira workspace was not available, so the import status is `TRACKER_SETUP_PENDING`.
 
 **Jira** - create sprints "Sprint 1" to "Sprint 12" on the board, then use *System -> External System Import -> CSV*
 with [export/jira-import.csv](export/jira-import.csv). Map `Issue Id` and `Parent Id` to keep the Epic -> Story ->
