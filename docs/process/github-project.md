@@ -66,7 +66,9 @@ Depends on: none
 
 Epic title: `{ID} {Title}`. Epic body records `Original ID` and the epic description. Epics are traceability parents. They are not extra sprint scope and they do not add story points.
 
-Set Status from merged pull-request evidence, not from the fact that the card is new. A story whose implementation pull request is merged is Done. A story with only a draft pull request is In Progress. A story with no implementation pull request is not started and stays in Backlog. The evidence used on 2026-10-02 is in [sprint-1-2-board-checklist.md](sprint-1-2-board-checklist.md). Mentioning a story id in a pull request body is not enough. The pull request has to be the change that implemented that story.
+Record the implementation pull request and story acceptance separately. The checklist is [sprint-1-2-board-checklist.md](sprint-1-2-board-checklist.md). Mentioning a story id in a pull request body is not enough. The pull request has to be the change that implemented that story.
+
+A merged implementation is not story acceptance and is not the Definition of Done. Do not set Status to Done from the merge alone. Do not move that card back to Backlog only because the card was created later. Leave it In Review until the acceptance criteria and the Definition of Done are confirmed. US-106 is the explicit case: PR #12 merged the implementation, and CP1 remains NOT_VERIFIED. A draft implementation pull request is In Progress. No implementation pull request stays in Backlog.
 
 Leave Assignees empty until [team-approval-record.md](team-approval-record.md) names the lane owner. Lane is not a person.
 
