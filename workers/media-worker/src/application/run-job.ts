@@ -137,7 +137,15 @@ export async function runNextJob(
     });
     return "done";
   }
-  if (current.status === "Cancelled" || (await deps.queue.isCancelRequested(current.id))) {
+  let cancelRequested: boolean;
+  try {
+    cancelRequested =
+      current.status === "Cancelled" || (await deps.queue.isCancelRequested(current.id));
+  } catch {
+    await deps.queue.release(reserved.receipt);
+    return "done";
+  }
+  if (cancelRequested) {
     if (current.status !== "Cancelled") {
       await deps.jobs.save(current.cancel(deps.now()));
     }

@@ -66,6 +66,8 @@ export interface JobQueue {
   reserve(queueName: string): Promise<ReservedJob | null>;
   complete(receipt: JobReceipt): Promise<void>;
   fail(receipt: JobReceipt, failure: JobFailure): Promise<void>;
+  /** Return a reserved job to the queue, or drop its lock so recovery can take it. */
+  release(receipt: JobReceipt): Promise<void>;
   requestCancel(jobId: string): Promise<void>;
   isCancelRequested(jobId: string): Promise<boolean>;
   /** Fires if this process loses the reservation before complete or fail. */

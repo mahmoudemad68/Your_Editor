@@ -109,6 +109,28 @@ export class BullMqJobQueue implements JobQueue {
     await job.moveToCompleted("completed", receipt.token, false);
   }
 
+  async release(receipt: JobReceipt): Promise<void> {
+    this.stopRenewal(receipt.token);
+    const job = this.inflight.get(receipt.token);
+    this.inflight.delete(receipt.token);
+    if (!job) {
+      await this.dropLock(receipt);
+      return;
+    }
+    try {
+      await job.moveToWait(receipt.token);
+      return;
+    } catch {
+      // The lock may already be unusable. Fall through.
+    }
+    try {
+      await job.moveToFailed(new Error("reservation released"), receipt.token, false);
+      return;
+    } catch {
+      await this.dropLock(receipt);
+    }
+  }
+
   async fail(receipt: JobReceipt, failure: JobFailure): Promise<void> {
     this.stopRenewal(receipt.token);
     const job = this.takeInflight(receipt);
@@ -240,6 +262,14 @@ export class BullMqJobQueue implements JobQueue {
     const reason = "Job envelope does not match the shared JSON Schema.";
     await job.moveToFailed(new UnrecoverableError(reason), token, false);
     await this.deadLetter(queueName, job);
+  }
+
+  private async dropLock(receipt: JobReceipt): Promise<void> {
+    try {
+      await this.connection.del(`${PREFIX}:${receipt.queueName}:${receipt.jobId}:lock`);
+    } catch {
+      // Renewal is already stopped, so the lock expires and stall recovery can run.
+    }
   }
 
   private async deadLetter(queueName: string, job: BullJob): Promise<void> {

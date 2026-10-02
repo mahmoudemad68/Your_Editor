@@ -3,6 +3,7 @@
  * They cannot close over the parent test. Side effects go through payload paths.
  */
 
+import { spawn } from "node:child_process";
 import { appendFile, writeFile } from "node:fs/promises";
 import { type JobEnvelope } from "@editagent/domain";
 
@@ -94,6 +95,38 @@ export async function nonCooperativeSideEffect(
   if (marker.length > 0) {
     await writeFile(marker, `${Date.now()}\n`);
   }
+}
+
+/** Writes as soon as the handler starts. A cancel check that fails must not reach this. */
+export async function touchMarker(envelope: JobEnvelope): Promise<void> {
+  const marker = markerPath(envelope);
+  if (marker.length > 0) {
+    await writeFile(marker, "ran\n");
+  }
+}
+
+/**
+ * Spawns a non-detached descendant that writes the marker later.
+ * The descendant stays in this process group so the supervisor can reap it.
+ */
+export async function spawnDescendant(envelope: JobEnvelope, _signal: AbortSignal): Promise<void> {
+  const marker = markerPath(envelope);
+  const pidPath = typeof envelope.payload.pidPath === "string" ? envelope.payload.pidPath : "";
+  const wait = delayMs(envelope, 2_500);
+  const child = spawn(
+    process.execPath,
+    [
+      "-e",
+      "setTimeout(() => require('node:fs').writeFileSync(process.argv[1], 'late\\n'), Number(process.argv[2]))",
+      marker,
+      String(wait),
+    ],
+    { stdio: "ignore" },
+  );
+  if (pidPath.length > 0 && child.pid != null) {
+    await writeFile(pidPath, String(child.pid));
+  }
+  await new Promise(() => undefined);
 }
 
 /** Records one execution span. A second worker appending start before end means overlap. */
