@@ -1,5 +1,5 @@
 {
   "accessed": null,
-  "note": "Add dated, model-specific prices from the provider pricing page before a live run. An empty models object blocks live calls so the spend cap can be enforced. Do not invent a price.",
+  "note": "Add a dated, finite, positive model price from the provider pricing page before a live run. Each row needs input_per_million_usd, output_per_million_usd, and accessed (YYYY-MM-DD). Zero, negative, non-numeric, and undated rows block the call. An empty models object blocks live calls. Do not invent a price. The runner's spend cap is a local reservation, not a provider invoice ceiling.",
   "models": {}
 }

@@ -267,7 +267,7 @@ The owner decided EditAgent will call hosted LLM APIs with user-provided keys. T
 
 `tools/benchmarks/llm/` defines ten scripted edits over mock tools `trim`, `add_caption`, and `reframe`. Schema validity and semantic correctness are scored separately. A call can match the JSON Schema and still be the wrong edit. The synthetic transcript is 1,500 generated words standing in for 600 seconds of speech. It is not a person's recording.
 
-Dry-run is the default. A live call needs `--live`, the provider environment variable, a dated price row in `pricing.json`, and `LLM_BENCHMARK_SPEND_CAP_USD` (default 1 USD). The runner estimates an upper bound before each request and skips the request when that bound would exceed the remaining cap. Missing keys are `PENDING_CREDENTIALS`. Missing prices are `BLOCKED_COST`. This repository run did not make a paid call.
+Dry-run is the default. A live call needs `--live`, the provider environment variable, a dated positive price row in `pricing.json`, and a finite non-negative `LLM_BENCHMARK_SPEND_CAP_USD` (default 1 USD). Before each request the runner reserves a conservative local estimate that includes the tool definitions and an 800-token output cap, and it skips the request when that reservation would exceed the remaining local cap. Failed calls and responses without usable token counts keep the reservation. This is not a provider-side invoice ceiling: the provider can still bill differently from the local estimate. Missing keys are `PENDING_CREDENTIALS`. Missing or invalid prices are `BLOCKED_COST`. Context-window fit stays `UNVERIFIED` until the response reports input tokens and `context_windows.json` has a documented limit for that exact model. A successful request does not by itself prove the transcript fit. This repository run did not make a paid call.
 
 Documentation accessed 2026-10-02:
 
@@ -285,7 +285,7 @@ Observed measurements: **PENDING**.
 
 Default provider and fallback provider: **PENDING**.
 
-Schema-valid calls, semantic correctness, latency, tokens, and cost: **PENDING** for every provider.
+Schema-valid tool calls, correct abstentions, semantic correctness, latency, tokens, cost, and context-window fit: **PENDING** for every provider. Empty calls are not counted as schema-valid tool calls. A correct abstention counts only for the two scripted requests that expect no call. The CP1 fraction uses all ten scripted requests as the denominator.
 
 Formal CP1 LLM status: **NOT_VERIFIED**. The threshold is at least 9 of 10 schema-valid calls on a model that was actually called. Mocks and dry-runs do not meet it. A comparison needs live results from at least two hosted providers.
 

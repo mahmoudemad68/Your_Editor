@@ -1,32 +1,57 @@
-"""Dry-run by default. Live calls need --live, a key, a price row, and a spend cap."""
+"""Dry-run by default. Live calls need --live, a key, a dated positive price, and a valid cap.
+
+The spend cap is a local admission control. This process reserves the estimated
+cost of each request before sending it. That is not a guarantee of the
+provider's invoice.
+"""
 
 from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import time
+from datetime import date
 from pathlib import Path
 from typing import Any
 
-from adapters import post_json, redact, registry
+from adapters import (
+    MAX_OUTPUT_TOKENS,
+    collect_secrets,
+    dumps_redacted,
+    ensure_transport_url,
+    post_json,
+    redact,
+    registry,
+    sanitize,
+)
 from scoring import score_case
 from transcript import DURATION_SECONDS, load_transcript
 
 DEFAULT_CAP_USD = 1.0
-MAX_OUTPUT_TOKENS = 800
-ENV_NAMES = (
+CP1_DENOMINATOR = 10
+CP1_THRESHOLD = 9
+SECRET_ENV_NAMES = (
     "OPENAI_API_KEY",
     "ANTHROPIC_API_KEY",
     "GEMINI_API_KEY",
     "DASHSCOPE_API_KEY",
     "DEEPSEEK_API_KEY",
-    "DASHSCOPE_BASE_URL",
 )
 
 
 def estimate_tokens(text: str) -> int:
     return max(1, (len(text) + 3) // 4)
+
+
+def estimate_request_tokens(body: dict[str, Any]) -> int:
+    """Token estimate for the full submitted body, including tool definitions."""
+
+    encoded = json.dumps(
+        body, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+    )
+    return estimate_tokens(encoded)
 
 
 def load_pricing(path: Path) -> dict[str, Any]:
@@ -36,25 +61,85 @@ def load_pricing(path: Path) -> dict[str, Any]:
     return document
 
 
-def estimate_cost_usd(
-    pricing: dict[str, Any],
-    provider: str,
-    model: str,
-    input_tokens: int,
-    output_tokens: int,
-) -> float | None:
-    row = pricing["models"].get(f"{provider}:{model}")
+def load_context_limits(path: Path) -> dict[str, dict[str, Any]]:
+    if not path.is_file():
+        return {}
+    document = json.loads(path.read_text(encoding="utf-8"))
+    models = document.get("models") if isinstance(document, dict) else None
+    if not isinstance(models, dict):
+        return {}
+    accepted: dict[str, dict[str, Any]] = {}
+    for model, row in models.items():
+        if isinstance(model, str) and _valid_context_row(row):
+            accepted[model] = row
+    return accepted
+
+
+def _valid_context_row(row: object) -> bool:
     if not isinstance(row, dict):
+        return False
+    limit = row.get("limit_tokens")
+    source = row.get("source_url")
+    if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
+        return False
+    if not isinstance(source, str) or not source.startswith("https://"):
+        return False
+    return _valid_date(row.get("accessed"))
+
+
+def _valid_date(value: object) -> bool:
+    if not isinstance(value, str):
+        return False
+    try:
+        parsed = date.fromisoformat(value)
+    except ValueError:
+        return False
+    return parsed.isoformat() == value
+
+
+def _positive_finite(value: object) -> bool:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    return math.isfinite(value) and float(value) > 0
+
+
+def cap_is_valid(value: object) -> bool:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    return math.isfinite(value) and float(value) >= 0
+
+
+def priced_rates(
+    pricing: dict[str, Any], provider: str, model: str
+) -> tuple[float, float] | None:
+    models = pricing.get("models")
+    if not isinstance(models, dict):
+        return None
+    row = models.get(f"{provider}:{model}")
+    if not isinstance(row, dict) or not _valid_date(row.get("accessed")):
         return None
     input_price = row.get("input_per_million_usd")
     output_price = row.get("output_per_million_usd")
-    if not isinstance(input_price, (int, float)) or not isinstance(
-        output_price, (int, float)
-    ):
+    if not _positive_finite(input_price) or not _positive_finite(output_price):
         return None
-    return (input_tokens / 1_000_000) * float(input_price) + (
-        output_tokens / 1_000_000
-    ) * float(output_price)
+    return float(input_price), float(output_price)
+
+
+def estimate_cost_usd(
+    rates: tuple[float, float], input_tokens: int, output_tokens: int
+) -> float | None:
+    if isinstance(input_tokens, bool) or isinstance(output_tokens, bool):
+        return None
+    if not isinstance(input_tokens, int) or not isinstance(output_tokens, int):
+        return None
+    if input_tokens < 0 or output_tokens < 0:
+        return None
+    cost = (input_tokens / 1_000_000) * rates[0] + (output_tokens / 1_000_000) * rates[
+        1
+    ]
+    if not math.isfinite(cost) or cost < 0:
+        return None
+    return cost
 
 
 def load_requests(path: Path) -> list[dict[str, Any]]:
@@ -106,6 +191,16 @@ def thinking_metadata(provider: str, request_body: dict[str, Any]) -> dict[str, 
     }
 
 
+def _classify_token(value: object) -> tuple[str, int | None]:
+    if value is None:
+        return "missing", None
+    if isinstance(value, bool) or not isinstance(value, int):
+        return "invalid", None
+    if value < 0:
+        return "invalid", None
+    return "ok", value
+
+
 def _result(
     provider: str,
     model: str,
@@ -113,6 +208,7 @@ def _result(
     status: str,
     reason: str | None,
     calls: list[dict[str, Any]] | None = None,
+    spent_usd: float = 0.0,
     **extra: Any,
 ) -> dict[str, Any]:
     payload = {
@@ -126,12 +222,90 @@ def _result(
         "input_tokens": None,
         "output_tokens": None,
         "estimated_cost_usd": None,
+        "budget_reserved_usd": 0.0,
+        "budget_charged_usd": 0.0,
+        "running_spent_usd": spent_usd,
+        "stop_subsequent": False,
+        "usage_status": "not_sent",
         "schema_valid": None,
+        "schema_valid_tool_call": None,
+        "correct_abstention": None,
+        "valid_outcome": None,
         "semantic_correct": None,
-        "context_window": "UNKNOWN",
+        "transcript_included": False,
+        "transcript_kind": None,
+        "request_processed": False,
+        "context_window": "UNVERIFIED",
+        "context_window_reason": "not evaluated",
+        "context_input_tokens": None,
+        "context_limit_tokens": None,
     }
     payload.update(extra)
     return payload
+
+
+def assess_context(
+    model: str,
+    reported_input: int | None,
+    limits: dict[str, dict[str, Any]],
+    *,
+    sent: bool,
+) -> dict[str, Any]:
+    """Compare reported input usage with a documented limit. Do not invent one."""
+
+    row = limits.get(model)
+    limit = (
+        int(row["limit_tokens"])
+        if row is not None and _valid_context_row(row)
+        else None
+    )
+    if not sent:
+        return {
+            "context_window": "UNVERIFIED",
+            "context_window_reason": "request was not sent, so provider input usage is unavailable",
+            "context_input_tokens": None,
+            "context_limit_tokens": limit,
+        }
+    if reported_input is None:
+        return {
+            "context_window": "UNVERIFIED",
+            "context_window_reason": "provider did not report a usable input token count",
+            "context_input_tokens": None,
+            "context_limit_tokens": limit,
+        }
+    if limit is None:
+        return {
+            "context_window": "UNVERIFIED",
+            "context_window_reason": "no documented context-window limit is recorded for this model",
+            "context_input_tokens": reported_input,
+            "context_limit_tokens": None,
+        }
+    if reported_input <= limit:
+        state = "FITS"
+        reason = "reported input tokens are within the documented context limit"
+    else:
+        state = "EXCEEDS"
+        reason = "reported input tokens exceed the documented context limit"
+    return {
+        "context_window": state,
+        "context_window_reason": reason,
+        "context_input_tokens": reported_input,
+        "context_limit_tokens": limit,
+    }
+
+
+def _transcript_fields(included: bool) -> dict[str, Any]:
+    if not included:
+        return {"transcript_included": False, "transcript_kind": None}
+    return {
+        "transcript_included": True,
+        "transcript_kind": "synthetic",
+        "transcript_seconds": DURATION_SECONDS,
+    }
+
+
+def _exceeds(spent: float, cap: float) -> bool:
+    return spent > cap + 1e-9
 
 
 def run_case(
@@ -148,79 +322,171 @@ def run_case(
     commit_sha: str,
     transport: Any = None,
     timeout: float = 60,
+    context_limits: dict[str, dict[str, Any]] | None = None,
+    secrets: list[str] | None = None,
 ) -> dict[str, Any]:
     adapters = registry()
     if provider not in adapters:
         raise KeyError(provider)
     adapter = adapters[provider]
+    limits = context_limits or {}
+    known = secrets if secrets is not None else _secrets(api_key, options)
     if not model.strip():
-        return _result(
-            provider,
-            model,
-            case["id"],
-            "MISSING_MODEL",
-            "pass --model for this provider",
+        return _finish(
+            _result(
+                provider,
+                model,
+                case["id"],
+                "MISSING_MODEL",
+                "pass --model for this provider",
+                spent_usd=spent_usd,
+            ),
+            known,
+        )
+    if not cap_is_valid(cap_usd) or not cap_is_valid(spent_usd):
+        return _finish(
+            _result(
+                provider,
+                model,
+                case["id"],
+                "BLOCKED_BUDGET",
+                "spending cap must be a finite number greater than or equal to zero",
+                spent_usd=0.0,
+                stop_subsequent=True,
+            ),
+            known,
         )
     prompt = prompt_for(case, transcript)
     body = adapter.build_request(model, prompt, options)
     thinking = thinking_metadata(provider, body if isinstance(body, dict) else {})
-    secrets = [api_key, *[str(options.get(name, "")) for name in ENV_NAMES]]
+    common = {
+        "thinking": thinking,
+        "commit_sha": commit_sha,
+        "spent_usd": spent_usd,
+        **_transcript_fields(True),
+    }
     if body.get("unsupported"):
-        return _result(
-            provider,
-            model,
-            case["id"],
-            "UNSUPPORTED",
-            redact(str(body.get("reason")), secrets),
-            thinking=thinking,
-            commit_sha=commit_sha,
+        return _finish(
+            _result(
+                provider,
+                model,
+                case["id"],
+                "UNSUPPORTED",
+                redact(str(body.get("reason")), known),
+                **common,
+                **assess_context(model, None, limits, sent=False),
+            ),
+            known,
+        )
+    if body.get("blocked"):
+        return _finish(
+            _result(
+                provider,
+                model,
+                case["id"],
+                "BLOCKED",
+                redact(str(body.get("reason")), known),
+                **common,
+                stop_subsequent=True,
+                **assess_context(model, None, limits, sent=False),
+            ),
+            known,
         )
     if not live:
-        return _result(
-            provider,
-            model,
-            case["id"],
-            "DRY_RUN",
-            "live calls are off",
-            thinking=thinking,
-            commit_sha=commit_sha,
-            request_preview=_preview(body),
+        return _finish(
+            _result(
+                provider,
+                model,
+                case["id"],
+                "DRY_RUN",
+                "live calls are off",
+                **common,
+                request_preview=_preview(body),
+                **assess_context(model, None, limits, sent=False),
+            ),
+            known,
         )
     if not api_key:
-        return _result(
-            provider,
-            model,
-            case["id"],
-            "PENDING_CREDENTIALS",
-            f"{adapter.env_var} is not set",
-            thinking=thinking,
-            commit_sha=commit_sha,
-        )
-    input_tokens = estimate_tokens(prompt)
-    upper = estimate_cost_usd(pricing, provider, model, input_tokens, MAX_OUTPUT_TOKENS)
-    if upper is None:
-        return _result(
-            provider,
-            model,
-            case["id"],
-            "BLOCKED_COST",
-            "no dated price for this model, so the spend cap cannot be enforced",
-            thinking=thinking,
-            commit_sha=commit_sha,
-        )
-    if spent_usd + upper > cap_usd:
-        return _result(
-            provider,
-            model,
-            case["id"],
-            "SKIPPED",
-            "spending cap would be exceeded",
-            thinking=thinking,
-            commit_sha=commit_sha,
-            estimated_cost_usd=upper,
+        return _finish(
+            _result(
+                provider,
+                model,
+                case["id"],
+                "PENDING_CREDENTIALS",
+                f"{adapter.env_var} is not set",
+                **common,
+                **assess_context(model, None, limits, sent=False),
+            ),
+            known,
         )
     url = adapter.request_url(options)
+    try:
+        if not url:
+            raise ValueError("request URL is not available")
+        ensure_transport_url(url)
+    except Exception as exc:  # noqa: BLE001
+        return _finish(
+            _result(
+                provider,
+                model,
+                case["id"],
+                "BLOCKED",
+                redact(str(exc), known),
+                **common,
+                stop_subsequent=True,
+                **assess_context(model, None, limits, sent=False),
+            ),
+            known,
+        )
+    if not adapter.output_is_bounded(body):
+        return _finish(
+            _result(
+                provider,
+                model,
+                case["id"],
+                "BLOCKED",
+                "the request has no supported output-token limit matching the reserved budget",
+                **common,
+                stop_subsequent=True,
+                **assess_context(model, None, limits, sent=False),
+            ),
+            known,
+        )
+    rates = priced_rates(pricing, provider, model)
+    input_tokens = estimate_request_tokens(body)
+    upper = estimate_cost_usd(rates, input_tokens, MAX_OUTPUT_TOKENS) if rates else None
+    if rates is None or upper is None:
+        return _finish(
+            _result(
+                provider,
+                model,
+                case["id"],
+                "BLOCKED_COST",
+                "price entry must be a finite positive dated rate, so the local cap cannot be enforced",
+                **common,
+                stop_subsequent=True,
+                **assess_context(model, None, limits, sent=False),
+            ),
+            known,
+        )
+    if _exceeds(spent_usd + upper, cap_usd):
+        return _finish(
+            _result(
+                provider,
+                model,
+                case["id"],
+                "SKIPPED",
+                "spending cap would be exceeded",
+                **common,
+                estimated_cost_usd=upper,
+                **assess_context(model, None, limits, sent=False),
+            ),
+            known,
+        )
+    # Headers are built only after the URL and the output bound are accepted.
     headers = _headers(provider, api_key)
+    reserved = upper
+    spent_held = spent_usd + reserved
     started = time.perf_counter()
     try:
         if transport is None:
@@ -228,61 +494,290 @@ def run_case(
         else:
             payload = transport(url, headers, body)
     except Exception as exc:  # noqa: BLE001
-        # Provider libraries and urllib raise many types. The key must not leak.
-        return _result(
-            provider,
-            model,
-            case["id"],
-            "FAILED",
-            redact(str(exc), secrets),
-            thinking=thinking,
-            commit_sha=commit_sha,
-            latency_seconds=time.perf_counter() - started,
+        return _finish(
+            _accounted(
+                provider,
+                model,
+                case,
+                "FAILED",
+                redact(f"{type(exc).__name__}: {exc}", known),
+                calls=[],
+                scores=None,
+                thinking=thinking,
+                commit_sha=commit_sha,
+                latency=time.perf_counter() - started,
+                reserved=reserved,
+                charged=reserved,
+                running=spent_held,
+                stop=False,
+                usage_status="not_reported",
+                input_tokens=None,
+                output_tokens=None,
+                limits=limits,
+                sent=True,
+                processed=False,
+            ),
+            known,
         )
     latency = time.perf_counter() - started
     parsed = adapter.parse_response(payload if isinstance(payload, dict) else {})
-    calls = parsed["calls"]
-    if parsed["parse_error"]:
-        return _result(
+    calls = parsed["calls"] if isinstance(parsed.get("calls"), list) else []
+    if parsed.get("parse_error"):
+        return _finish(
+            _accounted(
+                provider,
+                model,
+                case,
+                "FAILED",
+                redact(str(parsed["parse_error"]), known),
+                calls=calls,
+                scores=None,
+                thinking=thinking,
+                commit_sha=commit_sha,
+                latency=latency,
+                reserved=reserved,
+                charged=reserved,
+                running=spent_held,
+                stop=False,
+                usage_status="not_reported",
+                input_tokens=None,
+                output_tokens=None,
+                limits=limits,
+                sent=True,
+                processed=False,
+            ),
+            known,
+        )
+    usage = _usage_decision(parsed)
+    if usage["state"] == "invalid":
+        return _finish(
+            _accounted(
+                provider,
+                model,
+                case,
+                "BUDGET_UNSAFE",
+                "provider token usage was missing a finite non-negative count, so the reservation is kept",
+                calls=calls,
+                scores=score_case(case, calls),
+                thinking=thinking,
+                commit_sha=commit_sha,
+                latency=latency,
+                reserved=reserved,
+                charged=reserved,
+                running=spent_held,
+                stop=True,
+                usage_status="rejected",
+                input_tokens=None,
+                output_tokens=None,
+                limits=limits,
+                sent=True,
+                processed=False,
+            ),
+            known,
+        )
+    if usage["state"] == "missing":
+        reported_input = usage["input_tokens"] if usage["input_state"] == "ok" else None
+        return _finish(
+            _accounted(
+                provider,
+                model,
+                case,
+                "SUCCESS",
+                None,
+                calls=calls,
+                scores=score_case(case, calls),
+                thinking=thinking,
+                commit_sha=commit_sha,
+                latency=latency,
+                reserved=reserved,
+                charged=reserved,
+                running=spent_held,
+                stop=False,
+                usage_status="missing",
+                input_tokens=reported_input,
+                output_tokens=None,
+                limits=limits,
+                sent=True,
+                processed=True,
+            ),
+            known,
+        )
+    observed = estimate_cost_usd(rates, usage["billed_input"], usage["billed_output"])
+    if observed is None:
+        return _finish(
+            _accounted(
+                provider,
+                model,
+                case,
+                "BUDGET_UNSAFE",
+                "observed usage could not be priced without lowering the reserved cost unsafely",
+                calls=calls,
+                scores=score_case(case, calls),
+                thinking=thinking,
+                commit_sha=commit_sha,
+                latency=latency,
+                reserved=reserved,
+                charged=reserved,
+                running=spent_held,
+                stop=True,
+                usage_status="rejected",
+                input_tokens=None,
+                output_tokens=None,
+                limits=limits,
+                sent=True,
+                processed=False,
+            ),
+            known,
+        )
+    reconciled = spent_usd + observed
+    if reconciled < 0:
+        return _finish(
+            _accounted(
+                provider,
+                model,
+                case,
+                "BUDGET_UNSAFE",
+                "reconciling usage would make accumulated cost negative, so the reservation is kept",
+                calls=calls,
+                scores=score_case(case, calls),
+                thinking=thinking,
+                commit_sha=commit_sha,
+                latency=latency,
+                reserved=reserved,
+                charged=reserved,
+                running=spent_held,
+                stop=True,
+                usage_status="rejected",
+                input_tokens=None,
+                output_tokens=None,
+                limits=limits,
+                sent=True,
+                processed=False,
+            ),
+            known,
+        )
+    return _finish(
+        _accounted(
             provider,
             model,
-            case["id"],
-            "FAILED",
-            parsed["parse_error"],
+            case,
+            "SUCCESS",
+            None,
             calls=calls,
+            scores=score_case(case, calls),
             thinking=thinking,
             commit_sha=commit_sha,
-            latency_seconds=latency,
-        )
-    scores = score_case(case, calls)
-    actual_in = (
-        parsed["input_tokens"]
-        if isinstance(parsed["input_tokens"], int)
-        else input_tokens
+            latency=latency,
+            reserved=reserved,
+            charged=observed,
+            running=reconciled,
+            stop=_exceeds(reconciled, cap_usd),
+            usage_status="reported",
+            input_tokens=usage["input_tokens"],
+            output_tokens=usage["output_tokens"],
+            limits=limits,
+            sent=True,
+            processed=True,
+        ),
+        known,
     )
-    actual_out = (
-        parsed["output_tokens"] if isinstance(parsed["output_tokens"], int) else 0
-    )
-    cost = estimate_cost_usd(pricing, provider, model, actual_in, actual_out)
+
+
+def _usage_decision(parsed: dict[str, Any]) -> dict[str, Any]:
+    input_state, input_tokens = _classify_token(parsed.get("input_tokens"))
+    output_state, output_tokens = _classify_token(parsed.get("output_tokens"))
+    thought_raw = parsed.get("thought_tokens")
+    thought_state, thought_tokens = _classify_token(thought_raw)
+    if "invalid" in {input_state, output_state} or (
+        thought_raw is not None and thought_state == "invalid"
+    ):
+        return {"state": "invalid", "input_state": input_state}
+    if input_state != "ok" or output_state != "ok":
+        return {
+            "state": "missing",
+            "input_state": input_state,
+            "input_tokens": input_tokens,
+        }
+    billed_output = output_tokens or 0
+    if thought_state == "ok" and thought_tokens is not None:
+        billed_output += thought_tokens
+    return {
+        "state": "ok",
+        "input_state": "ok",
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "billed_input": input_tokens,
+        "billed_output": billed_output,
+    }
+
+
+def _accounted(
+    provider: str,
+    model: str,
+    case: dict[str, Any],
+    status: str,
+    reason: str | None,
+    calls: list[dict[str, Any]],
+    scores: dict[str, bool] | None,
+    thinking: dict[str, Any],
+    commit_sha: str,
+    latency: float,
+    reserved: float,
+    charged: float,
+    running: float,
+    stop: bool,
+    usage_status: str,
+    input_tokens: int | None,
+    output_tokens: int | None,
+    limits: dict[str, dict[str, Any]],
+    sent: bool,
+    processed: bool,
+) -> dict[str, Any]:
+    context = assess_context(model, input_tokens, limits, sent=sent)
+    extra: dict[str, Any] = {
+        "thinking": thinking,
+        "commit_sha": commit_sha,
+        "latency_seconds": latency,
+        "budget_reserved_usd": reserved,
+        "budget_charged_usd": charged,
+        "running_spent_usd": running,
+        "stop_subsequent": stop,
+        "usage_status": usage_status,
+        "estimated_cost_usd": charged,
+        "request_processed": processed,
+        **_transcript_fields(True),
+        **context,
+    }
+    if input_tokens is not None:
+        extra["input_tokens"] = input_tokens
+    if output_tokens is not None:
+        extra["output_tokens"] = output_tokens
+    if scores is not None:
+        extra.update(scores)
     return _result(
         provider,
         model,
         case["id"],
-        "SUCCESS",
-        None,
+        status,
+        reason,
         calls=calls,
-        thinking=thinking,
-        commit_sha=commit_sha,
-        latency_seconds=latency,
-        input_tokens=parsed["input_tokens"],
-        output_tokens=parsed["output_tokens"],
-        estimated_cost_usd=cost,
-        schema_valid=scores["schema_valid"],
-        semantic_correct=scores["semantic_correct"],
-        context_window="UNKNOWN",
-        context_input_tokens_estimate=input_tokens,
-        transcript_seconds=DURATION_SECONDS,
+        spent_usd=running,
+        **extra,
     )
+
+
+def _finish(record: dict[str, Any], secrets: list[str]) -> dict[str, Any]:
+    # Score fields are already set. Sanitize before the caller logs or stores.
+    cleaned = sanitize(record, secrets)
+    if not isinstance(cleaned, dict):
+        return record
+    return cleaned
+
+
+def _secrets(api_key: str, options: dict[str, Any]) -> list[str]:
+    environment = {name: os.environ.get(name, "") for name in SECRET_ENV_NAMES}
+    bearer = f"Bearer {api_key}" if api_key else ""
+    return collect_secrets(api_key, bearer, options, environment)
 
 
 def _headers(provider: str, api_key: str) -> dict[str, str]:
@@ -298,9 +793,31 @@ def _headers(provider: str, api_key: str) -> dict[str, str]:
 
 
 def _preview(body: dict[str, Any]) -> dict[str, Any]:
-    preview = {key: body[key] for key in body if key != "messages" and key != "input"}
+    hidden = {"messages", "input"}
+    preview = {key: body[key] for key in body if key not in hidden}
     preview["prompt_included"] = "messages" in body or "input" in body
     return preview
+
+
+def stopped_record(
+    provider: str,
+    model: str,
+    case: dict[str, Any],
+    commit_sha: str,
+    spent_usd: float,
+) -> dict[str, Any]:
+    return _result(
+        provider,
+        model,
+        case["id"],
+        "BLOCKED_BUDGET",
+        "stopped because budget safety could not be established",
+        spent_usd=spent_usd,
+        commit_sha=commit_sha,
+        stop_subsequent=True,
+        **_transcript_fields(False),
+        **assess_context(model, None, {}, sent=False),
+    )
 
 
 def summarize(records: list[dict[str, Any]]) -> dict[str, Any]:
@@ -309,6 +826,7 @@ def summarize(records: list[dict[str, Any]]) -> dict[str, Any]:
         float(record["latency_seconds"])
         for record in live
         if isinstance(record.get("latency_seconds"), (int, float))
+        and math.isfinite(float(record["latency_seconds"]))
     )
     median = None
     if latencies:
@@ -318,20 +836,160 @@ def summarize(records: list[dict[str, Any]]) -> dict[str, Any]:
             if len(latencies) % 2
             else (latencies[middle - 1] + latencies[middle]) / 2
         )
-    schema_hits = sum(1 for record in live if record.get("schema_valid") is True)
+    tool_calls = sum(
+        1 for record in live if record.get("schema_valid_tool_call") is True
+    )
+    abstentions = sum(1 for record in live if record.get("correct_abstention") is True)
+    valid = sum(1 for record in live if record.get("valid_outcome") is True)
     semantic_hits = sum(1 for record in live if record.get("semantic_correct") is True)
+    complete = len(records) == CP1_DENOMINATOR and len(live) == CP1_DENOMINATOR
     observed = None
-    if len(live) == 10:
-        observed = schema_hits >= 9
+    if complete:
+        observed = valid >= CP1_THRESHOLD
+    measured = bool(live)
     return {
+        "scripted_requests": CP1_DENOMINATOR,
         "live_requests": len(live),
-        "schema_valid": schema_hits if live else None,
-        "semantic_correct": semantic_hits if live else None,
+        "schema_valid_tool_calls": tool_calls if measured else None,
+        "correct_abstentions": abstentions if measured else None,
+        "valid_outcomes": valid if measured else None,
+        "semantic_correct": semantic_hits if measured else None,
         "median_latency_seconds": median,
+        "cp1_schema": {
+            "schema_valid_tool_calls": tool_calls if complete else None,
+            "correct_abstentions": abstentions if complete else None,
+            "valid_outcomes": valid if complete else None,
+            "denominator": CP1_DENOMINATOR,
+            "threshold": CP1_THRESHOLD,
+            "observed_pass": observed,
+        },
         "observed_cp1_schema": observed,
         "formal_cp1": "NOT_VERIFIED",
-        "measurements": "PENDING" if not live else "LIVE",
+        "measurements": "PENDING" if not measured else "UNREVIEWED",
     }
+
+
+def log_line(message: str, secrets: list[str]) -> None:
+    print(redact(message, secrets), flush=True)
+
+
+def execute(
+    *,
+    provider: str,
+    model: str,
+    live: bool,
+    commit_sha: str,
+    output: Path,
+    spend_cap_usd: float,
+    cases: list[dict[str, Any]],
+    pricing: dict[str, Any],
+    transcript: str,
+    api_key: str,
+    options: dict[str, Any],
+    context_limits: dict[str, dict[str, Any]] | None = None,
+    transport: Any = None,
+    timeout: float = 60,
+) -> dict[str, Any]:
+    secrets = _secrets(api_key, options)
+    if live and api_key:
+        log_line(
+            "Live mode was requested. A request is sent only after a local reservation is accepted.",
+            secrets,
+        )
+    limits = context_limits or {}
+    spent = 0.0
+    stop = not cap_is_valid(spend_cap_usd)
+    records: list[dict[str, Any]] = []
+    for case in cases:
+        if stop:
+            if not records and not cap_is_valid(spend_cap_usd):
+                record = run_case(
+                    provider,
+                    model,
+                    case,
+                    transcript,
+                    live,
+                    api_key,
+                    options,
+                    pricing,
+                    spent,
+                    spend_cap_usd,
+                    commit_sha,
+                    transport=transport,
+                    timeout=timeout,
+                    context_limits=limits,
+                    secrets=secrets,
+                )
+            else:
+                record = stopped_record(provider, model, case, commit_sha, spent)
+                record = _finish(record, secrets)
+        else:
+            record = run_case(
+                provider,
+                model,
+                case,
+                transcript,
+                live,
+                api_key,
+                options,
+                pricing,
+                spent,
+                spend_cap_usd,
+                commit_sha,
+                transport=transport,
+                timeout=timeout,
+                context_limits=limits,
+                secrets=secrets,
+            )
+        spent_value = record.get("running_spent_usd")
+        if (
+            isinstance(spent_value, (int, float))
+            and not isinstance(spent_value, bool)
+            and math.isfinite(float(spent_value))
+            and float(spent_value) >= 0
+        ):
+            spent = float(spent_value)
+        if record.get("stop_subsequent") is True:
+            stop = True
+        records.append(record)
+        log_line(
+            json.dumps(
+                {
+                    "request_id": record.get("request_id"),
+                    "status": record.get("status"),
+                    "reason": record.get("reason"),
+                    "calls": record.get("calls"),
+                },
+                default=str,
+            ),
+            secrets,
+        )
+    adapter = registry()[provider]
+    report = {
+        "commit_sha": commit_sha,
+        "provider": provider,
+        "model": model,
+        "live": live,
+        "spend_cap_usd": spend_cap_usd if cap_is_valid(spend_cap_usd) else None,
+        "spend_cap_note": (
+            "Local reservation before send. Not a provider-side invoice ceiling."
+        ),
+        "summary": summarize(records),
+        "documentation": adapter.documentation(),
+        "records": records,
+    }
+    output.mkdir(parents=True, exist_ok=True)
+    destination = output / f"{provider}.json"
+    destination.write_text(dumps_redacted(report, secrets), encoding="utf-8")
+    log_line(str(destination), secrets)
+    return report
+
+
+def _parse_cap(explicit: float | None) -> float:
+    if explicit is not None:
+        return float(explicit)
+    raw = os.environ.get("LLM_BENCHMARK_SPEND_CAP_USD", str(DEFAULT_CAP_USD))
+    return float(raw)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -346,54 +1004,25 @@ def main(argv: list[str] | None = None) -> int:
     root = Path(__file__).resolve().parent
     cases = load_requests(root / "requests.json")
     pricing = load_pricing(root / "pricing.json")
+    limits = load_context_limits(root / "context_windows.json")
     transcript = load_transcript()
     adapter = registry()[args.provider]
     api_key = os.environ.get(adapter.env_var, "")
-    cap = args.spend_cap_usd
-    if cap is None:
-        cap = float(os.environ.get("LLM_BENCHMARK_SPEND_CAP_USD", DEFAULT_CAP_USD))
     options = {"dashscope_base_url": os.environ.get("DASHSCOPE_BASE_URL", "")}
-    if args.live and api_key:
-        print(
-            "Live mode was requested. This process will call the provider if the price cap allows it."
-        )
-    spent = 0.0
-    records = []
-    for case in cases:
-        record = run_case(
-            args.provider,
-            args.model,
-            case,
-            transcript,
-            args.live,
-            api_key,
-            options,
-            pricing,
-            spent,
-            cap,
-            args.commit_sha,
-        )
-        cost = record.get("estimated_cost_usd")
-        if (
-            args.live
-            and record["status"] == "SUCCESS"
-            and isinstance(cost, (int, float))
-        ):
-            spent += float(cost)
-        records.append(record)
-    args.output.mkdir(parents=True, exist_ok=True)
-    report = {
-        "commit_sha": args.commit_sha,
-        "provider": args.provider,
-        "model": args.model,
-        "live": args.live,
-        "summary": summarize(records),
-        "documentation": adapter.documentation(),
-        "records": records,
-    }
-    destination = args.output / f"{args.provider}.json"
-    destination.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
-    print(destination)
+    execute(
+        provider=args.provider,
+        model=args.model,
+        live=args.live,
+        commit_sha=args.commit_sha,
+        output=args.output,
+        spend_cap_usd=_parse_cap(args.spend_cap_usd),
+        cases=cases,
+        pricing=pricing,
+        transcript=transcript,
+        api_key=api_key,
+        options=options,
+        context_limits=limits,
+    )
     return 0
 
 

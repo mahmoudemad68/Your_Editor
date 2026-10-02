@@ -1,0 +1,5 @@
+{
+  "accessed": null,
+  "note": "Add a model only by copying its context-window limit from that provider's model documentation. Each row needs limit_tokens, source_url, and accessed (YYYY-MM-DD). Do not invent a limit. Models without a valid row stay UNVERIFIED.",
+  "models": {}
+}
