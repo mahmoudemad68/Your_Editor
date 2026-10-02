@@ -277,7 +277,7 @@ Documentation accessed 2026-10-02:
 - Qwen function calling on a workspace-specific compatible-mode host: https://help.aliyun.com/en/model-studio/qwen-function-calling
 - DeepSeek Chat Completions tool calls: https://api-docs.deepseek.com/guides/tool_calls/
 
-No SDK is pinned. Requests use `urllib`. Model ids are arguments, not defaults. The OpenAI guide's note that GPT-6 Astra and GPT-6.1 Sol require the Responses API is recorded as unsupported on this Chat Completions adapter. Thinking controls are provider-specific and are not one shared boolean.
+No SDK is pinned. Requests use `urllib`. Model ids are arguments, not defaults. The OpenAI guide's note that GPT-6 Astra and GPT-6.1 Sol require the Responses API is recorded as unsupported on this Chat Completions adapter. Thinking controls are provider-specific and are not one shared boolean. Omitted `reasoning_effort` on `gpt-5.6` is labeled with the documented default `medium`, and omitted DeepSeek thinking on `deepseek-flash` is labeled with the documented default enabled at effort `high`. Those labels cite the provider pages and are not live measurements. Both requests still cap output at 800 tokens.
 
 ### Results
 

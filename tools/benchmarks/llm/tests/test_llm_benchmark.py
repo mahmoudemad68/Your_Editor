@@ -224,8 +224,126 @@ class AdapterTests(unittest.TestCase):
         function = body["tools"][0]["function"]
         self.assertNotIn("strict", function)
         self.assertNotIn("enable_thinking", body)
+        self.assertNotIn("thinking", body)
+        self.assertNotIn("reasoning_effort", body)
         self.assertEqual(body["max_tokens"], adapters.MAX_OUTPUT_TOKENS)
         self.assertEqual(registry()["deepseek"].request_url(), adapters.DEEPSEEK_URL)
+
+
+class ThinkingMetadataTests(unittest.TestCase):
+    def test_gpt_56_omitted_effort_records_the_documented_medium_default(self) -> None:
+        body = registry()["openai"].build_request("gpt-5.6", "Keep 10 to 25 seconds.")
+        self.assertNotIn("reasoning_effort", body)
+        self.assertEqual(body["max_completion_tokens"], 800)
+        meta = runner.thinking_metadata("openai", body)
+        self.assertTrue(meta["parameter_omitted"])
+        self.assertIsNone(meta["explicitly_requested"])
+        self.assertEqual(meta["documented_default"], "medium")
+        self.assertFalse(meta["empirically_observed"])
+        self.assertEqual(
+            meta["documented_default_source"],
+            "https://developers.openai.com/api/docs/models/gpt-5.6-sol",
+        )
+        self.assertEqual(meta["documented_default_accessed"], "2026-10-02")
+        self.assertEqual(meta["output_token_cap"], 800)
+        self.assertEqual(meta["output_token_cap_field"], "max_completion_tokens")
+        self.assertEqual(meta["output_token_cap_source"], "request_body")
+        constraint = meta["documented_tool_constraint"]
+        self.assertFalse(constraint["empirically_observed"])
+        self.assertTrue(constraint["request_unchanged"])
+        self.assertIn("none", constraint["statement"])
+
+    def test_explicit_openai_effort_is_not_labeled_as_the_default(self) -> None:
+        body = registry()["openai"].build_request(
+            "gpt-5.6",
+            "hello",
+            {"openai_reasoning_effort": "low"},
+        )
+        self.assertEqual(body["reasoning_effort"], "low")
+        self.assertEqual(body["max_completion_tokens"], 800)
+        meta = runner.thinking_metadata("openai", body)
+        self.assertFalse(meta["parameter_omitted"])
+        self.assertEqual(meta["explicitly_requested"], "low")
+        self.assertIsNone(meta["documented_default"])
+        self.assertNotIn("documented_tool_constraint", meta)
+
+    def test_other_openai_models_do_not_inherit_the_gpt_56_default(self) -> None:
+        body = registry()["openai"].build_request("gpt-5.6-terra", "hello")
+        self.assertNotIn("reasoning_effort", body)
+        meta = runner.thinking_metadata("openai", body)
+        self.assertIsNone(meta["documented_default"])
+        self.assertIn(
+            "no documented omitted default", meta["documented_default_reason"]
+        )
+        self.assertFalse(meta["empirically_observed"])
+
+    def test_deepseek_flash_omitted_thinking_records_enabled_high(self) -> None:
+        body = registry()["deepseek"].build_request("deepseek-flash", "hello")
+        self.assertNotIn("thinking", body)
+        self.assertNotIn("reasoning_effort", body)
+        self.assertEqual(body["max_tokens"], 800)
+        meta = runner.thinking_metadata("deepseek", body)
+        self.assertTrue(meta["parameter_omitted"])
+        self.assertIsNone(meta["explicitly_requested"])
+        self.assertEqual(
+            meta["documented_default"],
+            {"thinking": "enabled", "reasoning_effort": "high"},
+        )
+        self.assertFalse(meta["empirically_observed"])
+        self.assertEqual(
+            meta["documented_default_source"],
+            "https://api-docs.deepseek.com/api/create-chat-completion",
+        )
+        self.assertEqual(meta["documented_default_accessed"], "2026-10-02")
+        self.assertEqual(meta["output_token_cap"], 800)
+        self.assertEqual(meta["output_token_cap_field"], "max_tokens")
+        self.assertEqual(meta["output_token_cap_source"], "request_body")
+
+    def test_dry_runs_carry_documented_defaults_without_a_live_call(self) -> None:
+        case = cases()[0]
+
+        def transport(*_args: object) -> dict:
+            raise AssertionError("dry-run must not call the provider")
+
+        openai = runner.run_case(
+            "openai",
+            "gpt-5.6",
+            case,
+            "short",
+            False,
+            "",
+            {},
+            {"models": {}},
+            0,
+            1,
+            "abc",
+            transport=transport,
+        )
+        deepseek = runner.run_case(
+            "deepseek",
+            "deepseek-flash",
+            case,
+            "short",
+            False,
+            "",
+            {},
+            {"models": {}},
+            0,
+            1,
+            "abc",
+            transport=transport,
+        )
+        self.assertEqual(openai["status"], "DRY_RUN")
+        self.assertEqual(deepseek["status"], "DRY_RUN")
+        self.assertEqual(openai["thinking"]["documented_default"], "medium")
+        self.assertEqual(openai["thinking"]["output_token_cap"], 800)
+        self.assertFalse(openai["thinking"]["empirically_observed"])
+        self.assertEqual(
+            deepseek["thinking"]["documented_default"],
+            {"thinking": "enabled", "reasoning_effort": "high"},
+        )
+        self.assertEqual(deepseek["thinking"]["output_token_cap"], 800)
+        self.assertFalse(deepseek["thinking"]["empirically_observed"])
 
     def test_malformed_openai_payload(self) -> None:
         parsed = registry()["openai"].parse_response({"choices": []})

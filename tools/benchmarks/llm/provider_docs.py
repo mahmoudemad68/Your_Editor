@@ -15,9 +15,27 @@ PROVIDERS: dict[str, dict[str, object]] = {
         "env": "OPENAI_API_KEY",
         "example_model_in_docs": "gpt-5.6-terra",
         "thinking": (
-            "Not a universal boolean. The Chat Completions example passes "
-            "reasoning_effort. This adapter omits it unless openai_reasoning_effort is set."
+            "Not a universal boolean. This adapter omits reasoning_effort unless "
+            "openai_reasoning_effort is set. For gpt-5.6 and gpt-5.6-sol, the model "
+            "card documents the omitted default as medium. That default is not a "
+            "measurement from this benchmark. The GPT-5.6 Sol upgrade guide says "
+            "Chat Completions function tools are compatible only with effective "
+            "reasoning none. The request is still sent without reasoning_effort."
         ),
+        "thinking_default": {
+            "parameter": "reasoning_effort",
+            "models": {
+                "gpt-5.6": "medium",
+                "gpt-5.6-sol": "medium",
+            },
+            "source_url": "https://developers.openai.com/api/docs/models/gpt-5.6-sol",
+            "also_stated_at": "https://developers.openai.com/api/docs/guides/reasoning",
+            "tool_constraint_source": (
+                "https://developers.openai.com/api/docs/guides/upgrading-to-gpt-5p6-sol"
+            ),
+            "accessed": ACCESSED,
+            "empirically_observed": False,
+        },
         "output_limit": "max_completion_tokens, set to the benchmark budget of 800",
         "limitations": [
             "Tool calls are read from choices[0].message.tool_calls.",
@@ -96,16 +114,60 @@ PROVIDERS: dict[str, dict[str, object]] = {
         "env": "DEEPSEEK_API_KEY",
         "example_model_in_docs": "deepseek-flash",
         "thinking": (
-            "Thinking mode is documented for DeepSeek-V3.2 tool use and is not enabled. "
-            "It is not the same flag as Qwen enable_thinking or OpenAI reasoning_effort."
+            "Not the same control as Qwen enable_thinking or OpenAI reasoning_effort. "
+            "This adapter omits thinking and reasoning_effort. The Chat Completions "
+            "reference documents the omitted defaults as thinking enabled and reasoning "
+            "effort high. Those defaults are not a measurement from this benchmark."
         ),
+        "thinking_default": {
+            "parameters": ["thinking", "reasoning_effort"],
+            "models": {
+                "deepseek-flash": {"thinking": "enabled", "reasoning_effort": "high"},
+            },
+            "source_url": "https://api-docs.deepseek.com/api/create-chat-completion",
+            "accessed": ACCESSED,
+            "empirically_observed": False,
+        },
         "output_limit": "max_tokens, set to the benchmark budget of 800",
         "limitations": [
             "The non-beta Chat Completions path is used.",
             "strict mode needs https://api.deepseek.com/beta and is not sent.",
             "The Chat Completions API does not support inserting tool calls mid-conversation.",
             "OpenAI-compatible tool_calls are read. Other OpenAI features are not assumed.",
-            "max_tokens is the documented Chat Completions output cap.",
+            "max_tokens is the documented Chat Completions output cap and is sent as 800.",
+            "Omitting thinking does not disable it. The reference default is enabled.",
         ],
     },
 }
+
+
+def documented_openai_reasoning_default(model: str) -> str | None:
+    """Documented omitted reasoning_effort for a model id, or None if unrecorded."""
+
+    catalog = PROVIDERS["openai"].get("thinking_default")
+    if not isinstance(catalog, dict):
+        return None
+    models = catalog.get("models")
+    if not isinstance(models, dict):
+        return None
+    value = models.get(model.strip().lower())
+    return value if isinstance(value, str) else None
+
+
+def documented_deepseek_thinking_default(model: str) -> dict[str, str] | None:
+    """Documented omitted thinking settings for a model id, or None if unrecorded."""
+
+    catalog = PROVIDERS["deepseek"].get("thinking_default")
+    if not isinstance(catalog, dict):
+        return None
+    models = catalog.get("models")
+    if not isinstance(models, dict):
+        return None
+    value = models.get(model.strip().lower())
+    if not isinstance(value, dict):
+        return None
+    thinking = value.get("thinking")
+    effort = value.get("reasoning_effort")
+    if not isinstance(thinking, str) or not isinstance(effort, str):
+        return None
+    return {"thinking": thinking, "reasoning_effort": effort}

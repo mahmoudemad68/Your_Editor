@@ -6,17 +6,17 @@ Dry-run is the default. The agent that added this package did not make a paid re
 
 ## Providers
 
-| Id        | Environment variable                         | API recorded on 2026-10-02                                                                     |
-| --------- | -------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| openai    | `OPENAI_API_KEY`                             | Chat Completions. `max_completion_tokens` is 800. Responses-only models are unsupported.       |
-| anthropic | `ANTHROPIC_API_KEY`                          | Messages API, `anthropic-version: 2023-06-01`. `max_tokens` is 800.                            |
-| gemini    | `GEMINI_API_KEY`                             | Interactions API. `generation_config.max_output_tokens` is 800.                                |
-| qwen      | `DASHSCOPE_API_KEY` and `DASHSCOPE_BASE_URL` | Allowlisted DashScope OpenAI-compatible chat completions. `max_tokens` is 800.                 |
-| deepseek  | `DEEPSEEK_API_KEY`                           | `https://api.deepseek.com/chat/completions`. `max_tokens` is 800. Strict and thinking are off. |
+| Id        | Environment variable                         | API recorded on 2026-10-02                                                                           |
+| --------- | -------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| openai    | `OPENAI_API_KEY`                             | Chat Completions. `max_completion_tokens` is 800. Responses-only models are unsupported.             |
+| anthropic | `ANTHROPIC_API_KEY`                          | Messages API, `anthropic-version: 2023-06-01`. `max_tokens` is 800.                                  |
+| gemini    | `GEMINI_API_KEY`                             | Interactions API. `generation_config.max_output_tokens` is 800.                                      |
+| qwen      | `DASHSCOPE_API_KEY` and `DASHSCOPE_BASE_URL` | Allowlisted DashScope OpenAI-compatible chat completions. `max_tokens` is 800.                       |
+| deepseek  | `DEEPSEEK_API_KEY`                           | `https://api.deepseek.com/chat/completions`. `max_tokens` is 800. Thinking is omitted, not disabled. |
 
 Pass `--model` yourself. Example names that appeared in those guides (`gpt-5.6-terra`, `gemini-3.8-flash`, `qwen3.8-max`, `deepseek-flash`) are not selected automatically. Add another hosted provider by registering an adapter in `adapters.registry`. If that adapter cannot set a supported output-token limit equal to the 800-token budget, the live call is `BLOCKED` and is not sent.
 
-Thinking mode is not one shared boolean. OpenAI can send `reasoning_effort` only when you add that option in code. Qwen sends `enable_thinking: false`. DeepSeek thinking mode is left off. Anthropic and Gemini requests in this spike do not enable a thinking feature.
+Thinking mode is not one shared boolean. An omitted field is not the same thing as a field this benchmark set. Qwen explicitly sends `enable_thinking: false`. OpenAI sends `reasoning_effort` only when `openai_reasoning_effort` is set. For `gpt-5.6`, the Sol model card documents the omitted default as `medium` (accessed 2026-10-02). DeepSeek omits `thinking` and `reasoning_effort`. The Chat Completions reference documents those omitted defaults as thinking `enabled` and effort `high` for `deepseek-flash`. Both reports also record the output cap this request actually sends, 800. None of those defaults were observed in a live response. The GPT-5.6 upgrade guide says Chat Completions function tools are compatible only with effective reasoning `none`. This adapter still omits `reasoning_effort`. Anthropic and Gemini requests do not send a thinking parameter, and no omitted default is recorded for them.
 
 ## Scoring
 
@@ -80,7 +80,7 @@ The first pair is OpenAI and DeepSeek. Both match this adapter's Chat Completion
 | openai   | `gpt-5.6` (the function-calling guide's Chat Completions example; the model card routes it to Sol) | 4          | 20          | 1050000        | https://developers.openai.com/api/docs/guides/function-calling and https://developers.openai.com/api/docs/models/gpt-5.6-sol |
 | deepseek | `deepseek-flash`                                                                                   | 0.3        | 1.2         | 1000000        | https://api-docs.deepseek.com/quick_start/pricing and https://api-docs.deepseek.com/guides/tool_calls                        |
 
-DeepSeek's row is the peak cache-miss input rate and the peak output rate. Off-peak is half, and a cache hit is cheaper. OpenAI's row is the standard text rate on the Sol card. That card says the promotional price lasts at least through 2026-11-21. Prompts over 272000 input tokens are priced higher; this transcript is not in that band. GPT-6 Astra still requires the Responses API for tool calling and stays unsupported here. DeepSeek thinking mode defaults on; this adapter still sends `max_tokens` 800 and does not turn thinking off.
+DeepSeek's row is the peak cache-miss input rate and the peak output rate. Off-peak is half, and a cache hit is cheaper. OpenAI's row is the standard text rate on the Sol card. That card says the promotional price lasts at least through 2026-11-21. Prompts over 272000 input tokens are priced higher; this transcript is not in that band. GPT-6 Astra still requires the Responses API for tool calling and stays unsupported here. For `gpt-5.6`, omitting `reasoning_effort` leaves the documented default `medium`; the upgrade guide says Chat Completions tools want effective reasoning `none`, and this request does not add that field. For `deepseek-flash`, omitting thinking leaves the documented default enabled at effort `high`. Both requests still send an output cap of 800. Those defaults are documentation, not a live measurement.
 
 See the reservation before any paid call. This dry-run does not use a key:
 

@@ -26,6 +26,12 @@ from adapters import (
     registry,
     sanitize,
 )
+from provider_docs import (
+    ACCESSED,
+    PROVIDERS,
+    documented_deepseek_thinking_default,
+    documented_openai_reasoning_default,
+)
 from scoring import score_case
 from transcript import DURATION_SECONDS, load_transcript
 
@@ -207,35 +213,125 @@ def prompt_for(case: dict[str, Any], transcript: str) -> str:
     )
 
 
-def thinking_metadata(provider: str, request_body: dict[str, Any]) -> dict[str, Any]:
+def _sent_output_cap(provider: str, body: dict[str, Any]) -> tuple[str | None, object]:
     if provider == "openai":
-        effort = request_body.get("reasoning_effort")
-        return {
+        return "max_completion_tokens", body.get("max_completion_tokens")
+    if provider == "gemini":
+        config = body.get("generation_config")
+        if isinstance(config, dict):
+            return "generation_config.max_output_tokens", config.get(
+                "max_output_tokens"
+            )
+        return "generation_config.max_output_tokens", None
+    if provider in {"anthropic", "qwen", "deepseek"}:
+        return "max_tokens", body.get("max_tokens")
+    return None, None
+
+
+def _thinking_base(provider: str, body: dict[str, Any]) -> dict[str, Any]:
+    field, cap = _sent_output_cap(provider, body)
+    return {
+        "unsupported_as_universal_boolean": True,
+        "empirically_observed": False,
+        "output_token_cap": cap,
+        "output_token_cap_field": field,
+        "output_token_cap_source": "request_body",
+    }
+
+
+def thinking_metadata(provider: str, request_body: dict[str, Any]) -> dict[str, Any]:
+    """Separate an explicit request field from a documented omitted default.
+
+    A documented default is copied from the provider page. It is not a value
+    this process observed in a live response.
+    """
+
+    model = str(request_body.get("model") or "")
+    base = _thinking_base(provider, request_body)
+    if provider == "openai":
+        sent = "reasoning_effort" in request_body
+        effort = request_body.get("reasoning_effort") if sent else None
+        documented = None if sent else documented_openai_reasoning_default(model)
+        catalog = PROVIDERS["openai"].get("thinking_default")
+        source = catalog.get("source_url") if isinstance(catalog, dict) else None
+        constraint_source = (
+            catalog.get("tool_constraint_source") if isinstance(catalog, dict) else None
+        )
+        metadata = {
+            **base,
             "control": "openai reasoning_effort",
-            "requested": effort,
-            "applied": effort is not None,
-            "unsupported_as_universal_boolean": True,
+            "explicitly_requested": effort,
+            "parameter_omitted": not sent,
+            "documented_default": documented,
+            "documented_default_source": source if documented is not None else None,
+            "documented_default_accessed": ACCESSED if documented is not None else None,
         }
+        if not sent and documented is None:
+            metadata["documented_default_reason"] = (
+                "no documented omitted default is recorded for this model"
+            )
+        if not sent and documented == "medium" and request_body.get("tools"):
+            metadata["documented_tool_constraint"] = {
+                "statement": (
+                    "The GPT-5.6 upgrade guide says Chat Completions function "
+                    "tools are compatible only with effective reasoning none."
+                ),
+                "source_url": constraint_source,
+                "accessed": ACCESSED,
+                "empirically_observed": False,
+                "request_unchanged": True,
+            }
+        return metadata
     if provider == "qwen":
+        sent = "enable_thinking" in request_body
         return {
+            **base,
             "control": "qwen enable_thinking",
-            "requested": request_body.get("enable_thinking"),
-            "applied": "enable_thinking" in request_body,
-            "unsupported_as_universal_boolean": True,
+            "explicitly_requested": request_body.get("enable_thinking")
+            if sent
+            else None,
+            "parameter_omitted": not sent,
+            "documented_default": None,
+            "documented_default_source": None,
+            "documented_default_accessed": None,
         }
     if provider == "deepseek":
-        return {
-            "control": "deepseek thinking mode",
-            "requested": None,
-            "applied": False,
-            "note": "Thinking mode is a separate DeepSeek-V3.2 setting and is not sent.",
-            "unsupported_as_universal_boolean": True,
+        thinking_sent = "thinking" in request_body
+        effort_sent = "reasoning_effort" in request_body
+        omitted = not thinking_sent and not effort_sent
+        documented = documented_deepseek_thinking_default(model) if omitted else None
+        catalog = PROVIDERS["deepseek"].get("thinking_default")
+        source = catalog.get("source_url") if isinstance(catalog, dict) else None
+        metadata = {
+            **base,
+            "control": "deepseek thinking and reasoning_effort",
+            "explicitly_requested": None
+            if omitted
+            else {
+                "thinking": request_body.get("thinking") if thinking_sent else None,
+                "reasoning_effort": request_body.get("reasoning_effort")
+                if effort_sent
+                else None,
+            },
+            "parameter_omitted": omitted,
+            "documented_default": documented,
+            "documented_default_source": source if documented is not None else None,
+            "documented_default_accessed": ACCESSED if documented is not None else None,
         }
+        if omitted and documented is None:
+            metadata["documented_default_reason"] = (
+                "no documented omitted default is recorded for this model"
+            )
+        return metadata
     return {
+        **base,
         "control": None,
-        "requested": None,
-        "applied": False,
-        "unsupported_as_universal_boolean": True,
+        "explicitly_requested": None,
+        "parameter_omitted": True,
+        "documented_default": None,
+        "documented_default_source": None,
+        "documented_default_accessed": None,
+        "documented_default_reason": "no documented omitted default is recorded for this provider",
     }
 
 
