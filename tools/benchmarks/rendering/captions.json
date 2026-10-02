@@ -1,0 +1,14 @@
+[
+  { "start": 0, "end": 5, "text": "Sixty seconds, vertical frame" },
+  { "start": 5, "end": 10, "text": "Captions stay on the lower third" },
+  { "start": 10, "end": 15, "text": "The title moves and fades" },
+  { "start": 15, "end": 20, "text": "Footage is a generated test pattern" },
+  { "start": 20, "end": 25, "text": "No stock clip is downloaded" },
+  { "start": 25, "end": 30, "text": "H.264 video, AAC audio" },
+  { "start": 30, "end": 35, "text": "Nine by sixteen, thirty frames" },
+  { "start": 35, "end": 40, "text": "One thousand eighty by one thousand nine hundred twenty" },
+  { "start": 40, "end": 45, "text": "This line replaces the previous caption" },
+  { "start": 45, "end": 50, "text": "Cut and concat is a different job" },
+  { "start": 50, "end": 55, "text": "Remotion draws the React overlay" },
+  { "start": 55, "end": 60, "text": "The minute is complete" }
+]

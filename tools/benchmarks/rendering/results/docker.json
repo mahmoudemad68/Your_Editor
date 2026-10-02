@@ -1,0 +1,37 @@
+{
+  "exitCode": 0,
+  "wallSeconds": 222.712828965,
+  "metrics": {
+    "wallSeconds": 222.189714144,
+    "bundleSeconds": 6.592959747,
+    "renderSeconds": 215.316610265,
+    "firstFrameSeconds": 0.736752846,
+    "startupSeconds": 7.329712593,
+    "browserExecutable": "/bench/node_modules/.remotion/chrome-headless-shell/linux64/chrome-headless-shell-linux64/chrome-headless-shell",
+    "peakRssBytes": 6557794304,
+    "browserPeakRssBytes": 1872834560,
+    "cpuSeconds": 411.54
+  },
+  "validation": {
+    "ok": true,
+    "problems": [],
+    "durationSeconds": 60.011,
+    "width": 1080,
+    "height": 1920,
+    "frameRate": "30/1",
+    "videoCodec": "h264",
+    "pixelFormat": "yuvj420p",
+    "audioCodec": "aac",
+    "sizeBytes": 46096928,
+    "bitrateBps": 6145130
+  },
+  "user": 10001,
+  "chromiumSandbox": {
+    "status": "DISABLED",
+    "observationMethod": "renderer descendant process arguments",
+    "browserPid": 233,
+    "browserPpid": 110,
+    "rendererPid": 110,
+    "observedFlags": ["--no-sandbox", "--disable-setuid-sandbox"]
+  }
+}

@@ -34,6 +34,20 @@ export default tseslint.config(
     },
   },
   {
+    files: ["tools/benchmarks/rendering/**/*.mjs"],
+    languageOptions: {
+      globals: {
+        Buffer: "readonly",
+        URL: "readonly",
+        console: "readonly",
+        process: "readonly",
+        setInterval: "readonly",
+        setTimeout: "readonly",
+        clearInterval: "readonly",
+      },
+    },
+  },
+  {
     files: ["apps/web/scripts/**/*.mjs"],
     languageOptions: {
       globals: {
