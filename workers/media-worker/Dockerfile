@@ -28,6 +28,7 @@ FROM deps AS build
 COPY tsconfig.base.json ./
 COPY workers/media-worker workers/media-worker
 COPY packages/domain packages/domain
+COPY packages/schemas packages/schemas
 COPY packages/shared packages/shared
 COPY packages/media-core packages/media-core
 RUN pnpm --filter @editagent/media-worker... build \

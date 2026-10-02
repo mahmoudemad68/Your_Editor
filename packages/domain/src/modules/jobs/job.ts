@@ -196,6 +196,9 @@ export class Job {
     failureReason: string | null,
     attemptCount: number,
   ): Job {
+    if (at < this.updatedAt) {
+      throw new DomainError("Job command timestamp cannot be earlier than the current updatedAt.");
+    }
     const allowed = LEGAL_TRANSITIONS[this.status];
     if (!allowed.includes(status)) {
       throw new DomainError(`Illegal job transition from ${this.status} to ${status}.`);

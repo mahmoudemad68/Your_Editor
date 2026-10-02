@@ -18,6 +18,7 @@ from uuid import uuid4
 import jsonschema
 from bullmq import Worker  # type: ignore[import-untyped]
 from bullmq.custom_errors import UnrecoverableError  # type: ignore[import-untyped]
+from jsonschema import ValidationError
 
 from editagent_ai_worker.infrastructure.job_envelope import load_job_envelope_schema
 from editagent_ai_worker.infrastructure.job_history import JobHistory
@@ -68,61 +69,148 @@ class BullMqConsumer:
         job = await self._worker.getNextJob(token)
         if job is None:
             return {"result": "idle"}
-        envelope = _envelope(job.data, int(getattr(job, "attemptsStarted", 0) or 0))
-        started, _attempt_number = self._history.begin(str(job.id))
-        if started == "exhausted":
-            await job.moveToFailed(UnrecoverableError("worker failed"), token, False)
-            return {"result": "failed", "jobId": str(job.id), "status": "Failed"}
-        execute_task = asyncio.create_task(self._execute(envelope))
-        renew_task = asyncio.create_task(self._renew(str(job.id), token))
+        job_id = str(job.id)
+        renew_task = asyncio.create_task(self._renew(job_id, token))
         try:
-            await asyncio.wait(
-                {execute_task, renew_task},
-                return_when=asyncio.FIRST_COMPLETED,
+            try:
+                envelope = _envelope(job.data, int(getattr(job, "attemptsStarted", 0) or 0))
+            except (ValidationError, QueueProtocolError):
+                await self._settle_invalid(job, token, job_id)
+                return {"result": "failed", "jobId": job_id, "status": "Failed"}
+            if await self._lost(renew_task):
+                return {"result": "lock-lost", "jobId": job_id}
+            phase = await asyncio.to_thread(self._history.read_status, job_id)
+            if phase in {"Completed", "Cancelled", "Failed"}:
+                await self._ack_terminal(job, token, job_id, phase)
+                return {"result": phase.lower(), "jobId": job_id, "status": phase}
+            started, _attempt_number = await asyncio.to_thread(
+                self._history.begin, job_id, envelope
             )
-            lock_lost = _task_failed(renew_task)
-            if lock_lost or not execute_task.done():
-                execute_task.cancel()
-                await self._stop_processes()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await execute_task
-            if lock_lost:
-                _retrieve(renew_task)
-                return {"result": "lock-lost", "jobId": str(job.id)}
-            outcome = execute_task.result()
-            if not renew_task.done():
-                renew_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await renew_task
-            if _task_failed(renew_task):
-                _retrieve(renew_task)
-                return {"result": "lock-lost", "jobId": str(job.id)}
-            owned = await self._worker.backend.extendLock(str(job.id), token, self._lock_ms)
-            if int(owned) != 1:
-                return {"result": "lock-lost", "jobId": str(job.id)}
-            if outcome == "complete":
-                await job.moveToCompleted("completed", token, False)
-                self._history.complete(str(job.id))
-                return {"result": "completed", "jobId": str(job.id), "status": "Completed"}
-            if outcome[0] == "retry":
-                await job.moveToFailed(RuntimeError(outcome[1]), token, False)
-                self._history.retry(str(job.id), outcome[1])
-                return {"result": "retrying", "jobId": str(job.id), "status": "Retrying"}
-            await job.moveToFailed(UnrecoverableError(outcome[1]), token, False)
-            self._history.fail(str(job.id), outcome[1], envelope)
-            return {"result": "failed", "jobId": str(job.id), "status": "Failed"}
+            if await self._lost(renew_task):
+                return {"result": "lock-lost", "jobId": job_id}
+            if started == "exhausted":
+                if await self._owns(job_id, token):
+                    await job.moveToFailed(UnrecoverableError("worker failed"), token, False)
+                return {"result": "failed", "jobId": job_id, "status": "Failed"}
+            return await self._run_guarded(job, token, job_id, envelope, renew_task)
         finally:
-            if not execute_task.done():
-                execute_task.cancel()
-            await self._stop_processes()
-            if not execute_task.done():
-                with contextlib.suppress(asyncio.CancelledError):
-                    await execute_task
             if not renew_task.done():
                 renew_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await renew_task
             _retrieve(renew_task)
+            await self._stop_processes()
+
+    async def _run_guarded(
+        self,
+        job: Any,
+        token: str,
+        job_id: str,
+        envelope: dict[str, Any],
+        renew_task: asyncio.Task[None],
+    ) -> dict[str, Any]:
+        execute_task = asyncio.create_task(self._execute(envelope))
+        guard_task = asyncio.create_task(self._guard(job_id, int(envelope["timeoutMs"])))
+        try:
+            await asyncio.wait(
+                {execute_task, renew_task, guard_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if await self._lost(renew_task):
+                await self._halt(execute_task, guard_task)
+                return {"result": "lock-lost", "jobId": job_id}
+            if not execute_task.done():
+                reason = guard_task.exception() if guard_task.done() else None
+                await self._halt(execute_task, guard_task)
+                if not await self._owns(job_id, token):
+                    return {"result": "lock-lost", "jobId": job_id}
+                if isinstance(reason, _CancelRequested):
+                    await asyncio.to_thread(self._history.cancel, job_id)
+                    await job.moveToCompleted("cancelled", token, False)
+                    return {"result": "cancelled", "jobId": job_id, "status": "Cancelled"}
+                attempt = int(envelope["attempt"])
+                max_attempts = int(envelope["maxAttempts"])
+                if attempt < max_attempts:
+                    await asyncio.to_thread(self._history.retry, job_id, "timed out")
+                    await job.moveToFailed(RuntimeError("timed out"), token, False)
+                    return {"result": "retrying", "jobId": job_id, "status": "Retrying"}
+                await asyncio.to_thread(self._history.fail, job_id, "timed out", envelope)
+                await job.moveToFailed(UnrecoverableError("timed out"), token, False)
+                return {"result": "failed", "jobId": job_id, "status": "Failed"}
+            guard_task.cancel()
+            outcome = execute_task.result()
+            if not await self._owns(job_id, token):
+                return {"result": "lock-lost", "jobId": job_id}
+            if outcome == "complete":
+                await asyncio.to_thread(self._history.complete, job_id)
+                await job.moveToCompleted("completed", token, False)
+                return {"result": "completed", "jobId": job_id, "status": "Completed"}
+            if outcome[0] == "retry":
+                await asyncio.to_thread(self._history.retry, job_id, outcome[1])
+                await job.moveToFailed(RuntimeError(outcome[1]), token, False)
+                return {"result": "retrying", "jobId": job_id, "status": "Retrying"}
+            await asyncio.to_thread(self._history.fail, job_id, outcome[1], envelope)
+            await job.moveToFailed(UnrecoverableError(outcome[1]), token, False)
+            return {"result": "failed", "jobId": job_id, "status": "Failed"}
+        finally:
+            await self._halt(execute_task, guard_task)
+
+    async def _guard(self, job_id: str, timeout_ms: int) -> None:
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + (timeout_ms / 1000)
+        while True:
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                raise _TimedOut()
+            await asyncio.sleep(min(0.05, remaining))
+            if await self._cancel_requested(job_id):
+                raise _CancelRequested()
+
+    async def _cancel_requested(self, job_id: str) -> bool:
+        raw = await self._worker.client.get(f"editagent:job-cancel:{job_id}")
+        return bool(raw == "1")
+
+    async def _owns(self, job_id: str, token: str) -> bool:
+        try:
+            extended = await self._worker.backend.extendLock(job_id, token, self._lock_ms)
+        except Exception:
+            return False
+        return int(extended) == 1
+
+    async def _lost(self, renew_task: asyncio.Task[None]) -> bool:
+        if not _task_failed(renew_task):
+            return False
+        _retrieve(renew_task)
+        return True
+
+    async def _halt(self, *tasks: asyncio.Task[Any]) -> None:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await self._stop_processes()
+        for task in tasks:
+            if not task.done():
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+            _retrieve(task)
+
+    async def _ack_terminal(self, job: Any, token: str, job_id: str, phase: str) -> None:
+        if not await self._owns(job_id, token):
+            return
+        if phase == "Failed":
+            await job.moveToFailed(UnrecoverableError("already failed"), token, False)
+            return
+        await job.moveToCompleted(phase.lower(), token, False)
+
+    async def _settle_invalid(self, job: Any, token: str, job_id: str) -> None:
+        reason = "Job envelope does not match the shared JSON Schema."
+        await asyncio.to_thread(
+            self._history.fail,
+            job_id,
+            reason,
+            {"schemaVersion": 1, "jobId": job_id, "invalid": True},
+        )
+        await job.moveToFailed(UnrecoverableError(reason), token, False)
 
     async def _sweep(self) -> None:
         await self._worker.backend.moveStalledJobsToWait(
@@ -195,6 +283,14 @@ def _envelope(data: Any, attempts_started: int) -> dict[str, Any]:
     document["attempt"] = attempts_started if attempts_started > 0 else stored_attempt
     jsonschema.validate(document, load_job_envelope_schema())
     return document
+
+
+class _CancelRequested(Exception):
+    """The shared cancel key was set while this worker owned the job."""
+
+
+class _TimedOut(Exception):
+    """The envelope timeout elapsed before the handler finished."""
 
 
 def _task_failed(task: asyncio.Task[Any]) -> bool:

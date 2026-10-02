@@ -40,6 +40,14 @@ export class JobExecutionUnconfirmedError extends Error {
   }
 }
 
+/** The idempotency key already names a job with different work. */
+export class IdempotencyConflictError extends Error {
+  constructor() {
+    super("idempotency key is already stored with different work");
+    this.name = "IdempotencyConflictError";
+  }
+}
+
 /** The reserved BullMQ payload does not match the shared envelope. The queue job is already settled. */
 export class InvalidJobEnvelopeError extends Error {
   readonly jobId: string;

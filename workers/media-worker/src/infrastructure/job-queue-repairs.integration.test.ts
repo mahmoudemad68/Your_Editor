@@ -313,7 +313,7 @@ test("QA repairs hold on Redis and Postgres", { timeout: 60_000 }, async () => {
           queueName,
           jobType: "probe",
           idempotencyKey,
-          payload: { n: 2 },
+          payload: { n: 1 },
           subject: subject(media),
           timeoutMs: 1_000,
           maxAttempts: 1,
@@ -321,6 +321,8 @@ test("QA repairs hold on Redis and Postgres", { timeout: 60_000 }, async () => {
         },
       ),
     ]);
+    // Both racers submit the same work. A different payload must be rejected
+    // instead of republished; that case is covered by the Codex regression.
     const winner = await jobs.findByIdempotencyKey(idempotencyKey);
     assert.equal(winner?.status, "Queued");
     const redis = new Redis(redisUrl);

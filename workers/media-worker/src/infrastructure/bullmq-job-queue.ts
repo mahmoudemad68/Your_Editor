@@ -35,6 +35,7 @@ export class BullMqJobQueue implements JobQueue {
   private readonly inflight = new Map<string, BullJob>();
   private readonly renewalTimers = new Map<string, ReturnType<typeof setInterval>>();
   private readonly lockListeners = new Map<string, () => void>();
+  private readonly lostTokens = new Set<string>();
   private readonly validateEnvelope: (data: unknown) => boolean;
   private readonly lockDurationMs: number;
   private readonly stalledIntervalMs: number;
@@ -85,12 +86,15 @@ export class BullMqJobQueue implements JobQueue {
     this.inflight.set(token, job);
     const attempt = job.attemptsStarted > 0 ? job.attemptsStarted : 1;
     const envelope = { ...(job.data as JobEnvelope), attempt };
-    try {
-      assertEnvelope(this.validateEnvelope, envelope);
-      await job.updateData(envelope);
-    } catch {
+    if (!this.validateEnvelope(envelope)) {
       await this.settleUnrecoverable(queueName, job, token);
       throw new InvalidJobEnvelopeError(String(job.id));
+    }
+    try {
+      await this.persistReservedEnvelope(job, envelope);
+    } catch (error) {
+      await this.release({ jobId: envelope.jobId, queueName, token });
+      throw error;
     }
     this.startRenewal(job, token);
     return {
@@ -100,6 +104,10 @@ export class BullMqJobQueue implements JobQueue {
   }
 
   whenLockLost(receipt: JobReceipt, notify: () => void): void {
+    if (this.lostTokens.delete(receipt.token)) {
+      notify();
+      return;
+    }
     this.lockListeners.set(receipt.token, notify);
   }
 
@@ -211,6 +219,10 @@ export class BullMqJobQueue implements JobQueue {
     return worker;
   }
 
+  protected async persistReservedEnvelope(job: BullJob, envelope: JobEnvelope): Promise<void> {
+    await job.updateData(envelope);
+  }
+
   private takeInflight(receipt: JobReceipt): BullJob {
     const job = this.inflight.get(receipt.token);
     if (!job) {
@@ -243,8 +255,13 @@ export class BullMqJobQueue implements JobQueue {
 
   private markLockLost(token: string): void {
     const notify = this.lockListeners.get(token);
+    this.inflight.delete(token);
+    this.lostTokens.add(token);
     this.stopRenewal(token);
-    notify?.();
+    if (notify) {
+      this.lostTokens.delete(token);
+      notify();
+    }
   }
 
   private stopRenewal(token: string): void {

@@ -216,8 +216,8 @@ services:
 
   ai-worker:
     build:
-      context: ./workers/ai-worker
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: workers/ai-worker/Dockerfile
     image: editagent-ai-worker:local
     container_name: editagent-ai-worker
     environment: *ai-environment
@@ -249,8 +249,8 @@ services:
     profiles: ["gpu"]
     image: editagent-ai-worker:local
     build:
-      context: ./workers/ai-worker
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: workers/ai-worker/Dockerfile
     container_name: editagent-ai-worker-gpu
     deploy:
       resources:

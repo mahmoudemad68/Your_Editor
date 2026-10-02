@@ -19,7 +19,14 @@ class EnvelopeError(Exception):
 
 
 def shared_schema_path() -> Path:
-    """Find the one JSON Schema both runtimes validate."""
+    """Find the one JSON Schema both runtimes validate.
+
+    The production image copies that file next to this module. A checkout
+    resolves the copy in packages/schemas instead.
+    """
+    sibling = Path(__file__).resolve().parent / "job-envelope.schema.json"
+    if sibling.is_file():
+        return sibling
     for parent in Path(__file__).resolve().parents:
         candidate = parent / "packages" / "schemas" / "src" / "job-envelope.schema.json"
         if candidate.is_file():

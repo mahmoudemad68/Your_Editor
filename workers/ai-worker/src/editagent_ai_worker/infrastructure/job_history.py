@@ -40,7 +40,14 @@ class JobHistory:
     def __init__(self, database_url: str) -> None:
         self._database_url = database_url
 
-    def begin(self, job_id: str) -> tuple[str, int]:
+    def read_status(self, job_id: str) -> str | None:
+        with psycopg.connect(self._database_url) as connection:
+            row = connection.execute("SELECT status FROM jobs WHERE id = %s", (job_id,)).fetchone()
+        if row is None:
+            return None
+        return str(row[0])
+
+    def begin(self, job_id: str, envelope: dict[str, Any] | None = None) -> tuple[str, int]:
         """Move Queued or Retrying work to Running. Recover a leftover Running row."""
         with psycopg.connect(self._database_url) as connection:
             row = connection.execute(
@@ -56,7 +63,7 @@ class JobHistory:
             now = _now_ms(int(updated_at))
             if status == "Running":
                 if int(attempt_count) >= int(max_attempts):
-                    self._fail(connection, job_id, now, "worker failed", None)
+                    self._fail(connection, job_id, now, "worker failed", envelope)
                     return ("exhausted", int(attempt_count))
                 connection.execute(
                     """
@@ -100,6 +107,26 @@ class JobHistory:
                 (uuid7(), job_id, attempt_number, now),
             )
             return ("running", attempt_number)
+
+    def cancel(self, job_id: str) -> None:
+        with psycopg.connect(self._database_url) as connection:
+            now = self._later_than_job(connection, job_id)
+            connection.execute(
+                """
+                UPDATE jobs
+                SET status = 'Cancelled', updated_at = %s
+                WHERE id = %s AND status = 'Running'
+                """,
+                (now, job_id),
+            )
+            connection.execute(
+                """
+                UPDATE job_attempts
+                SET status = 'Cancelled', finished_at = %s, reason = 'cancelled'
+                WHERE job_id = %s AND finished_at IS NULL
+                """,
+                (now, job_id),
+            )
 
     def complete(self, job_id: str) -> None:
         with psycopg.connect(self._database_url) as connection:

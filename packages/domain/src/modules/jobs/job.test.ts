@@ -108,4 +108,11 @@ test("illegal job transitions are rejected and legal ones record the next state"
   });
   assert.deepEqual(withPayload.payload, { mediaAssetId: "asset" });
   assert.deepEqual(withPayload.start(instant(2n)).payload, { mediaAssetId: "asset" });
+  const startedAtTen = created.start(instant(10n));
+  assert.throws(
+    () => startedAtTen.complete(instant(5n)),
+    /cannot be earlier than the current updatedAt/,
+  );
+  assert.equal(startedAtTen.status, "Running");
+  assert.equal(startedAtTen.complete(instant(10n)).status, "Completed");
 });

@@ -16,6 +16,7 @@ import {
 } from "@editagent/domain";
 
 import {
+  IdempotencyConflictError,
   InvalidJobEnvelopeError,
   JobCancelledError,
   JobExecutionUnconfirmedError,
@@ -53,9 +54,7 @@ export async function enqueueJob(
 ): Promise<{ jobId: string; duplicate: boolean }> {
   const existing = await deps.jobs.findByIdempotencyKey(input.idempotencyKey);
   if (existing) {
-    if (existing.status === "Queued") {
-      await publishQueued(deps, existing.id, input);
-    }
+    await republishQueued(deps, existing, input);
     return { jobId: existing.id, duplicate: true };
   }
   const job = Job.create(jobId(input.id), input.subject, deps.now(), {
@@ -74,9 +73,7 @@ export async function enqueueJob(
     }
     const winner = await deps.jobs.findByIdempotencyKey(input.idempotencyKey);
     if (winner) {
-      if (winner.status === "Queued") {
-        await publishQueued(deps, winner.id, input);
-      }
+      await republishQueued(deps, winner, input);
       return { jobId: winner.id, duplicate: true };
     }
     throw error;
@@ -199,11 +196,6 @@ export async function runNextJob(
     if (controller.signal.aborted) {
       throw controller.signal.reason;
     }
-    const finishedAt = deps.now();
-    await deps.jobs.save(started.complete(finishedAt));
-    await deps.jobs.appendAttempt(attempt.finish("Completed", finishedAt, null));
-    await deps.queue.complete(reserved.receipt);
-    return "done";
   } catch (error) {
     await settleFailure(deps, started, attempt, reserved.receipt, reserved.envelope, error);
     return "done";
@@ -211,11 +203,16 @@ export async function runNextJob(
     stopped = true;
     clearTimers(timeout, cancelPoll);
   }
+  const finishedAt = deps.now();
+  await deps.jobs.save(started.complete(finishedAt));
+  await deps.jobs.appendAttempt(attempt.finish("Completed", finishedAt, null));
+  await deps.queue.complete(reserved.receipt);
+  return "done";
 }
 
-async function publishQueued(
+async function republishQueued(
   deps: RunJobDeps,
-  id: string,
+  stored: Job,
   input: {
     readonly queueName: string;
     readonly jobType: string;
@@ -227,17 +224,81 @@ async function publishQueued(
     readonly backoffBaseMs: number;
   },
 ): Promise<void> {
+  if (!sameStoredWork(stored, input)) {
+    throw new IdempotencyConflictError();
+  }
+  if (stored.status !== "Queued") {
+    return;
+  }
+  if (
+    stored.queueName == null ||
+    stored.jobType == null ||
+    stored.idempotencyKey == null ||
+    stored.timeoutMs == null ||
+    stored.maxAttempts == null
+  ) {
+    throw new IdempotencyConflictError();
+  }
   await deps.queue.enqueue({
-    id: jobId(id),
-    queueName: input.queueName,
-    jobType: input.jobType,
-    idempotencyKey: input.idempotencyKey,
-    payload: input.payload,
-    subject: input.subject,
-    timeoutMs: input.timeoutMs,
-    maxAttempts: input.maxAttempts,
+    id: stored.id,
+    queueName: stored.queueName,
+    jobType: stored.jobType,
+    idempotencyKey: stored.idempotencyKey,
+    payload: stored.payload,
+    subject: stored.subject,
+    timeoutMs: stored.timeoutMs,
+    maxAttempts: stored.maxAttempts,
     backoffBaseMs: input.backoffBaseMs,
   });
+}
+
+function sameStoredWork(
+  stored: Job,
+  input: {
+    readonly queueName: string;
+    readonly jobType: string;
+    readonly payload: Readonly<Record<string, unknown>>;
+    readonly subject: JobSubject;
+    readonly timeoutMs: number;
+    readonly maxAttempts: number;
+  },
+): boolean {
+  return (
+    stored.queueName === input.queueName &&
+    stored.jobType === input.jobType &&
+    stored.timeoutMs === input.timeoutMs &&
+    stored.maxAttempts === input.maxAttempts &&
+    sameSubject(stored.subject, input.subject) &&
+    canonicalJson(stored.payload) === canonicalJson(input.payload)
+  );
+}
+
+function sameSubject(stored: JobSubject, input: JobSubject): boolean {
+  if (stored.kind !== input.kind) {
+    return false;
+  }
+  if (stored.kind === "project" && input.kind === "project") {
+    return stored.projectId === input.projectId;
+  }
+  if (stored.kind === "media-asset" && input.kind === "media-asset") {
+    return stored.mediaAssetId === input.mediaAssetId;
+  }
+  if (stored.kind === "derived-asset" && input.kind === "derived-asset") {
+    return stored.derivedAssetId === input.derivedAssetId;
+  }
+  return false;
+}
+
+function canonicalJson(value: unknown): string {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value) ?? "null";
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => canonicalJson(item)).join(",")}]`;
+  }
+  const record = value as Record<string, unknown>;
+  const keys = Object.keys(record).sort();
+  return `{${keys.map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`).join(",")}}`;
 }
 
 async function persistInvalidEnvelope(deps: RunJobDeps, id: string): Promise<void> {
