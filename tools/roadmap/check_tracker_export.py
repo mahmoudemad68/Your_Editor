@@ -1,8 +1,10 @@
-"""Check the generated tracker CSVs before a Jira import.
+"""Check the GitHub issue mapping against the generated backlog.
 
-The YAML backlog remains the source of truth. This script does not edit it.
-It checks that export/jira-import.csv and export/backlog-full.csv describe the
-same stories, with a hierarchy an importer can follow.
+The YAML backlog remains the source of truth. GitHub Issues plus one GitHub
+Project are the active tracker. export/jira-import.csv is a legacy file the
+roadmap generator still writes. This script checks that legacy file only so it
+cannot drift from backlog-full.csv. A passing run does not mean a GitHub
+Project exists and does not mean a Jira import is required.
 """
 
 from __future__ import annotations
@@ -178,16 +180,41 @@ def main() -> int:
         if parent and parent["Component/s"] != row["Component/s"]:
             errors.append(f"{row['Issue Id']}: component differs from its story")
 
-    for number in (1, 2):
+    expected_sprints = {1: (17, 50), 2: (14, 48)}
+    parent_epics: set[str] = set()
+    for number, (expected_count, expected_points) in expected_sprints.items():
         stories = [
             row for row in full_stories.values() if row["Sprint"] == f"Sprint {number}"
         ]
         points = sum(int(row["Story Points"]) for row in stories)
         print(f"Sprint {number}: {len(stories)} stories, {points} SP")
-        if not stories:
-            errors.append(f"Sprint {number} has no stories")
+        if (len(stories), points) != (expected_count, expected_points):
+            errors.append(
+                f"Sprint {number}: expected {expected_count} stories and "
+                f"{expected_points} SP, found {len(stories)} and {points}"
+            )
+        for story in stories:
+            story_id = story["ID"]
+            parent_epics.add(story["Epic"])
+            if not story["Title"].strip():
+                errors.append(f"{story_id}: missing title")
+            if "Acceptance criteria:" not in story["Description"]:
+                errors.append(f"{story_id}: description has no acceptance criteria")
+            if story["Lane"] not in LANE_TO_COMPONENT:
+                errors.append(f"{story_id}: lane {story['Lane']} is not a GitHub lane")
+            if story["Priority"] not in PRIORITY_TO_JIRA:
+                errors.append(f"{story_id}: priority {story['Priority']} is not mapped")
+            if (
+                story["Epic"] not in full_by_id
+                or full_by_id[story["Epic"]]["Type"] != "Epic"
+            ):
+                errors.append(f"{story_id}: epic {story['Epic']} is missing")
+            for dependency in [item for item in story["Depends On"].split(";") if item]:
+                if dependency not in full_stories:
+                    errors.append(f"{story_id}: depends on unknown story {dependency}")
 
-    print(f"jira rows: {len(jira)}")
+    print(f"sprint 1-2 parent epics: {', '.join(sorted(parent_epics))}")
+    print(f"legacy jira rows: {len(jira)}")
     print(f"full rows: {len(full)}")
     print(f"stories: {len(full_stories)}")
     print(f"scheduled stories above 8 SP: {above_eight}")
@@ -197,9 +224,10 @@ def main() -> int:
         for error in errors:
             print(f"- {error}")
         return 1
-    print("TRACKER_EXPORT: PASS")
-    print("TRACKER_IMPORT: NOT_RUN")
-    print("TRACKER_SETUP_PENDING")
+    print("ACTIVE_TRACKER: github")
+    print("LEGACY_JIRA_EXPORT: consistent, not the active tracker")
+    print("GITHUB_MAPPING: PASS")
+    print("GITHUB_PROJECT: NOT_OBSERVED")
     return 0
 
 

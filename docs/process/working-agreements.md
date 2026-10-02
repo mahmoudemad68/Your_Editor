@@ -8,9 +8,13 @@ sprint assignments, or scope.
 **Approval status: not approved.** No team member has signed
 [team-approval-record.md](team-approval-record.md). US-109 AC2 stays **BLOCKED** until every member does.
 
-**Tracker status: `TRACKER_SETUP_PENDING`.** Sprint 1 and Sprint 2 are represented in the repository CSV files and
-checked by `tools/roadmap/check_tracker_export.py`. They have not been observed on a Jira board. US-109 AC1 stays
-**BLOCKED** until that import is seen. See [tracker-import.md](tracker-import.md).
+**Tracker: GitHub.** Issues hold the stories and one GitHub Project is the board. Pull requests stay the only merge
+path. `docs/roadmap/export/jira-import.csv` is a legacy generated export and is not imported. The project was not
+created: `cursor[bot]` cannot create Projects on `mahmoudemad68`. US-109 AC1 stays **BLOCKED** until Sprint 1 and
+Sprint 2 are visible there with story points and confirmed owners. See [github-project.md](github-project.md).
+
+A GitHub pull-request approval does not approve these working agreements. AC2 stays **BLOCKED** until every member
+signs the approval record.
 
 WIP numbers and named people below are proposals. The GitHub sequence and the existing Definition of Ready and
 Definition of Done are the repository's current practice.
@@ -37,12 +41,13 @@ The board columns, in order, are:
 
 **Backlog → Ready → In Progress → In Review → Done.**
 
-The import mapping for those columns is in [tracker-import.md](tracker-import.md). The board itself is not configured
-until the Jira workspace exists.
+The GitHub Project fields are in [github-project.md](github-project.md). The project itself has not been created.
 
 ### Proposed WIP limits
 
 These numbers are a **proposal**. They are not in force until the approval record says the team accepted them.
+GitHub Projects does not enforce a WIP limit. At the stand-up the team counts In Progress and In Review, and sums
+Story Points in Ready. There is no automation that rejects an extra card.
 
 | Column      | Proposed limit | Rule                                                                                                              |
 | ----------- | -------------- | ----------------------------------------------------------------------------------------------------------------- |
@@ -205,7 +210,7 @@ Actual names require owner confirmation. Until then every person cell stays **PE
 
 | Document                                                       | Contents                                                                                          |
 | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| [tracker-import.md](tracker-import.md)                         | Jira field mapping, import runbook, and the local validation result                               |
+| [github-project.md](github-project.md)                         | GitHub Project fields, Sprint 1 and 2 issue mapping, and the setup blocker                        |
 | [sprint-1-2-board-checklist.md](sprint-1-2-board-checklist.md) | Sprint 1 and Sprint 2 ids, points, lanes, and dependencies, with tracker columns still unobserved |
 | [team-approval-record.md](team-approval-record.md)             | Signature template. Empty until the team signs                                                    |
 | [pull-requests.md](pull-requests.md)                           | Required `ci` check, one approval, and the up-to-date branch rule                                 |
