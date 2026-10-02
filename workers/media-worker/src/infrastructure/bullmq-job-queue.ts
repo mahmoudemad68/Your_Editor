@@ -18,7 +18,14 @@ import { Queue, UnrecoverableError, Worker, type Job as BullJob } from "bullmq";
 import { Redis } from "ioredis";
 import Ajv2020 from "ajv/dist/2020.js";
 
+import { InvalidJobEnvelopeError } from "../application/job-errors.js";
+
 const PREFIX = "bull";
+
+export interface BullMqJobQueueOptions {
+  readonly lockDurationMs?: number;
+  readonly stalledIntervalMs?: number;
+}
 
 export class BullMqJobQueue implements JobQueue {
   private readonly redisUrl: string;
@@ -26,11 +33,17 @@ export class BullMqJobQueue implements JobQueue {
   private readonly queues = new Map<string, Queue>();
   private readonly workers = new Map<string, Worker>();
   private readonly inflight = new Map<string, BullJob>();
+  private readonly renewalTimers = new Map<string, ReturnType<typeof setInterval>>();
+  private readonly lockListeners = new Map<string, () => void>();
   private readonly validateEnvelope: (data: unknown) => boolean;
+  private readonly lockDurationMs: number;
+  private readonly stalledIntervalMs: number;
   private closed = false;
 
-  constructor(redisUrl: string) {
+  constructor(redisUrl: string, options: BullMqJobQueueOptions = {}) {
     this.redisUrl = redisUrl;
+    this.lockDurationMs = options.lockDurationMs ?? 30_000;
+    this.stalledIntervalMs = options.stalledIntervalMs ?? 200;
     this.connection = new Redis(redisUrl, { maxRetriesPerRequest: null });
     const ajv = new Ajv2020({ allErrors: true, strict: false });
     this.validateEnvelope = ajv.compile(jobEnvelopeSchema);
@@ -72,20 +85,32 @@ export class BullMqJobQueue implements JobQueue {
     this.inflight.set(token, job);
     const attempt = job.attemptsStarted > 0 ? job.attemptsStarted : 1;
     const envelope = { ...(job.data as JobEnvelope), attempt };
-    assertEnvelope(this.validateEnvelope, envelope);
-    await job.updateData(envelope);
+    try {
+      assertEnvelope(this.validateEnvelope, envelope);
+      await job.updateData(envelope);
+    } catch {
+      await this.settleUnrecoverable(queueName, job, token);
+      throw new InvalidJobEnvelopeError(String(job.id));
+    }
+    this.startRenewal(job, token);
     return {
       receipt: { jobId: envelope.jobId, queueName, token },
       envelope,
     };
   }
 
+  whenLockLost(receipt: JobReceipt, notify: () => void): void {
+    this.lockListeners.set(receipt.token, notify);
+  }
+
   async complete(receipt: JobReceipt): Promise<void> {
+    this.stopRenewal(receipt.token);
     const job = this.takeInflight(receipt);
     await job.moveToCompleted("completed", receipt.token, false);
   }
 
   async fail(receipt: JobReceipt, failure: JobFailure): Promise<void> {
+    this.stopRenewal(receipt.token);
     const job = this.takeInflight(receipt);
     const error = failure.transient
       ? new Error(failure.reason)
@@ -122,6 +147,10 @@ export class BullMqJobQueue implements JobQueue {
       return;
     }
     this.closed = true;
+    for (const timer of this.renewalTimers.values()) {
+      clearInterval(timer);
+    }
+    this.renewalTimers.clear();
     await Promise.all([...this.workers.values()].map((worker) => worker.close()));
     await Promise.all([...this.queues.values()].map((queue) => queue.close()));
     this.workers.clear();
@@ -151,8 +180,8 @@ export class BullMqJobQueue implements JobQueue {
       connection: { url: this.redisUrl, maxRetriesPerRequest: null },
       prefix: PREFIX,
       autorun: false,
-      lockDuration: 30_000,
-      stalledInterval: 200,
+      lockDuration: this.lockDurationMs,
+      stalledInterval: this.stalledIntervalMs,
       maxStalledCount: 5,
     });
     this.workers.set(queueName, worker);
@@ -167,6 +196,50 @@ export class BullMqJobQueue implements JobQueue {
     }
     this.inflight.delete(receipt.token);
     return job;
+  }
+
+  private startRenewal(job: BullJob, token: string): void {
+    const every = Math.max(50, Math.floor(this.lockDurationMs / 2));
+    const timer = setInterval(() => {
+      void this.renew(job, token);
+    }, every);
+    timer.unref();
+    this.renewalTimers.set(token, timer);
+  }
+
+  private async renew(job: BullJob, token: string): Promise<void> {
+    try {
+      const extended = await job.extendLock(token, this.lockDurationMs);
+      if (Number(extended) === 1) {
+        return;
+      }
+    } catch {
+      // The lock command failed. Treat the reservation as lost.
+    }
+    this.markLockLost(token);
+  }
+
+  private markLockLost(token: string): void {
+    const notify = this.lockListeners.get(token);
+    this.stopRenewal(token);
+    notify?.();
+  }
+
+  private stopRenewal(token: string): void {
+    const timer = this.renewalTimers.get(token);
+    if (timer) {
+      clearInterval(timer);
+    }
+    this.renewalTimers.delete(token);
+    this.lockListeners.delete(token);
+  }
+
+  private async settleUnrecoverable(queueName: string, job: BullJob, token: string): Promise<void> {
+    this.inflight.delete(token);
+    this.stopRenewal(token);
+    const reason = "Job envelope does not match the shared JSON Schema.";
+    await job.moveToFailed(new UnrecoverableError(reason), token, false);
+    await this.deadLetter(queueName, job);
   }
 
   private async deadLetter(queueName: string, job: BullJob): Promise<void> {

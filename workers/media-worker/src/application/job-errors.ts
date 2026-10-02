@@ -23,3 +23,30 @@ export class JobCancelledError extends Error {
     this.name = "JobCancelledError";
   }
 }
+
+/** This worker no longer owns the BullMQ lock. Do not acknowledge the job. */
+export class LockLostError extends Error {
+  constructor() {
+    super("lock lost");
+    this.name = "LockLostError";
+  }
+}
+
+/** The supervised process could not be reaped. Terminal status must not be stored. */
+export class JobExecutionUnconfirmedError extends Error {
+  constructor() {
+    super("execution did not stop");
+    this.name = "JobExecutionUnconfirmedError";
+  }
+}
+
+/** The reserved BullMQ payload does not match the shared envelope. The queue job is already settled. */
+export class InvalidJobEnvelopeError extends Error {
+  readonly jobId: string;
+
+  constructor(jobId: string) {
+    super("Job envelope does not match the shared JSON Schema.");
+    this.name = "InvalidJobEnvelopeError";
+    this.jobId = jobId;
+  }
+}

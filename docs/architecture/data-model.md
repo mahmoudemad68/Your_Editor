@@ -265,4 +265,4 @@ erDiagram
 | `DerivedAssetRepository` | `packages/domain/src/modules/media/`    | US-128        |
 | `JobRepository`          | `packages/domain/src/modules/jobs/`     | US-129        |
 
-`IJobQueue` remains the queue port from the ports catalogue. It is not the Job repository. US-129 implements it as `BullMqJobQueue` in the media worker and as a Redis envelope reader in the AI worker. `IObjectStorage` remains the byte port.
+`IJobQueue` remains the queue port from the ports catalogue. It is not the Job repository. US-129 implements it as `BullMqJobQueue` in the media worker and as the BullMQ Python client in the AI worker. `IObjectStorage` remains the byte port.

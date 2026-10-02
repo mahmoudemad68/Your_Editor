@@ -13,10 +13,17 @@ import { createUuidV7, JobAttempt, type JobEnvelope, jobId, mediaAssetId } from 
 import { Redis } from "ioredis";
 import { Pool } from "pg";
 
-import { PermanentJobError } from "../application/job-errors.js";
-import { cancelJob, enqueueJob, runNextJob, type JobHandler } from "../application/run-job.js";
+import { cancelJob, enqueueJob, runNextJob } from "../application/run-job.js";
+import { type IsolatedHandler } from "../application/job-supervisor.js";
 import { BullMqJobQueue } from "./bullmq-job-queue.js";
+import { ChildProcessJobSupervisor } from "./child-job-supervisor.js";
 import { PostgresJobRepository } from "./postgres-job-repository.js";
+
+const handlerModule = path.join(__dirname, "../handlers/sample-handlers.js");
+
+function spec(exportName: string): IsolatedHandler {
+  return { modulePath: handlerModule, exportName };
+}
 
 const TEST_DATABASE = "editagent_us129";
 const redisUrl = process.env.REDIS_URL ?? "redis://127.0.0.1:6379/0";
@@ -126,7 +133,8 @@ test("queue contracts hold on Redis and Postgres", { timeout: 90_000 }, async ()
   const now = clock();
   const media = newId();
   const queueName = `jobs-${newId().slice(0, 8)}`;
-  const deps = { jobs, queue, now, newAttemptId: newId };
+  const supervisor = new ChildProcessJobSupervisor();
+  const deps = { jobs, queue, now, newAttemptId: newId, supervisor };
   try {
     await applyJobMigration(pool);
 
@@ -169,14 +177,7 @@ test("queue contracts hold on Redis and Postgres", { timeout: 90_000 }, async ()
     );
     assert.deepEqual(stored.rows[0]?.payload, { mediaAssetId: media });
 
-    const attempts = new Map<string, number>();
-    const transient: JobHandler = async (envelope) => {
-      const seen = attempts.get(envelope.jobId) ?? 0;
-      attempts.set(envelope.jobId, seen + 1);
-      if (seen === 0) {
-        throw new Error("blip");
-      }
-    };
+    const transient = spec("failTransient");
     await runNextJob(deps, queueName, transient);
     assert.equal((await jobs.findById(jobId(firstId)))?.status, "Retrying");
     assert.equal(await runNextJob(deps, queueName, transient), "idle");
@@ -201,15 +202,7 @@ test("queue contracts hold on Redis and Postgres", { timeout: 90_000 }, async ()
       maxAttempts: 3,
       backoffBaseMs: 20,
     });
-    await drive(
-      deps,
-      queueName,
-      async () => {
-        throw new PermanentJobError("disk corrupt");
-      },
-      permanentId,
-      "Failed",
-    );
+    await drive(deps, queueName, spec("failPermanent"), permanentId, "Failed");
     const failed = await jobs.findById(jobId(permanentId));
     assert.equal(failed?.status, "Failed");
     assert.equal(failed?.failureReason, "disk corrupt");
@@ -229,16 +222,7 @@ test("queue contracts hold on Redis and Postgres", { timeout: 90_000 }, async ()
       maxAttempts: 1,
       backoffBaseMs: 20,
     });
-    const running = runNextJob(deps, queueName, async (_envelope, signal) => {
-      await new Promise((_resolve, reject) => {
-        const timer = setInterval(() => {
-          if (signal.aborted) {
-            clearInterval(timer);
-            reject(signal.reason);
-          }
-        }, 20);
-      });
-    });
+    const running = runNextJob(deps, queueName, spec("cooperativeCancel"));
     await waitFor(async () => (await jobs.findById(jobId(cancelId)))?.status === "Running");
     const cancelStarted = Date.now();
     await cancelJob(deps, cancelId);
@@ -258,13 +242,9 @@ test("queue contracts hold on Redis and Postgres", { timeout: 90_000 }, async ()
       maxAttempts: 1,
       backoffBaseMs: 20,
     });
-    let ran = false;
     await cancelJob(deps, raceId);
-    const raced = await runNextJob(deps, queueName, async () => {
-      ran = true;
-    });
+    const raced = await runNextJob(deps, queueName, spec("succeed"));
     assert.equal(raced, "idle");
-    assert.equal(ran, false);
     assert.equal((await jobs.findById(jobId(raceId)))?.status, "Cancelled");
 
     const delayedCancelId = newId();
@@ -273,24 +253,17 @@ test("queue contracts hold on Redis and Postgres", { timeout: 90_000 }, async ()
       queueName,
       jobType: "probe",
       idempotencyKey: `delayed-${delayedCancelId}`,
-      payload: {},
+      payload: { reason: "later" },
       subject: subject(media),
       timeoutMs: 5_000,
       maxAttempts: 3,
       backoffBaseMs: 5_000,
     });
-    await runNextJob(deps, queueName, async () => {
-      throw new Error("later");
-    });
+    await runNextJob(deps, queueName, spec("failAlways"));
     assert.equal((await jobs.findById(jobId(delayedCancelId)))?.status, "Retrying");
     await cancelJob(deps, delayedCancelId);
     await delay(300);
-    assert.equal(
-      await runNextJob(deps, queueName, async () => {
-        throw new Error("should stay cancelled");
-      }),
-      "idle",
-    );
+    assert.equal(await runNextJob(deps, queueName, spec("succeed")), "idle");
     assert.equal((await jobs.findById(jobId(delayedCancelId)))?.status, "Cancelled");
 
     const timeoutId = newId();
@@ -305,17 +278,7 @@ test("queue contracts hold on Redis and Postgres", { timeout: 90_000 }, async ()
       maxAttempts: 1,
       backoffBaseMs: 20,
     });
-    await drive(
-      deps,
-      queueName,
-      async (_envelope, signal) => {
-        await new Promise((_resolve, reject) => {
-          signal.addEventListener("abort", () => reject(signal.reason));
-        });
-      },
-      timeoutId,
-      "Failed",
-    );
+    await drive(deps, queueName, spec("cooperativeCancel"), timeoutId, "Failed");
     assert.match((await jobs.findById(jobId(timeoutId)))?.failureReason ?? "", /timed out/);
 
     const exhaustId = newId();
@@ -330,15 +293,7 @@ test("queue contracts hold on Redis and Postgres", { timeout: 90_000 }, async ()
       maxAttempts: 2,
       backoffBaseMs: 15,
     });
-    await drive(
-      deps,
-      queueName,
-      async () => {
-        throw new Error("still broken");
-      },
-      exhaustId,
-      "Failed",
-    );
+    await drive(deps, queueName, spec("failAlways"), exhaustId, "Failed");
     const exhausted = await jobs.listAttempts(jobId(exhaustId));
     assert.equal(exhausted.length, 2);
     assert.equal((await jobs.findDeadLetter(jobId(exhaustId)))?.reason, "still broken");
@@ -371,9 +326,9 @@ test("queue contracts hold on Redis and Postgres", { timeout: 90_000 }, async ()
     const crashQueue = new BullMqJobQueue(redisUrl);
     try {
       await drive(
-        { jobs, queue: crashQueue, now, newAttemptId: newId },
+        { jobs, queue: crashQueue, now, newAttemptId: newId, supervisor },
         queueName,
-        async () => undefined,
+        spec("succeed"),
         crashId,
         "Completed",
       );
@@ -389,7 +344,7 @@ test("queue contracts hold on Redis and Postgres", { timeout: 90_000 }, async ()
     const recoverId = newId();
     const holdingQueue = new BullMqJobQueue(redisUrl);
     await enqueueJob(
-      { jobs, queue: holdingQueue, now, newAttemptId: newId },
+      { jobs, queue: holdingQueue, now, newAttemptId: newId, supervisor },
       {
         id: recoverId,
         queueName,
@@ -406,9 +361,9 @@ test("queue contracts hold on Redis and Postgres", { timeout: 90_000 }, async ()
     const recoveredQueue = new BullMqJobQueue(redisUrl);
     try {
       await drive(
-        { jobs, queue: recoveredQueue, now, newAttemptId: newId },
+        { jobs, queue: recoveredQueue, now, newAttemptId: newId, supervisor },
         queueName,
-        async () => undefined,
+        spec("succeed"),
         recoverId,
         "Completed",
       );
@@ -428,9 +383,10 @@ async function drive(
     queue: BullMqJobQueue;
     now: () => bigint;
     newAttemptId: () => string;
+    supervisor: ChildProcessJobSupervisor;
   },
   queueName: string,
-  handler: JobHandler,
+  handler: IsolatedHandler,
   id: string,
   wanted: string,
 ): Promise<void> {

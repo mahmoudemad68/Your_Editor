@@ -15,13 +15,22 @@ import {
   jobId,
 } from "@editagent/domain";
 
-import { JobCancelledError, JobTimeoutError, PermanentJobError } from "./job-errors.js";
+import {
+  InvalidJobEnvelopeError,
+  JobCancelledError,
+  JobExecutionUnconfirmedError,
+  JobTimeoutError,
+  LockLostError,
+  PermanentJobError,
+} from "./job-errors.js";
+import { type IsolatedHandler, type JobSupervisor } from "./job-supervisor.js";
 
-export type JobHandler = (envelope: JobEnvelope, signal: AbortSignal) => Promise<void>;
+export type { IsolatedHandler, JobSupervisor } from "./job-supervisor.js";
 
 export interface RunJobDeps {
   readonly jobs: JobRepository;
   readonly queue: JobQueue;
+  readonly supervisor: JobSupervisor;
   readonly now: () => Instant;
   readonly newAttemptId: () => string;
 }
@@ -45,17 +54,7 @@ export async function enqueueJob(
   const existing = await deps.jobs.findByIdempotencyKey(input.idempotencyKey);
   if (existing) {
     if (existing.status === "Queued") {
-      await deps.queue.enqueue({
-        id: existing.id,
-        queueName: input.queueName,
-        jobType: input.jobType,
-        idempotencyKey: input.idempotencyKey,
-        payload: input.payload,
-        subject: input.subject,
-        timeoutMs: input.timeoutMs,
-        maxAttempts: input.maxAttempts,
-        backoffBaseMs: input.backoffBaseMs,
-      });
+      await publishQueued(deps, existing.id, input);
     }
     return { jobId: existing.id, duplicate: true };
   }
@@ -75,6 +74,9 @@ export async function enqueueJob(
     }
     const winner = await deps.jobs.findByIdempotencyKey(input.idempotencyKey);
     if (winner) {
+      if (winner.status === "Queued") {
+        await publishQueued(deps, winner.id, input);
+      }
       return { jobId: winner.id, duplicate: true };
     }
     throw error;
@@ -112,9 +114,18 @@ export async function cancelJob(deps: RunJobDeps, id: string): Promise<void> {
 export async function runNextJob(
   deps: RunJobDeps,
   queueName: string,
-  handler: JobHandler,
+  handler: IsolatedHandler,
 ): Promise<"idle" | "done"> {
-  const reserved = await deps.queue.reserve(queueName);
+  let reserved;
+  try {
+    reserved = await deps.queue.reserve(queueName);
+  } catch (error) {
+    if (error instanceof InvalidJobEnvelopeError) {
+      await persistInvalidEnvelope(deps, error.jobId);
+      return "done";
+    }
+    throw error;
+  }
   if (!reserved) {
     return "idle";
   }
@@ -151,35 +162,108 @@ export async function runNextJob(
   );
   await deps.jobs.appendAttempt(attempt);
   const controller = new AbortController();
+  let stopped = false;
   const timeout = setTimeout(() => {
-    controller.abort(new JobTimeoutError());
+    if (!stopped) {
+      controller.abort(new JobTimeoutError());
+    }
   }, reserved.envelope.timeoutMs);
   const cancelPoll = setInterval(() => {
-    void deps.queue.isCancelRequested(started.id).then((cancelled) => {
-      if (cancelled) {
+    void Promise.resolve(deps.queue.isCancelRequested(started.id))
+      .then((cancelled) => {
+        if (stopped || !cancelled) {
+          return;
+        }
         controller.abort(new JobCancelledError());
-      }
-    });
+      })
+      .catch(() => {
+        // Redis did not answer the cancel poll. That is not a cancellation,
+        // and the rejection must not escape the interval callback.
+      });
   }, CANCEL_POLL_MS);
+  deps.queue.whenLockLost(reserved.receipt, () => {
+    if (!stopped) {
+      controller.abort(new LockLostError());
+    }
+  });
   try {
-    await Promise.race([
-      handler(reserved.envelope, controller.signal),
-      abortAsPromise(controller.signal),
-    ]);
+    await deps.supervisor.run(reserved.envelope, handler, controller.signal);
     if (controller.signal.aborted) {
       throw controller.signal.reason;
     }
-    clearTimers(timeout, cancelPoll);
     const finishedAt = deps.now();
     await deps.jobs.save(started.complete(finishedAt));
     await deps.jobs.appendAttempt(attempt.finish("Completed", finishedAt, null));
     await deps.queue.complete(reserved.receipt);
     return "done";
   } catch (error) {
-    clearTimers(timeout, cancelPoll);
     await settleFailure(deps, started, attempt, reserved.receipt, reserved.envelope, error);
     return "done";
+  } finally {
+    stopped = true;
+    clearTimers(timeout, cancelPoll);
   }
+}
+
+async function publishQueued(
+  deps: RunJobDeps,
+  id: string,
+  input: {
+    readonly queueName: string;
+    readonly jobType: string;
+    readonly idempotencyKey: string;
+    readonly payload: Readonly<Record<string, unknown>>;
+    readonly subject: JobSubject;
+    readonly timeoutMs: number;
+    readonly maxAttempts: number;
+    readonly backoffBaseMs: number;
+  },
+): Promise<void> {
+  await deps.queue.enqueue({
+    id: jobId(id),
+    queueName: input.queueName,
+    jobType: input.jobType,
+    idempotencyKey: input.idempotencyKey,
+    payload: input.payload,
+    subject: input.subject,
+    timeoutMs: input.timeoutMs,
+    maxAttempts: input.maxAttempts,
+    backoffBaseMs: input.backoffBaseMs,
+  });
+}
+
+async function persistInvalidEnvelope(deps: RunJobDeps, id: string): Promise<void> {
+  const current = await deps.jobs.findById(jobId(id));
+  if (
+    !current ||
+    current.status === "Completed" ||
+    current.status === "Failed" ||
+    current.status === "Cancelled"
+  ) {
+    return;
+  }
+  const at = deps.now();
+  const reason = "Job envelope does not match the shared JSON Schema.";
+  const running = current.status === "Running" ? current : current.start(at);
+  if (running !== current) {
+    await deps.jobs.save(running);
+  }
+  const failedAt = running === current ? at : deps.now();
+  const failed = running.fail(failedAt, reason);
+  await deps.jobs.save(failed);
+  await deps.jobs.appendAttempt(
+    JobAttempt.start(deps.newAttemptId(), failed.id, failed.attemptCount, failedAt).finish(
+      "Failed",
+      failedAt,
+      reason,
+    ),
+  );
+  await deps.jobs.saveDeadLetter({
+    jobId: failed.id,
+    reason,
+    envelopeJson: JSON.stringify({ schemaVersion: 1, jobId: failed.id, invalid: true }),
+    createdAt: failedAt,
+  });
 }
 
 const WORKER_FAILED = "worker failed";
@@ -228,6 +312,9 @@ async function settleFailure(
   envelope: JobEnvelope,
   error: unknown,
 ): Promise<void> {
+  if (error instanceof LockLostError || error instanceof JobExecutionUnconfirmedError) {
+    return;
+  }
   const at = deps.now();
   if (isCancelled(error)) {
     await deps.jobs.save(started.cancel(at));
@@ -258,15 +345,6 @@ async function settleFailure(
 
 function isCancelled(error: unknown): boolean {
   return error instanceof JobCancelledError;
-}
-
-function abortAsPromise(signal: AbortSignal): Promise<never> {
-  if (signal.aborted) {
-    return Promise.reject(signal.reason);
-  }
-  return new Promise((_resolve, reject) => {
-    signal.addEventListener("abort", () => reject(signal.reason), { once: true });
-  });
 }
 
 function clearTimers(

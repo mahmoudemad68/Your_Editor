@@ -68,6 +68,8 @@ export interface JobQueue {
   fail(receipt: JobReceipt, failure: JobFailure): Promise<void>;
   requestCancel(jobId: string): Promise<void>;
   isCancelRequested(jobId: string): Promise<boolean>;
+  /** Fires if this process loses the reservation before complete or fail. */
+  whenLockLost(receipt: JobReceipt, notify: () => void): void;
   discardQueued(jobId: string, queueName: string): Promise<void>;
   publishProgress(jobId: string, event: JobProgressEvent): Promise<void>;
   close(): Promise<void>;

@@ -4,10 +4,12 @@ version = "0.0.0"
 description = "EditAgent AI worker scaffold. Perception models are later stories."
 requires-python = ">=3.11,<3.12"
 dependencies = [
+  "bullmq>=3.3,<4",
   "jsonschema>=4.23,<5",
   "pydantic>=2.10,<3",
+  "psycopg[binary]>=3.2,<4",
   "pydantic-settings>=2.7,<3",
-  "redis>=5.2,<6",
+  "redis>=5.2,<8",
 ]
 
 [project.scripts]
@@ -105,6 +107,8 @@ forbidden_modules = [
   "django",
   "celery",
   "redis",
+  "bullmq",
+  "psycopg",
   "boto3",
   "torch",
   "transformers",
