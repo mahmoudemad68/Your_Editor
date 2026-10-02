@@ -187,7 +187,7 @@ def load_benchmark(root: Path) -> list[dict[str, Any]]:
     return cases
 
 
-SENT_STATUSES = frozenset({"SUCCESS", "FAILED", "BUDGET_UNSAFE"})
+SENT_STATUSES = frozenset({"SUCCESS", "FAILED", "BUDGET_UNSAFE", "TRUNCATED"})
 
 
 def cp1_formal_status(
@@ -228,6 +228,22 @@ def _sent_output_cap(provider: str, body: dict[str, Any]) -> tuple[str | None, o
     return None, None
 
 
+def _request_configuration(body: dict[str, Any]) -> dict[str, Any]:
+    """Fields that control the live call, without the prompt or tool schemas."""
+
+    keys = (
+        "model",
+        "reasoning_effort",
+        "thinking",
+        "enable_thinking",
+        "tool_choice",
+        "max_completion_tokens",
+        "max_tokens",
+        "generation_config",
+    )
+    return {key: body[key] for key in keys if key in body}
+
+
 def _thinking_base(provider: str, body: dict[str, Any]) -> dict[str, Any]:
     field, cap = _sent_output_cap(provider, body)
     return {
@@ -251,18 +267,22 @@ def thinking_metadata(provider: str, request_body: dict[str, Any]) -> dict[str, 
     if provider == "openai":
         sent = "reasoning_effort" in request_body
         effort = request_body.get("reasoning_effort") if sent else None
-        documented = None if sent else documented_openai_reasoning_default(model)
+        documented = documented_openai_reasoning_default(model)
         catalog = PROVIDERS["openai"].get("thinking_default")
         source = catalog.get("source_url") if isinstance(catalog, dict) else None
         constraint_source = (
             catalog.get("tool_constraint_source") if isinstance(catalog, dict) else None
+        )
+        requires_none = (
+            model.strip().lower() in {"gpt-5.6", "gpt-5.6-sol"} and effort == "none"
         )
         metadata = {
             **base,
             "control": "openai reasoning_effort",
             "explicitly_requested": effort,
             "parameter_omitted": not sent,
-            "documented_default": documented,
+            "documented_default": None if sent else documented,
+            "documented_omitted_default": documented if sent else None,
             "documented_default_source": source if documented is not None else None,
             "documented_default_accessed": ACCESSED if documented is not None else None,
         }
@@ -270,16 +290,17 @@ def thinking_metadata(provider: str, request_body: dict[str, Any]) -> dict[str, 
             metadata["documented_default_reason"] = (
                 "no documented omitted default is recorded for this model"
             )
-        if not sent and documented == "medium" and request_body.get("tools"):
-            metadata["documented_tool_constraint"] = {
+        if requires_none:
+            metadata["compatibility_requirement"] = {
+                "value": "none",
                 "statement": (
-                    "The GPT-5.6 upgrade guide says Chat Completions function "
-                    "tools are compatible only with effective reasoning none."
+                    "Starting with GPT-5.4, Chat Completions does not support "
+                    "tool calling with reasoning_effort values other than none."
                 ),
-                "source_url": constraint_source,
+                "source_url": "https://developers.openai.com/api/docs/guides/migrate-to-responses",
+                "also_stated_at": constraint_source,
                 "accessed": ACCESSED,
                 "empirically_observed": False,
-                "request_unchanged": True,
             }
         return metadata
     if provider == "qwen":
@@ -317,6 +338,13 @@ def thinking_metadata(provider: str, request_body: dict[str, Any]) -> dict[str, 
             "documented_default": documented,
             "documented_default_source": source if documented is not None else None,
             "documented_default_accessed": ACCESSED if documented is not None else None,
+            "tool_choice": request_body.get("tool_choice"),
+            "tool_choice_explicit": "tool_choice" in request_body,
+            "tool_choice_source": "https://api-docs.deepseek.com/api/create-chat-completion",
+            "tool_choice_note": (
+                "auto is the default when tools are present and is allowed in "
+                "thinking mode. required and named choices are rejected in thinking mode."
+            ),
         }
         if omitted and documented is None:
             metadata["documented_default_reason"] = (
@@ -505,6 +533,9 @@ def run_case(
     thinking = thinking_metadata(provider, body if isinstance(body, dict) else {})
     common = {
         "thinking": thinking,
+        "request_configuration": _request_configuration(
+            body if isinstance(body, dict) else {}
+        ),
         "commit_sha": commit_sha,
         "spent_usd": spent_usd,
         **_transcript_fields(True),
@@ -666,14 +697,21 @@ def run_case(
     latency = time.perf_counter() - started
     parsed = adapter.parse_response(payload if isinstance(payload, dict) else {})
     calls = parsed["calls"] if isinstance(parsed.get("calls"), list) else []
+    truncated = parsed.get("truncated") is True
+    truncation_reason = "provider finish_reason is length, so the output hit the token cap and is truncated"
     if parsed.get("parse_error"):
+        reason = redact(str(parsed["parse_error"]), known)
+        status = "FAILED"
+        if truncated:
+            status = "TRUNCATED"
+            reason = f"{truncation_reason}; {reason}"
         return _finish(
             _accounted(
                 provider,
                 model,
                 case,
-                "FAILED",
-                redact(str(parsed["parse_error"]), known),
+                status,
+                reason,
                 calls=calls,
                 scores=None,
                 thinking=thinking,
@@ -726,8 +764,8 @@ def run_case(
                 provider,
                 model,
                 case,
-                "SUCCESS",
-                None,
+                "TRUNCATED" if truncated else "SUCCESS",
+                truncation_reason if truncated else None,
                 calls=calls,
                 scores=score_case(case, calls),
                 thinking=thinking,
@@ -742,7 +780,7 @@ def run_case(
                 output_tokens=None,
                 limits=limits,
                 sent=True,
-                processed=True,
+                processed=not truncated,
             ),
             known,
         )
@@ -834,8 +872,8 @@ def run_case(
             provider,
             model,
             case,
-            "SUCCESS",
-            None,
+            "TRUNCATED" if truncated else "SUCCESS",
+            truncation_reason if truncated else None,
             calls=calls,
             scores=score_case(case, calls),
             thinking=thinking,
@@ -850,7 +888,7 @@ def run_case(
             output_tokens=usage["output_tokens"],
             limits=limits,
             sent=True,
-            processed=True,
+            processed=not truncated,
         ),
         known,
     )

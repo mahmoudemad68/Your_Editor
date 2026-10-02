@@ -231,31 +231,35 @@ class AdapterTests(unittest.TestCase):
 
 
 class ThinkingMetadataTests(unittest.TestCase):
-    def test_gpt_56_omitted_effort_records_the_documented_medium_default(self) -> None:
-        body = registry()["openai"].build_request("gpt-5.6", "Keep 10 to 25 seconds.")
-        self.assertNotIn("reasoning_effort", body)
+    def test_gpt_56_chat_tools_send_reasoning_none(self) -> None:
+        body = registry()["openai"].build_request(
+            "gpt-5.6",
+            "Keep 10 to 25 seconds.",
+            {"openai_reasoning_effort": "low"},
+        )
+        self.assertEqual(body["reasoning_effort"], "none")
         self.assertEqual(body["max_completion_tokens"], 800)
+        self.assertEqual(body["tool_choice"], "auto")
         meta = runner.thinking_metadata("openai", body)
-        self.assertTrue(meta["parameter_omitted"])
-        self.assertIsNone(meta["explicitly_requested"])
-        self.assertEqual(meta["documented_default"], "medium")
+        self.assertFalse(meta["parameter_omitted"])
+        self.assertEqual(meta["explicitly_requested"], "none")
+        self.assertIsNone(meta["documented_default"])
+        self.assertEqual(meta["documented_omitted_default"], "medium")
         self.assertFalse(meta["empirically_observed"])
         self.assertEqual(
             meta["documented_default_source"],
             "https://developers.openai.com/api/docs/models/gpt-5.6-sol",
         )
-        self.assertEqual(meta["documented_default_accessed"], "2026-10-02")
+        requirement = meta["compatibility_requirement"]
+        self.assertEqual(requirement["value"], "none")
+        self.assertFalse(requirement["empirically_observed"])
+        self.assertIn("migrate-to-responses", requirement["source_url"])
         self.assertEqual(meta["output_token_cap"], 800)
         self.assertEqual(meta["output_token_cap_field"], "max_completion_tokens")
-        self.assertEqual(meta["output_token_cap_source"], "request_body")
-        constraint = meta["documented_tool_constraint"]
-        self.assertFalse(constraint["empirically_observed"])
-        self.assertTrue(constraint["request_unchanged"])
-        self.assertIn("none", constraint["statement"])
 
     def test_explicit_openai_effort_is_not_labeled_as_the_default(self) -> None:
         body = registry()["openai"].build_request(
-            "gpt-5.6",
+            "gpt-5.6-terra",
             "hello",
             {"openai_reasoning_effort": "low"},
         )
@@ -265,7 +269,7 @@ class ThinkingMetadataTests(unittest.TestCase):
         self.assertFalse(meta["parameter_omitted"])
         self.assertEqual(meta["explicitly_requested"], "low")
         self.assertIsNone(meta["documented_default"])
-        self.assertNotIn("documented_tool_constraint", meta)
+        self.assertNotIn("compatibility_requirement", meta)
 
     def test_other_openai_models_do_not_inherit_the_gpt_56_default(self) -> None:
         body = registry()["openai"].build_request("gpt-5.6-terra", "hello")
@@ -281,6 +285,7 @@ class ThinkingMetadataTests(unittest.TestCase):
         body = registry()["deepseek"].build_request("deepseek-flash", "hello")
         self.assertNotIn("thinking", body)
         self.assertNotIn("reasoning_effort", body)
+        self.assertEqual(body["tool_choice"], "auto")
         self.assertEqual(body["max_tokens"], 800)
         meta = runner.thinking_metadata("deepseek", body)
         self.assertTrue(meta["parameter_omitted"])
@@ -298,6 +303,8 @@ class ThinkingMetadataTests(unittest.TestCase):
         self.assertEqual(meta["output_token_cap"], 800)
         self.assertEqual(meta["output_token_cap_field"], "max_tokens")
         self.assertEqual(meta["output_token_cap_source"], "request_body")
+        self.assertEqual(meta["tool_choice"], "auto")
+        self.assertTrue(meta["tool_choice_explicit"])
 
     def test_dry_runs_carry_documented_defaults_without_a_live_call(self) -> None:
         case = cases()[0]
@@ -335,15 +342,156 @@ class ThinkingMetadataTests(unittest.TestCase):
         )
         self.assertEqual(openai["status"], "DRY_RUN")
         self.assertEqual(deepseek["status"], "DRY_RUN")
-        self.assertEqual(openai["thinking"]["documented_default"], "medium")
+        self.assertEqual(openai["thinking"]["explicitly_requested"], "none")
+        self.assertEqual(openai["thinking"]["documented_omitted_default"], "medium")
+        self.assertEqual(openai["request_configuration"]["reasoning_effort"], "none")
+        self.assertEqual(openai["request_configuration"]["max_completion_tokens"], 800)
         self.assertEqual(openai["thinking"]["output_token_cap"], 800)
         self.assertFalse(openai["thinking"]["empirically_observed"])
+        self.assertEqual(deepseek["request_configuration"]["tool_choice"], "auto")
+        self.assertEqual(deepseek["request_configuration"]["max_tokens"], 800)
+        self.assertNotIn("thinking", deepseek["request_configuration"])
+        self.assertNotIn("reasoning_effort", deepseek["request_configuration"])
         self.assertEqual(
             deepseek["thinking"]["documented_default"],
             {"thinking": "enabled", "reasoning_effort": "high"},
         )
         self.assertEqual(deepseek["thinking"]["output_token_cap"], 800)
         self.assertFalse(deepseek["thinking"]["empirically_observed"])
+
+    def test_serialized_bodies_match_the_compatibility_gate(self) -> None:
+        captured: dict[str, str] = {}
+
+        def transport(url: str, _headers: dict, body: dict) -> dict:
+            captured[url] = json.dumps(body)
+            if "api.deepseek.com" in url:
+                return _empty_openai({"prompt_tokens": 4, "completion_tokens": 1})
+            return _empty_openai({"prompt_tokens": 4, "completion_tokens": 1})
+
+        for provider, model in (("openai", "gpt-5.6"), ("deepseek", "deepseek-flash")):
+            result = runner.run_case(
+                provider,
+                model,
+                cases()[0],
+                "short",
+                True,
+                "sk-fake-compatibility",
+                {},
+                {
+                    "models": {
+                        f"{provider}:{model}": {
+                            "input_per_million_usd": 1,
+                            "output_per_million_usd": 1,
+                            "accessed": "2026-10-02",
+                        }
+                    }
+                },
+                0,
+                100,
+                "abc",
+                transport=transport,
+            )
+            self.assertEqual(result["status"], "SUCCESS", provider)
+        openai_body = next(
+            text for url, text in captured.items() if "api.openai.com" in url
+        )
+        deepseek_body = next(
+            text for url, text in captured.items() if "api.deepseek.com" in url
+        )
+        self.assertIn('"reasoning_effort": "none"', openai_body)
+        self.assertIn('"max_completion_tokens": 800', openai_body)
+        self.assertNotIn('"reasoning_effort": "medium"', openai_body)
+        self.assertIn('"tool_choice": "auto"', deepseek_body)
+        self.assertIn('"max_tokens": 800', deepseek_body)
+        self.assertNotIn('"thinking"', deepseek_body)
+        self.assertNotIn('"reasoning_effort"', deepseek_body)
+
+    def test_truncated_and_malformed_calls_are_not_cp1_successes(self) -> None:
+        valid_call = {
+            "id": "call-1",
+            "type": "function",
+            "function": {
+                "name": "trim",
+                "arguments": '{"start_seconds": 10, "end_seconds": 25}',
+            },
+        }
+
+        case = next(row for row in cases() if row["id"] == "trim-keep-range")
+        truncated = runner.run_case(
+            "deepseek",
+            "deepseek-flash",
+            case,
+            "short",
+            True,
+            "sk-fake",
+            {},
+            {
+                "models": {
+                    "deepseek:deepseek-flash": {
+                        "input_per_million_usd": 1,
+                        "output_per_million_usd": 1,
+                        "accessed": "2026-10-02",
+                    }
+                }
+            },
+            0,
+            100,
+            "abc",
+            transport=lambda _url, _headers, _body: {
+                "choices": [
+                    {
+                        "finish_reason": "length",
+                        "message": {"tool_calls": [valid_call]},
+                    }
+                ],
+                "usage": {"prompt_tokens": 20, "completion_tokens": 800},
+            },
+        )
+        malformed = runner.run_case(
+            "deepseek",
+            "deepseek-flash",
+            case,
+            "short",
+            True,
+            "sk-fake",
+            {},
+            {
+                "models": {
+                    "deepseek:deepseek-flash": {
+                        "input_per_million_usd": 1,
+                        "output_per_million_usd": 1,
+                        "accessed": "2026-10-02",
+                    }
+                }
+            },
+            0,
+            100,
+            "abc",
+            transport=lambda *_args: {"choices": []},
+        )
+        self.assertEqual(truncated["status"], "TRUNCATED")
+        self.assertIn("length", truncated["reason"])
+        self.assertTrue(truncated["schema_valid_tool_call"])
+        self.assertEqual(malformed["status"], "FAILED")
+        self.assertIn("malformed", malformed["reason"])
+        summary = runner.summarize(
+            [
+                {**truncated, "suite": "primary"},
+                {**malformed, "suite": "primary"},
+                *[
+                    {
+                        "status": "SUCCESS",
+                        "suite": "primary",
+                        "schema_valid_tool_call": True,
+                        "semantic_correct": True,
+                        "latency_seconds": 0.1,
+                    }
+                    for _index in range(8)
+                ],
+            ]
+        )
+        self.assertEqual(summary["schema_valid_tool_calls"], 8)
+        self.assertIs(summary["observed_cp1_schema"], False)
 
     def test_malformed_openai_payload(self) -> None:
         parsed = registry()["openai"].parse_response({"choices": []})

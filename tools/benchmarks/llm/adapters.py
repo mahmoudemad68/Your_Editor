@@ -368,14 +368,20 @@ class OpenAIAdapter(ProviderAdapter):
             "tool_choice": "auto",
             "max_completion_tokens": MAX_OUTPUT_TOKENS,
         }
-        effort = options.get("openai_reasoning_effort")
-        if effort:
-            body["reasoning_effort"] = effort
+        if _gpt56_chat_tools_require_reasoning_none(model):
+            # Docs: Chat Completions tool calls accept only reasoning_effort none.
+            # Omitting it would use the documented medium default.
+            body["reasoning_effort"] = "none"
+        else:
+            effort = options.get("openai_reasoning_effort")
+            if effort:
+                body["reasoning_effort"] = effort
         return body
 
     def parse_response(self, payload: dict[str, Any]) -> dict[str, Any]:
         try:
-            message = payload["choices"][0]["message"]
+            choice = payload["choices"][0]
+            message = choice["message"]
             raw_calls = message.get("tool_calls") or []
             calls = [
                 {
@@ -384,11 +390,14 @@ class OpenAIAdapter(ProviderAdapter):
                 }
                 for item in raw_calls
             ]
+            finish_reason = choice.get("finish_reason")
         except (KeyError, IndexError, TypeError) as exc:
             return _malformed(str(exc))
         usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
         return {
             "calls": calls,
+            "finish_reason": finish_reason,
+            "truncated": finish_reason == "length",
             "input_tokens": usage.get("prompt_tokens"),
             "output_tokens": usage.get("completion_tokens"),
             "thought_tokens": None,
@@ -551,6 +560,7 @@ class DeepSeekAdapter(ProviderAdapter):
             "model": model,
             "messages": [{"role": "user", "content": prompt}],
             "tools": _deepseek_tools(),
+            "tool_choice": "auto",
             "max_tokens": MAX_OUTPUT_TOKENS,
         }
 
@@ -564,6 +574,17 @@ def _dashscope_base(options: dict[str, Any] | None) -> str:
     return str(options.get("dashscope_base_url") or "")
 
 
+def _gpt56_chat_tools_require_reasoning_none(model: str) -> bool:
+    """GPT-5.6 Chat Completions function tools require reasoning_effort none.
+
+    The migrate-to-Responses guide says that, starting with GPT-5.4, Chat
+    Completions tool calling does not support any other reasoning_effort.
+    gpt-5.6 is the alias for GPT-5.6 Sol. Accessed 2026-10-02.
+    """
+
+    return model.strip().lower() in {"gpt-5.6", "gpt-5.6-sol"}
+
+
 def _responses_only(model: str) -> bool:
     folded = model.lower()
     return "gpt-6" in folded and ("astra" in folded or "sol" in folded)
@@ -574,6 +595,8 @@ def _malformed(reason: str) -> dict[str, Any]:
         "calls": [],
         "input_tokens": None,
         "output_tokens": None,
+        "finish_reason": None,
+        "truncated": False,
         "thought_tokens": None,
         "parse_error": f"malformed provider response: {reason}",
     }

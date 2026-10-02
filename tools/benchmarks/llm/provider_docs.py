@@ -15,12 +15,13 @@ PROVIDERS: dict[str, dict[str, object]] = {
         "env": "OPENAI_API_KEY",
         "example_model_in_docs": "gpt-5.6-terra",
         "thinking": (
-            "Not a universal boolean. This adapter omits reasoning_effort unless "
-            "openai_reasoning_effort is set. For gpt-5.6 and gpt-5.6-sol, the model "
-            "card documents the omitted default as medium. That default is not a "
-            "measurement from this benchmark. The GPT-5.6 Sol upgrade guide says "
-            "Chat Completions function tools are compatible only with effective "
-            "reasoning none. The request is still sent without reasoning_effort."
+            "Not a universal boolean. gpt-5.6 and gpt-5.6-sol Chat Completions "
+            "requests in this benchmark send reasoning_effort none, because the "
+            "migrate-to-Responses guide says Chat Completions tool calling does not "
+            "support any other value starting with GPT-5.4. The Sol model card still "
+            "documents medium as the default when the field is omitted. This process "
+            "did not observe that rejection; it followed the written constraint. "
+            "Other OpenAI models omit reasoning_effort unless openai_reasoning_effort is set."
         ),
         "thinking_default": {
             "parameter": "reasoning_effort",
@@ -115,9 +116,11 @@ PROVIDERS: dict[str, dict[str, object]] = {
         "example_model_in_docs": "deepseek-flash",
         "thinking": (
             "Not the same control as Qwen enable_thinking or OpenAI reasoning_effort. "
-            "This adapter omits thinking and reasoning_effort. The Chat Completions "
-            "reference documents the omitted defaults as thinking enabled and reasoning "
-            "effort high. Those defaults are not a measurement from this benchmark."
+            "This adapter omits thinking and reasoning_effort, and sends tool_choice auto. "
+            "The Chat Completions reference documents the omitted defaults as thinking "
+            "enabled and reasoning effort high, and it allows auto in thinking mode. "
+            "required and named tool choices are rejected while thinking is enabled. "
+            "Those defaults are not a measurement from this benchmark."
         ),
         "thinking_default": {
             "parameters": ["thinking", "reasoning_effort"],
