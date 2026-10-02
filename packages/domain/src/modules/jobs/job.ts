@@ -1,6 +1,6 @@
 /**
  * Job aggregate. Jobs owns the job record. The module that does the work owns the result.
- * The queue, retries, and workers are US-129. This type does not transition status.
+ * Status changes go through the transition methods. Illegal moves throw DomainError.
  */
 
 import { type Instant, instant, requireAuditOrder } from "../../kernel/clock.js";
@@ -16,8 +16,17 @@ import {
   type ProjectId,
 } from "../../kernel/id.js";
 
-/** State names from the job state machine. Transitions are US-129. */
+/** State names from the job state machine. */
 export type JobStatus = "Queued" | "Running" | "Completed" | "Failed" | "Retrying" | "Cancelled";
+
+const LEGAL_TRANSITIONS: Record<JobStatus, readonly JobStatus[]> = {
+  Queued: ["Running", "Cancelled"],
+  Running: ["Completed", "Failed", "Retrying", "Cancelled"],
+  Retrying: ["Running", "Failed", "Cancelled"],
+  Completed: [],
+  Failed: [],
+  Cancelled: [],
+};
 
 /**
  * Points at the domain work the job executes.
@@ -39,6 +48,23 @@ export interface JobSnapshot {
   readonly status: string;
   readonly createdAt: bigint | string;
   readonly updatedAt: bigint | string;
+  readonly failureReason?: string | null;
+  readonly attemptCount?: number;
+  readonly queueName?: string | null;
+  readonly jobType?: string | null;
+  readonly idempotencyKey?: string | null;
+  readonly timeoutMs?: number | null;
+  readonly maxAttempts?: number | null;
+  readonly payload?: Readonly<Record<string, unknown>>;
+}
+
+export interface JobWork {
+  readonly queueName: string;
+  readonly jobType: string;
+  readonly idempotencyKey: string;
+  readonly timeoutMs: number;
+  readonly maxAttempts: number;
+  readonly payload: Readonly<Record<string, unknown>>;
 }
 
 export class Job {
@@ -47,6 +73,14 @@ export class Job {
   readonly status: JobStatus;
   readonly createdAt: Instant;
   readonly updatedAt: Instant;
+  readonly failureReason: string | null;
+  readonly attemptCount: number;
+  readonly queueName: string | null;
+  readonly jobType: string | null;
+  readonly idempotencyKey: string | null;
+  readonly timeoutMs: number | null;
+  readonly maxAttempts: number | null;
+  readonly payload: Readonly<Record<string, unknown>>;
 
   constructor(
     id: JobId | string,
@@ -54,6 +88,14 @@ export class Job {
     status: string,
     createdAt: Instant | string | bigint,
     updatedAt?: Instant | string | bigint,
+    failureReason: string | null = null,
+    attemptCount = 0,
+    queueName: string | null = null,
+    jobType: string | null = null,
+    idempotencyKey: string | null = null,
+    timeoutMs: number | null = null,
+    maxAttempts: number | null = null,
+    payload: Readonly<Record<string, unknown>> = {},
   ) {
     const created = instant(createdAt);
     this.id = jobId(String(id));
@@ -61,12 +103,34 @@ export class Job {
     this.status = jobStatus(status);
     this.createdAt = created;
     this.updatedAt = updatedAt == null ? created : instant(updatedAt);
+    this.failureReason = blankToNull(failureReason);
+    this.attemptCount = requireCount(attemptCount);
+    this.queueName = blankToNull(queueName);
+    this.jobType = blankToNull(jobType);
+    this.idempotencyKey = blankToNull(idempotencyKey);
+    this.timeoutMs = requireOptionalPositive(timeoutMs, "timeoutMs");
+    this.maxAttempts = requireOptionalPositive(maxAttempts, "maxAttempts");
+    this.payload = parsePayload(payload);
     requireAuditOrder(this.createdAt, this.updatedAt);
     Object.freeze(this);
   }
 
-  static create(id: JobId, subject: JobSubject, createdAt: Instant): Job {
-    return new Job(id, subject, "Queued", createdAt, createdAt);
+  static create(id: JobId, subject: JobSubject, createdAt: Instant, work?: JobWork): Job {
+    return new Job(
+      id,
+      subject,
+      "Queued",
+      createdAt,
+      createdAt,
+      null,
+      0,
+      work?.queueName ?? null,
+      work?.jobType ?? null,
+      work?.idempotencyKey ?? null,
+      work?.timeoutMs ?? null,
+      work?.maxAttempts ?? null,
+      work?.payload ?? {},
+    );
   }
 
   /** Rebuild a persisted Job in whatever status was stored. Does not run a transition. */
@@ -77,7 +141,35 @@ export class Job {
       snapshot.status,
       snapshot.createdAt,
       snapshot.updatedAt,
+      snapshot.failureReason ?? null,
+      snapshot.attemptCount ?? 0,
+      snapshot.queueName ?? null,
+      snapshot.jobType ?? null,
+      snapshot.idempotencyKey ?? null,
+      snapshot.timeoutMs ?? null,
+      snapshot.maxAttempts ?? null,
+      snapshot.payload ?? {},
     );
+  }
+
+  start(at: Instant): Job {
+    return this.move("Running", at, null, this.attemptCount + 1);
+  }
+
+  complete(at: Instant): Job {
+    return this.move("Completed", at, null, this.attemptCount);
+  }
+
+  fail(at: Instant, reason: string): Job {
+    return this.move("Failed", at, requireReason(reason), this.attemptCount);
+  }
+
+  retry(at: Instant, reason: string): Job {
+    return this.move("Retrying", at, requireReason(reason), this.attemptCount);
+  }
+
+  cancel(at: Instant): Job {
+    return this.move("Cancelled", at, this.failureReason, this.attemptCount);
   }
 
   toSnapshot(): JobSnapshot {
@@ -87,7 +179,42 @@ export class Job {
       status: this.status,
       createdAt: this.createdAt,
       updatedAt: this.updatedAt,
+      failureReason: this.failureReason,
+      attemptCount: this.attemptCount,
+      queueName: this.queueName,
+      jobType: this.jobType,
+      idempotencyKey: this.idempotencyKey,
+      timeoutMs: this.timeoutMs,
+      maxAttempts: this.maxAttempts,
+      payload: this.payload,
     };
+  }
+
+  private move(
+    status: JobStatus,
+    at: Instant,
+    failureReason: string | null,
+    attemptCount: number,
+  ): Job {
+    const allowed = LEGAL_TRANSITIONS[this.status];
+    if (!allowed.includes(status)) {
+      throw new DomainError(`Illegal job transition from ${this.status} to ${status}.`);
+    }
+    return new Job(
+      this.id,
+      this.subject,
+      status,
+      this.createdAt,
+      at,
+      failureReason,
+      attemptCount,
+      this.queueName,
+      this.jobType,
+      this.idempotencyKey,
+      this.timeoutMs,
+      this.maxAttempts,
+      this.payload,
+    );
   }
 }
 
@@ -105,6 +232,46 @@ export function jobStatus(value: string): JobStatus {
   throw new DomainError(
     "Job status must be Queued, Running, Completed, Failed, Retrying, or Cancelled.",
   );
+}
+
+function blankToNull(value: string | null): string | null {
+  if (value == null) {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed.length === 0 ? null : trimmed;
+}
+
+function requireReason(reason: string): string {
+  const trimmed = reason.trim();
+  if (trimmed.length === 0) {
+    throw new DomainError("A failed or retrying job requires a reason.");
+  }
+  return trimmed;
+}
+
+function requireCount(value: number): number {
+  if (!Number.isInteger(value) || value < 0) {
+    throw new DomainError("Job attemptCount must be a non-negative integer.");
+  }
+  return value;
+}
+
+function parsePayload(value: Readonly<Record<string, unknown>>): Readonly<Record<string, unknown>> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new DomainError("Job payload must be an object.");
+  }
+  return Object.freeze({ ...value });
+}
+
+function requireOptionalPositive(value: number | null, name: string): number | null {
+  if (value == null) {
+    return null;
+  }
+  if (!Number.isInteger(value) || value < 1) {
+    throw new DomainError(`${name} must be a positive integer.`);
+  }
+  return value;
 }
 
 function parseSubject(value: JobSnapshot["subject"]): JobSubject {

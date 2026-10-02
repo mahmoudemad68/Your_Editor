@@ -34,13 +34,16 @@ Keys are opaque strings allocated by the owning module. The adapter does not int
 
 Operations:
 
-- `enqueue(job) → JobId`
-- `reserve(queueName) → job payload`
-- `complete(jobId)`
-- `fail(jobId, reason)`
+- `enqueue(job) → job id and whether the idempotency key was already present`
+- `reserve(queueName) → job payload and an opaque receipt`
+- `complete(receipt)`
+- `fail(receipt, reason, transient)`
+- `requestCancel(jobId)` and `isCancelRequested(jobId)`
+- `discardQueued(jobId, queueName)` for a job that has not started
 - `publishProgress(jobId, event)`
+- `close()`
 
-Payloads are JSON documents validated against a JSON Schema from `packages/schemas` before a worker runs them. The queue technology is Redis and BullMQ (ADR-004). The port does not expose BullMQ types.
+Payloads are JSON documents validated against a JSON Schema from `packages/schemas` before a worker runs them. The queue technology is Redis and BullMQ (ADR-004). The port does not expose BullMQ types. US-129 names the port `JobQueue` in the domain package, matching the other ports, which do not use an `I` prefix.
 
 ### `ISandbox`
 

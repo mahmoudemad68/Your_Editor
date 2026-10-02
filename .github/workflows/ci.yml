@@ -21,6 +21,7 @@ jobs:
     env:
       TURBO_TELEMETRY_DISABLED: "1"
       DATABASE_URL: postgresql://editagent:editagent-dev-password@localhost:5432/editagent
+      REDIS_URL: redis://127.0.0.1:6379/0
       S3_ENDPOINT: http://127.0.0.1:9000
       S3_PUBLIC_ENDPOINT: http://127.0.0.1:9000
       S3_BUCKET: editagent
@@ -38,6 +39,15 @@ jobs:
           - 5432:5432
         options: >-
           --health-cmd "pg_isready -U editagent -d editagent"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      redis:
+        image: redis:7.4-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 20

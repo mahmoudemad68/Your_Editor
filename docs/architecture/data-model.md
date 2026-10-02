@@ -158,13 +158,17 @@ erDiagram
 
   Job {
     uuidv7 id PK
-    string jobType "planned US-129"
+    string queueName
+    string jobType
+    string idempotencyKey UK
+    string status
     string subjectKind
     uuidv7 subjectId
-    string status
-    int attemptCount "planned"
-    string idempotencyKey UK "planned"
-    string failureReason "planned nullable"
+    json payload
+    int timeoutMs
+    int maxAttempts
+    int attemptCount
+    string failureReason "nullable"
     bigint createdAt
     bigint updatedAt
   }
@@ -174,9 +178,16 @@ erDiagram
     uuidv7 jobId FK
     int attemptNumber
     string status
-    string failureReason "nullable"
+    string reason "nullable"
     bigint startedAt
     bigint finishedAt "nullable"
+  }
+
+  JobDeadLetter {
+    uuidv7 jobId PK_FK
+    string reason
+    json envelope
+    bigint createdAt
   }
 ```
 
@@ -186,7 +197,7 @@ erDiagram
 
 `UploadSession` stores the overall multipart upload for US-123: who started it, the server storage key, the provider upload id, status, and expiry. `UploadPart` stores each successful part. The key is `(uploadSessionId, partNumber)`. `etag` is what completion must send back, in part-number order. A failed part is simply absent, so parts 1, 2, and 4 can be stored while part 3 is not. A reload reads those rows and does not resend them. `completedPartCount` may be cached for display. It is not the source of truth. The S3 multipart API is not implemented here.
 
-`JobAttempt` is the Postgres history US-129 asks for so the UI and audit can show attempts. This slice does not implement the state machine. US-130 progress fan-out is Redis pub/sub and does not add a table.
+`Job`, `JobAttempt`, and `JobDeadLetter` are the Postgres history for US-129. Redis holds the BullMQ message. These rows are the record that survives a Redis flush. `0005_jobs.sql` creates them. US-130 progress fan-out is Redis pub/sub and does not add a table.
 
 ## Sprint 1 and Sprint 2 traceability
 
@@ -220,7 +231,7 @@ erDiagram
 | US-126 Technical metadata             | `media_assets` inspection columns in `0003_media_probe_metadata.sql`. Duration is integer microseconds after a successful probe. |
 | US-127 Validation                     | `MediaAsset.validationState` and `rejection`.                                                                                    |
 | US-128 Proxies and thumbnails         | `DerivedAsset` storage key and parameter signature.                                                                              |
-| US-129 Job queue and history          | `Job` and `JobAttempt`.                                                                                                          |
+| US-129 Job queue and history          | `jobs`, `job_attempts`, and `job_dead_letters` in `0005_jobs.sql`. Redis is the broker, not the record.                          |
 | US-130 Live progress                  | No table. Redis pub/sub.                                                                                                         |
 | US-131 Progress UI                    | Reuses `Job` and `JobAttempt`.                                                                                                   |
 
@@ -254,4 +265,4 @@ erDiagram
 | `DerivedAssetRepository` | `packages/domain/src/modules/media/`    | US-128        |
 | `JobRepository`          | `packages/domain/src/modules/jobs/`     | US-129        |
 
-`IJobQueue` remains the queue port from the ports catalogue. It is not the Job repository. `IObjectStorage` remains the byte port. Neither is implemented here.
+`IJobQueue` remains the queue port from the ports catalogue. It is not the Job repository. US-129 implements it as `BullMqJobQueue` in the media worker and as a Redis envelope reader in the AI worker. `IObjectStorage` remains the byte port.
