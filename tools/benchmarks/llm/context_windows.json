@@ -1,5 +1,17 @@
 {
-  "accessed": null,
-  "note": "Add a model only by copying its context-window limit from that provider's model documentation. Each row needs limit_tokens, source_url, and accessed (YYYY-MM-DD). Do not invent a limit. Models without a valid row stay UNVERIFIED.",
-  "models": {}
+  "accessed": "2026-10-02",
+  "note": "Limits below were copied from the cited pages. A model without a valid row stays UNVERIFIED. Do not invent a limit.",
+  "models": {
+    "gpt-5.6": {
+      "limit_tokens": 1050000,
+      "source_url": "https://developers.openai.com/api/docs/models/gpt-5.6-sol",
+      "accessed": "2026-10-02"
+    },
+    "deepseek-flash": {
+      "limit_tokens": 1000000,
+      "source_url": "https://api-docs.deepseek.com/quick_start/pricing",
+      "accessed": "2026-10-02",
+      "note": "The pricing page states a 1M context length. This row records that figure as 1000000 decimal tokens."
+    }
+  }
 }

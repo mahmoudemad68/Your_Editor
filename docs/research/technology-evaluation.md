@@ -265,9 +265,9 @@ The owner decided EditAgent will call hosted LLM APIs with user-provided keys. T
 
 ### Method
 
-`tools/benchmarks/llm/` defines ten scripted edits over mock tools `trim`, `add_caption`, and `reframe`. Schema validity and semantic correctness are scored separately. A call can match the JSON Schema and still be the wrong edit. The synthetic transcript is 1,500 generated words standing in for 600 seconds of speech. It is not a person's recording.
+`tools/benchmarks/llm/` defines ten primary scripted edits that expect a tool call, plus two abstention guardrails, over mock tools `trim`, `add_caption`, and `reframe`. Schema-valid tool calls, semantic correctness, and correct abstention are separate measurements. Abstentions do not count toward the CP1 numerator. A call can match the JSON Schema and still be the wrong edit. The synthetic transcript is 1,500 generated words standing in for 600 seconds of speech. It is not a person's recording.
 
-Dry-run is the default. A live call needs `--live`, the provider environment variable, a dated positive price row in `pricing.json`, and a finite non-negative `LLM_BENCHMARK_SPEND_CAP_USD` (default 1 USD). Before each request the runner reserves a conservative local estimate that includes the tool definitions and an 800-token output cap, and it skips the request when that reservation would exceed the remaining local cap. Failed calls and responses without usable token counts keep the reservation. This is not a provider-side invoice ceiling: the provider can still bill differently from the local estimate. Missing keys are `PENDING_CREDENTIALS`. Missing or invalid prices are `BLOCKED_COST`. Context-window fit stays `UNVERIFIED` until the response reports input tokens and `context_windows.json` has a documented limit for that exact model. A successful request does not by itself prove the transcript fit. This repository run did not make a paid call.
+Dry-run is the default. A live call needs `--live`, the provider environment variable, a dated positive price row in `pricing.json`, and a finite non-negative `LLM_BENCHMARK_SPEND_CAP_USD` (default 1 USD). Before each request the runner reserves a conservative local estimate that includes the tool definitions and an 800-token output cap, and it skips the request when that reservation would exceed the remaining local cap. Failed calls, responses without usable token counts, and a nonempty request that reports zero input tokens together with zero output tokens keep the reservation. The zero-usage case stops later requests. This is not a provider-side invoice ceiling: the provider can still bill differently from the local estimate. Missing keys are `PENDING_CREDENTIALS`. Missing or invalid prices are `BLOCKED_COST`. Context-window fit stays `UNVERIFIED` until the response reports input tokens and `context_windows.json` has a documented limit for that exact model. A successful request does not by itself prove the transcript fit. This repository run did not make a paid call.
 
 Documentation accessed 2026-10-02:
 
@@ -285,9 +285,11 @@ Observed measurements: **PENDING**.
 
 Default provider and fallback provider: **PENDING**.
 
-Schema-valid tool calls, correct abstentions, semantic correctness, latency, tokens, cost, and context-window fit: **PENDING** for every provider. Empty calls are not counted as schema-valid tool calls. A correct abstention counts only for the two scripted requests that expect no call. The CP1 fraction uses all ten scripted requests as the denominator.
+Schema-valid tool calls, correct abstentions, semantic correctness, latency, tokens, cost, and context-window fit: **PENDING** for every provider. The CP1 numerator counts schema-valid tool calls on the ten primary requests only. The threshold stays 9 of 10. The two abstention guardrails are separate and do not fill that numerator.
 
-Formal CP1 LLM status: **NOT_VERIFIED**. The threshold is at least 9 of 10 schema-valid calls on a model that was actually called. Mocks and dry-runs do not meet it. A comparison needs live results from at least two hosted providers.
+Formal CP1 LLM status: **NOT_VERIFIED**. A provider report can record PASS or FAIL only after a real live run sends all ten primary requests. Mocks, dry-runs, and this repository checkout do not do that. A comparison needs live results from at least two hosted providers. Live execution is **LIVE_READY_PENDING_AUTHORIZATION**. No paid call was made.
+
+Prepared comparison, not yet run: OpenAI `gpt-5.6` (Chat Completions function-calling guide; the model card says this id routes to GPT-5.6 Sol) and DeepSeek `deepseek-flash` (tool calls on Chat Completions). Prices and context limits copied on 2026-10-02 are in `pricing.json` and `context_windows.json`. GPT-6 Astra remains unsupported on this Chat Completions adapter.
 
 ### Reproduction
 

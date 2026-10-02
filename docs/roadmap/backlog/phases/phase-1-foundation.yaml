@@ -164,9 +164,9 @@ epics:
             lane: AI
             depends_on: []
             tasks:
-              - Define 10 scripted editing requests with a mock tool set (trim, add_caption, reframe)
+              - Define 10 primary scripted editing requests that expect tool calls, plus separate abstention guardrails, with a mock tool set (trim, add_caption, reframe)
               - "Run them only through hosted LLM APIs with user-provided keys for OpenAI, Anthropic Claude, Google Gemini, Alibaba Qwen, and DeepSeek. Do not use Ollama, vLLM, Kaggle, or other local serving. Register an adapter to add a hosted provider."
-              - Measure schema validity separately from semantic correctness, plus latency, cost per run, and context-window fit for a 10-minute transcript
+              - Measure schema-valid tool calls separately from semantic correctness and from abstention guardrails, plus latency, cost per run, and context-window fit for a 10-minute transcript
               - +doc Record results, costs and the default/fallback provider decision
             acceptance:
               - "Each hosted provider that returns a live run has a schema-valid rate, a separate semantic-correctness rate, median latency, and estimated cost. Providers without a live run stay pending, and a choice requires at least two hosted providers."

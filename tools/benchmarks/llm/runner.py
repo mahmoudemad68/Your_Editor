@@ -145,9 +145,57 @@ def estimate_cost_usd(
 def load_requests(path: Path) -> list[dict[str, Any]]:
     document = json.loads(path.read_text(encoding="utf-8"))
     requests = document["requests"]
-    if not isinstance(requests, list) or len(requests) != 10:
-        raise ValueError("the benchmark dataset must contain 10 requests")
+    if not isinstance(requests, list) or len(requests) != CP1_DENOMINATOR:
+        raise ValueError("the primary benchmark dataset must contain 10 requests")
+    for row in requests:
+        if row.get("expected", {}).get("mode") != "calls":
+            raise ValueError("primary requests must expect tool calls")
     return requests
+
+
+def load_guardrails(path: Path) -> list[dict[str, Any]]:
+    document = json.loads(path.read_text(encoding="utf-8"))
+    requests = document["requests"]
+    if not isinstance(requests, list) or len(requests) != 2:
+        raise ValueError("the abstention guardrails must contain 2 requests")
+    for row in requests:
+        if row.get("expected", {}).get("mode") != "no_calls":
+            raise ValueError("guardrail requests must expect no tool calls")
+    return requests
+
+
+def load_benchmark(root: Path) -> list[dict[str, Any]]:
+    """Ten primary tool-call requests, then the abstention guardrails."""
+
+    primary = load_requests(root / "requests.json")
+    guardrails = load_guardrails(root / "guardrails.json")
+    cases: list[dict[str, Any]] = []
+    for row in primary:
+        stamped = dict(row)
+        stamped["suite"] = "primary"
+        cases.append(stamped)
+    for row in guardrails:
+        stamped = dict(row)
+        stamped["suite"] = "guardrail"
+        cases.append(stamped)
+    return cases
+
+
+SENT_STATUSES = frozenset({"SUCCESS", "FAILED", "BUDGET_UNSAFE"})
+
+
+def cp1_formal_status(
+    *,
+    live: bool,
+    real_transport: bool,
+    all_primary_sent: bool,
+    observed_pass: bool | None,
+) -> str:
+    """PASS or FAIL only for a real live measurement of all ten primary requests."""
+
+    if live and real_transport and all_primary_sent and observed_pass is not None:
+        return "PASS" if observed_pass else "FAIL"
+    return "NOT_VERIFIED"
 
 
 def prompt_for(case: dict[str, Any], transcript: str) -> str:
@@ -602,6 +650,35 @@ def run_case(
             ),
             known,
         )
+    if usage["input_tokens"] == 0 and usage["output_tokens"] == 0 and prompt.strip():
+        return _finish(
+            _accounted(
+                provider,
+                model,
+                case,
+                "BUDGET_UNSAFE",
+                (
+                    "provider reported zero input tokens and zero output tokens "
+                    "for a nonempty request, so the reservation is kept"
+                ),
+                calls=calls,
+                scores=score_case(case, calls),
+                thinking=thinking,
+                commit_sha=commit_sha,
+                latency=latency,
+                reserved=reserved,
+                charged=reserved,
+                running=spent_held,
+                stop=True,
+                usage_status="untrusted_zero",
+                input_tokens=None,
+                output_tokens=None,
+                limits=limits,
+                sent=True,
+                processed=False,
+            ),
+            known,
+        )
     observed = estimate_cost_usd(rates, usage["billed_input"], usage["billed_output"])
     if observed is None:
         return _finish(
@@ -820,11 +897,21 @@ def stopped_record(
     )
 
 
+def _primary_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [record for record in records if record.get("suite", "primary") == "primary"]
+
+
+def _guardrail_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [record for record in records if record.get("suite") == "guardrail"]
+
+
 def summarize(records: list[dict[str, Any]]) -> dict[str, Any]:
-    live = [record for record in records if record["status"] == "SUCCESS"]
+    primary = _primary_records(records)
+    guardrails = _guardrail_records(records)
+    primary_success = [record for record in primary if record["status"] == "SUCCESS"]
     latencies = sorted(
         float(record["latency_seconds"])
-        for record in live
+        for record in primary_success
         if isinstance(record.get("latency_seconds"), (int, float))
         and math.isfinite(float(record["latency_seconds"]))
     )
@@ -837,36 +924,94 @@ def summarize(records: list[dict[str, Any]]) -> dict[str, Any]:
             else (latencies[middle - 1] + latencies[middle]) / 2
         )
     tool_calls = sum(
-        1 for record in live if record.get("schema_valid_tool_call") is True
+        1 for record in primary_success if record.get("schema_valid_tool_call") is True
     )
-    abstentions = sum(1 for record in live if record.get("correct_abstention") is True)
-    valid = sum(1 for record in live if record.get("valid_outcome") is True)
-    semantic_hits = sum(1 for record in live if record.get("semantic_correct") is True)
-    complete = len(records) == CP1_DENOMINATOR and len(live) == CP1_DENOMINATOR
-    observed = None
-    if complete:
-        observed = valid >= CP1_THRESHOLD
-    measured = bool(live)
+    semantic_hits = sum(
+        1 for record in primary_success if record.get("semantic_correct") is True
+    )
+    abstentions = sum(
+        1
+        for record in guardrails
+        if record["status"] == "SUCCESS" and record.get("correct_abstention") is True
+    )
+    guardrail_semantic = sum(
+        1
+        for record in guardrails
+        if record["status"] == "SUCCESS" and record.get("semantic_correct") is True
+    )
+    all_sent = len(primary) == CP1_DENOMINATOR and all(
+        record["status"] in SENT_STATUSES for record in primary
+    )
+    observed = tool_calls >= CP1_THRESHOLD if all_sent else None
+    measured = bool(primary_success)
     return {
         "scripted_requests": CP1_DENOMINATOR,
-        "live_requests": len(live),
-        "schema_valid_tool_calls": tool_calls if measured else None,
-        "correct_abstentions": abstentions if measured else None,
-        "valid_outcomes": valid if measured else None,
-        "semantic_correct": semantic_hits if measured else None,
+        "live_requests": len(primary_success),
+        "schema_valid_tool_calls": tool_calls if all_sent or measured else None,
+        "correct_abstentions": abstentions,
+        "semantic_correct": semantic_hits if all_sent or measured else None,
         "median_latency_seconds": median,
         "cp1_schema": {
-            "schema_valid_tool_calls": tool_calls if complete else None,
-            "correct_abstentions": abstentions if complete else None,
-            "valid_outcomes": valid if complete else None,
+            "schema_valid_tool_calls": tool_calls if all_sent else None,
             "denominator": CP1_DENOMINATOR,
             "threshold": CP1_THRESHOLD,
+            "counts_abstentions": False,
             "observed_pass": observed,
+        },
+        "guardrails": {
+            "requests": len(guardrails),
+            "correct_abstentions": abstentions if guardrails else None,
+            "semantic_correct": guardrail_semantic if guardrails else None,
         },
         "observed_cp1_schema": observed,
         "formal_cp1": "NOT_VERIFIED",
         "measurements": "PENDING" if not measured else "UNREVIEWED",
     }
+
+
+def case_reservation_usd(
+    provider: str,
+    model: str,
+    case: dict[str, Any],
+    transcript: str,
+    pricing: dict[str, Any],
+    options: dict[str, Any],
+) -> float | None:
+    """Upper bound reserved before one live request. None when the price or bound is missing."""
+
+    if provider not in registry() or not model.strip():
+        return None
+    adapter = registry()[provider]
+    body = adapter.build_request(model, prompt_for(case, transcript), options)
+    if (
+        body.get("unsupported")
+        or body.get("blocked")
+        or not adapter.output_is_bounded(body)
+    ):
+        return None
+    rates = priced_rates(pricing, provider, model)
+    if rates is None:
+        return None
+    return estimate_cost_usd(rates, estimate_request_tokens(body), MAX_OUTPUT_TOKENS)
+
+
+def maximum_local_reservation_usd(
+    provider: str,
+    model: str,
+    cases: list[dict[str, Any]],
+    transcript: str,
+    pricing: dict[str, Any],
+    options: dict[str, Any],
+) -> float | None:
+    total = 0.0
+    for case in cases:
+        amount = case_reservation_usd(
+            provider, model, case, transcript, pricing, options
+        )
+        if amount is None:
+            return None
+        total += amount
+    return total
 
 
 def log_line(message: str, secrets: list[str]) -> None:
@@ -951,6 +1096,7 @@ def execute(
             spent = float(spent_value)
         if record.get("stop_subsequent") is True:
             stop = True
+        record["suite"] = str(case.get("suite", "primary"))
         records.append(record)
         log_line(
             json.dumps(
@@ -965,6 +1111,16 @@ def execute(
             secrets,
         )
     adapter = registry()[provider]
+    summary = summarize(records)
+    summary["formal_cp1"] = cp1_formal_status(
+        live=live,
+        real_transport=transport is None,
+        all_primary_sent=len(_primary_records(records)) == CP1_DENOMINATOR
+        and all(
+            record["status"] in SENT_STATUSES for record in _primary_records(records)
+        ),
+        observed_pass=summary["observed_cp1_schema"],
+    )
     report = {
         "commit_sha": commit_sha,
         "provider": provider,
@@ -974,7 +1130,10 @@ def execute(
         "spend_cap_note": (
             "Local reservation before send. Not a provider-side invoice ceiling."
         ),
-        "summary": summarize(records),
+        "maximum_local_reservation_usd": maximum_local_reservation_usd(
+            provider, model, cases, transcript, pricing, options
+        ),
+        "summary": summary,
         "documentation": adapter.documentation(),
         "records": records,
     }
@@ -1002,7 +1161,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--spend-cap-usd", type=float, default=None)
     args = parser.parse_args(argv)
     root = Path(__file__).resolve().parent
-    cases = load_requests(root / "requests.json")
+    cases = load_benchmark(root)
     pricing = load_pricing(root / "pricing.json")
     limits = load_context_limits(root / "context_windows.json")
     transcript = load_transcript()

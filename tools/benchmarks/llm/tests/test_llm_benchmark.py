@@ -48,10 +48,17 @@ def cases() -> list[dict]:
     return json.loads((ROOT / "requests.json").read_text(encoding="utf-8"))["requests"]
 
 
+def guardrail_cases() -> list[dict]:
+    return json.loads((ROOT / "guardrails.json").read_text(encoding="utf-8"))[
+        "requests"
+    ]
+
+
 class DatasetTests(unittest.TestCase):
-    def test_ten_requests_cover_the_required_situations(self) -> None:
-        rows = cases()
+    def test_ten_primary_requests_expect_tool_calls(self) -> None:
+        rows = runner.load_requests(ROOT / "requests.json")
         self.assertEqual(len(rows), 10)
+        self.assertTrue(all(row["expected"]["mode"] == "calls" for row in rows))
         tags = {tag for row in rows for tag in row["tags"]}
         for required in (
             "valid_trim",
@@ -59,14 +66,23 @@ class DatasetTests(unittest.TestCase):
             "reframe",
             "multi_step",
             "multi_tool",
-            "ambiguous",
-            "out_of_bounds",
             "position",
             "timing",
         ):
             self.assertIn(required, tags)
         multi = [row for row in rows if len(row["expected"]["calls"]) > 1]
         self.assertGreaterEqual(len(multi), 1)
+
+    def test_abstention_guardrails_are_outside_the_primary_ten(self) -> None:
+        rows = runner.load_guardrails(ROOT / "guardrails.json")
+        self.assertEqual(
+            {row["id"] for row in rows}, {"ambiguous-request", "out-of-bounds-trim"}
+        )
+        self.assertTrue(all(row["expected"]["mode"] == "no_calls" for row in rows))
+        benchmark = runner.load_benchmark(ROOT)
+        self.assertEqual(len(benchmark), 12)
+        self.assertEqual(sum(row["suite"] == "primary" for row in benchmark), 10)
+        self.assertEqual(sum(row["suite"] == "guardrail" for row in benchmark), 2)
 
     def test_transcript_is_synthetic_and_ten_minutes(self) -> None:
         text = transcript.build_transcript()
@@ -77,7 +93,9 @@ class DatasetTests(unittest.TestCase):
 
 class ScoringTests(unittest.TestCase):
     def test_schema_valid_wrong_action_is_not_semantic_success(self) -> None:
-        case = next(row for row in cases() if row["id"] == "out-of-bounds-trim")
+        case = next(
+            row for row in guardrail_cases() if row["id"] == "out-of-bounds-trim"
+        )
         calls = [
             {"name": "trim", "arguments": {"start_seconds": 700, "end_seconds": 800}}
         ]
@@ -96,7 +114,7 @@ class ScoringTests(unittest.TestCase):
         self.assertFalse(scoring.schema_valid([], "no_calls"))
         expecting_calls = next(row for row in cases() if row["id"] == "trim-keep-range")
         expecting_none = next(
-            row for row in cases() if row["id"] == "ambiguous-request"
+            row for row in guardrail_cases() if row["id"] == "ambiguous-request"
         )
         missed = scoring.score_case(expecting_calls, [])
         abstained = scoring.score_case(expecting_none, [])
@@ -413,34 +431,74 @@ def _dated_price(
 
 
 class Cp1ScoringTests(unittest.TestCase):
-    def test_no_calls_score_two_of_ten_and_do_not_pass(self) -> None:
-        records = []
-        for case in cases():
-            scored = scoring.score_case(case, [])
-            records.append(
-                {
-                    "status": "SUCCESS",
-                    "schema_valid_tool_call": scored["schema_valid_tool_call"],
-                    "correct_abstention": scored["correct_abstention"],
-                    "valid_outcome": scored["valid_outcome"],
-                    "semantic_correct": scored["semantic_correct"],
-                    "latency_seconds": 0.01,
-                }
-            )
+    def _record(self, case: dict, calls: list, status: str = "SUCCESS") -> dict:
+        scored = scoring.score_case(case, calls)
+        return {
+            "status": status,
+            "suite": case.get("suite", "primary"),
+            "schema_valid_tool_call": scored["schema_valid_tool_call"],
+            "correct_abstention": scored["correct_abstention"],
+            "valid_outcome": scored["valid_outcome"],
+            "semantic_correct": scored["semantic_correct"],
+            "latency_seconds": 0.01,
+        }
+
+    def test_empty_primary_calls_score_zero_of_ten(self) -> None:
+        records = [self._record(case, []) for case in cases()]
+        for case in guardrail_cases():
+            stamped = dict(case)
+            stamped["suite"] = "guardrail"
+            records.append(self._record(stamped, []))
         summary = runner.summarize(records)
         self.assertEqual(summary["schema_valid_tool_calls"], 0)
         self.assertEqual(summary["correct_abstentions"], 2)
-        self.assertEqual(summary["valid_outcomes"], 2)
-        self.assertEqual(summary["semantic_correct"], 2)
+        self.assertEqual(summary["cp1_schema"]["schema_valid_tool_calls"], 0)
         self.assertEqual(summary["cp1_schema"]["denominator"], 10)
-        self.assertEqual(summary["cp1_schema"]["valid_outcomes"], 2)
+        self.assertEqual(summary["cp1_schema"]["threshold"], 9)
+        self.assertFalse(summary["cp1_schema"]["counts_abstentions"])
         self.assertIs(summary["observed_cp1_schema"], False)
+        self.assertEqual(summary["formal_cp1"], "NOT_VERIFIED")
+
+    def test_guardrail_abstentions_do_not_raise_eight_primary_hits_to_nine(
+        self,
+    ) -> None:
+        records = []
+        for index, case in enumerate(cases()):
+            calls = case["expected"]["calls"] if index < 8 else []
+            records.append(self._record(case, calls))
+        for case in guardrail_cases():
+            stamped = dict(case)
+            stamped["suite"] = "guardrail"
+            records.append(self._record(stamped, []))
+        summary = runner.summarize(records)
+        self.assertEqual(summary["schema_valid_tool_calls"], 8)
+        self.assertEqual(summary["correct_abstentions"], 2)
+        self.assertIs(summary["observed_cp1_schema"], False)
+
+    def test_failed_primary_requests_are_not_schema_valid_hits(self) -> None:
+        records = []
+        for index, case in enumerate(cases()):
+            status = "FAILED" if index == 0 else "SUCCESS"
+            records.append(self._record(case, case["expected"]["calls"], status))
+        summary = runner.summarize(records)
+        self.assertEqual(summary["schema_valid_tool_calls"], 9)
+        self.assertEqual(summary["cp1_schema"]["schema_valid_tool_calls"], 9)
+        self.assertIs(summary["observed_cp1_schema"], True)
         self.assertEqual(summary["formal_cp1"], "NOT_VERIFIED")
 
     def test_mocked_transport_with_no_calls_does_not_pass_cp1(self) -> None:
         def transport(_url: str, _headers: dict, _body: dict) -> dict:
             return _empty_openai({"prompt_tokens": 20, "completion_tokens": 1})
 
+        benchmark = []
+        for case in cases():
+            stamped = dict(case)
+            stamped["suite"] = "primary"
+            benchmark.append(stamped)
+        for case in guardrail_cases():
+            stamped = dict(case)
+            stamped["suite"] = "guardrail"
+            benchmark.append(stamped)
         report = runner.execute(
             provider="openai",
             model="example-model",
@@ -448,7 +506,7 @@ class Cp1ScoringTests(unittest.TestCase):
             commit_sha="abc",
             output=Path("/tmp/llm-cp1-empty"),
             spend_cap_usd=1,
-            cases=cases(),
+            cases=benchmark,
             pricing=_dated_price(),
             transcript="short transcript",
             api_key="sk-mock-openai",
@@ -456,17 +514,54 @@ class Cp1ScoringTests(unittest.TestCase):
             transport=transport,
         )
         summary = report["summary"]
-        self.assertEqual(summary["valid_outcomes"], 2)
         self.assertEqual(summary["schema_valid_tool_calls"], 0)
         self.assertEqual(summary["correct_abstentions"], 2)
         self.assertEqual(summary["cp1_schema"]["denominator"], 10)
+        self.assertFalse(summary["cp1_schema"]["counts_abstentions"])
         self.assertIs(summary["observed_cp1_schema"], False)
         self.assertEqual(summary["formal_cp1"], "NOT_VERIFIED")
-        self.assertTrue(
-            all(
-                record["schema_valid_tool_call"] is False
-                for record in report["records"]
-            )
+        self.assertEqual(
+            runner.cp1_formal_status(
+                live=True,
+                real_transport=False,
+                all_primary_sent=True,
+                observed_pass=True,
+            ),
+            "NOT_VERIFIED",
+        )
+        self.assertEqual(
+            runner.cp1_formal_status(
+                live=True,
+                real_transport=True,
+                all_primary_sent=True,
+                observed_pass=True,
+            ),
+            "PASS",
+        )
+        self.assertEqual(
+            runner.cp1_formal_status(
+                live=True,
+                real_transport=True,
+                all_primary_sent=True,
+                observed_pass=False,
+            ),
+            "FAIL",
+        )
+
+    def test_skipped_primary_request_does_not_count_as_sent(self) -> None:
+        records = [self._record(case, case["expected"]["calls"]) for case in cases()]
+        records[0]["status"] = "SKIPPED"
+        records[0]["schema_valid_tool_call"] = False
+        summary = runner.summarize(records)
+        self.assertIsNone(summary["observed_cp1_schema"])
+        self.assertEqual(
+            runner.cp1_formal_status(
+                live=True,
+                real_transport=True,
+                all_primary_sent=False,
+                observed_pass=None,
+            ),
+            "NOT_VERIFIED",
         )
 
 
@@ -613,6 +708,68 @@ class BudgetSafetyTests(SafetyTests):
             result["budget_charged_usd"], result["budget_reserved_usd"]
         )
         self.assertGreater(result["budget_charged_usd"], treated_as_free_output or 0)
+
+    def test_zero_input_and_output_keeps_reservation_and_stops(self) -> None:
+        called = {"n": 0}
+
+        def transport(_url: str, _headers: dict, _body: dict) -> dict:
+            called["n"] += 1
+            if called["n"] > 1:
+                raise AssertionError("subsequent request was sent")
+            return _empty_openai({"prompt_tokens": 0, "completion_tokens": 0})
+
+        second = dict(self.case)
+        second["id"] = "second"
+        report = runner.execute(
+            provider="openai",
+            model="example-model",
+            live=True,
+            commit_sha="abc",
+            output=Path("/tmp/llm-zero-usage"),
+            spend_cap_usd=100,
+            cases=[self.case, second],
+            pricing=self.pricing,
+            transcript="short",
+            api_key="sk-secret",
+            options={},
+            transport=transport,
+        )
+        first = report["records"][0]
+        self.assertEqual(called["n"], 1)
+        self.assertEqual(first["status"], "BUDGET_UNSAFE")
+        self.assertEqual(first["usage_status"], "untrusted_zero")
+        self.assertIn("zero input tokens and zero output tokens", first["reason"])
+        self.assertGreater(first["budget_reserved_usd"], 0)
+        self.assertAlmostEqual(
+            first["budget_charged_usd"], first["budget_reserved_usd"]
+        )
+        self.assertGreaterEqual(
+            first["running_spent_usd"], first["budget_reserved_usd"]
+        )
+        self.assertEqual(report["records"][1]["status"], "BLOCKED_BUDGET")
+
+    def test_zero_output_with_reported_input_still_reconciles(self) -> None:
+        def transport(_url: str, _headers: dict, _body: dict) -> dict:
+            return _empty_openai({"prompt_tokens": 12, "completion_tokens": 0})
+
+        result = runner.run_case(
+            "openai",
+            "example-model",
+            self.case,
+            "short",
+            True,
+            "sk-secret",
+            {},
+            self.pricing,
+            0,
+            100,
+            "abc",
+            transport=transport,
+        )
+        self.assertEqual(result["status"], "SUCCESS")
+        self.assertEqual(result["usage_status"], "reported")
+        self.assertFalse(result["stop_subsequent"])
+        self.assertLess(result["budget_charged_usd"], result["budget_reserved_usd"])
 
     def test_failed_request_keeps_its_reservation(self) -> None:
         body = registry()["openai"].build_request(

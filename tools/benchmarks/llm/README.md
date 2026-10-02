@@ -20,11 +20,11 @@ Thinking mode is not one shared boolean. OpenAI can send `reasoning_effort` only
 
 ## Scoring
 
-`requests.json` has ten scripted requests. Eight expect a tool call. Two (`ambiguous-request` and `out-of-bounds-trim`) expect no call.
+`requests.json` has ten primary requests. Every one expects a tool call. `guardrails.json` keeps two abstention scenarios, `ambiguous-request` and `out-of-bounds-trim`. Those two are not part of the CP1 ten.
 
-Schema-valid tool calls and semantic correctness stay separate. A call can match the JSON Schema and still be the wrong edit.
+Schema-valid tool calls, semantic correctness, and correct abstention stay separate. A call can match the JSON Schema and still be the wrong edit.
 
-An empty tool-call list is not a schema-valid tool call. It is a correct abstention only when that request's expected mode is `no_calls`. The CP1 fraction is `valid_outcomes / 10`. A valid outcome is either a schema-valid tool call or a correct abstention. The threshold is 9. Correct abstentions are not renamed as tool calls. `formal_cp1` stays `NOT_VERIFIED` for mocks and for this repository run.
+An empty tool-call list is not a schema-valid tool call. It is a correct abstention only when that request's expected mode is `no_calls`. The CP1 numerator counts schema-valid tool calls on the ten primary requests. The denominator is 10. The threshold is 9. Abstentions do not add to the numerator. Failed, skipped, and missing requests are not successes. `formal_cp1` stays `NOT_VERIFIED` unless a real live run, not a mock transport, actually sends all ten primary requests. This repository checkout does not do that.
 
 `fixtures/transcript_10min.txt` is 1,500 synthetic words standing in for 600 seconds. It is not customer media. Including that transcript in the prompt, receiving a successful response, and verifying context-window capacity are three different facts. The report uses `FITS` or `EXCEEDS` only when the provider reports input tokens and `context_windows.json` has a documented limit for that exact model id, with `source_url` and `accessed`. Otherwise the status is `UNVERIFIED` and the reason says which fact was missing. Do not invent a limit.
 
@@ -41,7 +41,7 @@ Before a live request is sent, the runner:
 3. Adds the 800 output tokens that the provider request itself caps, using that provider's documented field.
 4. Reserves `input_estimate * input_price + 800 * output_price` before the network call.
 
-If the reservation would exceed the remaining local cap, the request is `SKIPPED` and not sent. A failed, timed-out, or unreadable response keeps the reservation. Missing output usage is not treated as zero output; the reservation stays. Negative, non-integer, or non-finite token counts are rejected, the reservation stays, and later requests stop. When both input and output counts are usable, the ledger replaces the reservation with the priced usage, including Gemini `total_thought_tokens` when that field is present. The accumulated local cost is not allowed to go below zero. If it would, the reservation stays and later requests stop.
+If the reservation would exceed the remaining local cap, the request is `SKIPPED` and not sent. A failed, timed-out, or unreadable response keeps the reservation. Missing output usage is not treated as zero output; the reservation stays. A nonempty request that reports zero input tokens and zero output tokens is an untrusted usage anomaly: the reservation stays, the record says so, and later requests stop. Negative, non-integer, or non-finite token counts are rejected the same way. When both counts are usable and not that zero pair, the ledger replaces the reservation with the priced usage, including Gemini `total_thought_tokens` when that field is present. The accumulated local cost is not allowed to go below zero. If it would, the reservation stays and later requests stop.
 
 Gemini usage is read from `total_input_tokens` and `total_output_tokens`. The older `input_tokens` and `output_tokens` names on an Interactions payload are not used.
 
@@ -69,16 +69,57 @@ python3 tools/benchmarks/llm/runner.py \
   --output /tmp/llm-out
 ```
 
-## How the owner runs OpenAI first
+## Prepared live comparison
 
-1. Choose a model id from the current OpenAI function-calling guide and export it as `OPENAI_MODEL`. Do not rely on a name baked into this repo.
-2. Add a dated price to `pricing.json` under the key `openai:<that model>` with finite positive `input_per_million_usd` and `output_per_million_usd`. Copy the numbers from OpenAI's pricing page and set `accessed` to that day.
-3. Optionally add that same model id to `context_windows.json` with `limit_tokens`, `source_url`, and `accessed` copied from the model card. Leave it out if you do not have the documented limit.
-4. Export `OPENAI_API_KEY` in the shell. Do not put it in a file in this repository.
-5. Export `LLM_BENCHMARK_SPEND_CAP_USD` if you want a local cap other than the default of 1. Use a finite non-negative number.
-6. Run the command above with `--live`.
+Status: **LIVE_READY_PENDING_AUTHORIZATION**. Do not put API keys in the repository, the pull request, logs, or an agent transcript. Export them only in the shell that will run the command.
 
-Without a valid price row, the runner does not call the provider.
+The first pair is OpenAI and DeepSeek. Both match this adapter's Chat Completions tool calls. Prices and context limits copied on 2026-10-02:
+
+| Provider | Model id                                                                                           | Input / 1M | Output / 1M | Context tokens | Source                                                                                                                       |
+| -------- | -------------------------------------------------------------------------------------------------- | ---------- | ----------- | -------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| openai   | `gpt-5.6` (the function-calling guide's Chat Completions example; the model card routes it to Sol) | 4          | 20          | 1050000        | https://developers.openai.com/api/docs/guides/function-calling and https://developers.openai.com/api/docs/models/gpt-5.6-sol |
+| deepseek | `deepseek-flash`                                                                                   | 0.3        | 1.2         | 1000000        | https://api-docs.deepseek.com/quick_start/pricing and https://api-docs.deepseek.com/guides/tool_calls                        |
+
+DeepSeek's row is the peak cache-miss input rate and the peak output rate. Off-peak is half, and a cache hit is cheaper. OpenAI's row is the standard text rate on the Sol card. That card says the promotional price lasts at least through 2026-11-21. Prompts over 272000 input tokens are priced higher; this transcript is not in that band. GPT-6 Astra still requires the Responses API for tool calling and stays unsupported here. DeepSeek thinking mode defaults on; this adapter still sends `max_tokens` 800 and does not turn thinking off.
+
+See the reservation before any paid call. This dry-run does not use a key:
+
+```bash
+python3 tools/benchmarks/llm/runner.py \
+  --provider openai \
+  --model gpt-5.6 \
+  --commit-sha "$(git rev-parse HEAD)" \
+  --output /tmp/llm-out
+python3 tools/benchmarks/llm/runner.py \
+  --provider deepseek \
+  --model deepseek-flash \
+  --commit-sha "$(git rev-parse HEAD)" \
+  --output /tmp/llm-out
+```
+
+Read `maximum_local_reservation_usd` in each JSON file. The default local cap is 1 USD. If that sum is greater than the cap, raise `LLM_BENCHMARK_SPEND_CAP_USD` in the shell before `--live`, or the later requests are skipped and formal CP1 stays `NOT_VERIFIED`.
+
+When you authorize a live run, export the key in that shell and add `--live`:
+
+```bash
+export OPENAI_API_KEY
+python3 tools/benchmarks/llm/runner.py \
+  --provider openai \
+  --model gpt-5.6 \
+  --live \
+  --commit-sha "$(git rev-parse HEAD)" \
+  --output /tmp/llm-out
+
+export DEEPSEEK_API_KEY
+python3 tools/benchmarks/llm/runner.py \
+  --provider deepseek \
+  --model deepseek-flash \
+  --live \
+  --commit-sha "$(git rev-parse HEAD)" \
+  --output /tmp/llm-out
+```
+
+Each file reports schema-valid tool calls out of 10, semantic correctness, guardrail abstentions, median latency, tokens, reserved and charged cost, and context-window fit. Formal CP1 in that file becomes PASS or FAIL only when the live transport sent all ten primary requests. Two such files are the minimum comparison. They do not by themselves accept US-107.
 
 ## Adding another provider later
 
@@ -89,7 +130,7 @@ Set the matching variable and pass that provider id:
 - `DASHSCOPE_API_KEY` and an allowlisted `DASHSCOPE_BASE_URL`
 - `DEEPSEEK_API_KEY`
 
-Use the same `--live`, `--model`, price key (`anthropic:<model>`, and so on), and local spend cap. A provider that has not been run stays pending. A comparison that names a default needs live measurements from at least two hosted providers. Formal CP1 stays `NOT_VERIFIED` until those measurements are reviewed.
+Use the same `--live`, `--model`, price key (`anthropic:<model>`, and so on), and local spend cap. A provider that has not been run stays pending. A comparison that names a default needs live measurements from at least two hosted providers. The research record stays `NOT_VERIFIED` until a person reviews those live files.
 
 ## Results template
 
@@ -105,8 +146,7 @@ Use the same `--live`, `--model`, price key (`anthropic:<model>`, and so on), an
   "summary": {
     "live_requests": 0,
     "schema_valid_tool_calls": null,
-    "correct_abstentions": null,
-    "valid_outcomes": null,
+    "correct_abstentions": 0,
     "semantic_correct": null,
     "median_latency_seconds": null,
     "cp1_schema": {
@@ -122,4 +162,4 @@ Use the same `--live`, `--model`, price key (`anthropic:<model>`, and so on), an
 }
 ```
 
-A completed live file sets `measurements` to `UNREVIEWED`. That means the process recorded a run. It does not accept US-107 or move formal CP1 to pass. Each record includes status (`DRY_RUN`, `PENDING_CREDENTIALS`, `BLOCKED_COST`, `BLOCKED_BUDGET`, `BLOCKED`, `UNSUPPORTED`, `SKIPPED`, `FAILED`, `BUDGET_UNSAFE`, or `SUCCESS`), tool calls, latency, token counts, reserved and charged cost, schema-valid tool calls, correct abstention, semantic correctness, and context-window status.
+A completed live file sets `measurements` to `UNREVIEWED` until the real transport has sent every primary request. Only that case sets `formal_cp1` to PASS or FAIL. It still does not accept US-107. Each record includes `suite` (`primary` or `guardrail`), status (`DRY_RUN`, `PENDING_CREDENTIALS`, `BLOCKED_COST`, `BLOCKED_BUDGET`, `BLOCKED`, `UNSUPPORTED`, `SKIPPED`, `FAILED`, `BUDGET_UNSAFE`, or `SUCCESS`), tool calls, latency, token counts, reserved and charged cost, schema-valid tool calls, correct abstention, semantic correctness, and context-window status.

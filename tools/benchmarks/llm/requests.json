@@ -79,16 +79,32 @@
       }
     },
     {
-      "id": "ambiguous-request",
-      "tags": ["ambiguous"],
-      "prompt": "Make it better.",
-      "expected": { "mode": "no_calls", "calls": [] }
+      "id": "trim-last-20",
+      "tags": ["valid_trim"],
+      "prompt": "Keep the last 20 seconds of the 600 second source.",
+      "expected": {
+        "mode": "calls",
+        "calls": [{ "name": "trim", "arguments": { "start_seconds": 580, "end_seconds": 600 } }]
+      }
     },
     {
-      "id": "out-of-bounds-trim",
-      "tags": ["out_of_bounds"],
-      "prompt": "Trim the 600 second source from 700 seconds to 800 seconds.",
-      "expected": { "mode": "no_calls", "calls": [] }
+      "id": "caption-center",
+      "tags": ["caption", "position", "timing"],
+      "prompt": "Add the caption Note at the center from 8 seconds to 11 seconds.",
+      "expected": {
+        "mode": "calls",
+        "calls": [
+          {
+            "name": "add_caption",
+            "arguments": {
+              "text": "Note",
+              "start_seconds": 8,
+              "end_seconds": 11,
+              "position": "center"
+            }
+          }
+        ]
+      }
     },
     {
       "id": "reframe-and-caption",
