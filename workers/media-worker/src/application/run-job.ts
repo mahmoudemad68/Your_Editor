@@ -126,7 +126,17 @@ export async function runNextJob(
   if (!reserved) {
     return "idle";
   }
+  const controller = new AbortController();
+  deps.queue.whenLockLost(reserved.receipt, () => {
+    controller.abort(new LockLostError());
+  });
+  if (controller.signal.aborted) {
+    return "done";
+  }
   const current = await deps.jobs.findById(jobId(reserved.envelope.jobId));
+  if (controller.signal.aborted) {
+    return "done";
+  }
   if (!current) {
     await deps.queue.fail(reserved.receipt, {
       reason: "job row is missing",
@@ -139,7 +149,12 @@ export async function runNextJob(
     cancelRequested =
       current.status === "Cancelled" || (await deps.queue.isCancelRequested(current.id));
   } catch {
-    await deps.queue.release(reserved.receipt);
+    if (!controller.signal.aborted) {
+      await deps.queue.release(reserved.receipt);
+    }
+    return "done";
+  }
+  if (controller.signal.aborted) {
     return "done";
   }
   if (cancelRequested) {
@@ -150,15 +165,18 @@ export async function runNextJob(
     return "done";
   }
   if (current.status === "Completed" || current.status === "Failed") {
-    await deps.queue.complete(reserved.receipt);
+    await acknowledgeTerminal(deps, current, reserved.receipt, controller.signal);
     return "done";
   }
   const workable = await recoverAbandonedRun(deps, current, reserved.receipt, reserved.envelope);
-  if (workable == null) {
+  if (workable == null || controller.signal.aborted) {
     return "done";
   }
   const started = workable.start(deps.now());
   await deps.jobs.save(started);
+  if (controller.signal.aborted) {
+    return "done";
+  }
   const attempt = JobAttempt.start(
     deps.newAttemptId(),
     started.id,
@@ -166,17 +184,19 @@ export async function runNextJob(
     started.updatedAt,
   );
   await deps.jobs.appendAttempt(attempt);
-  const controller = new AbortController();
-  let stopped = false;
+  if (controller.signal.aborted) {
+    return "done";
+  }
+  let handlerFinished = false;
   const timeout = setTimeout(() => {
-    if (!stopped) {
+    if (!handlerFinished) {
       controller.abort(new JobTimeoutError());
     }
   }, reserved.envelope.timeoutMs);
   const cancelPoll = setInterval(() => {
     void Promise.resolve(deps.queue.isCancelRequested(started.id))
       .then((cancelled) => {
-        if (stopped || !cancelled) {
+        if (handlerFinished || !cancelled) {
           return;
         }
         controller.abort(new JobCancelledError());
@@ -186,11 +206,6 @@ export async function runNextJob(
         // and the rejection must not escape the interval callback.
       });
   }, CANCEL_POLL_MS);
-  deps.queue.whenLockLost(reserved.receipt, () => {
-    if (!stopped) {
-      controller.abort(new LockLostError());
-    }
-  });
   try {
     await deps.supervisor.run(reserved.envelope, handler, controller.signal);
     if (controller.signal.aborted) {
@@ -200,13 +215,34 @@ export async function runNextJob(
     await settleFailure(deps, started, attempt, reserved.receipt, reserved.envelope, error);
     return "done";
   } finally {
-    stopped = true;
+    handlerFinished = true;
     clearTimers(timeout, cancelPoll);
   }
-  const finishedAt = deps.now();
-  await deps.jobs.save(started.complete(finishedAt));
-  await deps.jobs.appendAttempt(attempt.finish("Completed", finishedAt, null));
-  await deps.queue.complete(reserved.receipt);
+  // The handler already succeeded. Ledger and acknowledgement failures stay
+  // here, so they are not recorded as another handler attempt. A crash or
+  // lock loss before this commit can run the handler again; external side
+  // effects are not exactly-once. A commit followed by a lost acknowledgement
+  // is reconciled by the next reservation.
+  const committed = await commitCompletion(deps, started, attempt, reserved.receipt, controller);
+  if (committed === "exhausted") {
+    try {
+      await deps.queue.release(reserved.receipt);
+    } catch {
+      // The reservation is already gone. Stall recovery can take the job.
+    }
+    return "done";
+  }
+  if (committed !== "committed" || controller.signal.aborted) {
+    return "done";
+  }
+  if (!(await deps.queue.ownsReservation(reserved.receipt))) {
+    return "done";
+  }
+  try {
+    await deps.queue.complete(reserved.receipt);
+  } catch {
+    // PostgreSQL already committed. The next worker acknowledges the row.
+  }
   return "done";
 }
 
@@ -414,6 +450,77 @@ async function settleFailure(
 
 function isCancelled(error: unknown): boolean {
   return error instanceof JobCancelledError;
+}
+
+const LEDGER_RETRY_MS = 25;
+const LEDGER_ATTEMPTS = 40;
+
+async function commitCompletion(
+  deps: RunJobDeps,
+  started: Job,
+  attempt: JobAttempt,
+  receipt: JobReceipt,
+  controller: AbortController,
+): Promise<"committed" | "lock-lost" | "exhausted"> {
+  const finishedAt = deps.now();
+  const completed = started.complete(finishedAt);
+  const closed = attempt.finish("Completed", finishedAt, null);
+  for (let tryNumber = 0; tryNumber < LEDGER_ATTEMPTS; tryNumber += 1) {
+    if (controller.signal.aborted) {
+      return "lock-lost";
+    }
+    if (!(await deps.queue.ownsReservation(receipt))) {
+      return "lock-lost";
+    }
+    try {
+      await deps.jobs.recordCompletion(completed, closed);
+      return "committed";
+    } catch {
+      if (controller.signal.aborted) {
+        return "lock-lost";
+      }
+      await delay(LEDGER_RETRY_MS);
+    }
+  }
+  return "exhausted";
+}
+
+async function acknowledgeTerminal(
+  deps: RunJobDeps,
+  job: Job,
+  receipt: JobReceipt,
+  signal: AbortSignal,
+): Promise<void> {
+  if (signal.aborted || !(await deps.queue.ownsReservation(receipt))) {
+    return;
+  }
+  await closeOpenAttempt(deps, job);
+  if (signal.aborted || !(await deps.queue.ownsReservation(receipt))) {
+    return;
+  }
+  try {
+    await deps.queue.complete(receipt);
+  } catch {
+    // The terminal row is already durable. The next reservation acknowledges it.
+  }
+}
+
+async function closeOpenAttempt(deps: RunJobDeps, job: Job): Promise<void> {
+  const attempts = await deps.jobs.listAttempts(job.id);
+  const open = [...attempts].reverse().find((attempt) => attempt.finishedAt == null);
+  if (!open) {
+    return;
+  }
+  const now = deps.now();
+  const at = now < open.startedAt ? open.startedAt : now;
+  const status = job.status === "Failed" ? "Failed" : "Completed";
+  await deps.jobs.appendAttempt(open.finish(status, at, job.failureReason));
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }
 
 function clearTimers(

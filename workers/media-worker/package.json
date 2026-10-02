@@ -7,7 +7,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node ../../tools/test/run-node-tests.mjs dist/application/describe.test.js dist/application/inspect-media.test.js dist/infrastructure/config.test.js dist/infrastructure/object-stager.test.js dist/infrastructure/job-queue.integration.test.js dist/infrastructure/job-queue-repairs.integration.test.js dist/infrastructure/job-python-consumer.integration.test.js dist/infrastructure/job-queue-round3.integration.test.js dist/infrastructure/job-queue-codex.integration.test.js",
+    "test": "node ../../tools/test/run-node-tests.mjs dist/application/describe.test.js dist/application/inspect-media.test.js dist/infrastructure/config.test.js dist/infrastructure/object-stager.test.js dist/infrastructure/job-queue.integration.test.js dist/infrastructure/job-queue-repairs.integration.test.js dist/infrastructure/job-python-consumer.integration.test.js dist/infrastructure/job-queue-round3.integration.test.js dist/infrastructure/job-queue-codex.integration.test.js dist/infrastructure/job-queue-f5-f11.integration.test.js",
     "start": "node dist/index.js",
     "inspect": "node dist/inspect.js"
   },

@@ -15,6 +15,11 @@ export interface JobRepository {
   findByIdempotencyKey(idempotencyKey: string): Promise<Job | null>;
   save(job: Job): Promise<void>;
   appendAttempt(attempt: JobAttempt): Promise<void>;
+  /**
+   * Commits a Completed job and its closed Completed attempt together.
+   * Either both rows persist or neither does.
+   */
+  recordCompletion(job: Job, attempt: JobAttempt): Promise<void>;
   listAttempts(id: JobId): Promise<readonly JobAttempt[]>;
   saveDeadLetter(letter: JobDeadLetter): Promise<void>;
   findDeadLetter(id: JobId): Promise<JobDeadLetter | null>;

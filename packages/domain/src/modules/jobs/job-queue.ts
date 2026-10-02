@@ -72,6 +72,11 @@ export interface JobQueue {
   isCancelRequested(jobId: string): Promise<boolean>;
   /** Fires if this process loses the reservation before complete or fail. */
   whenLockLost(receipt: JobReceipt, notify: () => void): void;
+  /**
+   * True only while this process still owns the reservation.
+   * A true result refreshes that lock.
+   */
+  ownsReservation(receipt: JobReceipt): Promise<boolean>;
   discardQueued(jobId: string, queueName: string): Promise<void>;
   publishProgress(jobId: string, event: JobProgressEvent): Promise<void>;
   close(): Promise<void>;

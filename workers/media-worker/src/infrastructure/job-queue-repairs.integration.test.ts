@@ -285,6 +285,7 @@ test("QA repairs hold on Redis and Postgres", { timeout: 60_000 }, async () => {
         }
       },
       appendAttempt: (attempt: JobAttempt) => jobs.appendAttempt(attempt),
+      recordCompletion: (job: Job, attempt: JobAttempt) => jobs.recordCompletion(job, attempt),
       listAttempts: (id: JobId) => jobs.listAttempts(id),
       saveDeadLetter: (letter: JobDeadLetter) => jobs.saveDeadLetter(letter),
       findDeadLetter: (id: JobId) => jobs.findDeadLetter(id),

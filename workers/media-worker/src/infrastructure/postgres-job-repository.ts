@@ -11,7 +11,11 @@ import {
   type JobId,
   type JobRepository,
 } from "@editagent/domain";
-import { type Pool } from "pg";
+import { type Pool, type PoolClient } from "pg";
+
+interface Sql {
+  query(text: string, values?: readonly unknown[]): Promise<unknown>;
+}
 
 interface JobRow {
   id: string;
@@ -58,59 +62,40 @@ export class PostgresJobRepository implements JobRepository {
   }
 
   async save(job: Job): Promise<void> {
-    const snapshot = job.toSnapshot();
-    const subjectId = subjectIdOf(job);
-    await this.pool.query(
-      `INSERT INTO jobs (
-         id, queue_name, job_type, idempotency_key, status, subject_kind, subject_id,
-         payload, timeout_ms, max_attempts, attempt_count, failure_reason, created_at, updated_at
-       ) VALUES (
-         $1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12, $13, $14
-       )
-       ON CONFLICT (id) DO UPDATE SET
-         status = EXCLUDED.status,
-         attempt_count = EXCLUDED.attempt_count,
-         failure_reason = EXCLUDED.failure_reason,
-         updated_at = EXCLUDED.updated_at`,
-      [
-        snapshot.id,
-        snapshot.queueName,
-        snapshot.jobType,
-        snapshot.idempotencyKey,
-        snapshot.status,
-        snapshot.subject.kind,
-        subjectId,
-        JSON.stringify(snapshot.payload ?? {}),
-        snapshot.timeoutMs,
-        snapshot.maxAttempts,
-        snapshot.attemptCount,
-        snapshot.failureReason,
-        snapshot.createdAt.toString(),
-        snapshot.updatedAt.toString(),
-      ],
-    );
+    await writeJob(this.pool, job);
   }
 
   async appendAttempt(attempt: JobAttempt): Promise<void> {
-    const snapshot = attempt.toSnapshot();
-    await this.pool.query(
-      `INSERT INTO job_attempts (
-         id, job_id, attempt_number, status, started_at, finished_at, reason
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7)
-       ON CONFLICT (job_id, attempt_number) DO UPDATE SET
-         status = EXCLUDED.status,
-         finished_at = EXCLUDED.finished_at,
-         reason = EXCLUDED.reason`,
-      [
-        snapshot.id,
-        snapshot.jobId,
-        snapshot.attemptNumber,
-        snapshot.status,
-        snapshot.startedAt.toString(),
-        snapshot.finishedAt == null ? null : snapshot.finishedAt.toString(),
-        snapshot.reason,
-      ],
-    );
+    await writeAttempt(this.pool, attempt);
+  }
+
+  async recordCompletion(job: Job, attempt: JobAttempt): Promise<void> {
+    if (
+      job.status !== "Completed" ||
+      attempt.status !== "Completed" ||
+      attempt.finishedAt == null ||
+      attempt.jobId !== job.id ||
+      attempt.attemptNumber !== job.attemptCount ||
+      attempt.finishedAt !== job.updatedAt
+    ) {
+      throw new Error("recordCompletion requires the Completed job and its closed attempt.");
+    }
+    const client: PoolClient = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      await writeJob(client, job);
+      await writeAttempt(client, attempt);
+      await client.query("COMMIT");
+    } catch (error) {
+      try {
+        await client.query("ROLLBACK");
+      } catch {
+        // The original write error is the one the caller must see.
+      }
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async listAttempts(id: JobId): Promise<readonly JobAttempt[]> {
@@ -160,6 +145,61 @@ export class PostgresJobRepository implements JobRepository {
       createdAt: BigInt(row.created_at),
     };
   }
+}
+
+async function writeJob(sql: Sql, job: Job): Promise<void> {
+  const snapshot = job.toSnapshot();
+  await sql.query(
+    `INSERT INTO jobs (
+       id, queue_name, job_type, idempotency_key, status, subject_kind, subject_id,
+       payload, timeout_ms, max_attempts, attempt_count, failure_reason, created_at, updated_at
+     ) VALUES (
+       $1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12, $13, $14
+     )
+     ON CONFLICT (id) DO UPDATE SET
+       status = EXCLUDED.status,
+       attempt_count = EXCLUDED.attempt_count,
+       failure_reason = EXCLUDED.failure_reason,
+       updated_at = EXCLUDED.updated_at`,
+    [
+      snapshot.id,
+      snapshot.queueName,
+      snapshot.jobType,
+      snapshot.idempotencyKey,
+      snapshot.status,
+      snapshot.subject.kind,
+      subjectIdOf(job),
+      JSON.stringify(snapshot.payload ?? {}),
+      snapshot.timeoutMs,
+      snapshot.maxAttempts,
+      snapshot.attemptCount,
+      snapshot.failureReason,
+      snapshot.createdAt.toString(),
+      snapshot.updatedAt.toString(),
+    ],
+  );
+}
+
+async function writeAttempt(sql: Sql, attempt: JobAttempt): Promise<void> {
+  const snapshot = attempt.toSnapshot();
+  await sql.query(
+    `INSERT INTO job_attempts (
+       id, job_id, attempt_number, status, started_at, finished_at, reason
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+     ON CONFLICT (job_id, attempt_number) DO UPDATE SET
+       status = EXCLUDED.status,
+       finished_at = EXCLUDED.finished_at,
+       reason = EXCLUDED.reason`,
+    [
+      snapshot.id,
+      snapshot.jobId,
+      snapshot.attemptNumber,
+      snapshot.status,
+      snapshot.startedAt.toString(),
+      snapshot.finishedAt == null ? null : snapshot.finishedAt.toString(),
+      snapshot.reason,
+    ],
+  );
 }
 
 const JOB_SELECT = `SELECT id::text AS id, queue_name, job_type, idempotency_key, status,

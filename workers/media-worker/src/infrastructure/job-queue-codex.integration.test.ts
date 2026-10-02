@@ -185,6 +185,7 @@ test("idempotency conflict keeps the stored payload", { timeout: 60_000 }, async
         }
       },
       appendAttempt: (attempt: JobAttempt) => jobs.appendAttempt(attempt),
+      recordCompletion: (job: Job, attempt: JobAttempt) => jobs.recordCompletion(job, attempt),
       listAttempts: (id: JobId) => jobs.listAttempts(id),
       saveDeadLetter: (letter: JobDeadLetter) => jobs.saveDeadLetter(letter),
       findDeadLetter: (id: JobId) => jobs.findDeadLetter(id),
@@ -255,15 +256,18 @@ test("a ledger failure after success does not fail the job", { timeout: 60_000 }
     const marker = path.join(directory, "ran");
     const queueName = `ledger-${newId().slice(0, 8)}`;
     const id = newId();
+    let ledgerAttempts = 0;
     const flaky: JobRepository = {
       findById: (job: JobId) => jobs.findById(job),
       findByIdempotencyKey: (key: string) => jobs.findByIdempotencyKey(key),
       save: (job: Job) => jobs.save(job),
-      async appendAttempt(attempt: JobAttempt) {
-        if (attempt.status === "Completed") {
-          throw new Error("attempt ledger down");
+      appendAttempt: (attempt: JobAttempt) => jobs.appendAttempt(attempt),
+      async recordCompletion(job: Job, attempt: JobAttempt) {
+        if (job.status === "Completed" && ledgerAttempts === 0) {
+          ledgerAttempts += 1;
+          throw new Error("completion ledger down");
         }
-        await jobs.appendAttempt(attempt);
+        await jobs.recordCompletion(job, attempt);
       },
       listAttempts: (job: JobId) => jobs.listAttempts(job),
       saveDeadLetter: (letter: JobDeadLetter) => jobs.saveDeadLetter(letter),
@@ -281,41 +285,17 @@ test("a ledger failure after success does not fail the job", { timeout: 60_000 }
         maxAttempts: 1,
         backoffBaseMs: 20,
       });
-      await assert.rejects(
-        () =>
-          runNextJob(depsFor(flaky, queue), queueName, {
-            modulePath: handlerModule,
-            exportName: "touchMarker",
-          }),
-        /attempt ledger down/,
-      );
+      await runNextJob(depsFor(flaky, queue), queueName, {
+        modulePath: handlerModule,
+        exportName: "touchMarker",
+      });
+      assert.equal(ledgerAttempts, 1);
       assert.equal((await jobs.findById(jobId(id)))?.status, "Completed");
       assert.equal((await jobs.findById(jobId(id)))?.failureReason, null);
+      assert.equal((await jobs.listAttempts(jobId(id)))[0]?.status, "Completed");
+      assert.equal((await jobs.listAttempts(jobId(id)))[0]?.finishedAt == null, false);
       assert.equal(await markerText(marker), "ran\n");
-      assert.equal(await bullState(queueName, id), "active");
-      await queue.close();
-      await delay(500);
-      const recovered = new BullMqJobQueue(redisUrl, {
-        lockDurationMs: 400,
-        stalledIntervalMs: 150,
-      });
-      try {
-        const started = Date.now();
-        let state = await bullState(queueName, id);
-        while (state !== "completed" && Date.now() - started < 8_000) {
-          await runNextJob(depsFor(jobs, recovered), queueName, {
-            modulePath: handlerModule,
-            exportName: "touchMarker",
-          });
-          state = await bullState(queueName, id);
-          await delay(100);
-        }
-        assert.equal(state, "completed");
-      } finally {
-        await recovered.close();
-      }
-      assert.equal(await markerText(marker), "ran\n");
-      assert.equal((await jobs.findById(jobId(id)))?.status, "Completed");
+      assert.equal(await bullState(queueName, id), "completed");
       assert.equal(await jobs.findDeadLetter(jobId(id)), null);
     } finally {
       await queue.close();

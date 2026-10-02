@@ -111,6 +111,26 @@ export class BullMqJobQueue implements JobQueue {
     this.lockListeners.set(receipt.token, notify);
   }
 
+  async ownsReservation(receipt: JobReceipt): Promise<boolean> {
+    if (this.lostTokens.has(receipt.token)) {
+      return false;
+    }
+    const job = this.inflight.get(receipt.token);
+    if (!job) {
+      return false;
+    }
+    try {
+      const extended = await job.extendLock(receipt.token, this.lockDurationMs);
+      if (Number(extended) === 1) {
+        return true;
+      }
+    } catch {
+      // The lock command failed. The reservation is gone.
+    }
+    this.markLockLost(receipt.token);
+    return false;
+  }
+
   async complete(receipt: JobReceipt): Promise<void> {
     this.stopRenewal(receipt.token);
     const job = this.takeInflight(receipt);

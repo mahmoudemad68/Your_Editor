@@ -27,6 +27,9 @@ type ChildResult = { type: "completed" } | { type: "failed"; name: string; messa
 
 export class ChildProcessJobSupervisor implements JobSupervisor {
   async run(envelope: JobEnvelope, handler: IsolatedHandler, signal: AbortSignal): Promise<void> {
+    if (signal.aborted) {
+      throw abortReason(signal);
+    }
     const child = fork(path.join(__dirname, "job-child.js"), [], {
       stdio: ["ignore", "ignore", "pipe", "ipc"],
       detached: true,
@@ -37,8 +40,12 @@ export class ChildProcessJobSupervisor implements JobSupervisor {
     });
     const pgid = await dedicatedGroup(child);
     if (pgid == null) {
-      child.kill("SIGKILL");
+      await reapUnstarted(child, null);
       throw new JobExecutionUnconfirmedError();
+    }
+    if (signal.aborted) {
+      await reapUnstarted(child, pgid);
+      throw abortReason(signal);
     }
     const exited = once(child, "exit").then(([code, signalName]) => ({
       code: code as number | null,
@@ -48,6 +55,10 @@ export class ChildProcessJobSupervisor implements JobSupervisor {
     child.on("message", (value: unknown) => {
       message = value as ChildResult;
     });
+    if (signal.aborted) {
+      await reapUnstarted(child, pgid);
+      throw abortReason(signal);
+    }
     child.send({
       type: "start",
       envelope,
@@ -118,6 +129,25 @@ export class ChildProcessJobSupervisor implements JobSupervisor {
     }
     const detail = Buffer.concat(stderr).toString("utf8").trim();
     throw new Error(detail.length > 0 ? detail : "job process exited before reporting a result");
+  }
+}
+
+function abortReason(signal: AbortSignal): Error {
+  return signal.reason instanceof Error ? signal.reason : new LockLostError();
+}
+
+async function reapUnstarted(child: ChildProcess, pgid: number | null): Promise<void> {
+  if (pgid != null) {
+    signalGroup(pgid, "SIGKILL");
+  } else if (child.exitCode === null && child.signalCode === null) {
+    child.kill("SIGKILL");
+  }
+  if (child.exitCode === null && child.signalCode === null) {
+    await Promise.race([once(child, "exit"), delay(REAP_MS)]);
+  }
+  child.removeAllListeners();
+  if (pgid != null && !(await groupGone(pgid))) {
+    throw new JobExecutionUnconfirmedError();
   }
 }
 
