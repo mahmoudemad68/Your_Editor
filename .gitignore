@@ -29,5 +29,8 @@ tools/benchmarks/rendering/fixtures/segments/
 tools/benchmarks/rendering/public/*.mp4
 tools/benchmarks/rendering/out/
 tools/benchmarks/rendering/.remotion/
+tools/benchmarks/asr/results/**
+!tools/benchmarks/asr/results/.gitkeep
+tools/benchmarks/asr/**/__pycache__/
 .python-version
 !workers/ai-worker/.python-version
