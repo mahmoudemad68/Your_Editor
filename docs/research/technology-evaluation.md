@@ -256,3 +256,44 @@ On this VM the median of three measured Remotion runs is 139.644 seconds, which 
 - Remotion 4.0.532 license, checked 2026-10-01: https://github.com/remotion-dev/remotion/blob/v4.0.532/LICENSE.md
 - Remotion 5.0 terms, not yet in effect for 4.0.532: https://www.remotion.dev/docs/terms
 - Raw measurements: `tools/benchmarks/rendering/results/summary.json`
+
+## US-107 LLM tool-calling feasibility (hosted APIs)
+
+This section is only the tool-calling spike. It does not change the US-106 rendering measurements or the rendering CP1 gate above, which stays **NOT_VERIFIED**.
+
+The owner decided EditAgent will call hosted LLM APIs with user-provided keys. The providers in this spike are OpenAI, Anthropic Claude, Google Gemini, Alibaba Qwen, and DeepSeek. Ollama, vLLM, Kaggle, and other local serving are out of scope. The canonical US-107 task text matches that decision. ADR-006 still isolates provider transport from schema validation. This benchmark is not the US-301 port implementation.
+
+### Method
+
+`tools/benchmarks/llm/` defines ten scripted edits over mock tools `trim`, `add_caption`, and `reframe`. Schema validity and semantic correctness are scored separately. A call can match the JSON Schema and still be the wrong edit. The synthetic transcript is 1,500 generated words standing in for 600 seconds of speech. It is not a person's recording.
+
+Dry-run is the default. A live call needs `--live`, the provider environment variable, a dated price row in `pricing.json`, and `LLM_BENCHMARK_SPEND_CAP_USD` (default 1 USD). The runner estimates an upper bound before each request and skips the request when that bound would exceed the remaining cap. Missing keys are `PENDING_CREDENTIALS`. Missing prices are `BLOCKED_COST`. This repository run did not make a paid call.
+
+Documentation accessed 2026-10-02:
+
+- OpenAI Chat Completions function calling: https://developers.openai.com/api/docs/guides/function-calling
+- Anthropic Messages tool use, version header `2023-06-01`: https://platform.claude.com/docs/en/agents-and-tools/tool-use/overview
+- Gemini Interactions function calling: https://ai.google.dev/gemini-api/docs/function-calling
+- Qwen function calling on a workspace-specific compatible-mode host: https://help.aliyun.com/en/model-studio/qwen-function-calling
+- DeepSeek Chat Completions tool calls: https://api-docs.deepseek.com/guides/tool_calls/
+
+No SDK is pinned. Requests use `urllib`. Model ids are arguments, not defaults. The OpenAI guide's note that GPT-6 Astra and GPT-6.1 Sol require the Responses API is recorded as unsupported on this Chat Completions adapter. Thinking controls are provider-specific and are not one shared boolean.
+
+### Results
+
+Observed measurements: **PENDING**.
+
+Default provider and fallback provider: **PENDING**.
+
+Schema-valid calls, semantic correctness, latency, tokens, and cost: **PENDING** for every provider.
+
+Formal CP1 LLM status: **NOT_VERIFIED**. The threshold is at least 9 of 10 schema-valid calls on a model that was actually called. Mocks and dry-runs do not meet it. A comparison needs live results from at least two hosted providers.
+
+### Reproduction
+
+```bash
+python3 tools/benchmarks/llm/tests/test_llm_benchmark.py
+python3 tools/benchmarks/llm/runner.py --provider openai --model "$OPENAI_MODEL" --commit-sha "$(git rev-parse HEAD)" --output /tmp/llm-out
+```
+
+Add `--live` only after `pricing.json` has a dated `openai:<model>` price and `OPENAI_API_KEY` is set in the environment. The command above, without `--live`, does not call OpenAI.

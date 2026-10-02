@@ -121,19 +121,19 @@ US-106-T4,Task,US-106,Record results and the hybrid render-strategy recommendati
 US-107,Story,FT-01.3,LLM tool-calling feasibility spike,"As the AI engineer, I want to measure how reliably candidate LLMs produce schema-valid tool calls, so that the agent design and default provider are chosen on evidence.
 
 Acceptance criteria:
-- Each candidate has a measured valid-call rate, median latency and estimated cost per agent run
-- Checkpoint CP1 LLM criterion is evaluated with a pass or fail result
+- Each hosted provider that returns a live run has a schema-valid rate, a separate semantic-correctness rate, median latency, and estimated cost. Providers without a live run stay pending, and a choice requires at least two hosted providers.
+- Checkpoint CP1 LLM criterion is evaluated with a pass or fail result only from live measurements
 
 Technical tasks:
 - Define 10 scripted editing requests with a mock tool set (trim, add_caption, reframe)
-- Run them against at least two hosted providers and one local model (vLLM or Ollama) with native tool calling
-- Measure schema validity, latency, cost per run and context-window fit for a 10-minute transcript
+- Run them only through hosted LLM APIs with user-provided keys for OpenAI, Anthropic Claude, Google Gemini, Alibaba Qwen, and DeepSeek. Do not use Ollama, vLLM, Kaggle, or other local serving. Register an adapter to add a hosted provider.
+- Measure schema validity separately from semantic correctness, plus latency, cost per run, and context-window fit for a 10-minute transcript
 - `DOC` Record results, costs and the default/fallback provider decision
 
 Parallelism: Parallel - can start on day 1 of the sprint",PH1,EP-01,FT-01.3,Sprint 1,AI,P0,2,,Parallel - can start on day 1 of the sprint,mvp;ai;P0
 US-107-T1,Task,US-107,"Define 10 scripted editing requests with a mock tool set (trim, add_caption, reframe)",,PH1,EP-01,FT-01.3,Sprint 1,AI,P0,,,,
-US-107-T2,Task,US-107,Run them against at least two hosted providers and one local model (vLLM or Ollama) with native tool calling,,PH1,EP-01,FT-01.3,Sprint 1,AI,P0,,,,
-US-107-T3,Task,US-107,"Measure schema validity, latency, cost per run and context-window fit for a 10-minute transcript",,PH1,EP-01,FT-01.3,Sprint 1,AI,P0,,,,
+US-107-T2,Task,US-107,"Run them only through hosted LLM APIs with user-provided keys for OpenAI, Anthropic Claude, Google Gemini, Alibaba Qwen, and DeepSeek. Do not use Ollama, vLLM, Kaggle, or other local serving. Register an adapter to add a hosted provider.",,PH1,EP-01,FT-01.3,Sprint 1,AI,P0,,,,
+US-107-T3,Task,US-107,"Measure schema validity separately from semantic correctness, plus latency, cost per run, and context-window fit for a 10-minute transcript",,PH1,EP-01,FT-01.3,Sprint 1,AI,P0,,,,
 US-107-T4,Task,US-107,"Record results, costs and the default/fallback provider decision",,PH1,EP-01,FT-01.3,Sprint 1,AI,P0,,,,doc
 US-108,Story,FT-01.3,Risk register and threat model v0,"As the team, I want a living risk register and an initial threat model, so that technical, schedule and security risks are owned and mitigated early.
 
