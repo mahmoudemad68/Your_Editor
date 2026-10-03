@@ -1,6 +1,7 @@
 import {
   ConfigurationError,
   parseMediaWorkerConfig,
+  WORKER_HEALTH_PORT,
   type EnvSource,
   type StorageWorkerConfig,
 } from "@editagent/shared";
@@ -12,12 +13,14 @@ export interface MediaWorkerConfig extends StorageWorkerConfig {
   readonly ffprobePath: string;
   readonly ffprobeTimeoutMs: number;
   readonly probeTmpDir: string | null;
+  readonly mediaInspectQueue: string;
+  readonly healthPort: number;
 }
 
 /** Process boundary for media-worker configuration. Reads the environment once. */
 export function loadMediaWorkerConfig(env: EnvSource = process.env): MediaWorkerConfig {
   const base = parseMediaWorkerConfig(env);
-  return { ...base, ...parseProbeRuntime(env) };
+  return { ...base, ...parseProbeRuntime(env), ...parseWorkerRuntime(env) };
 }
 
 function parseProbeRuntime(env: EnvSource): {
@@ -48,4 +51,28 @@ function parseProbeRuntime(env: EnvSource): {
     throw new ConfigurationError("Media worker", "PROBE_TMPDIR must be an absolute path.");
   }
   return { ffprobePath, ffprobeTimeoutMs, probeTmpDir };
+}
+
+function parseWorkerRuntime(env: EnvSource): { mediaInspectQueue: string; healthPort: number } {
+  const configured = env["MEDIA_INSPECT_QUEUE"];
+  const mediaInspectQueue =
+    configured === undefined || configured.length === 0 ? "media" : configured;
+  if (
+    mediaInspectQueue.includes(":") ||
+    mediaInspectQueue !== mediaInspectQueue.trim() ||
+    mediaInspectQueue.length > 64
+  ) {
+    throw new ConfigurationError(
+      "Media worker",
+      "MEDIA_INSPECT_QUEUE must be a short name without a colon.",
+    );
+  }
+  const rawPort = env["WORKER_HEALTH_PORT"];
+  if (rawPort === undefined || rawPort.length === 0) {
+    return { mediaInspectQueue, healthPort: WORKER_HEALTH_PORT };
+  }
+  if (!/^\d+$/.test(rawPort) || Number(rawPort) > 65535) {
+    throw new ConfigurationError("Media worker", "WORKER_HEALTH_PORT must be a port.");
+  }
+  return { mediaInspectQueue, healthPort: Number(rawPort) };
 }

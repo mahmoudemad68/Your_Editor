@@ -14,6 +14,7 @@ import { DomainError, projectId, type ProjectId } from "@editagent/domain";
 import { BeginMediaUpload, CompleteMediaUpload } from "../application/uploads.js";
 import { ApiRequestLog } from "./api-request-log.js";
 import { requireActor } from "./actor.js";
+import { requestCorrelationId } from "./correlation.js";
 import {
   BeginUploadResponseDto,
   MediaAssetResponseDto,
@@ -78,6 +79,7 @@ export class UploadsController {
       requireActor(request),
       parseProjectRouteId(rawProjectId),
       body,
+      requestCorrelationId(),
     );
     this.requestLog.jobAccepted("media.inspect", asset.id);
     return toMediaAssetResponse(asset);

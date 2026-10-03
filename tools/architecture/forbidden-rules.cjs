@@ -147,10 +147,22 @@ const forbidden = [
   {
     name: "api-allow-list",
     severity: "error",
-    comment: "API may depend on domain, schemas, and shared.",
+    comment: "API may depend on domain, schemas, shared, and the shared job queue.",
     from: { path: "^apps/api/" },
     to: {
-      pathNot: "^(apps/api/|packages/domain/|packages/schemas/|packages/shared/|node_modules/)",
+      pathNot:
+        "^(apps/api/|packages/domain/|packages/schemas/|packages/shared/|packages/job-queue/|node_modules/)",
+      dependencyTypesNot: ["core"],
+    },
+  },
+  {
+    name: "job-queue-allow-list",
+    severity: "error",
+    comment: "The job queue package may depend on domain, schemas, and shared.",
+    from: { path: "^packages/job-queue/" },
+    to: {
+      pathNot:
+        "^(packages/job-queue/|packages/domain/|packages/schemas/|packages/shared/|node_modules/)",
       dependencyTypesNot: ["core"],
     },
   },
@@ -168,11 +180,12 @@ const forbidden = [
   {
     name: "media-worker-allow-list",
     severity: "error",
-    comment: "Media worker may depend on domain, schemas, tool-sdk, media-core, and shared.",
+    comment:
+      "Media worker may depend on domain, schemas, tool-sdk, media-core, shared, and job-queue.",
     from: { path: "^workers/media-worker/" },
     to: {
       pathNot:
-        "^(workers/media-worker/|packages/domain/|packages/schemas/|packages/tool-sdk/|packages/media-core/|packages/shared/|node_modules/)",
+        "^(workers/media-worker/|packages/domain/|packages/schemas/|packages/tool-sdk/|packages/media-core/|packages/shared/|packages/job-queue/|node_modules/)",
       dependencyTypesNot: ["core"],
     },
   },

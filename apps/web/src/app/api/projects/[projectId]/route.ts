@@ -1,4 +1,8 @@
-import { deleteProject, renameProject } from "../../../../composition/project-actions";
+import {
+  correlationIdFromRequest,
+  deleteProject,
+  renameProject,
+} from "../../../../composition/project-actions";
 import { projectApiResponse } from "../../../../composition/project-response";
 
 export const dynamic = "force-dynamic";
@@ -10,13 +14,15 @@ export async function PATCH(request: Request, context: { params: Promise<{ proje
     typeof body === "object" && body !== null && "name" in body && typeof body.name === "string"
       ? body.name
       : "";
-  return projectApiResponse(await renameProject(projectId, name));
+  return projectApiResponse(
+    await renameProject(projectId, name, correlationIdFromRequest(request)),
+  );
 }
 
 export async function DELETE(
-  _request: Request,
+  request: Request,
   context: { params: Promise<{ projectId: string }> },
 ) {
   const { projectId } = await context.params;
-  return projectApiResponse(await deleteProject(projectId));
+  return projectApiResponse(await deleteProject(projectId, correlationIdFromRequest(request)));
 }

@@ -6,5 +6,6 @@ test("health reports the bounded module count", () => {
   const status = getHealthStatus();
   assert.equal(status.status, "ok");
   assert.equal(status.modules, 12);
-  assert.deepEqual(getReadyStatus(), { status: "ready" });
+  assert.deepEqual(getReadyStatus(true), { status: "ready" });
+  assert.deepEqual(getReadyStatus(false), { status: "not-ready" });
 });

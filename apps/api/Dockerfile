@@ -18,6 +18,7 @@ COPY packages/schemas/package.json packages/schemas/package.json
 COPY packages/shared/package.json packages/shared/package.json
 COPY packages/tool-sdk/package.json packages/tool-sdk/package.json
 COPY packages/media-core/package.json packages/media-core/package.json
+COPY packages/job-queue/package.json packages/job-queue/package.json
 COPY workers/agent-worker/package.json workers/agent-worker/package.json
 COPY workers/media-worker/package.json workers/media-worker/package.json
 COPY workers/render-worker/package.json workers/render-worker/package.json
@@ -28,7 +29,9 @@ FROM deps AS build
 COPY tsconfig.base.json ./
 COPY apps/api apps/api
 COPY packages/domain packages/domain
+COPY packages/schemas packages/schemas
 COPY packages/shared packages/shared
+COPY packages/job-queue packages/job-queue
 RUN pnpm --filter @editagent/api... build \
     && find /app -type f \( -name '*.test.ts' -o -name '*.test.js' -o -name '*.test.js.map' -o -name '*.test.d.ts' -o -name '*.test.d.ts.map' \) -delete \
     && pnpm --filter @editagent/api --prod deploy --legacy /out \

@@ -241,7 +241,7 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description The process is alive. */
+      /** @description The process is alive. This does not check dependencies. */
       200: {
         headers: {
           [name: string]: unknown;
@@ -259,8 +259,15 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description The process can accept work. */
+      /** @description Postgres and Redis accepted a readiness check. */
       200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description A required dependency did not answer. */
+      503: {
         headers: {
           [name: string]: unknown;
         };

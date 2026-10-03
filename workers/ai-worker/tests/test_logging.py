@@ -20,5 +20,6 @@ def test_job_logs_repeat_the_request_correlation_id(capsys: CaptureFixture[str])
     assert {line["correlationId"] for line in lines} == {"web-request-1"}
     assert [line["event"] for line in lines] == ["job.started", "job.finished"]
     for line in lines:
+        assert line["service"] == "ai-worker"
         assert "stack" not in line
         assert "Traceback" not in json.dumps(line)

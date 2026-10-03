@@ -88,6 +88,7 @@ services:
     container_name: editagent-api
     environment:
       DATABASE_URL: *database-url
+      REDIS_URL: redis://redis:6379/0
       PORT: "3001"
       HOST: "0.0.0.0"
       <<: *object-storage
@@ -96,6 +97,8 @@ services:
       - "${API_PORT:-3001}:3001"
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
       minio:
         condition: service_healthy

@@ -1,4 +1,4 @@
-import { beginUpload } from "../../../../../composition/project-actions";
+import { beginUpload, correlationIdFromRequest } from "../../../../../composition/project-actions";
 import { projectApiResponse } from "../../../../../composition/project-response";
 import { readUploadDeclaration } from "../../../../../composition/upload-declaration";
 
@@ -14,5 +14,7 @@ export async function POST(request: Request, context: { params: Promise<{ projec
       message: "The upload declaration is not valid.",
     });
   }
-  return projectApiResponse(await beginUpload(projectId, declaration));
+  return projectApiResponse(
+    await beginUpload(projectId, declaration, correlationIdFromRequest(request)),
+  );
 }

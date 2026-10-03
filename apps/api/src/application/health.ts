@@ -10,9 +10,14 @@ export function getHealthStatus(): HealthStatus {
 }
 
 export interface ReadyStatus {
-  readonly status: "ready";
+  readonly status: "ready" | "not-ready";
 }
 
-export function getReadyStatus(): ReadyStatus {
-  return { status: "ready" };
+export interface ReadinessProbe {
+  check(): Promise<boolean>;
+}
+
+/** Ready means dependencies answered. Health does not call this. */
+export function getReadyStatus(ready: boolean): ReadyStatus {
+  return { status: ready ? "ready" : "not-ready" };
 }

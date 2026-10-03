@@ -16,10 +16,19 @@ import {
   RenameProject,
 } from "./application/projects.js";
 import { GetMediaDetails } from "./application/media-details.js";
-import { BeginMediaUpload, CompleteMediaUpload } from "./application/uploads.js";
+import { type ReadinessProbe } from "./application/health.js";
+import {
+  BeginMediaUpload,
+  CompleteMediaUpload,
+  type InspectJobPublisher,
+} from "./application/uploads.js";
 import { createServiceLogger, type JsonLogger } from "@editagent/shared";
 import { ApiRequestLog } from "./presentation/api-request-log.js";
-import { HealthController, ReadyController } from "./presentation/health.controller.js";
+import {
+  HealthController,
+  READINESS_PROBE,
+  ReadyController,
+} from "./presentation/health.controller.js";
 import { MediaController } from "./presentation/media.controller.js";
 import { ProjectsController } from "./presentation/projects.controller.js";
 import { UploadsController } from "./presentation/uploads.controller.js";
@@ -33,6 +42,8 @@ export interface ApiComposition {
   readonly mediaIds: MediaAssetIdGenerator;
   readonly presignTtlSeconds: number;
   readonly logger?: JsonLogger;
+  readonly inspectJobs?: InspectJobPublisher;
+  readonly readiness?: ReadinessProbe;
 }
 
 function createFallbackLogger(): JsonLogger {
@@ -83,18 +94,35 @@ export class AppModule {
           useValue: new GetMediaDetails(composition.projects, composition.media),
         },
         {
+          provide: READINESS_PROBE,
+          useValue: composition.readiness ?? {
+            async check(): Promise<boolean> {
+              return false;
+            },
+          },
+        },
+        {
           provide: ApiRequestLog,
           useValue: new ApiRequestLog(composition.logger ?? createFallbackLogger()),
         },
         {
           provide: CompleteMediaUpload,
-          useValue: new CompleteMediaUpload(
-            composition.projects,
-            composition.media,
-            composition.objects,
-            composition.mediaIds,
-            composition.clock,
-          ),
+          useValue: composition.inspectJobs
+            ? new CompleteMediaUpload(
+                composition.projects,
+                composition.media,
+                composition.objects,
+                composition.mediaIds,
+                composition.clock,
+                composition.inspectJobs,
+              )
+            : new CompleteMediaUpload(
+                composition.projects,
+                composition.media,
+                composition.objects,
+                composition.mediaIds,
+                composition.clock,
+              ),
         },
       ],
     };

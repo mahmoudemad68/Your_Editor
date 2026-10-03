@@ -1,6 +1,7 @@
 /**
- * One upload correlation id is logged by the API and by the worker that
- * receives the job payload.
+ * Contract check for the log payload shape.
+ * The broker proof is queue-correlation.integration.test.ts.
+ * This test does not reserve a BullMQ job.
  */
 
 import "reflect-metadata";

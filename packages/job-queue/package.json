@@ -1,0 +1,26 @@
+{
+  "name": "@editagent/job-queue",
+  "version": "0.0.0",
+  "private": true,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node ../../tools/test/run-node-tests.mjs dist/infrastructure/postgres-pool.test.js"
+  },
+  "dependencies": {
+    "@editagent/domain": "workspace:*",
+    "@editagent/schemas": "workspace:*",
+    "@editagent/shared": "workspace:*",
+    "ajv": "8.17.1",
+    "bullmq": "5.61.0",
+    "ioredis": "5.8.2",
+    "pg": "8.23.1"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "@types/pg": "8.23.1",
+    "typescript": "catalog:"
+  }
+}

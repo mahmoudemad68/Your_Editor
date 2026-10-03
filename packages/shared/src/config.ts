@@ -26,6 +26,7 @@ export interface ApiObjectStorageConfig {
 
 export interface ApiConfig {
   readonly databaseUrl: string;
+  readonly redisUrl: string;
   readonly port: number;
   readonly host: string;
   readonly objectStorage: ApiObjectStorageConfig;
@@ -182,6 +183,7 @@ function presignTtlSeconds() {
 const apiSchema = z
   .object({
     DATABASE_URL: databaseUrl(),
+    REDIS_URL: redisUrl(),
     PORT: portField(3001),
     HOST: hostField(),
     S3_ENDPOINT: httpUrl(
@@ -209,6 +211,7 @@ const apiSchema = z
   })
   .transform((env): ApiConfig => ({
     databaseUrl: env.DATABASE_URL,
+    redisUrl: env.REDIS_URL,
     port: env.PORT,
     host: env.HOST,
     objectStorage: {

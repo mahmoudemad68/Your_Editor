@@ -24,7 +24,12 @@ def log_job(correlation_id: str, message: str, **fields: str) -> None:
     if correlation_id.strip() == "":
         raise ValueError("A log line requires a correlation ID.")
     configure_logging()
-    structlog.get_logger("ai-worker").info(message, correlationId=correlation_id, **fields)
+    structlog.get_logger("ai-worker").info(
+        message,
+        service="ai-worker",
+        correlationId=correlation_id,
+        **fields,
+    )
 
 
 def run_logged_job(raw: str) -> None:

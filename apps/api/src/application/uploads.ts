@@ -43,6 +43,11 @@ export interface CheckedUpload {
   readonly storageKey: string;
 }
 
+/** Publishes the inspect job after the asset row is stored. */
+export interface InspectJobPublisher {
+  publish(mediaAssetId: string, correlationId: string): Promise<void>;
+}
+
 /**
  * BeginMediaUpload and CompleteMediaUpload.
  * Membership and object checks stay here. Controllers do not build storage keys.
@@ -143,12 +148,14 @@ export class CompleteMediaUpload {
     private readonly objects: IObjectStorage,
     private readonly ids: MediaAssetIdGenerator,
     private readonly clock: Clock,
+    private readonly inspectJobs?: InspectJobPublisher,
   ) {}
 
   async execute(
     actorUserId: UserId,
     projectId: ProjectId,
     input: UploadDeclaration,
+    correlationId?: string,
   ): Promise<MediaAsset> {
     await requireUploader(this.projects, projectId, actorUserId);
     const checked = checkDeclaration(projectId, input);
@@ -174,6 +181,9 @@ export class CompleteMediaUpload {
       contentSha256: checked.sha256,
     });
     await this.media.save(asset);
+    if (this.inspectJobs !== undefined && correlationId !== undefined) {
+      await this.inspectJobs.publish(asset.id, correlationId);
+    }
     return asset;
   }
 }
