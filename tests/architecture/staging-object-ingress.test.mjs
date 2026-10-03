@@ -44,6 +44,9 @@ test("signed uploads use the ingress and admin paths do not", async () => {
   const ingress = `editagent-ingress-${suffix}`;
   const ingressImage = `editagent-object-ingress:${suffix}`;
   try {
+    docker(["build", "-t", "editagent-minio:test", "-f", "infra/minio/Dockerfile", "."], {
+      cwd: root,
+    });
     docker(["build", "-t", ingressImage, "-f", "infra/object-ingress/Dockerfile", "."], {
       cwd: root,
     });
@@ -56,7 +59,7 @@ test("signed uploads use the ingress and admin paths do not", async () => {
       "MINIO_ROOT_USER=editagent",
       "-e",
       "MINIO_ROOT_PASSWORD=editagent-dev-secret",
-      "editagent-minio:remediated",
+      "editagent-minio:test",
     ]);
     const minioAddress = docker([
       "inspect",
