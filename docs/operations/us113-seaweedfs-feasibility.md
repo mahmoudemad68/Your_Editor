@@ -44,7 +44,7 @@ Secrets are written at test runtime into a `0600` directory and mounted read-onl
 
 Compose `internal` networks do not stop the Docker host. On this host, container-to-container traffic also needs an `iptables-legacy` `DOCKER-FORWARD` accept because the legacy `FORWARD` policy is DROP. `infra/seaweedfs-spike/isolate-internal-network.sh` is part of the proof. It is not installed as a staging firewall.
 
-The script drops new traffic to the internal subnet from every interface except the internal bridge, and drops host `OUTPUT` to that subnet. On the application subnet it allows new TCP connections only to ports 8333 and 8080, plus the established replies those connections need. A deployment that skips these rules, or an equivalent host firewall on a dedicated VM, is not isolated.
+The script drops new traffic to the internal subnet from every interface except the internal bridge, and drops host `OUTPUT` to that subnet. On the application subnet it allows new TCP connections only to ports 8333 and 8080, plus the established replies those connections need. It writes those rules with `iptables-nft` and `iptables-legacy`, and skips a backend whose `DOCKER-USER` or `DOCKER-FORWARD` chain is absent. GitHub-hosted runners keep Docker's chains on only one of those backends. A deployment that skips these rules, or an equivalent host firewall on a dedicated VM, is not isolated.
 
 | Caller                        | Target                                     | Result                                      |
 | ----------------------------- | ------------------------------------------ | ------------------------------------------- |
