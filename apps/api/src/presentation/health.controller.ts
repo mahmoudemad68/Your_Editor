@@ -26,8 +26,12 @@ export class ReadyController {
   constructor(@Inject(READINESS_PROBE) private readonly probe: ReadinessProbe) {}
 
   @Get()
-  @ApiOkResponse({ description: "Postgres and Redis accepted a readiness check." })
-  @ApiServiceUnavailableResponse({ description: "A required dependency did not answer." })
+  @ApiOkResponse({
+    description: "Postgres and Redis each answered within the one-second readiness deadline.",
+  })
+  @ApiServiceUnavailableResponse({
+    description: "A required dependency did not answer within the one-second readiness deadline.",
+  })
   async ready(): Promise<ReadyStatus> {
     if (!(await this.probe.check())) {
       throw new HttpException(getReadyStatus(false), HttpStatus.SERVICE_UNAVAILABLE);

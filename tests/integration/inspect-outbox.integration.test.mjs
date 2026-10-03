@@ -381,6 +381,158 @@ describe("inspect publication outbox", { concurrency: false }, () => {
       await app.close();
     }
   });
+
+  test("a stale publisher with the same worker id cannot mark the reclaimed lease delivered", async () => {
+    const queue = realQueue();
+    const firstHold = gate();
+    const firstEntered = gate();
+    const secondHold = gate();
+    const secondEntered = gate();
+    const first = publicationWith(queue, {
+      workerId: "api",
+      publish: async (record) => {
+        firstEntered.open();
+        await firstHold.promise;
+        await publishRecord(queue, record);
+      },
+    });
+    const finishing = completeUpload(first, "corr-fence-delivered", "fence-delivered.mp4");
+    try {
+      await firstEntered.promise;
+      const assetId = await assetIdForCorrelation("corr-fence-delivered");
+      const claimed = await outboxFor(assetId);
+      await expireLease(assetId);
+      const second = publicationWith(queue, {
+        workerId: "api",
+        publish: async (record) => {
+          secondEntered.open();
+          await secondHold.promise;
+          await publishRecord(queue, record);
+        },
+      });
+      const secondRun = second.dispatchAsset(assetId);
+      await secondEntered.promise;
+      const reclaimed = await outboxFor(assetId);
+      assert.equal(reclaimed.status, "Delivering");
+      assert.equal(reclaimed.lease_owner, "api");
+      assert.ok(reclaimed.attempt_count > claimed.attempt_count);
+      firstHold.open();
+      await finishing;
+      const afterStale = await outboxFor(assetId);
+      assert.equal(afterStale.status, "Delivering");
+      assert.equal(afterStale.attempt_count, reclaimed.attempt_count);
+      assert.equal(afterStale.lease_owner, "api");
+      secondHold.open();
+      assert.equal(await secondRun, true);
+      const delivered = await outboxFor(assetId);
+      assert.equal(delivered.status, "Delivered");
+      assert.equal(await countJobsFor(delivered.job_id), 1);
+      await expectOneConsumed(queue, assetId, "corr-fence-delivered");
+    } finally {
+      firstHold.open();
+      secondHold.open();
+    }
+  });
+
+  test("a stale publisher with the same worker id cannot retry a reclaimed lease", async () => {
+    const queue = realQueue();
+    const firstHold = gate();
+    const firstEntered = gate();
+    const secondHold = gate();
+    const secondEntered = gate();
+    const first = publicationWith(queue, {
+      workerId: "api",
+      publish: async () => {
+        firstEntered.open();
+        await firstHold.promise;
+        throw new Error("stale retry");
+      },
+    });
+    const finishing = completeUpload(first, "corr-fence-retry", "fence-retry.mp4");
+    try {
+      await firstEntered.promise;
+      const assetId = await assetIdForCorrelation("corr-fence-retry");
+      await expireLease(assetId);
+      const second = publicationWith(queue, {
+        workerId: "api",
+        publish: async (record) => {
+          secondEntered.open();
+          await secondHold.promise;
+          await publishRecord(queue, record);
+        },
+      });
+      const secondRun = second.dispatchAsset(assetId);
+      await secondEntered.promise;
+      const reclaimed = await outboxFor(assetId);
+      firstHold.open();
+      await finishing;
+      const afterStale = await outboxFor(assetId);
+      assert.equal(afterStale.status, "Delivering");
+      assert.equal(afterStale.attempt_count, reclaimed.attempt_count);
+      assert.equal(afterStale.lease_owner, "api");
+      assert.equal(
+        afterStale.error_history.some((entry) => entry.message === "stale retry"),
+        false,
+      );
+      secondHold.open();
+      assert.equal(await secondRun, true);
+      const delivered = await outboxFor(assetId);
+      assert.equal(delivered.status, "Delivered");
+      assert.equal(await countJobsFor(delivered.job_id), 1);
+      await expectOneConsumed(queue, assetId, "corr-fence-retry");
+    } finally {
+      firstHold.open();
+      secondHold.open();
+    }
+  });
+
+  test("a late redis publish after a newer claim does not duplicate the job", async () => {
+    const queue = realQueue();
+    const late = gate();
+    const entered = gate();
+    const lateFinished = gate();
+    const first = publicationWith(queue, {
+      workerId: "instance-a",
+      deadlineMs: 200,
+      publish: async (record) => {
+        entered.open();
+        await late.promise;
+        await publishRecord(queue, record);
+        lateFinished.open();
+      },
+    });
+    const finishing = completeUpload(first, "corr-late-fence", "late-fence.mp4");
+    try {
+      await entered.promise;
+      const assetId = await assetIdForCorrelation("corr-late-fence");
+      await expireLease(assetId);
+      const second = publicationWith(queue, { workerId: "instance-b" });
+      let deliveredBySecond = await second.dispatchAsset(assetId);
+      if (!deliveredBySecond) {
+        await forceDue(assetId);
+        deliveredBySecond = await second.dispatchAsset(assetId);
+      }
+      assert.equal(deliveredBySecond, true);
+      const delivered = await outboxFor(assetId);
+      assert.equal(delivered.status, "Delivered");
+      late.open();
+      await lateFinished.promise;
+      await finishing;
+      const after = await outboxFor(assetId);
+      assert.equal(after.status, "Delivered");
+      assert.equal(after.correlation_id, "corr-late-fence");
+      assert.equal(await countJobsFor(after.job_id), 1);
+      await expectOneConsumed(queue, assetId, "corr-late-fence");
+      assert.equal(await second.dispatchAsset(assetId), false);
+      const attempts = await pool.query(
+        "SELECT count(*)::int AS count FROM job_attempts WHERE job_id = $1 AND status = 'Completed'",
+        [after.job_id],
+      );
+      assert.equal(attempts.rows[0].count, 1);
+    } finally {
+      late.open();
+    }
+  });
 });
 
 function publicationWith(queue, extra) {
@@ -553,11 +705,37 @@ async function forceDue(assetId) {
 async function outboxFor(assetId) {
   const result = await pool.query(
     `SELECT job_id::text AS job_id, status, correlation_id, attempt_count, last_error,
-            error_history, queue_name
+            error_history, queue_name, lease_owner
      FROM inspect_publication_outbox WHERE media_asset_id = $1`,
     [assetId],
   );
   return result.rows[0];
+}
+
+async function assetIdForCorrelation(correlationId) {
+  const result = await pool.query(
+    `SELECT media_asset_id::text AS id
+     FROM inspect_publication_outbox WHERE correlation_id = $1`,
+    [correlationId],
+  );
+  return result.rows[0].id;
+}
+
+async function expireLease(assetId) {
+  await pool.query(
+    `UPDATE inspect_publication_outbox
+     SET lease_until = 0
+     WHERE media_asset_id = $1 AND status = 'Delivering'`,
+    [assetId],
+  );
+}
+
+function gate() {
+  let open = () => undefined;
+  const promise = new Promise((resolve) => {
+    open = resolve;
+  });
+  return { promise, open };
 }
 
 async function jobIdFor(assetId) {

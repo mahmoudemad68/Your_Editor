@@ -25,4 +25,8 @@ export {
 } from "./application/run-job.js";
 export { BullMqJobQueue, type BullMqJobQueueOptions } from "./infrastructure/bullmq-job-queue.js";
 export { PostgresJobRepository } from "./infrastructure/postgres-job-repository.js";
-export { observePostgresPool, postgresAndRedisReady } from "./infrastructure/readiness.js";
+export {
+  READINESS_DEADLINE_MS,
+  observePostgresPool,
+  postgresAndRedisReady,
+} from "./infrastructure/readiness.js";

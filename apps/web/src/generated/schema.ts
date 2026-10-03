@@ -259,14 +259,14 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Postgres and Redis accepted a readiness check. */
+      /** @description Postgres and Redis each answered within the one-second readiness deadline. */
       200: {
         headers: {
           [name: string]: unknown;
         };
         content?: never;
       };
-      /** @description A required dependency did not answer. */
+      /** @description A required dependency did not answer within the one-second readiness deadline. */
       503: {
         headers: {
           [name: string]: unknown;

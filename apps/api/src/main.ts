@@ -43,7 +43,7 @@ export async function bootstrap(): Promise<void> {
     newJobId: () => createUuidV7(Date.now(), randomBytes(10)),
     newAttemptId: () => createUuidV7(Date.now(), randomBytes(10)),
     queueName: config.mediaInspectQueue,
-    workerId: "api",
+    workerId: `api-${randomBytes(8).toString("hex")}`,
   });
   startPublicationRecovery(publication);
   const app = await createApiApplication({

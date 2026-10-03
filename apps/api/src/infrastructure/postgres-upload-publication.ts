@@ -240,8 +240,7 @@ export class PostgresUploadPublication implements UploadPublication {
   private async deliver(row: OutboxRow): Promise<boolean> {
     try {
       await withDeadline(this.publish(toRecord(row)), this.deadlineMs);
-      await this.markDelivered(row.job_id);
-      return true;
+      return this.markDelivered(row);
     } catch (error) {
       if (error instanceof DispatcherCrash) {
         return false;
@@ -277,9 +276,13 @@ export class PostgresUploadPublication implements UploadPublication {
     );
   }
 
-  private async markDelivered(jobId: string): Promise<void> {
+  /**
+   * The claim generation is attempt_count. A publisher that lost the lease
+   * still knows its old generation, so it cannot mark a newer claim delivered.
+   */
+  private async markDelivered(row: OutboxRow): Promise<boolean> {
     const now = this.options.now().toString();
-    await this.options.pool.query(
+    const result = await this.options.pool.query(
       `UPDATE inspect_publication_outbox
        SET status = 'Delivered',
            delivered_at = $2::bigint,
@@ -287,17 +290,21 @@ export class PostgresUploadPublication implements UploadPublication {
            lease_until = NULL,
            last_error = NULL,
            updated_at = $2::bigint
-       WHERE job_id = $1::uuid AND lease_owner = $3 AND status = 'Delivering'`,
-      [jobId, now, this.workerId],
+       WHERE job_id = $1::uuid
+         AND lease_owner = $3
+         AND status = 'Delivering'
+         AND attempt_count = $4`,
+      [row.job_id, now, this.workerId, row.attempt_count],
     );
+    return result.rowCount === 1;
   }
 
-  private async markRetry(row: OutboxRow, error: unknown): Promise<void> {
+  private async markRetry(row: OutboxRow, error: unknown): Promise<boolean> {
     const message = error instanceof Error ? error.message : "inspect publication failed";
     const now = this.options.now();
     const delay = retryDelay(row.attempt_count);
     const availableAt = (now + BigInt(delay)).toString();
-    await this.options.pool.query(
+    const result = await this.options.pool.query(
       `UPDATE inspect_publication_outbox
        SET status = 'Pending',
            lease_owner = NULL,
@@ -310,9 +317,13 @@ export class PostgresUploadPublication implements UploadPublication {
            END,
            available_at = $4::bigint,
            updated_at = $3::bigint
-       WHERE job_id = $1::uuid AND lease_owner = $5 AND status = 'Delivering'`,
-      [row.job_id, message, now.toString(), availableAt, this.workerId],
+       WHERE job_id = $1::uuid
+         AND lease_owner = $5
+         AND status = 'Delivering'
+         AND attempt_count = $6`,
+      [row.job_id, message, now.toString(), availableAt, this.workerId, row.attempt_count],
     );
+    return result.rowCount === 1;
   }
 
   private async findByAsset(mediaAssetId: string): Promise<OutboxRow | null> {
