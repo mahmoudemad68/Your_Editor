@@ -39,8 +39,17 @@ rule() {
       return 0
     fi
     tool=iptables-legacy
+  elif command -v iptables-nft >/dev/null 2>&1; then
+    tool=iptables-nft
   else
     tool=iptables
+  fi
+  chain=$1
+  # GitHub-hosted runners keep Docker's chains on one backend only.
+  # Inserting into the other backend fails with "No chain/target/match".
+  if ! ipt "$tool" -S "$chain" >/dev/null 2>&1; then
+    echo "skip $tool $chain: chain is absent" >&2
+    return 0
   fi
   if [ "$action" = remove ] || [ "$action" = remove-forward ] || [ "$action" = remove-edge ]; then
     ipt "$tool" -D "$@" >/dev/null 2>&1 || true
