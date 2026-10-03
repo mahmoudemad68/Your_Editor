@@ -35,3 +35,19 @@ PostgreSQL matches the relational ownership and consistency the modules need, an
 - **Filesystem paths in the database.** Rejected. Paths do not survive a second machine, and they invite path-traversal bugs the threat model already names.
 - **SQLite for development and PostgreSQL for production.** Rejected. Two SQL dialects would weaken the repository tests.
 - **A document database for analysis JSON and PostgreSQL for the rest.** Rejected for the foundation. Analysis documents fit in PostgreSQL JSON columns validated by JSON Schema. A second database can be revisited if measurement says so.
+
+## Proposed revision — not accepted
+
+- **Status of this revision:** Proposed
+- **Date:** 2026-10-03
+- **Approval:** none
+
+The decision above stays Accepted. This revision is not approved and does not change the running system.
+
+The open-source MinIO tag used by EditAgent still contains CVE-2026-33322 and CVE-2026-33419. A disposable SeaweedFS 4.48 proof, recorded in `docs/operations/us113-seaweedfs-feasibility.md`, ran the existing `S3ObjectStorage` adapter without removing checksum or `If-None-Match` checks. That proof is evidence for a later decision. It is not a decision.
+
+The proposed replacement text, if later accepted, would change only the development object-store sentence:
+
+> An S3-compatible object store holds binary objects. SeaweedFS 4.48, image digest `sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d`, is the development implementation. MinIO volumes are not reused.
+
+The alternative that stays on MinIO is a named patched AIStor release, which needs a license and procurement approval. That alternative is also not accepted.

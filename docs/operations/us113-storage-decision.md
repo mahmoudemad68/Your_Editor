@@ -46,4 +46,4 @@ Pick one authorized path:
 1. Procure a named AIStor release and accept its license, then replace the image and re-scan it.
 2. Approve an ADR that replaces MinIO, then run the compatibility tests above.
 
-Until then the MinIO image fails the critical scan, the security gate fails, and no image is published.
+A disposable SeaweedFS 4.48 proof is recorded in `docs/operations/us113-seaweedfs-feasibility.md`. The existing adapter passed the checksum and conditional-upload checks. That proof does not approve a replacement. Until an owner accepts either path, the MinIO image fails the critical scan, the security gate fails, and no image is published.

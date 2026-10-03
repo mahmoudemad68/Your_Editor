@@ -1,0 +1,14 @@
+{
+  "identities": [
+    {
+      "name": "editagent-spike",
+      "credentials": [
+        {
+          "accessKey": "seaweed-spike-access",
+          "secretKey": "seaweed-spike-secret"
+        }
+      ],
+      "actions": ["Admin", "Read", "Write", "List", "Tagging"]
+    }
+  ]
+}
