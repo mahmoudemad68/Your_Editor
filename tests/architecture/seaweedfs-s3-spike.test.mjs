@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import { createHash, randomBytes } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { createRequire } from "node:module";
 import path from "node:path";
@@ -45,9 +45,17 @@ function docker(args) {
   return result.stdout.trim();
 }
 
+function runtimeIdentity() {
+  const result = run("docker", ["run", "--rm", "--entrypoint", "id", image, "seaweed"]);
+  assert.equal(result.status, 0, result.stderr);
+  const uid = Number(result.stdout.match(/uid=(\d+)/)?.[1]);
+  const gid = Number(result.stdout.match(/gid=(\d+)/)?.[1]);
+  assert.equal(Number.isInteger(uid) && uid > 0, true, result.stdout);
+  assert.equal(Number.isInteger(gid) && gid > 0, true, result.stdout);
+  return { uid, gid };
+}
+
 function writeSecrets(directory) {
-  // The image runs as uid 1000. A 0600 file owned by the GitHub runner is
-  // unreadable in the container, so S3 exits. The temp directory stays 0700.
   const key = () => randomBytes(32).toString("base64url");
   writeFileSync(
     path.join(directory, "security.toml"),
@@ -73,7 +81,7 @@ ui = false
 [filer.expose_directory_metadata]
 enabled = false
 `,
-    { mode: 0o644 },
+    { mode: 0o600 },
   );
   writeFileSync(
     path.join(directory, "s3.json"),
@@ -86,8 +94,68 @@ enabled = false
         },
       ],
     }),
-    { mode: 0o644 },
+    { mode: 0o600 },
   );
+}
+
+function ownSecrets(directory, identity) {
+  chmodSync(directory, 0o700);
+  const files = ["security.toml", "s3.json"].map((name) => path.join(directory, name));
+  const owned = run("sudo", ["chown", `${identity.uid}:${identity.gid}`, ...files]);
+  if (owned.status !== 0) {
+    assert.fail(
+      `cannot chown secrets to ${identity.uid}:${identity.gid}: ${owned.stderr || owned.stdout}`,
+    );
+  }
+  const mode = run("sudo", ["chmod", "600", ...files]);
+  if (mode.status !== 0) {
+    assert.fail(`cannot chmod secrets to 0600: ${mode.stderr || mode.stdout}`);
+  }
+}
+
+function assertSecretPermissions(directory, identity) {
+  const directoryStat = statSync(directory);
+  assert.equal(directoryStat.mode & 0o777, 0o700, "secret directory must be 0700");
+  for (const name of ["security.toml", "s3.json"]) {
+    const file = path.join(directory, name);
+    const fileStat = statSync(file);
+    assert.equal(fileStat.mode & 0o777, 0o600, `${name} must be 0600`);
+    assert.equal(fileStat.uid, identity.uid, `${name} owner`);
+    assert.equal(fileStat.gid, identity.gid, `${name} group`);
+    const readable = run("docker", [
+      "run",
+      "--rm",
+      "--user",
+      `${identity.uid}:${identity.gid}`,
+      "--entrypoint",
+      "sh",
+      "-v",
+      `${file}:/check:ro`,
+      image,
+      "-c",
+      "test -r /check && wc -c < /check",
+    ]);
+    assert.equal(
+      readable.status,
+      0,
+      `${name} is not readable by the runtime user: ${readable.stderr}`,
+    );
+    assert.equal(Number(readable.stdout.trim()) > 0, true, `${name} was empty`);
+    const denied = run("docker", [
+      "run",
+      "--rm",
+      "--user",
+      "65534:65534",
+      "--entrypoint",
+      "sh",
+      "-v",
+      `${file}:/check:ro`,
+      image,
+      "-c",
+      "test -r /check",
+    ]);
+    assert.notEqual(denied.status, 0, `${name} was readable by an unrelated uid`);
+  }
 }
 
 function bridgeName(network) {
@@ -192,7 +260,10 @@ async function eventually(action) {
 test("secure SeaweedFS topology keeps private bytes behind S3", { timeout: 300_000 }, async () => {
   const secrets = mkdtempSync(path.join(tmpdir(), "seaweed-secrets-"));
   const evidencePath = path.join(tmpdir(), "seaweed-secure-evidence.txt");
+  const identity = runtimeIdentity();
   writeSecrets(secrets);
+  ownSecrets(secrets, identity);
+  assertSecretPermissions(secrets, identity);
   const env = { SEAWEED_SECRET_DIR: secrets };
   const minioVolumesBefore = docker(["volume", "ls", "--format", "{{.Name}}"])
     .split("\n")
@@ -232,6 +303,13 @@ test("secure SeaweedFS topology keeps private bytes behind S3", { timeout: 300_0
     firewall.appSubnet = appSubnet;
     const edged = run(isolate, ["apply-edge", appSubnet]);
     assert.equal(edged.status, 0, edged.stderr + edged.stdout);
+    const verified = run(isolate, ["verify", subnet, bridge, appSubnet, appBridge]);
+    assert.equal(verified.status, 0, `${verified.stderr}\n${verified.stdout}`);
+    assert.equal(verified.stdout.includes("DOCKER-USER"), true, verified.stdout);
+    assert.equal(verified.stdout.includes(subnet), true, verified.stdout);
+    assert.equal(verified.stdout.includes("DROP"), true, verified.stdout);
+    note(`runtime-uid=${identity.uid} runtime-gid=${identity.gid}`);
+    note(verified.stdout.trim());
     const ready = compose(["up", "-d", "--wait", "--wait-timeout", "120"], env);
     if (ready.status !== 0) {
       const logs = compose(["logs", "--no-color", "--tail", "80", "s3"], env);
@@ -572,6 +650,7 @@ test("secure SeaweedFS topology keeps private bytes behind S3", { timeout: 300_0
     }
     compose(["down", "-v"], env);
     rmSync(secrets, { recursive: true, force: true });
+    assert.equal(existsSync(secrets), false, "generated secrets were not removed");
     const minioVolumesAfter = docker(["volume", "ls", "--format", "{{.Name}}"])
       .split("\n")
       .filter((name) => name.includes("minio"));

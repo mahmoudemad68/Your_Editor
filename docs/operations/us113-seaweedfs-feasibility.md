@@ -31,7 +31,7 @@ Observed memory after the adversarial upload: master 59 MiB, volume 135 MiB, fil
 
 ## Authentication
 
-Secrets are written at test runtime into a `0700` directory and mounted read-only at `/etc/seaweedfs/security.toml` and `/etc/seaweedfs/s3.json`. The files are `0644` so the image user, uid 1000, can read them when the host user is different. They are not baked into the image and are not committed. The previous `infra/seaweedfs-spike/s3.json` spike credentials were removed.
+Secrets are written at test runtime into a `0700` directory and mounted read-only at `/etc/seaweedfs/security.toml` and `/etc/seaweedfs/s3.json`. The files stay mode `0600`. The test reads `id seaweed` from the image and changes ownership to that uid and gid, so the non-root process can read them when the host user is different. An unrelated uid cannot read them. They are not baked into the image and are not committed. The previous `infra/seaweedfs-spike/s3.json` spike credentials were removed.
 
 `security.toml` sets four distinct keys:
 
@@ -44,7 +44,7 @@ Secrets are written at test runtime into a `0700` directory and mounted read-onl
 
 Compose `internal` networks do not stop the Docker host. On this host, container-to-container traffic also needs an `iptables-legacy` `DOCKER-FORWARD` accept because the legacy `FORWARD` policy is DROP. `infra/seaweedfs-spike/isolate-internal-network.sh` is part of the proof. It is not installed as a staging firewall.
 
-The script drops new traffic to the internal subnet from every interface except the internal bridge, and drops host `OUTPUT` to that subnet. On the application subnet it allows new TCP connections only to ports 8333 and 8080, plus the established replies those connections need. It writes those rules with `iptables-nft` and `iptables-legacy`, and skips a backend whose `DOCKER-USER` or `DOCKER-FORWARD` chain is absent. GitHub-hosted runners keep Docker's chains on only one of those backends. A deployment that skips these rules, or an equivalent host firewall on a dedicated VM, is not isolated.
+The script drops new traffic to the internal subnet from every interface except the internal bridge, and drops host `OUTPUT` to that subnet. On the application subnet it allows new TCP connections only to ports 8333 and 8080, plus the established replies those connections need. It installs each required rule on every backend that has the chain (`iptables-nft` and `iptables-legacy`). A backend without that chain is skipped. If no backend accepts the rule, the script exits with an unsupported-firewall error and the test fails. `verify` then checks the effective rules before any upload. A deployment that skips these rules, or an equivalent host firewall on a dedicated VM, is not isolated.
 
 | Caller                        | Target                                     | Result                                      |
 | ----------------------------- | ------------------------------------------ | ------------------------------------------- |
