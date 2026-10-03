@@ -7,10 +7,8 @@ export const MEDIA_INSPECT_TIMEOUT_MS = 30_000;
 export const MEDIA_INSPECT_MAX_ATTEMPTS = 2;
 export const MEDIA_INSPECT_BACKOFF_MS = 400;
 
-export const MEDIA_INSPECT_QUEUE = "media";
-
-/** Rejects queue names that would break the BullMQ key or the dead-letter name. */
-export function mediaInspectQueueName(queueName: string = MEDIA_INSPECT_QUEUE): string {
+/** Rejects a queue name the composition root already chose. */
+export function mediaInspectQueueName(queueName: string): string {
   if (
     queueName.length === 0 ||
     queueName.includes(":") ||
@@ -33,13 +31,13 @@ export async function publishMediaInspectJob(
     readonly jobId: string;
     readonly mediaAssetId: string;
     readonly correlationId: string;
-    readonly queueName?: string;
+    readonly queueName: string;
   },
 ): Promise<{ jobId: string; duplicate: boolean }> {
   const assetId = mediaAssetId(input.mediaAssetId);
   return enqueueJob(deps, {
     id: input.jobId,
-    queueName: mediaInspectQueueName(input.queueName ?? MEDIA_INSPECT_QUEUE),
+    queueName: mediaInspectQueueName(input.queueName),
     jobType: MEDIA_INSPECT_JOB_TYPE,
     idempotencyKey: `media.inspect.${assetId}`,
     payload: {

@@ -60,6 +60,10 @@ export async function sleepBriefly(envelope: JobEnvelope, signal: AbortSignal): 
 /** Stops when the parent asks. Writes the marker only after the abort is observed. */
 export async function cooperativeCancel(envelope: JobEnvelope, signal: AbortSignal): Promise<void> {
   const marker = markerPath(envelope);
+  const started = envelope.payload["startedPath"];
+  if (typeof started === "string" && started.length > 0) {
+    await writeFile(started, "started\n");
+  }
   await new Promise<never>((_resolve, reject) => {
     const timer = setTimeout(() => {
       reject(new Error("cooperative handler was not aborted"));

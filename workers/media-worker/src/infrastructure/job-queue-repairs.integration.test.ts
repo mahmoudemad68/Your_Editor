@@ -101,20 +101,25 @@ test("QA repairs hold on Redis and Postgres", { timeout: 60_000 }, async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "us129-repair-"));
   try {
     const cooperativeMarker = path.join(directory, "cooperative");
+    const cooperativeStartedMarker = path.join(directory, "cooperative-started");
     const cooperativeId = newId();
     await enqueueJob(deps, {
       id: cooperativeId,
       queueName,
       jobType: "probe",
       idempotencyKey: `coop-${cooperativeId}`,
-      payload: { markerPath: cooperativeMarker },
+      payload: { markerPath: cooperativeMarker, startedPath: cooperativeStartedMarker },
       subject: subject(media),
       timeoutMs: 30_000,
       maxAttempts: 1,
       backoffBaseMs: 20,
     });
     const cooperativeRun = runNextJob(deps, queueName, spec("cooperativeCancel"));
-    while ((await jobs.findById(jobId(cooperativeId)))?.status !== "Running") {
+    const handlerWait = Date.now();
+    while (!(await markerExists(cooperativeStartedMarker))) {
+      if (Date.now() - handlerWait > 10_000) {
+        throw new Error("cooperative handler did not start");
+      }
       await delay(10);
     }
     const cooperativeStarted = Date.now();
