@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 # Production image for the media worker. Multi-stage, non-root, no secrets in the image.
 
-FROM node:22.23.2-bookworm-slim AS base
+FROM node:22.23.3-alpine3.23@sha256:baf676f7d0e552f3231945c2f979055ca121bce128c152f7a34e6bd1728b1c5a AS base
 ENV PNPM_HOME="/pnpm" \
     PATH="/pnpm:$PATH" \
     CI=true \
@@ -38,14 +38,14 @@ RUN pnpm --filter @editagent/media-worker... build \
     && pnpm --filter @editagent/media-worker --prod deploy --legacy /out \
     && rm -f /out/node_modules/.pnpm/node_modules/@editagent/media-worker
 
-FROM node:22.23.2-bookworm-slim AS runtime
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg=7:5.1.9-0+deb12u1 \
-    && rm -rf /var/lib/apt/lists/* \
+FROM node:22.23.3-alpine3.23@sha256:baf676f7d0e552f3231945c2f979055ca121bce128c152f7a34e6bd1728b1c5a AS runtime
+RUN apk add --no-cache ffmpeg=8.0.1-r1 \
     && ffprobe -version \
     && ffprobe -version | head -n 1 > /etc/editagent-ffprobe-release \
-    && groupadd --system --gid 10001 editagent \
-    && useradd --system --uid 10001 --gid 10001 --home-dir /home/editagent --create-home --shell /usr/sbin/nologin editagent
+    && addgroup -S -g 10001 editagent \
+    && adduser -S -D -H -u 10001 -G editagent -h /home/editagent -s /sbin/nologin editagent \
+    && mkdir -p /home/editagent \
+    && chown editagent:editagent /home/editagent
 WORKDIR /app
 COPY --from=build --chown=10001:10001 /out/ ./
 USER 10001:10001

@@ -28,7 +28,7 @@ Postgres `16.10-alpine` and Redis `7.4-alpine` are not rebuilt. The same workflo
 
 Pull requests build and scan the same images and upload SBOMs. They do not push to GHCR and they do not deploy.
 
-Trivy fails that image job when it reports a critical finding. The failed image is not pushed. The SBOM from the earlier step remains as an artifact. A red image scan is not a release.
+Trivy fails that image job when it reports a critical finding. The failed image is not pushed. The SBOM from the earlier step remains as an artifact. A red image scan is not a release. The current finding record and the unapplied MinIO risk-acceptance proposal are in `docs/operations/us113-vulnerability-review.md`.
 
 ## GitHub Environment `staging`
 
