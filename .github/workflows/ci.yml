@@ -54,6 +54,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - name: Start MinIO
         run: |
@@ -167,6 +169,18 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ffmpeg
           ffprobe -version
+
+      - name: Install secret scanner
+        run: ./infra/scripts/install-supply-chain-tools.sh gitleaks
+
+      - name: Scan for secrets
+        run: gitleaks detect --source . --redact --config .gitleaks.toml --exit-code 1
+
+      - name: Scan Node dependencies for critical vulnerabilities
+        run: pnpm audit --audit-level critical
+
+      - name: Scan Python dependencies for critical vulnerabilities
+        run: ./infra/scripts/audit-python.sh
 
       - name: Test
         run: pnpm test

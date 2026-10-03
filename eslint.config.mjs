@@ -56,6 +56,15 @@ export default tseslint.config(
     },
   },
   {
+    files: ["infra/object-ingress/**/*.mjs"],
+    languageOptions: {
+      globals: {
+        URL: "readonly",
+        process: "readonly",
+      },
+    },
+  },
+  {
     files: ["tests/**/*.mjs"],
     languageOptions: {
       globals: {

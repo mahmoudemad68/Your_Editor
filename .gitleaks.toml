@@ -1,0 +1,12 @@
+title = "EditAgent"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Local Compose placeholders. They are not staging or production credentials."
+regexTarget = "line"
+regexes = [
+  '''editagent-dev-password''',
+  '''editagent-dev-secret''',
+]

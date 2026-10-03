@@ -2,6 +2,8 @@
 
 Local runtime for US-114. Application adapters stay in later stories. This directory does not implement repositories, BullMQ, uploads, or authentication.
 
+Staging release, image digests, and rollback are documented in `docs/operations/staging-release.md`. That path is not the local stack below.
+
 ## Start
 
 From the repository root:

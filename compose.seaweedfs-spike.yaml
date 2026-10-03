@@ -1,0 +1,136 @@
+# Disposable secure SeaweedFS topology.
+# This does not replace MinIO. Secrets are mounted from SEAWEED_SECRET_DIR
+# and are not stored in the image.
+
+name: editagent-seaweedfs-secure
+
+networks:
+  seaweed_internal:
+    name: editagent-seaweed-internal
+  seaweed_app:
+    name: editagent-seaweed-app
+
+services:
+  master:
+    image: chrislusf/seaweedfs@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d
+    command:
+      - master
+      - -ip=master
+      - -ip.bind=0.0.0.0
+      - -port=9333
+      - -mdir=/data
+      - -telemetry=false
+      - -volumeSizeLimitMB=8
+    networks: [seaweed_internal]
+    volumes:
+      - seaweed-master:/data
+      - ${SEAWEED_SECRET_DIR:?SEAWEED_SECRET_DIR is required}/security.toml:/etc/seaweedfs/security.toml:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9333/dir/status"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+  volume:
+    image: chrislusf/seaweedfs@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d
+    command:
+      - volume
+      - -dir=/data
+      - -max=8
+      - -mserver=master:9333
+      - -ip=volume
+      - -ip.bind=0.0.0.0
+      - -port=8080
+    networks: [seaweed_internal]
+    volumes:
+      - seaweed-volume:/data
+      - ${SEAWEED_SECRET_DIR:?SEAWEED_SECRET_DIR is required}/security.toml:/etc/seaweedfs/security.toml:ro
+    depends_on:
+      - master
+    healthcheck:
+      test: ["CMD-SHELL", "wget -S -O /dev/null http://volume:8080/ 2>&1 | grep -q HTTP/"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 8s
+
+  filer:
+    image: chrislusf/seaweedfs@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d
+    command:
+      - filer
+      - -master=master:9333
+      - -ip=filer
+      - -ip.bind=0.0.0.0
+      - -port=8888
+      - -defaultStoreDir=/data
+      - -disableDirListing
+    networks: [seaweed_internal]
+    volumes:
+      - seaweed-filer:/data
+      - ${SEAWEED_SECRET_DIR:?SEAWEED_SECRET_DIR is required}/security.toml:/etc/seaweedfs/security.toml:ro
+    depends_on:
+      - volume
+    healthcheck:
+      test: ["CMD-SHELL", "wget -S -O /dev/null http://filer:8888/ 2>&1 | grep -q HTTP/"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 8s
+
+  s3:
+    image: chrislusf/seaweedfs@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d
+    command:
+      - s3
+      - -filer=filer:8888
+      - -ip.bind=0.0.0.0
+      - -port=8333
+      - -port.iceberg=0
+      - -port.lance=0
+      - -iam=false
+      - -config=/etc/seaweedfs/s3.json
+    networks: [seaweed_internal, seaweed_app]
+    ports:
+      - "127.0.0.1:18333:8333"
+    volumes:
+      - ${SEAWEED_SECRET_DIR:?SEAWEED_SECRET_DIR is required}/security.toml:/etc/seaweedfs/security.toml:ro
+      - ${SEAWEED_SECRET_DIR:?SEAWEED_SECRET_DIR is required}/s3.json:/etc/seaweedfs/s3.json:ro
+    depends_on:
+      - filer
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8333/status"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 8s
+
+  object-ingress:
+    image: editagent-object-ingress:spike
+    build:
+      context: .
+      dockerfile: infra/object-ingress/Dockerfile
+    networks: [seaweed_app]
+    environment:
+      MINIO_UPSTREAM: http://s3:8333
+      PORT: "8080"
+    ports:
+      - "127.0.0.1:18081:8080"
+    depends_on:
+      - s3
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:8080/health').then((response)=>process.exit(response.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+volumes:
+  seaweed-master:
+  seaweed-volume:
+  seaweed-filer:
