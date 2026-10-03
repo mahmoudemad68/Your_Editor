@@ -4,9 +4,10 @@
  */
 
 import assert from "node:assert/strict";
+import { type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { readdirSync, readFileSync } from "node:fs";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -92,22 +93,41 @@ function envelope(): JobEnvelope {
   };
 }
 
-function countJobChildren(): number {
-  let count = 0;
-  for (const entry of readdirSync("/proc")) {
-    if (!/^\d+$/.test(entry)) {
-      continue;
+const nodeRequire = createRequire(__filename);
+
+/**
+ * Records only the child processes this test asks Node to fork.
+ * A scan of every job-child.js on the machine also sees parallel test files.
+ */
+type Fork = typeof import("node:child_process").fork;
+
+function trackForks(onFork?: () => void): { readonly pids: number[]; restore: () => void } {
+  const childProcess = nodeRequire("node:child_process") as { fork: Fork };
+  const original = childProcess.fork;
+  const pids: number[] = [];
+  childProcess.fork = ((...args: Parameters<Fork>) => {
+    const child = original(...args) as ChildProcess;
+    if (typeof child.pid === "number") {
+      pids.push(child.pid);
     }
-    try {
-      const command = readFileSync(`/proc/${entry}/cmdline`).toString("utf8");
-      if (command.includes("job-child.js")) {
-        count += 1;
-      }
-    } catch {
-      // The process exited while we were reading.
-    }
+    onFork?.();
+    return child;
+  }) as Fork;
+  return {
+    pids,
+    restore() {
+      childProcess.fork = original;
+    },
+  };
+}
+
+function processAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return !(error instanceof Error && "code" in error && error.code === "ESRCH");
   }
-  return count;
 }
 
 async function withDatabase(suffix: string, body: (pool: Pool) => Promise<void>): Promise<void> {
@@ -199,14 +219,51 @@ async function enqueueProbe(
 
 test("an already aborted signal does not fork a job child", async () => {
   const supervisor = new ChildProcessJobSupervisor();
-  const before = countJobChildren();
-  const signal = AbortSignal.abort(new LockLostError());
-  await assert.rejects(
-    () =>
-      supervisor.run(envelope(), { modulePath: handlerModule, exportName: "touchMarker" }, signal),
-    (error: unknown) => error instanceof LockLostError,
-  );
-  assert.equal(countJobChildren(), before);
+  const tracked = trackForks();
+  try {
+    const signal = AbortSignal.abort(new LockLostError());
+    await assert.rejects(
+      () =>
+        supervisor.run(
+          envelope(),
+          { modulePath: handlerModule, exportName: "touchMarker" },
+          signal,
+        ),
+      (error: unknown) => error instanceof LockLostError,
+    );
+    assert.deepEqual(tracked.pids, []);
+  } finally {
+    tracked.restore();
+  }
+});
+
+test("an abort between fork and start reaps that child", { timeout: 20_000 }, async () => {
+  const supervisor = new ChildProcessJobSupervisor();
+  const directory = await mkdtemp(path.join(tmpdir(), "us129-f11-fork-"));
+  const marker = path.join(directory, "ran");
+  const controller = new AbortController();
+  const tracked = trackForks(() => {
+    controller.abort(new LockLostError());
+  });
+  try {
+    await assert.rejects(
+      () =>
+        supervisor.run(
+          { ...envelope(), payload: { markerPath: marker } },
+          { modulePath: handlerModule, exportName: "touchMarker" },
+          controller.signal,
+        ),
+      (error: unknown) => error instanceof LockLostError,
+    );
+    assert.equal(tracked.pids.length, 1);
+    const pid = tracked.pids[0];
+    assert.equal(pid != null && pid > 1, true);
+    assert.equal(processAlive(pid ?? 0), false);
+    assert.equal(await markerText(marker), null);
+  } finally {
+    tracked.restore();
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test(
@@ -462,17 +519,20 @@ test("lock loss during findById does not start the handler", { timeout: 60_000 }
     };
     try {
       await enqueueProbe(depsFor(jobs, queue), queueName, id, { markerPath: marker });
-      const before = countJobChildren();
-      await runNextJob(depsFor(slow, queue), queueName, {
-        modulePath: handlerModule,
-        exportName: "touchMarker",
-      });
-      await delay(200);
+      const tracked = trackForks();
+      try {
+        await runNextJob(depsFor(slow, queue), queueName, {
+          modulePath: handlerModule,
+          exportName: "touchMarker",
+        });
+        assert.deepEqual(tracked.pids, []);
+      } finally {
+        tracked.restore();
+      }
       assert.equal(notified, true);
       assert.equal(await markerText(marker), null);
       assert.equal((await jobs.findById(jobId(id)))?.status, "Queued");
       assert.equal((await jobs.listAttempts(jobId(id))).length, 0);
-      assert.equal(countJobChildren(), before);
       await queue.close();
       const recovered = new BullMqJobQueue(redisUrl, {
         lockDurationMs: 400,
