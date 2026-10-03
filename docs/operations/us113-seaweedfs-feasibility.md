@@ -1,63 +1,106 @@
 # SeaweedFS feasibility proof
 
-This is an investigation. MinIO remains the development object store. ADR-005 stays Accepted. The proposed revision in that record is not approved.
+This is an investigation. MinIO remains the development and staging object store. ADR-005 stays Accepted. The proposed revision in that record is not approved. `compose.yaml` and `compose.staging.yaml` were not switched to SeaweedFS, and no MinIO volume was mounted, migrated, or deleted.
 
-## Environment
+Independent QA rejected `weed mini` at `5c973b5c0d74c2c3b9200639c408f2e47970b53c`. The Filer HTTP listener on port 8888 returned a private object with no credentials. The S3 API rejected the same unsigned request. That mini topology is not a candidate.
+
+## Image
 
 - Image: `chrislusf/seaweedfs@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d`
 - Tag recorded with that digest: `4.48`
 - License: Apache-2.0 (`github.com/seaweedfs/seaweedfs`)
-- Compose project: `editagent-seaweedfs-spike`
-- Volume: `editagent-seaweedfs-spike_seaweedfs-spike-data`
-- Published port: `127.0.0.1:18333` to container port 8333
-- Existing MinIO volume `editagent_minio-data` was not mounted, migrated, or deleted
 - Image size: 529,212,727 bytes
-- Observed process memory after startup: about 73 MiB
-- Syft SBOM: SPDX 2.3, 284 packages
-- Trivy 0.75.0, `--severity CRITICAL,HIGH`: no findings in the Alpine 3.24.2 base or `usr/bin/weed`
+- Earlier Syft SBOM for this digest: SPDX 2.3, 284 packages
+- Trivy 0.75.0, `--severity CRITICAL,HIGH`, rerun on this digest: no findings in Alpine 3.24.2 or `usr/bin/weed`. Exit code 0. The critical publish gate was not changed and was not pointed at this image.
 
-The critical publish gate was not changed and was not pointed at this image.
+## Disposable topology
 
-## Compatibility
+Compose file: `compose.seaweedfs-spike.yaml`. Project name: `editagent-seaweedfs-secure`.
 
-The test `tests/architecture/seaweedfs-s3-spike.test.mjs` uses the built `S3ObjectStorage` class. Checksum validation and `If-None-Match: *` stayed in place.
+| Service        | Command                                                  | Listeners             | Network                              | Published         |
+| -------------- | -------------------------------------------------------- | --------------------- | ------------------------------------ | ----------------- |
+| master         | `master`, telemetry off, 8 MB volume limit in this proof | HTTP 9333, gRPC 19333 | `editagent-seaweed-internal`         | none              |
+| volume         | `volume -max=8`                                          | HTTP 8080, gRPC 18080 | internal only                        | none              |
+| filer          | `filer -disableDirListing`                               | HTTP 8888, gRPC 18888 | internal only                        | none              |
+| s3             | `s3 -iam=false -port.iceberg=0 -port.lance=0`            | HTTP 8333, gRPC 18333 | internal and `editagent-seaweed-app` | `127.0.0.1:18333` |
+| object-ingress | existing Node proxy                                      | HTTP 8080             | app network only                     | `127.0.0.1:18081` |
 
-| Requirement                  | Result | Evidence                                                                                      |
-| ---------------------------- | ------ | --------------------------------------------------------------------------------------------- |
-| CreateBucket                 | PASS   | `ensureBucket()` completed                                                                    |
-| PutObject                    | PASS   | `put()` completed                                                                             |
-| GetObject                    | PASS   | returned bytes matched the upload                                                             |
-| HeadObject                   | PASS   | `stat()` returned size, type, and checksum                                                    |
-| DeleteObject                 | PASS   | `stat()` returned null afterward                                                              |
-| Path-style requests          | PASS   | signed URL path started with `/editagent-spike/`                                              |
-| ChecksumSHA256 on upload     | PASS   | `put()` and the signed PUT sent `x-amz-checksum-sha256`                                       |
-| ChecksumSHA256 on HeadObject | PASS   | `stat().checksumSha256Hex` matched the SHA-256 of the body                                    |
-| Presigned PUT                | PASS   | HTTP 200                                                                                      |
-| SigV4 Host                   | PASS   | URL host was `127.0.0.1:18333` for the direct client and the ingress host for the proxied PUT |
-| Signed Content-Type          | PASS   | changing it returned 403 `SignatureDoesNotMatch`                                              |
-| Signed If-None-Match         | PASS   | omitting it returned 403 `SignatureDoesNotMatch`                                              |
-| Signed x-amz-checksum-sha256 | PASS   | omitting it returned 403 `SignatureDoesNotMatch`                                              |
-| Duplicate object protection  | PASS   | second PUT returned 412                                                                       |
-| Upload completion checks     | PASS   | size, `video/mp4`, and checksum matched the declaration                                       |
+WebDAV, Iceberg, Lance, the admin server, the filer IAM port, and pprof were not started. Volume 4.48 has no `-disableHttp` flag. File reads on the volume server are rejected with JWT instead.
 
-## Ingress, network, and credentials
+Observed memory after the adversarial upload: master 59 MiB, volume 135 MiB, filer 59 MiB, S3 59 MiB, object ingress 56 MiB.
 
-The existing object ingress accepted the signed PUT (HTTP 200) and returned 403 for `POST /?Action=AssumeRoleWithLDAPIdentity` and `GET /minio/admin/v3/info`.
+## Authentication
 
-S3 credentials are a mounted JSON file, `infra/seaweedfs-spike/s3.json`. They are spike values, not the MinIO root password, and they are not baked into the image.
+Secrets are written at test runtime into a `0600` directory and mounted read-only at `/etc/seaweedfs/security.toml` and `/etc/seaweedfs/s3.json`. They are not baked into the image and are not committed. The previous `infra/seaweedfs-spike/s3.json` spike credentials were removed.
 
-`weed mini` also listens, inside the container, on the master UI, volume server, filer, WebDAV, Iceberg, Lance, and admin ports. Compose publishes only 8333. On this host, the container bridge address still answered the admin UI on port 23646 and the filer on port 8888. Unpublished ports are not same-host isolation. The spike now sets an admin username and password. A shared environment must keep those extra ports off the host firewall and must not reuse this password.
+`security.toml` sets four distinct keys:
 
-## Operations
+- `jwt.signing` and `jwt.signing.read` for master and volume writes and reads
+- `jwt.filer_signing` and `jwt.filer_signing.read` for Filer HTTP writes and reads
 
-SeaweedFS data lives under `/data` as filer LevelDB, master snapshots, and volume files. That is not the MinIO layout under `.minio.sys`. A MinIO volume cannot be mounted as a SeaweedFS volume.
+`access.ui` is false, which disables the volume UI. `filer.expose_directory_metadata` is false. The S3 gateway uses the same file, so it can mint the Filer tokens. Unsigned S3 requests return 403. Unsigned Filer object reads return 401 `wrong jwt`. A known volume needle URL, and `weed download` of that needle without the signing key, return 401 rather than the object.
 
-Backup is a copy of `/data` while the process is stopped, or an S3 copy of the objects. Restore is the reverse. Postgres metadata is unchanged and must still point at the copied keys. The two stores are restored together, as ADR-005 already requires.
+## Network boundary
 
-A migration would create a new volume, copy objects through the S3 API, then point `S3_ENDPOINT` and `S3_PUBLIC_ENDPOINT` at SeaweedFS and the object ingress. It would not be an in-place disk conversion.
+Compose `internal` networks do not stop the Docker host. On this host, container-to-container traffic also needs an `iptables-legacy` `DOCKER-FORWARD` accept because the legacy `FORWARD` policy is DROP. `infra/seaweedfs-spike/isolate-internal-network.sh` is part of the proof. It is not installed as a staging firewall.
 
-## Feasibility
+The script drops new traffic to the internal subnet from every interface except the internal bridge, and drops host `OUTPUT` to that subnet. On the application subnet it allows new TCP connections only to ports 8333 and 8080, plus the established replies those connections need. A deployment that skips these rules, or an equivalent host firewall on a dedicated VM, is not isolated.
 
-Replacing MinIO is technically feasible for the guarantees this adapter enforces. No application change was required for the tests above. The work that remains is operational: one process with several internal ports, a new volume, an S3 copy, and an accepted ADR. The critical MinIO CVEs are not in this image. High and critical Trivy findings were not reported for this digest. That scan is not a waiver for later versions.
+| Caller                        | Target                                     | Result                                      |
+| ----------------------------- | ------------------------------------------ | ------------------------------------------- |
+| Docker host                   | Filer, volume, master, and S3 internal IPs | no connection                               |
+| Docker host                   | published S3 object path                   | 403, private bytes absent                   |
+| Docker host                   | object ingress object path                 | 403, private bytes absent                   |
+| App network (API position)    | Filer, volume, and master                  | no connection                               |
+| App-network sibling           | S3 `:8333` unsigned                        | 403, private bytes absent                   |
+| App-network sibling and host  | S3 gRPC `:18333`                           | no connection                               |
+| Object ingress container      | Filer object URL                           | no response, private bytes absent           |
+| Another Docker network        | Filer and volume                           | no connection                               |
+| Internal unauthorized sibling | Filer object path and volume needle URL    | 401, private bytes absent                   |
+| Internal unauthorized sibling | volume `/` and Filer `/`                   | 401                                         |
+| Internal unauthorized sibling | `weed filer.cat` and `weed download`       | no private bytes                            |
+| Internal unauthorized sibling | master `:9333`                             | 200 topology JSON and HTML, no object bytes |
+| Internal unauthorized sibling | volume `/status`                           | 200 disk and volume counts, no object bytes |
+| Internal unauthorized sibling | volume and Filer `/healthz`                | 200 empty body                              |
+| Internal unauthorized sibling | S3 `:8333` unsigned                        | 403                                         |
 
-AIStor remains the other unaccepted option. It needs a license. This proof did not purchase one.
+Status 0 in the automated test means the client received no HTTP response before the one-second limit. The private marker was `private-video-bytes-MUST-NOT-LEAK`. It was absent from every unauthorized response.
+
+## Adapter retest
+
+`tests/architecture/seaweedfs-s3-spike.test.mjs` uses the built `S3ObjectStorage` class. The adapter source was not changed. Checksum validation and `If-None-Match: *` stayed in place.
+
+| Requirement                  | Result | Evidence                                                             |
+| ---------------------------- | ------ | -------------------------------------------------------------------- |
+| CreateBucket, Put, Get, Head | PASS   | direct client against `127.0.0.1:18333`                              |
+| Delete, then restore         | PASS   | object returned after the volume and filer directories were replaced |
+| Path-style and SigV4         | PASS   | presigned host was `127.0.0.1:18081`; unsigned S3 returned 403       |
+| ChecksumSHA256               | PASS   | `stat().checksumSha256Hex` matched the body                          |
+| Presigned PUT via ingress    | PASS   | HTTP 200                                                             |
+| Signed Content-Type          | PASS   | changed header returned 403                                          |
+| Signed If-None-Match         | PASS   | omitted header returned 403                                          |
+| Signed checksum header       | PASS   | omitted header returned 403                                          |
+| Wrong body checksum          | PASS   | not HTTP 200                                                         |
+| Duplicate upload             | PASS   | second PUT returned 412                                              |
+| Restart                      | PASS   | checksum still matched after volume, filer, and S3 restarted         |
+| Anonymous byte bypass        | PASS   | no unauthorized listener returned the marker                         |
+
+## Volumes, backup, and health
+
+Three named volumes: `seaweed-master`, `seaweed-volume`, and `seaweed-filer`. Filer metadata is LevelDB under the filer data directory. Object bytes are collection `.dat` and `.idx` files on the volume server. That is not the MinIO layout. A MinIO volume cannot be mounted here.
+
+Backup is a copy taken while the volume server and filer are stopped. Restore replaces each data directory. Copying the backup over a later LevelDB log leaves the deletion in place, so the proof deletes the current directory before copying the backup back. Master Raft state is a third copy and was not required to read the restored object. Postgres metadata is unchanged and must still point at the same keys. The two stores are restored together, as ADR-005 already requires.
+
+Health checks: master `GET /dir/status`; volume and filer any HTTP response on their own port (401 counts as alive); S3 `GET /status`; ingress `GET /health`.
+
+## Unresolved concerns
+
+- Master HTTP on the internal network is not JWT-protected. It returns topology and an HTML status page. It did not return object bytes.
+- Volume `/status` is intentionally unauthenticated upstream. It lists collection names, volume ids, and file counts. It did not return object bytes. `/healthz` on the volume and filer is empty and unauthenticated.
+- Volume and Filer gRPC ports reset unauthenticated clients in this test. They are not protected by mTLS. Isolation is the network rule above.
+- Anyone who can create containers, run `docker exec`, or mount the volumes can read the bytes. That is the same host-admin boundary as MinIO.
+- This host's legacy iptables behavior is not a universal Docker guarantee. The firewall script has to be applied, and then removed, with the disposable project.
+
+## Operational complexity against AIStor
+
+AIStor `RELEASE.2026-03-17T21-25-16Z` remains one process, close to the current MinIO service, with a license and a procurement decision. It was not downloaded or scanned. The SeaweedFS secure proof is four storage processes, an ingress, three volumes, two secret files, and a host firewall. Observed memory was about 370 MiB before counting the kernel. Backup has to stop the filer and the volume server and replace both directories. That is more operational surface than a licensed single-binary swap. Neither option is accepted for staging.

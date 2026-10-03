@@ -28,16 +28,16 @@ The GitHub advisories name MinIO AIStor `RELEASE.2026-03-17T21-25-16Z` as the fi
 
 SeaweedFS is the concrete candidate: Apache-2.0, an S3 gateway, and an active upstream. Garage (AGPL-3.0) and Ceph RGW (LGPL-2.1) are alternatives with heavier operations. None of them is approved. ADR-005 currently says MinIO. Changing that is an architecture decision, not a silent image swap.
 
-| Question                             | Assessment                                                                                                                                   |
-| ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| Presigned uploads                    | Not demonstrated. SigV4 host, checksum, and `If-None-Match` behavior must be tested with `S3ObjectStorage` before an ADR.                    |
-| Required S3 operations               | Must pass the same bucket, put, head, get, and delete calls the API uses.                                                                    |
-| Existing API integration             | The port can stay. The adapter stays only if those calls match. A failed checksum or conditional put is a blocker.                           |
-| Persistence and backup               | A new volume format. The current MinIO volume is not a drop-in backup source.                                                                |
-| Authentication and network isolation | Use static credentials and the same ingress rule: browsers reach object methods only. Do not expose an admin or STS port.                    |
-| Known security findings              | Must be scanned with the same Trivy critical gate before publish.                                                                            |
-| Migration complexity                 | New compose service, data migration, and compatibility tests. Larger than an image replacement.                                              |
-| Licensing and cost                   | SeaweedFS is Apache-2.0. Operating cost is the host we already need, not a license purchase. AGPL candidates need a separate license review. |
+| Question                             | Assessment                                                                                                                                                                                               |
+| ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Presigned uploads                    | Demonstrated on SeaweedFS 4.48 with the unchanged adapter, including signed Content-Type, If-None-Match, and checksum. `weed mini` is rejected.                                                          |
+| Required S3 operations               | Create, put, head, get, delete, duplicate rejection, and a bad checksum passed against the secure topology.                                                                                              |
+| Existing API integration             | `S3ObjectStorage` was not modified.                                                                                                                                                                      |
+| Persistence and backup               | New volumes. Filer LevelDB and volume files must be stopped and replaced together. The MinIO volume was not reused.                                                                                      |
+| Authentication and network isolation | S3 and Filer HTTP require credentials. The host can still open unpublished container ports unless a host firewall drops the internal subnet. That firewall was proven locally and is not staging config. |
+| Known security findings              | The pinned digest had no Trivy CRITICAL or HIGH findings. The critical gate was not weakened.                                                                                                            |
+| Migration complexity                 | Four storage processes, three volumes, mounted secrets, and a host firewall. Larger than an AIStor image replacement.                                                                                    |
+| Licensing and cost                   | SeaweedFS is Apache-2.0. Operating cost is the host we already need, not a license purchase. AGPL candidates need a separate license review.                                                             |
 
 ## Decision required
 
@@ -46,4 +46,4 @@ Pick one authorized path:
 1. Procure a named AIStor release and accept its license, then replace the image and re-scan it.
 2. Approve an ADR that replaces MinIO, then run the compatibility tests above.
 
-A disposable SeaweedFS 4.48 proof is recorded in `docs/operations/us113-seaweedfs-feasibility.md`. The existing adapter passed the checksum and conditional-upload checks. That proof does not approve a replacement. Until an owner accepts either path, the MinIO image fails the critical scan, the security gate fails, and no image is published.
+A disposable SeaweedFS 4.48 secure topology is recorded in `docs/operations/us113-seaweedfs-feasibility.md`. Independent QA rejected `weed mini`. The multi-component proof passed locally and is waiting for another independent pass. It does not approve a replacement. Until an owner accepts either path, the MinIO image fails the critical scan, the security gate fails, and no image is published.

@@ -44,10 +44,10 @@ PostgreSQL matches the relational ownership and consistency the modules need, an
 
 The decision above stays Accepted. This revision is not approved and does not change the running system.
 
-The open-source MinIO tag used by EditAgent still contains CVE-2026-33322 and CVE-2026-33419. A disposable SeaweedFS 4.48 proof, recorded in `docs/operations/us113-seaweedfs-feasibility.md`, ran the existing `S3ObjectStorage` adapter without removing checksum or `If-None-Match` checks. That proof is evidence for a later decision. It is not a decision.
+The open-source MinIO tag used by EditAgent still contains CVE-2026-33322 and CVE-2026-33419. A disposable SeaweedFS 4.48 proof is recorded in `docs/operations/us113-seaweedfs-feasibility.md`. Independent QA rejected `weed mini` because the Filer served private bytes with no credentials. A later multi-component topology kept those bytes behind S3 in a local adversarial test. That topology is evidence for a later decision. It is not a decision, and it is not deployed.
 
 The proposed replacement text, if later accepted, would change only the development object-store sentence:
 
-> An S3-compatible object store holds binary objects. SeaweedFS 4.48, image digest `sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d`, is the development implementation. MinIO volumes are not reused.
+> An S3-compatible object store holds binary objects. SeaweedFS 4.48, image digest `sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d`, is the development implementation only in the secure multi-component topology: master, volume, filer, and S3 gateway, with Filer and volume HTTP authenticated and only the S3 gateway reachable from the application network. A host firewall must block the internal subnet. MinIO volumes are not reused. `weed mini` is not sufficient.
 
 The alternative that stays on MinIO is a named patched AIStor release, which needs a license and procurement approval. That alternative is also not accepted.
