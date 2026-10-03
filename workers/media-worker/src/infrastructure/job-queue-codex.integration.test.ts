@@ -330,7 +330,13 @@ test(
         const redis = new Redis(redisUrl);
         await redis.del(`bull:${queueName}:${id}:lock`);
         await redis.quit();
-        await delay(800);
+        const lossWait = Date.now();
+        while (await queue.ownsReservation(reserved.receipt)) {
+          if (Date.now() - lossWait > 5_000) {
+            throw new Error("lock was not lost");
+          }
+          await delay(50);
+        }
         let notified = false;
         queue.whenLockLost(reserved.receipt, () => {
           notified = true;

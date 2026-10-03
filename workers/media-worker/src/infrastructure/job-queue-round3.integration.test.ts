@@ -147,7 +147,11 @@ test("round 3 blockers stay fixed on Redis and Postgres", { timeout: 60_000 }, a
       modulePath: handlerModule,
       exportName: "spawnDescendant",
     });
-    while ((await jobs.findById(jobId(cancelId)))?.status !== "Running") {
+    const descendantWait = Date.now();
+    while ((await markerText(cancelPid)) === null) {
+      if (Date.now() - descendantWait > 10_000) {
+        throw new Error("descendant did not start");
+      }
       await delay(10);
     }
     const cancelStarted = Date.now();
