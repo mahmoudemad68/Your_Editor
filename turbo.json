@@ -26,6 +26,7 @@
       "outputs": ["coverage/**", "coverage.xml", "dist-test/**"],
       "passThroughEnv": [
         "DATABASE_URL",
+        "REDIS_URL",
         "S3_ENDPOINT",
         "S3_PUBLIC_ENDPOINT",
         "S3_BUCKET",
