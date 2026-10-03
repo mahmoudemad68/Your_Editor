@@ -18,9 +18,10 @@ import { enqueueJob } from "../application/run-job.js";
 import { BullMqJobQueue } from "./bullmq-job-queue.js";
 import { ChildProcessJobSupervisor } from "./child-job-supervisor.js";
 import { PostgresJobRepository } from "./postgres-job-repository.js";
+import { isolatedRedisUrl, uniqueQueueSuffix } from "./test-redis.js";
 
 const TEST_DATABASE = "editagent_us129_py";
-const redisUrl = process.env.REDIS_URL ?? "redis://127.0.0.1:6379/0";
+const redisUrl = isolatedRedisUrl(3, process.env["REDIS_URL"]);
 const repoRoot = path.resolve(__dirname, "../../../..");
 
 function adminUrl(): string {
@@ -90,7 +91,7 @@ test("Python consumes a job enqueued by TypeScript", { timeout: 90_000 }, async 
   const queue = new BullMqJobQueue(redisUrl);
   const now = clock();
   const media = newId();
-  const queueName = `py-${newId().slice(0, 8)}`;
+  const queueName = `py-${uniqueQueueSuffix()}`;
   const deps = {
     jobs,
     queue,

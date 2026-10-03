@@ -24,6 +24,7 @@ const storageEnv = {
 
 const apiStorageEnv = {
   DATABASE_URL: databaseUrl,
+  REDIS_URL: redisUrl,
   S3_ENDPOINT: "http://minio:9000",
   S3_PUBLIC_ENDPOINT: "http://localhost:9000",
   S3_BUCKET: "editagent",
@@ -66,6 +67,7 @@ test("API config fails when PORT is not a port number", () => {
 test("API config parses a database URL and applies port and host defaults", () => {
   const config = parseApiConfig({ ...apiStorageEnv, PATH: "/usr/bin" });
   assert.equal(config.databaseUrl, databaseUrl);
+  assert.equal(config.redisUrl, redisUrl);
   assert.equal(config.port, 3001);
   assert.equal(config.host, "0.0.0.0");
   assert.equal(config.objectStorage.endpoint, "http://minio:9000");

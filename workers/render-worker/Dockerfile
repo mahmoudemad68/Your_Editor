@@ -18,6 +18,7 @@ COPY packages/schemas/package.json packages/schemas/package.json
 COPY packages/shared/package.json packages/shared/package.json
 COPY packages/tool-sdk/package.json packages/tool-sdk/package.json
 COPY packages/media-core/package.json packages/media-core/package.json
+COPY packages/job-queue/package.json packages/job-queue/package.json
 COPY workers/agent-worker/package.json workers/agent-worker/package.json
 COPY workers/media-worker/package.json workers/media-worker/package.json
 COPY workers/render-worker/package.json workers/render-worker/package.json

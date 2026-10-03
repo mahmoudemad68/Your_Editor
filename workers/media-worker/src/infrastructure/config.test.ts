@@ -57,6 +57,8 @@ test("media-worker configuration accepts a complete development environment", ()
   assert.equal(config.ffprobePath, "ffprobe");
   assert.equal(config.ffprobeTimeoutMs, 30_000);
   assert.equal(config.probeTmpDir, null);
+  assert.equal(config.mediaInspectQueue, "media");
+  assert.equal(config.healthPort, 3200);
   const configured = loadMediaWorkerConfig({
     DATABASE_URL: databaseUrl,
     REDIS_URL: redisUrl,

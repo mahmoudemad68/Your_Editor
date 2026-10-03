@@ -29,9 +29,10 @@ import { cancelJob, enqueueJob, runNextJob } from "../application/run-job.js";
 import { BullMqJobQueue } from "./bullmq-job-queue.js";
 import { ChildProcessJobSupervisor } from "./child-job-supervisor.js";
 import { PostgresJobRepository } from "./postgres-job-repository.js";
+import { isolatedRedisUrl, uniqueQueueSuffix } from "./test-redis.js";
 
 const TEST_DATABASE = "editagent_us129_repair";
-const redisUrl = process.env.REDIS_URL ?? "redis://127.0.0.1:6379/0";
+const redisUrl = isolatedRedisUrl(2, process.env["REDIS_URL"]);
 const repoRoot = path.resolve(__dirname, "../../../..");
 const handlerModule = path.join(__dirname, "../handlers/sample-handlers.js");
 
@@ -64,10 +65,94 @@ function clock() {
   };
 }
 
+async function bullState(queueName: string, id: string): Promise<string | null> {
+  const named = new Queue(queueName, {
+    connection: { url: redisUrl, maxRetriesPerRequest: null },
+    prefix: "bull",
+  });
+  named.on("error", () => undefined);
+  try {
+    const job = await named.getJob(id);
+    return job ? await job.getState() : null;
+  } finally {
+    await named.close();
+  }
+}
+
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
+}
+
+async function runUntilHandlerStarts(
+  deps: Parameters<typeof runNextJob>[0],
+  queueName: string,
+  handler: IsolatedHandler,
+  marker: string,
+  id: string,
+  jobs: PostgresJobRepository,
+): Promise<{ run: Promise<"idle" | "done"> }> {
+  let inflight: Promise<"idle" | "done"> | undefined;
+  let attempts = 0;
+  let settlement = "not-started";
+  let failure = "";
+  const started = Date.now();
+  while (!(await markerExists(marker))) {
+    const current = await jobs.findById(jobId(id));
+    if (
+      current &&
+      current.status !== "Queued" &&
+      current.status !== "Running" &&
+      current.status !== "Retrying"
+    ) {
+      await inflight?.catch(() => undefined);
+      throw new Error(
+        `handler did not start; job ${current.status}: ${current.failureReason ?? ""}`,
+      );
+    }
+    if (failure.length > 0) {
+      throw new Error(`handler did not start; job ${current?.status ?? "missing"}; ${failure}`);
+    }
+    if (Date.now() - started > 10_000) {
+      const bull = await bullState(queueName, id);
+      throw new Error(
+        `handler did not start; job ${current?.status ?? "missing"}; reservation ${settlement}; attempts ${attempts}; bull ${bull ?? "absent"}`,
+      );
+    }
+    if (
+      inflight === undefined &&
+      (current == null || current.status === "Queued" || current.status === "Retrying")
+    ) {
+      attempts += 1;
+      settlement = "pending";
+      const run = runNextJob(deps, queueName, handler).then(
+        async (result) => {
+          if (inflight === run) {
+            settlement = result;
+            if (result === "idle" || (result === "done" && !(await markerExists(marker)))) {
+              inflight = undefined;
+            }
+          }
+          return result;
+        },
+        (error: unknown) => {
+          if (inflight === run) {
+            settlement = "rejected";
+            failure = error instanceof Error ? error.message : String(error);
+            inflight = undefined;
+          }
+          return "idle" as const;
+        },
+      );
+      inflight = run;
+    }
+    await delay(10);
+  }
+  if (inflight === undefined) {
+    throw new Error("handler marker appeared without a reservation");
+  }
+  return { run: inflight };
 }
 
 function subject(media: string) {
@@ -96,27 +181,32 @@ test("QA repairs hold on Redis and Postgres", { timeout: 60_000 }, async () => {
   const supervisor = new ChildProcessJobSupervisor();
   const now = clock();
   const media = newId();
-  const queueName = `repair-${newId().slice(0, 8)}`;
+  const queueName = `repair-${uniqueQueueSuffix()}`;
   const deps = { jobs, queue, supervisor, now, newAttemptId: newId };
   const directory = await mkdtemp(path.join(tmpdir(), "us129-repair-"));
   try {
     const cooperativeMarker = path.join(directory, "cooperative");
+    const cooperativeStartedMarker = path.join(directory, "cooperative-started");
     const cooperativeId = newId();
     await enqueueJob(deps, {
       id: cooperativeId,
       queueName,
       jobType: "probe",
       idempotencyKey: `coop-${cooperativeId}`,
-      payload: { markerPath: cooperativeMarker },
+      payload: { markerPath: cooperativeMarker, startedPath: cooperativeStartedMarker },
       subject: subject(media),
       timeoutMs: 30_000,
       maxAttempts: 1,
       backoffBaseMs: 20,
     });
-    const cooperativeRun = runNextJob(deps, queueName, spec("cooperativeCancel"));
-    while ((await jobs.findById(jobId(cooperativeId)))?.status !== "Running") {
-      await delay(10);
-    }
+    const { run: cooperativeRun } = await runUntilHandlerStarts(
+      deps,
+      queueName,
+      spec("cooperativeCancel"),
+      cooperativeStartedMarker,
+      cooperativeId,
+      jobs,
+    );
     const cooperativeStarted = Date.now();
     await cancelJob(deps, cooperativeId);
     await cooperativeRun;
@@ -332,7 +422,7 @@ test("QA repairs hold on Redis and Postgres", { timeout: 60_000 }, async () => {
     assert.equal(present, 1);
     assert.equal(raced.filter((result) => result.status === "fulfilled").length, 1);
 
-    const badQueue = `bad-${newId().slice(0, 8)}`;
+    const badQueue = `bad-${uniqueQueueSuffix()}`;
     const badId = newId();
     await enqueueJob(deps, {
       id: badId,
@@ -377,7 +467,7 @@ test("QA repairs hold on Redis and Postgres", { timeout: 60_000 }, async () => {
       }
       return originalCancel(id);
     };
-    const pollQueue = `poll-${newId().slice(0, 8)}`;
+    const pollQueue = `poll-${uniqueQueueSuffix()}`;
     const pollId = newId();
     await enqueueJob(deps, {
       id: pollId,

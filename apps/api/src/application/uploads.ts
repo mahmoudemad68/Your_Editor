@@ -44,6 +44,15 @@ export interface CheckedUpload {
 }
 
 /**
+ * Stores the asset and a recoverable inspect intent together, then attempts
+ * publication without making the caller wait on an unreachable broker.
+ * The same stored upload returns the existing asset.
+ */
+export interface UploadPublication {
+  complete(asset: MediaAsset, correlationId: string): Promise<MediaAsset>;
+}
+
+/**
  * BeginMediaUpload and CompleteMediaUpload.
  * Membership and object checks stay here. Controllers do not build storage keys.
  */
@@ -143,12 +152,14 @@ export class CompleteMediaUpload {
     private readonly objects: IObjectStorage,
     private readonly ids: MediaAssetIdGenerator,
     private readonly clock: Clock,
+    private readonly publication?: UploadPublication,
   ) {}
 
   async execute(
     actorUserId: UserId,
     projectId: ProjectId,
     input: UploadDeclaration,
+    correlationId?: string,
   ): Promise<MediaAsset> {
     await requireUploader(this.projects, projectId, actorUserId);
     const checked = checkDeclaration(projectId, input);
@@ -173,6 +184,9 @@ export class CompleteMediaUpload {
       byteSize: checked.byteSize,
       contentSha256: checked.sha256,
     });
+    if (this.publication !== undefined && correlationId !== undefined) {
+      return this.publication.complete(asset, correlationId);
+    }
     await this.media.save(asset);
     return asset;
   }

@@ -20,6 +20,22 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/ready": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["ReadyController_ready"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/projects": {
     parameters: {
       query?: never;
@@ -82,7 +98,7 @@ export interface paths {
     };
     get?: never;
     put?: never;
-    /** Verify the stored object and record a MediaAsset. */
+    /** Verify the stored object and record a MediaAsset. The same declaration returns the stored asset, including while inspect publication is still pending. */
     post: operations["UploadsController_complete"];
     delete?: never;
     options?: never;
@@ -225,7 +241,33 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
+      /** @description The process is alive. This does not check dependencies. */
       200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  ReadyController_ready: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Postgres and Redis each answered within the one-second readiness deadline. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description A required dependency did not answer within the one-second readiness deadline. */
+      503: {
         headers: {
           [name: string]: unknown;
         };
@@ -521,7 +563,7 @@ export interface operations {
         };
         content?: never;
       };
-      /** @description The stored object is missing, mismatched, or already recorded. */
+      /** @description The stored object is missing or mismatched, or this declaration conflicts with the upload already stored for that key. */
       409: {
         headers: {
           [name: string]: unknown;

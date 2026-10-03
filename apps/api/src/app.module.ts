@@ -16,8 +16,19 @@ import {
   RenameProject,
 } from "./application/projects.js";
 import { GetMediaDetails } from "./application/media-details.js";
-import { BeginMediaUpload, CompleteMediaUpload } from "./application/uploads.js";
-import { HealthController } from "./presentation/health.controller.js";
+import { type ReadinessProbe } from "./application/health.js";
+import {
+  BeginMediaUpload,
+  CompleteMediaUpload,
+  type UploadPublication,
+} from "./application/uploads.js";
+import { createServiceLogger, type JsonLogger } from "@editagent/shared";
+import { ApiRequestLog } from "./presentation/api-request-log.js";
+import {
+  HealthController,
+  READINESS_PROBE,
+  ReadyController,
+} from "./presentation/health.controller.js";
 import { MediaController } from "./presentation/media.controller.js";
 import { ProjectsController } from "./presentation/projects.controller.js";
 import { UploadsController } from "./presentation/uploads.controller.js";
@@ -30,6 +41,13 @@ export interface ApiComposition {
   readonly objects: IObjectStorage;
   readonly mediaIds: MediaAssetIdGenerator;
   readonly presignTtlSeconds: number;
+  readonly logger?: JsonLogger;
+  readonly publication?: UploadPublication;
+  readonly readiness?: ReadinessProbe;
+}
+
+function createFallbackLogger(): JsonLogger {
+  return createServiceLogger("api");
 }
 
 /** Composition root. It wires use cases to a repository. It does not contain Project rules. */
@@ -38,7 +56,13 @@ export class AppModule {
   static register(composition: ApiComposition): DynamicModule {
     return {
       module: AppModule,
-      controllers: [HealthController, ProjectsController, UploadsController, MediaController],
+      controllers: [
+        HealthController,
+        ReadyController,
+        ProjectsController,
+        UploadsController,
+        MediaController,
+      ],
       providers: [
         {
           provide: CreateProject,
@@ -70,14 +94,35 @@ export class AppModule {
           useValue: new GetMediaDetails(composition.projects, composition.media),
         },
         {
+          provide: READINESS_PROBE,
+          useValue: composition.readiness ?? {
+            async check(): Promise<boolean> {
+              return false;
+            },
+          },
+        },
+        {
+          provide: ApiRequestLog,
+          useValue: new ApiRequestLog(composition.logger ?? createFallbackLogger()),
+        },
+        {
           provide: CompleteMediaUpload,
-          useValue: new CompleteMediaUpload(
-            composition.projects,
-            composition.media,
-            composition.objects,
-            composition.mediaIds,
-            composition.clock,
-          ),
+          useValue: composition.publication
+            ? new CompleteMediaUpload(
+                composition.projects,
+                composition.media,
+                composition.objects,
+                composition.mediaIds,
+                composition.clock,
+                composition.publication,
+              )
+            : new CompleteMediaUpload(
+                composition.projects,
+                composition.media,
+                composition.objects,
+                composition.mediaIds,
+                composition.clock,
+              ),
         },
       ],
     };

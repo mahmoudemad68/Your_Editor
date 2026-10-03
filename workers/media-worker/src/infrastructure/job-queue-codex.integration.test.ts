@@ -31,7 +31,9 @@ import { BullMqJobQueue } from "./bullmq-job-queue.js";
 import { ChildProcessJobSupervisor } from "./child-job-supervisor.js";
 import { PostgresJobRepository } from "./postgres-job-repository.js";
 
-const redisUrl = process.env.REDIS_URL ?? "redis://127.0.0.1:6379/0";
+import { isolatedRedisUrl, uniqueQueueSuffix } from "./test-redis.js";
+
+const redisUrl = isolatedRedisUrl(5, process.env["REDIS_URL"]);
 const repoRoot = path.resolve(__dirname, "../../../..");
 const handlerModule = path.join(__dirname, "../handlers/sample-handlers.js");
 
@@ -170,7 +172,7 @@ test("idempotency conflict keeps the stored payload", { timeout: 60_000 }, async
     const jobs = new PostgresJobRepository(pool);
     const queue = new BullMqJobQueue(redisUrl);
     const media = newId();
-    const queueName = `idem-${newId().slice(0, 8)}`;
+    const queueName = `idem-${uniqueQueueSuffix()}`;
     const idempotencyKey = `idem-${newId()}`;
     const storedId = newId();
     const racingJobs: JobRepository = {
@@ -236,7 +238,7 @@ test("idempotency conflict keeps the stored payload", { timeout: 60_000 }, async
           enqueueJob(depsFor(racingJobs, queue), {
             ...work,
             id: newId(),
-            queueName: `other-${newId().slice(0, 8)}`,
+            queueName: `other-${uniqueQueueSuffix()}`,
             payload: { n: 1 },
           }),
         (error: unknown) => error instanceof IdempotencyConflictError,
@@ -254,7 +256,7 @@ test("a ledger failure after success does not fail the job", { timeout: 60_000 }
     const queue = new BullMqJobQueue(redisUrl, { lockDurationMs: 400, stalledIntervalMs: 150 });
     const directory = await mkdtemp(path.join(tmpdir(), "us129-codex-"));
     const marker = path.join(directory, "ran");
-    const queueName = `ledger-${newId().slice(0, 8)}`;
+    const queueName = `ledger-${uniqueQueueSuffix()}`;
     const id = newId();
     let ledgerAttempts = 0;
     const flaky: JobRepository = {
@@ -311,7 +313,7 @@ test(
     await withDatabase("codex_lock", async (pool) => {
       const jobs = new PostgresJobRepository(pool);
       const queue = new BullMqJobQueue(redisUrl, { lockDurationMs: 200, stalledIntervalMs: 100 });
-      const queueName = `late-${newId().slice(0, 8)}`;
+      const queueName = `late-${uniqueQueueSuffix()}`;
       const id = newId();
       try {
         await enqueueJob(depsFor(jobs, queue), {
@@ -330,7 +332,13 @@ test(
         const redis = new Redis(redisUrl);
         await redis.del(`bull:${queueName}:${id}:lock`);
         await redis.quit();
-        await delay(800);
+        const lossWait = Date.now();
+        while (await queue.ownsReservation(reserved.receipt)) {
+          if (Date.now() - lossWait > 5_000) {
+            throw new Error("lock was not lost");
+          }
+          await delay(50);
+        }
         let notified = false;
         queue.whenLockLost(reserved.receipt, () => {
           notified = true;
@@ -351,7 +359,7 @@ test(
     await withDatabase("codex_update", async (pool) => {
       const jobs = new PostgresJobRepository(pool);
       const failing = new UpdateDataFails(redisUrl);
-      const queueName = `upd-${newId().slice(0, 8)}`;
+      const queueName = `upd-${uniqueQueueSuffix()}`;
       const id = newId();
       const directory = await mkdtemp(path.join(tmpdir(), "us129-codex-"));
       const marker = path.join(directory, "ran");
@@ -406,8 +414,8 @@ test("Python timeout and cancel stop the hold before the marker", { timeout: 60_
     const directory = await mkdtemp(path.join(tmpdir(), "us129-codex-"));
     const timeoutMarker = path.join(directory, "timeout");
     const cancelMarker = path.join(directory, "cancel");
-    const timeoutQueue = `pyt-${newId().slice(0, 8)}`;
-    const cancelQueue = `pyc-${newId().slice(0, 8)}`;
+    const timeoutQueue = `pyt-${uniqueQueueSuffix()}`;
+    const cancelQueue = `pyc-${uniqueQueueSuffix()}`;
     const timeoutId = newId();
     const cancelId = newId();
     const work = subject(newId());
@@ -482,7 +490,7 @@ test(
     await withDatabase("codex_pyack", async (pool, url) => {
       const jobs = new PostgresJobRepository(pool);
       const queue = new BullMqJobQueue(redisUrl);
-      const queueName = `pyack-${newId().slice(0, 8)}`;
+      const queueName = `pyack-${uniqueQueueSuffix()}`;
       const id = newId();
       try {
         await pool.query(`
@@ -531,8 +539,8 @@ test(
       const queue = new BullMqJobQueue(redisUrl);
       const directory = await mkdtemp(path.join(tmpdir(), "us129-codex-"));
       const marker = path.join(directory, "crash");
-      const badQueue = `pybad-${newId().slice(0, 8)}`;
-      const crashQueue = `pycrash-${newId().slice(0, 8)}`;
+      const badQueue = `pybad-${uniqueQueueSuffix()}`;
+      const crashQueue = `pycrash-${uniqueQueueSuffix()}`;
       const badId = newId();
       const crashId = newId();
       try {
@@ -620,7 +628,7 @@ test(
       const queue = new BullMqJobQueue(redisUrl);
       const directory = await mkdtemp(path.join(tmpdir(), "us129-codex-"));
       const marker = path.join(directory, "renew");
-      const queueName = `pyren-${newId().slice(0, 8)}`;
+      const queueName = `pyren-${uniqueQueueSuffix()}`;
       const id = newId();
       try {
         await pool.query(`

@@ -43,7 +43,7 @@ Operations:
 - `publishProgress(jobId, event)`
 - `close()`
 
-Payloads are JSON documents validated against a JSON Schema from `packages/schemas` before a worker runs them. The queue technology is Redis and BullMQ (ADR-004). The port does not expose BullMQ types. US-129 names the port `JobQueue` in the domain package, matching the other ports, which do not use an `I` prefix.
+Payloads are JSON documents validated against a JSON Schema from `packages/schemas` before a worker runs them. The queue technology is Redis and BullMQ (ADR-004). The port does not expose BullMQ types. US-129 names the port `JobQueue` in the domain package, matching the other ports, which do not use an `I` prefix. The BullMQ adapter and the Postgres job repository live in `packages/job-queue`. The API composition root and the media worker both use that package. A request correlation id travels inside `JobEnvelope.payload`.
 
 ### `ISandbox`
 
@@ -123,7 +123,7 @@ Owned by Media (inspection and derivatives) and Tools (editing commands). Implem
 
 `IMediaProbe` is declared in `packages/domain/src/modules/media`. The roadmap task that names `packages/media-core` as the port location is reconciled here: application code cannot import `media-core` (`application-no-outer-layers`), so the contract stays in the Media module and the FFprobe adapter stays in `packages/media-core`. Only that package spawns FFprobe. The adapter uses an argument array with `shell: false`, a finite timeout, and `-protocol_whitelist file`. That restriction is not the hostile-media validation required by US-127.
 
-US-126 inspection is not automatic. `CompleteMediaUpload` and `GET /projects/:projectId/media/:mediaAssetId` do not run FFprobe. `workers/media-worker` exposes `inspectMediaAsset` and `node dist/inspect.js <mediaAssetId>` for a stored asset. US-129 will call `inspectMediaAsset` from the job handler. There is no queue in this story.
+US-126 inspection is not automatic. `CompleteMediaUpload` publishes a durable `media.inspect` job after the asset row is stored. It does not run FFprobe. `GET /projects/:projectId/media/:mediaAssetId` does not inspect either. The media worker reserves that job through `JobQueue` and completes it. `inspectMediaAsset` and `node dist/inspect.js <mediaAssetId>` remain the FFprobe entry points.
 
 ## Rendering port
 

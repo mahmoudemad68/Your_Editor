@@ -1,3 +1,5 @@
+import { acceptCorrelationId, createCorrelationId } from "@editagent/shared";
+
 import { loadWebConfig } from "../infrastructure/config";
 import { createHttpProjectApi } from "../infrastructure/project-api";
 import type {
@@ -9,46 +11,67 @@ import type {
   UploadDeclaration,
 } from "../project-contract";
 
-function api() {
-  return createHttpProjectApi({ baseUrl: loadWebConfig().apiBaseUrl });
+function api(correlationId?: string) {
+  return createHttpProjectApi({
+    baseUrl: loadWebConfig().apiBaseUrl,
+    ...(correlationId === undefined ? {} : { correlationId }),
+  });
 }
 
-export async function listProjects(): Promise<ApiResult<readonly ProjectRecord[]>> {
-  return api().listProjects();
+export function correlationIdFromRequest(request: Request): string {
+  return (
+    acceptCorrelationId(request.headers.get("x-request-id") ?? undefined) ?? createCorrelationId()
+  );
 }
 
-export async function createProject(name: string): Promise<ApiResult<ProjectRecord>> {
-  return api().createProject(name);
+export async function listProjects(
+  correlationId?: string,
+): Promise<ApiResult<readonly ProjectRecord[]>> {
+  return api(correlationId).listProjects();
+}
+
+export async function createProject(
+  name: string,
+  correlationId?: string,
+): Promise<ApiResult<ProjectRecord>> {
+  return api(correlationId).createProject(name);
 }
 
 export async function renameProject(
   projectId: string,
   name: string,
+  correlationId?: string,
 ): Promise<ApiResult<ProjectRecord>> {
-  return api().renameProject(projectId, name);
+  return api(correlationId).renameProject(projectId, name);
 }
 
-export async function deleteProject(projectId: string): Promise<ApiResult<void>> {
-  return api().deleteProject(projectId);
+export async function deleteProject(
+  projectId: string,
+  correlationId?: string,
+): Promise<ApiResult<void>> {
+  return api(correlationId).deleteProject(projectId);
 }
 
 export async function beginUpload(
   projectId: string,
   body: UploadDeclaration,
+  correlationId?: string,
 ): Promise<ApiResult<BeginUpload>> {
-  return api().beginUpload(projectId, body);
+  return api(correlationId).beginUpload(projectId, body);
 }
 
 export async function completeUpload(
   projectId: string,
   body: UploadDeclaration,
+  correlationId?: string,
 ): Promise<ApiResult<MediaAssetRecord>> {
-  return api().completeUpload(projectId, body);
+  return api(correlationId).completeUpload(projectId, body);
 }
 
 export async function getMediaDetails(
   projectId: string,
   mediaAssetId: string,
+  correlationId?: string,
 ): Promise<ApiResult<MediaDetails>> {
-  return api().getMediaDetails(projectId, mediaAssetId);
+  return api(correlationId).getMediaDetails(projectId, mediaAssetId);
 }

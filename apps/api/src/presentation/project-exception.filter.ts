@@ -1,5 +1,6 @@
 import { type ArgumentsHost, Catch, type ExceptionFilter, HttpException } from "@nestjs/common";
 import { DomainError, MediaAssetConflict, ProjectConflict } from "@editagent/domain";
+import { createCorrelationId, currentCorrelationId } from "@editagent/shared";
 import { ProjectForbiddenError, ProjectNotFoundError } from "../application/project-access.js";
 import {
   ObjectStorageUnavailable,
@@ -9,7 +10,10 @@ import {
 } from "../application/upload-errors.js";
 
 interface HttpReply {
-  status(code: number): { json(body: unknown): void };
+  status(code: number): {
+    json(body: unknown): void;
+    type?(value: string): void;
+  };
 }
 
 /** Maps application and domain failures to HTTP. It does not decide membership. */
@@ -49,6 +53,14 @@ export class ProjectExceptionFilter implements ExceptionFilter {
       response.status(400).json({ statusCode: 400, message: exception.message });
       return;
     }
-    response.status(500).json({ statusCode: 500, message: "Internal server error." });
+    const sent = response.status(500);
+    sent.type?.("application/problem+json");
+    sent.json({
+      type: "about:blank",
+      title: "Internal Server Error",
+      status: 500,
+      detail: "An unexpected error occurred.",
+      traceId: currentCorrelationId() ?? createCorrelationId(),
+    });
   }
 }

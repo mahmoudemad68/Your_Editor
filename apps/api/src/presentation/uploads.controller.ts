@@ -12,7 +12,9 @@ import {
 } from "@nestjs/swagger";
 import { DomainError, projectId, type ProjectId } from "@editagent/domain";
 import { BeginMediaUpload, CompleteMediaUpload } from "../application/uploads.js";
+import { ApiRequestLog } from "./api-request-log.js";
 import { requireActor } from "./actor.js";
+import { requestCorrelationId } from "./correlation.js";
 import {
   BeginUploadResponseDto,
   MediaAssetResponseDto,
@@ -27,6 +29,7 @@ export class UploadsController {
   constructor(
     private readonly beginMediaUpload: BeginMediaUpload,
     private readonly completeMediaUpload: CompleteMediaUpload,
+    private readonly requestLog: ApiRequestLog,
   ) {}
 
   @Post()
@@ -57,14 +60,18 @@ export class UploadsController {
 
   @Post("complete")
   @HttpCode(201)
-  @ApiOperation({ summary: "Verify the stored object and record a MediaAsset." })
+  @ApiOperation({
+    summary:
+      "Verify the stored object and record a MediaAsset. The same declaration returns the stored asset, including while inspect publication is still pending.",
+  })
   @ApiCreatedResponse({ type: MediaAssetResponseDto })
   @ApiBadRequestResponse({ description: "The declared upload is not allowed." })
   @ApiUnauthorizedResponse({ description: "Sign in is required." })
   @ApiForbiddenResponse({ description: "Only an Owner or Editor can upload media." })
   @ApiNotFoundResponse({ description: "The Project is not visible to the caller." })
   @ApiConflictResponse({
-    description: "The stored object is missing, mismatched, or already recorded.",
+    description:
+      "The stored object is missing or mismatched, or this declaration conflicts with the upload already stored for that key.",
   })
   @ApiResponse({ status: 502, description: "Object storage is unavailable." })
   async complete(
@@ -76,7 +83,9 @@ export class UploadsController {
       requireActor(request),
       parseProjectRouteId(rawProjectId),
       body,
+      requestCorrelationId(),
     );
+    this.requestLog.jobAccepted("media.inspect", asset.id);
     return toMediaAssetResponse(asset);
   }
 }

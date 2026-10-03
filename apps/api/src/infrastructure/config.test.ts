@@ -8,6 +8,7 @@ const databaseUrl = "postgresql://editagent:editagent-dev-password@postgres:5432
 
 const apiEnv = {
   DATABASE_URL: databaseUrl,
+  REDIS_URL: "redis://redis:6379/0",
   S3_ENDPOINT: "http://minio:9000",
   S3_PUBLIC_ENDPOINT: "http://localhost:9000",
   S3_BUCKET: "editagent",
@@ -59,6 +60,8 @@ test("the API process exits immediately when DATABASE_URL is absent", () => {
 test("a present database URL is returned unchanged", () => {
   const config = loadApiConfig(apiEnv);
   assert.equal(config.databaseUrl, databaseUrl);
+  assert.equal(config.redisUrl, "redis://redis:6379/0");
+  assert.equal(config.mediaInspectQueue, "media");
   assert.equal(config.objectStorage.endpoint, "http://minio:9000");
   assert.equal(config.objectStorage.publicEndpoint, "http://localhost:9000");
   assert.equal(config.objectStorage.presignTtlSeconds, 900);

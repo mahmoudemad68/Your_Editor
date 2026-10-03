@@ -145,6 +145,42 @@ test("BeginMediaUpload rejects MIME, size, hash, and hostile filenames before a 
   assert.equal(objects.objects.size, 0);
 });
 
+test("CompleteMediaUpload publishes one inspect job for the request correlation id", async () => {
+  const projects = new InMemoryProjectRepository();
+  const objects = new MemoryObjectStorage("http://localhost:9000");
+  const clock = new ManualClock(instant(10n));
+  await new CreateProject(projects, new OneProjectId(), clock).execute(OWNER, "Launch");
+  const key = `projects/${PROJECT}/media/sha256/${HASH}`;
+  await objects.put(key, new Uint8Array(4), "video/mp4", HASH);
+  const published: Array<{ mediaAssetId: string; correlationId: string }> = [];
+  let stored: Awaited<ReturnType<InMemoryMediaAssetRepository["findById"]>> = null;
+  const complete = new CompleteMediaUpload(
+    projects,
+    new InMemoryMediaAssetRepository(),
+    objects,
+    new OneMediaId(),
+    clock,
+    {
+      async complete(asset, correlationId) {
+        if (
+          stored !== null &&
+          stored.storageKey === asset.storageKey &&
+          stored.displayFilename === asset.displayFilename
+        ) {
+          return stored;
+        }
+        stored = asset;
+        published.push({ mediaAssetId: asset.id, correlationId });
+        return asset;
+      },
+    },
+  );
+  const asset = await complete.execute(OWNER, PROJECT, declaration, "web-request-1");
+  const repeated = await complete.execute(OWNER, PROJECT, declaration, "web-request-2");
+  assert.equal(repeated.id, asset.id);
+  assert.deepEqual(published, [{ mediaAssetId: asset.id, correlationId: "web-request-1" }]);
+});
+
 test("CompleteMediaUpload persists a verified object and rejects mismatches", async () => {
   const { createProject, complete, objects, media } = setup();
   await createProject.execute(OWNER, "Launch");

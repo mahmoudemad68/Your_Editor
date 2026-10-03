@@ -38,14 +38,14 @@ export class ChildProcessJobSupervisor implements JobSupervisor {
     child.stderr?.on("data", (chunk: Buffer) => {
       stderr.push(chunk);
     });
-    const pgid = await dedicatedGroup(child);
-    if (pgid == null) {
-      await reapUnstarted(child, null);
-      throw new JobExecutionUnconfirmedError();
-    }
+    const pgid = await dedicatedGroup(child, signal);
     if (signal.aborted) {
       await reapUnstarted(child, pgid);
       throw abortReason(signal);
+    }
+    if (pgid == null) {
+      await reapUnstarted(child, null);
+      throw new JobExecutionUnconfirmedError();
     }
     const exited = once(child, "exit").then(([code, signalName]) => ({
       code: code as number | null,
@@ -151,22 +151,32 @@ async function reapUnstarted(child: ChildProcess, pgid: number | null): Promise<
   }
 }
 
-async function dedicatedGroup(child: ChildProcess): Promise<number | null> {
+async function dedicatedGroup(child: ChildProcess, signal: AbortSignal): Promise<number | null> {
   const pid = child.pid;
   if (pid == null || pid <= 1) {
     return null;
   }
-  const deadline = Date.now() + 300;
-  while (Date.now() < deadline) {
-    const group = processGroupId(pid);
-    const own = processGroupId(process.pid);
-    if (group === pid && group !== own && group > 1) {
+  // setpgid runs in the detached child after it is scheduled. A short cutoff
+  // treats that delay as an unconfirmed execution and the handler never starts.
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline && !signal.aborted) {
+    const group = observedGroup(pid);
+    if (group != null) {
       return group;
     }
     if (child.exitCode !== null || child.signalCode !== null) {
       return null;
     }
     await delay(10);
+  }
+  return observedGroup(pid);
+}
+
+function observedGroup(pid: number): number | null {
+  const group = processGroupId(pid);
+  const own = processGroupId(process.pid);
+  if (group === pid && group !== own && group > 1) {
+    return group;
   }
   return null;
 }

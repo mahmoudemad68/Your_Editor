@@ -19,6 +19,18 @@ test("production web source does not bind a test actor", () => {
   }
 });
 
+test("every web project route forwards the request correlation id", () => {
+  const root = path.resolve(__dirname, "../../src/app/api/projects");
+  const files = readdirSync(root, { recursive: true, encoding: "utf8" }).filter((file) =>
+    file.endsWith("route.ts"),
+  );
+  assert.ok(files.length >= 5);
+  for (const file of files) {
+    const text = readFileSync(path.join(root, file), "utf8");
+    assert.equal(text.includes("correlationIdFromRequest(request)"), true, file);
+  }
+});
+
 test("the production project client does not send an identity header", async () => {
   const source = readFileSync(
     path.resolve(__dirname, "../../src/infrastructure/project-api.ts"),

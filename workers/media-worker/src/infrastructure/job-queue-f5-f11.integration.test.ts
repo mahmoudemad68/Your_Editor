@@ -32,7 +32,9 @@ import { BullMqJobQueue } from "./bullmq-job-queue.js";
 import { ChildProcessJobSupervisor } from "./child-job-supervisor.js";
 import { PostgresJobRepository } from "./postgres-job-repository.js";
 
-const redisUrl = process.env.REDIS_URL ?? "redis://127.0.0.1:6379/0";
+import { isolatedRedisUrl, uniqueQueueSuffix } from "./test-redis.js";
+
+const redisUrl = isolatedRedisUrl(6, process.env["REDIS_URL"]);
 const repoRoot = path.resolve(__dirname, "../../../..");
 const handlerModule = path.join(__dirname, "../handlers/sample-handlers.js");
 
@@ -275,7 +277,7 @@ test(
       const queue = new BullMqJobQueue(redisUrl);
       const directory = await mkdtemp(path.join(tmpdir(), "us129-f5-"));
       const marker = path.join(directory, "ran");
-      const queueName = `f5r-${newId().slice(0, 8)}`;
+      const queueName = `f5r-${uniqueQueueSuffix()}`;
       const id = newId();
       let failures = 0;
       const flaky: JobRepository = {
@@ -342,7 +344,7 @@ test("either completion write rolls the transaction back", { timeout: 60_000 }, 
     `);
     const jobs = new PostgresJobRepository(pool);
     const queue = new BullMqJobQueue(redisUrl);
-    const queueName = `f5t-${newId().slice(0, 8)}`;
+    const queueName = `f5t-${uniqueQueueSuffix()}`;
     const id = newId();
     const now = clock();
     try {
@@ -395,7 +397,7 @@ test(
       const queue = new AckFails(redisUrl, { lockDurationMs: 400, stalledIntervalMs: 150 });
       const directory = await mkdtemp(path.join(tmpdir(), "us129-f5-"));
       const marker = path.join(directory, "ran");
-      const queueName = `f5a-${newId().slice(0, 8)}`;
+      const queueName = `f5a-${uniqueQueueSuffix()}`;
       const id = newId();
       try {
         await enqueueProbe(depsFor(jobs, queue), queueName, id, { markerPath: marker });
@@ -451,7 +453,7 @@ test(
       const queue = new BullMqJobQueue(redisUrl);
       const directory = await mkdtemp(path.join(tmpdir(), "us129-f5-"));
       const marker = path.join(directory, "ran");
-      const queueName = `f5o-${newId().slice(0, 8)}`;
+      const queueName = `f5o-${uniqueQueueSuffix()}`;
       const id = newId();
       const now = clock();
       const deps = {
@@ -495,7 +497,7 @@ test("lock loss during findById does not start the handler", { timeout: 60_000 }
     const queue = new BullMqJobQueue(redisUrl, { lockDurationMs: 200, stalledIntervalMs: 100 });
     const directory = await mkdtemp(path.join(tmpdir(), "us129-f11-"));
     const marker = path.join(directory, "ran");
-    const queueName = `f11-${newId().slice(0, 8)}`;
+    const queueName = `f11-${uniqueQueueSuffix()}`;
     const id = newId();
     let notified = false;
     const originalLost = queue.whenLockLost.bind(queue);
