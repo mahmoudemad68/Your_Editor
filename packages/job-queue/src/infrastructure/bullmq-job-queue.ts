@@ -46,6 +46,7 @@ export class BullMqJobQueue implements JobQueue {
     this.lockDurationMs = options.lockDurationMs ?? 30_000;
     this.stalledIntervalMs = options.stalledIntervalMs ?? 200;
     this.connection = new Redis(redisUrl, { maxRetriesPerRequest: null });
+    this.connection.on("error", () => undefined);
     const ajv = new Ajv2020({ allErrors: true, strict: false });
     this.validateEnvelope = ajv.compile(jobEnvelopeSchema);
   }
@@ -192,7 +193,7 @@ export class BullMqJobQueue implements JobQueue {
     await this.connection.publish(`editagent:job-progress:${jobId}`, event.message);
   }
 
-  async close(): Promise<void> {
+  async close(immediate = false): Promise<void> {
     if (this.closed) {
       return;
     }
@@ -201,10 +202,18 @@ export class BullMqJobQueue implements JobQueue {
       clearInterval(timer);
     }
     this.renewalTimers.clear();
-    await Promise.all([...this.workers.values()].map((worker) => worker.close()));
-    await Promise.all([...this.queues.values()].map((queue) => queue.close()));
+    const closing = Promise.all([
+      ...[...this.workers.values()].map((worker) => worker.close(immediate)),
+      ...[...this.queues.values()].map((queue) => queue.close()),
+    ]);
     this.workers.clear();
     this.queues.clear();
+    if (immediate) {
+      this.connection.disconnect();
+      await Promise.race([closing.catch(() => undefined), delay(200)]);
+      return;
+    }
+    await closing;
     await this.connection.quit();
   }
 
@@ -217,6 +226,7 @@ export class BullMqJobQueue implements JobQueue {
       connection: { url: this.redisUrl, maxRetriesPerRequest: null },
       prefix: PREFIX,
     });
+    queue.on("error", () => undefined);
     this.queues.set(queueName, queue);
     return queue;
   }
@@ -234,6 +244,7 @@ export class BullMqJobQueue implements JobQueue {
       stalledInterval: this.stalledIntervalMs,
       maxStalledCount: 5,
     });
+    worker.on("error", () => undefined);
     this.workers.set(queueName, worker);
     await worker.startStalledCheckTimer();
     return worker;
@@ -354,6 +365,12 @@ function assertEnvelope(validate: (data: unknown) => boolean, envelope: JobEnvel
   if (!validate(envelope)) {
     throw new Error("Job envelope does not match the shared JSON Schema.");
   }
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }
 
 function isDuplicateJob(error: unknown): boolean {

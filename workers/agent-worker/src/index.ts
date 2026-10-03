@@ -11,7 +11,8 @@ import { agentToolsPackage } from "./infrastructure/marker.js";
 export function main(): void {
   loadAgentWorkerConfig();
   startNoopTracing("agent-worker");
-  startHealthServer(WORKER_HEALTH_PORT);
+  // Config has loaded. This scaffold does not probe Redis on /ready.
+  startHealthServer(WORKER_HEALTH_PORT, { ready: () => true });
   process.stdout.write(`${describeWorker()} (${agentToolsPackage})\n`);
   keepProcessAlive();
 }

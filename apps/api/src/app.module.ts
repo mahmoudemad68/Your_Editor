@@ -20,7 +20,7 @@ import { type ReadinessProbe } from "./application/health.js";
 import {
   BeginMediaUpload,
   CompleteMediaUpload,
-  type InspectJobPublisher,
+  type UploadPublication,
 } from "./application/uploads.js";
 import { createServiceLogger, type JsonLogger } from "@editagent/shared";
 import { ApiRequestLog } from "./presentation/api-request-log.js";
@@ -42,7 +42,7 @@ export interface ApiComposition {
   readonly mediaIds: MediaAssetIdGenerator;
   readonly presignTtlSeconds: number;
   readonly logger?: JsonLogger;
-  readonly inspectJobs?: InspectJobPublisher;
+  readonly publication?: UploadPublication;
   readonly readiness?: ReadinessProbe;
 }
 
@@ -107,14 +107,14 @@ export class AppModule {
         },
         {
           provide: CompleteMediaUpload,
-          useValue: composition.inspectJobs
+          useValue: composition.publication
             ? new CompleteMediaUpload(
                 composition.projects,
                 composition.media,
                 composition.objects,
                 composition.mediaIds,
                 composition.clock,
-                composition.inspectJobs,
+                composition.publication,
               )
             : new CompleteMediaUpload(
                 composition.projects,

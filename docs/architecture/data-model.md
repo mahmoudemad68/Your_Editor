@@ -199,6 +199,8 @@ erDiagram
 
 `Job`, `JobAttempt`, and `JobDeadLetter` are the Postgres history for US-129. Redis holds the BullMQ message. These rows are the record that survives a Redis flush. `0005_jobs.sql` creates them. US-130 progress fan-out is Redis pub/sub and does not add a table.
 
+`inspect_publication_outbox` in `0006_inspect_publication_outbox.sql` is the durable intent to publish one `media.inspect` job for an uploaded MediaAsset. The asset row and the intent commit in one transaction, so a stored asset is not left without a recoverable publication. A dispatcher leases due rows with `FOR UPDATE SKIP LOCKED` and delivers them through the existing `publishMediaInspectJob` path. Delivery is at-least-once. A crash after Redis accepts the message is recovered by republishing the same job id, which the job idempotency key already treats as one logical job. The row is marked delivered only after that publication returns, or when that job is already terminal. Transient failures stay pending with bounded backoff and an error history.
+
 ## Sprint 1 and Sprint 2 traceability
 
 | Story                                 | Persistence                                                                                                                      |

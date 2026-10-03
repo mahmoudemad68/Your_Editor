@@ -19,9 +19,10 @@ import { cancelJob, enqueueJob, runNextJob } from "../application/run-job.js";
 import { BullMqJobQueue } from "./bullmq-job-queue.js";
 import { ChildProcessJobSupervisor } from "./child-job-supervisor.js";
 import { PostgresJobRepository } from "./postgres-job-repository.js";
+import { isolatedRedisUrl, uniqueQueueSuffix } from "./test-redis.js";
 
 const TEST_DATABASE = "editagent_us129_round3";
-const redisUrl = process.env.REDIS_URL ?? "redis://127.0.0.1:6379/0";
+const redisUrl = isolatedRedisUrl(4, process.env["REDIS_URL"]);
 const repoRoot = path.resolve(__dirname, "../../../..");
 const handlerModule = path.join(__dirname, "../handlers/sample-handlers.js");
 
@@ -130,7 +131,7 @@ test("round 3 blockers stay fixed on Redis and Postgres", { timeout: 60_000 }, a
   try {
     const cancelMarker = path.join(directory, "cancel");
     const cancelPid = path.join(directory, "cancel-pid");
-    const cancelQueue = `grp-${newId().slice(0, 8)}`;
+    const cancelQueue = `grp-${uniqueQueueSuffix()}`;
     const cancelId = newId();
     await enqueueJob(deps, {
       id: cancelId,
@@ -169,7 +170,7 @@ test("round 3 blockers stay fixed on Redis and Postgres", { timeout: 60_000 }, a
 
     const timeoutMarker = path.join(directory, "timeout");
     const timeoutPid = path.join(directory, "timeout-pid");
-    const timeoutQueue = `to-${newId().slice(0, 8)}`;
+    const timeoutQueue = `to-${uniqueQueueSuffix()}`;
     const timeoutId = newId();
     await enqueueJob(deps, {
       id: timeoutId,
@@ -198,7 +199,7 @@ test("round 3 blockers stay fixed on Redis and Postgres", { timeout: 60_000 }, a
     assert.equal(await markerText(timeoutMarker), null);
 
     const touch = path.join(directory, "touch");
-    const checkQueue = `chk-${newId().slice(0, 8)}`;
+    const checkQueue = `chk-${uniqueQueueSuffix()}`;
     const checkId = newId();
     await enqueueJob(deps, {
       id: checkId,
@@ -248,7 +249,7 @@ test("round 3 blockers stay fixed on Redis and Postgres", { timeout: 60_000 }, a
     assert.equal((await jobs.findById(jobId(checkId)))?.status, "Completed");
 
     const pyMarker = path.join(directory, "py-lock");
-    const pyQueue = `pyl-${newId().slice(0, 8)}`;
+    const pyQueue = `pyl-${uniqueQueueSuffix()}`;
     const pyId = newId();
     await enqueueJob(deps, {
       id: pyId,

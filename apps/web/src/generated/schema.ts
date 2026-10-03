@@ -98,7 +98,7 @@ export interface paths {
     };
     get?: never;
     put?: never;
-    /** Verify the stored object and record a MediaAsset. */
+    /** Verify the stored object and record a MediaAsset. The same declaration returns the stored asset, including while inspect publication is still pending. */
     post: operations["UploadsController_complete"];
     delete?: never;
     options?: never;
@@ -563,7 +563,7 @@ export interface operations {
         };
         content?: never;
       };
-      /** @description The stored object is missing, mismatched, or already recorded. */
+      /** @description The stored object is missing or mismatched, or this declaration conflicts with the upload already stored for that key. */
       409: {
         headers: {
           [name: string]: unknown;

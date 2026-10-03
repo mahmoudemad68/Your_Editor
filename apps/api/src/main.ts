@@ -6,7 +6,6 @@ import {
   observePostgresPool,
   PostgresJobRepository,
   postgresAndRedisReady,
-  publishMediaInspectJob,
 } from "@editagent/job-queue";
 import { createServiceLogger, startNoopTracing } from "@editagent/shared";
 import { Pool } from "pg";
@@ -17,6 +16,10 @@ import { NodeMediaAssetIdGenerator } from "./infrastructure/node-media-asset-id-
 import { NodeProjectIdGenerator } from "./infrastructure/node-project-id-generator.js";
 import { PostgresMediaAssetRepository } from "./infrastructure/postgres-media-repository.js";
 import { PostgresProjectRepository } from "./infrastructure/postgres-project-repository.js";
+import {
+  PostgresUploadPublication,
+  startPublicationRecovery,
+} from "./infrastructure/postgres-upload-publication.js";
 import { S3ObjectStorage } from "./infrastructure/s3-object-storage.js";
 import { SystemClock } from "./infrastructure/system-clock.js";
 
@@ -32,6 +35,17 @@ export async function bootstrap(): Promise<void> {
   const clock = new SystemClock();
   const jobs = new PostgresJobRepository(pool);
   const queue = new BullMqJobQueue(config.redisUrl);
+  const publication = new PostgresUploadPublication({
+    pool,
+    jobs,
+    queue,
+    now: () => clock.now(),
+    newJobId: () => createUuidV7(Date.now(), randomBytes(10)),
+    newAttemptId: () => createUuidV7(Date.now(), randomBytes(10)),
+    queueName: config.mediaInspectQueue,
+    workerId: "api",
+  });
+  startPublicationRecovery(publication);
   const app = await createApiApplication({
     projects: new PostgresProjectRepository(pool),
     clock,
@@ -44,29 +58,7 @@ export async function bootstrap(): Promise<void> {
     readiness: {
       check: () => postgresAndRedisReady(pool, config.redisUrl),
     },
-    inspectJobs: {
-      async publish(mediaAssetId: string, correlationId: string): Promise<void> {
-        await publishMediaInspectJob(
-          {
-            jobs,
-            queue,
-            supervisor: {
-              async run(): Promise<void> {
-                throw new Error("The API does not run jobs.");
-              },
-            },
-            now: () => clock.now(),
-            newAttemptId: () => createUuidV7(Date.now(), randomBytes(10)),
-          },
-          {
-            jobId: createUuidV7(Date.now(), randomBytes(10)),
-            mediaAssetId,
-            correlationId,
-            queueName: config.mediaInspectQueue,
-          },
-        );
-      },
-    },
+    publication,
   });
   await app.listen(config.port, config.host);
 }

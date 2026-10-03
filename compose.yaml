@@ -159,6 +159,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    # Compose health is process startup (the ready file), not HTTP /ready.
+    # HTTP /health is liveness. HTTP /ready means the process can accept work.
     healthcheck:
       test: ["CMD", "node", "-e", "require('node:fs').accessSync('/tmp/editagent.ready')"]
       interval: 5s
@@ -184,6 +186,8 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+    # Compose health is process startup (the ready file), not HTTP /ready.
+    # HTTP /health is liveness. HTTP /ready means the process can accept work.
     healthcheck:
       test: ["CMD", "node", "-e", "require('node:fs').accessSync('/tmp/editagent.ready')"]
       interval: 5s
@@ -209,6 +213,8 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+    # Compose health is process startup (the ready file), not HTTP /ready.
+    # HTTP /health is liveness. HTTP /ready means the process can accept work.
     healthcheck:
       test: ["CMD", "node", "-e", "require('node:fs').accessSync('/tmp/editagent.ready')"]
       interval: 5s

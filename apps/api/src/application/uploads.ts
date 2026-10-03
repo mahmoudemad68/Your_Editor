@@ -43,9 +43,13 @@ export interface CheckedUpload {
   readonly storageKey: string;
 }
 
-/** Publishes the inspect job after the asset row is stored. */
-export interface InspectJobPublisher {
-  publish(mediaAssetId: string, correlationId: string): Promise<void>;
+/**
+ * Stores the asset and a recoverable inspect intent together, then attempts
+ * publication without making the caller wait on an unreachable broker.
+ * The same stored upload returns the existing asset.
+ */
+export interface UploadPublication {
+  complete(asset: MediaAsset, correlationId: string): Promise<MediaAsset>;
 }
 
 /**
@@ -148,7 +152,7 @@ export class CompleteMediaUpload {
     private readonly objects: IObjectStorage,
     private readonly ids: MediaAssetIdGenerator,
     private readonly clock: Clock,
-    private readonly inspectJobs?: InspectJobPublisher,
+    private readonly publication?: UploadPublication,
   ) {}
 
   async execute(
@@ -180,10 +184,10 @@ export class CompleteMediaUpload {
       byteSize: checked.byteSize,
       contentSha256: checked.sha256,
     });
-    await this.media.save(asset);
-    if (this.inspectJobs !== undefined && correlationId !== undefined) {
-      await this.inspectJobs.publish(asset.id, correlationId);
+    if (this.publication !== undefined && correlationId !== undefined) {
+      return this.publication.complete(asset, correlationId);
     }
+    await this.media.save(asset);
     return asset;
   }
 }

@@ -11,12 +11,7 @@ import { Writable } from "node:stream";
 import { test } from "node:test";
 import path from "node:path";
 import { createUuidV7, instant, mediaAssetId, projectId, userId } from "@editagent/domain";
-import {
-  BullMqJobQueue,
-  observePostgresPool,
-  PostgresJobRepository,
-  publishMediaInspectJob,
-} from "@editagent/job-queue";
+import { BullMqJobQueue, observePostgresPool, PostgresJobRepository } from "@editagent/job-queue";
 import { createServiceLogger } from "@editagent/shared";
 import { Redis } from "ioredis";
 import { Pool } from "pg";
@@ -35,6 +30,7 @@ import { NodeMediaAssetIdGenerator } from "./infrastructure/node-media-asset-id-
 import { NodeProjectIdGenerator } from "./infrastructure/node-project-id-generator.js";
 import { PostgresMediaAssetRepository } from "./infrastructure/postgres-media-repository.js";
 import { PostgresProjectRepository } from "./infrastructure/postgres-project-repository.js";
+import { PostgresUploadPublication } from "./infrastructure/postgres-upload-publication.js";
 import { S3ObjectStorage } from "./infrastructure/s3-object-storage.js";
 import { SystemClock } from "./infrastructure/system-clock.js";
 import { bindActor } from "./presentation/actor.js";
@@ -51,7 +47,10 @@ function adminUrl(): string {
 }
 
 function redisUrl(): string {
-  return process.env["REDIS_URL"] ?? "redis://127.0.0.1:6379/0";
+  const base = process.env["REDIS_URL"] ?? "redis://127.0.0.1:6379/0";
+  const url = new URL(base);
+  url.pathname = "/8";
+  return url.toString();
 }
 
 function withDatabase(url: string, database: string): string {
@@ -148,7 +147,7 @@ test(
   "upload completion reaches the media worker with one correlation id",
   { timeout: 60_000 },
   async () => {
-    const queueName = `media${createUuidV7(Date.now(), randomBytes(10)).slice(0, 8)}`;
+    const queueName = `media${randomBytes(6).toString("hex")}`;
     const previousQueue = process.env["MEDIA_INSPECT_QUEUE"];
     process.env["MEDIA_INSPECT_QUEUE"] = queueName;
     const admin = new Pool({ connectionString: adminUrl() });
@@ -194,29 +193,17 @@ test(
             }
           },
         },
-        inspectJobs: {
-          async publish(assetId: string, correlationId: string): Promise<void> {
-            await publishMediaInspectJob(
-              {
-                jobs,
-                queue,
-                supervisor: {
-                  async run(): Promise<void> {
-                    throw new Error("The API does not run jobs.");
-                  },
-                },
-                now: () => clock.now(),
-                newAttemptId: () => createUuidV7(Date.now(), randomBytes(10)),
-              },
-              {
-                jobId: createUuidV7(Date.now(), randomBytes(10)),
-                mediaAssetId: assetId,
-                correlationId,
-                queueName,
-              },
-            );
-          },
-        },
+        publication: new PostgresUploadPublication({
+          pool,
+          jobs,
+          queue,
+          now: () => clock.now(),
+          newJobId: () => createUuidV7(Date.now(), randomBytes(10)),
+          newAttemptId: () => createUuidV7(Date.now(), randomBytes(10)),
+          queueName,
+          deadlineMs: 2_000,
+          workerId: "correlation-test",
+        }),
       },
       (use) => {
         use((request, _response, next) => {
@@ -341,7 +328,7 @@ test(
           sha256: hash,
         }),
       });
-      assert.equal(duplicate.status, 409);
+      assert.equal(duplicate.status, 201, await duplicate.text());
       const stillOne = await pool.query("SELECT id FROM jobs WHERE idempotency_key = $1", [
         `media.inspect.${asset.id}`,
       ]);

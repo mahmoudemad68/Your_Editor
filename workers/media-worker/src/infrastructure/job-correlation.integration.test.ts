@@ -19,10 +19,11 @@ import { type IsolatedHandler } from "../application/job-supervisor.js";
 import { BullMqJobQueue } from "./bullmq-job-queue.js";
 import { ChildProcessJobSupervisor } from "./child-job-supervisor.js";
 import { PostgresJobRepository } from "./postgres-job-repository.js";
+import { isolatedRedisUrl, uniqueQueueSuffix } from "./test-redis.js";
 
 const TEST_DATABASE = "editagent_us115_logs";
 const handlerModule = path.join(__dirname, "../handlers/sample-handlers.js");
-const redisUrl = process.env["REDIS_URL"] ?? "redis://127.0.0.1:6379/0";
+const redisUrl = isolatedRedisUrl(7, process.env["REDIS_URL"]);
 const repoRoot = path.resolve(__dirname, "../../../..");
 
 function spec(exportName: string): IsolatedHandler {
@@ -109,7 +110,7 @@ test(
         logJobLifecycle(logger, event);
       },
     };
-    const queueName = `logs${newId().slice(0, 8)}`;
+    const queueName = `logs${uniqueQueueSuffix()}`;
     const correlationId = "corr-worker-1";
     try {
       await applyJobMigration(pool);
