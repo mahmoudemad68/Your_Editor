@@ -8,8 +8,9 @@ ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
     UV_PYTHON=/usr/local/bin/python
 WORKDIR /app
-COPY pyproject.toml uv.lock ./
-COPY src ./src
+COPY workers/ai-worker/pyproject.toml workers/ai-worker/uv.lock ./
+COPY workers/ai-worker/src ./src
+COPY packages/schemas/src/job-envelope.schema.json ./src/editagent_ai_worker/infrastructure/job-envelope.schema.json
 RUN uv sync --frozen --no-dev --no-editable
 
 FROM python:3.11-slim-bookworm AS runtime

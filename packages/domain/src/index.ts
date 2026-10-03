@@ -47,8 +47,23 @@ export { Critique } from "./modules/critic/index.js";
 export { Clip, Effect, Timeline, Track } from "./modules/editing/index.js";
 export { User, operatorRole } from "./modules/identity/index.js";
 export type { OperatorRole, UserRepository, UserSnapshot } from "./modules/identity/index.js";
-export { Job, jobStatus } from "./modules/jobs/index.js";
-export type { JobRepository, JobSnapshot, JobStatus, JobSubject } from "./modules/jobs/index.js";
+export { Job, JobAttempt, jobStatus } from "./modules/jobs/index.js";
+export type {
+  EnqueueJobCommand,
+  EnqueueJobResult,
+  JobDeadLetter,
+  JobEnvelope,
+  JobFailure,
+  JobProgressEvent,
+  JobQueue,
+  JobReceipt,
+  JobRepository,
+  JobSnapshot,
+  JobStatus,
+  JobSubject,
+  JobWork,
+  ReservedJob,
+} from "./modules/jobs/index.js";
 export {
   Audio,
   assertMediaStorageKey,

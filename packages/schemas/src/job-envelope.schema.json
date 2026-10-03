@@ -1,0 +1,41 @@
+{
+  "$id": "https://editagent.local/schemas/job-envelope.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "JobEnvelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "jobId",
+    "queueName",
+    "jobType",
+    "idempotencyKey",
+    "payload",
+    "timeoutMs",
+    "maxAttempts",
+    "attempt",
+    "backoffBaseMs",
+    "subject"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "jobId": { "type": "string", "minLength": 1 },
+    "queueName": { "type": "string", "minLength": 1 },
+    "jobType": { "type": "string", "minLength": 1 },
+    "idempotencyKey": { "type": "string", "minLength": 1 },
+    "payload": { "type": "object" },
+    "timeoutMs": { "type": "integer", "minimum": 1 },
+    "maxAttempts": { "type": "integer", "minimum": 1 },
+    "attempt": { "type": "integer", "minimum": 1 },
+    "backoffBaseMs": { "type": "integer", "minimum": 1 },
+    "subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "id"],
+      "properties": {
+        "kind": { "enum": ["project", "media-asset", "derived-asset"] },
+        "id": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}
