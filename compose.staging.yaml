@@ -64,12 +64,41 @@ services:
     command: ["server", "/data", "--console-address", ":9001"]
     volumes:
       - staging-minio-data:/data
+    # No host ports. The object ingress is the external object entry point.
+    # Sharing the Docker network, or reaching this container's bridge address
+    # from the host, still reaches the MinIO API. Unpublished ports are not
+    # same-host isolation.
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9000/minio/health/live"]
       interval: 5s
       timeout: 5s
       retries: 20
       start_period: 10s
+    restart: unless-stopped
+
+  object-ingress:
+    image: ${EDITAGENT_OBJECT_INGRESS_IMAGE:?EDITAGENT_OBJECT_INGRESS_IMAGE is required}
+    pull_policy: always
+    environment:
+      MINIO_UPSTREAM: http://minio:9000
+      PORT: "8080"
+    ports:
+      - "${STAGING_BIND_IP:?STAGING_BIND_IP is required}:${STAGING_OBJECTS_PORT:?STAGING_OBJECTS_PORT is required}:8080"
+    depends_on:
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:8080/health').then((response)=>process.exit(response.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
     restart: unless-stopped
 
   api:

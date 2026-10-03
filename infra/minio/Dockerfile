@@ -47,8 +47,9 @@ RUN apk add --no-cache ca-certificates su-exec wget \
     && chown minio:minio /data
 
 COPY --from=build /out/minio /usr/local/bin/minio
+COPY infra/minio/reject-vulnerable-identity.sh /usr/local/bin/reject-vulnerable-identity
 COPY infra/minio/entrypoint.sh /usr/local/bin/minio-entrypoint
-RUN chmod 0755 /usr/local/bin/minio /usr/local/bin/minio-entrypoint
+RUN chmod 0755 /usr/local/bin/minio /usr/local/bin/reject-vulnerable-identity /usr/local/bin/minio-entrypoint
 
 EXPOSE 9000 9001
 ENTRYPOINT ["/usr/local/bin/minio-entrypoint"]

@@ -32,6 +32,7 @@ function stagingEnv() {
     MEDIA_INSPECT_QUEUE: "media",
     STAGING_BIND_IP: "127.0.0.1",
     STAGING_WEB_PORT: "3000",
+    STAGING_OBJECTS_PORT: "8080",
     EDITAGENT_API_IMAGE: pinned("editagent-api"),
     EDITAGENT_WEB_IMAGE: pinned("editagent-web"),
     EDITAGENT_MEDIA_WORKER_IMAGE: pinned("editagent-media-worker"),
@@ -39,6 +40,7 @@ function stagingEnv() {
     EDITAGENT_AGENT_WORKER_IMAGE: pinned("editagent-agent-worker"),
     EDITAGENT_AI_WORKER_IMAGE: pinned("editagent-ai-worker"),
     EDITAGENT_MINIO_IMAGE: pinned("editagent-minio"),
+    EDITAGENT_OBJECT_INGRESS_IMAGE: pinned("editagent-object-ingress"),
     EDITAGENT_POSTGRES_IMAGE: pinned("postgres"),
     EDITAGENT_REDIS_IMAGE: pinned("redis"),
   };
@@ -78,7 +80,7 @@ test("a synthetic secret fixture fails gitleaks and the repository does not", ()
   }
 });
 
-test("staging compose has no credential fallbacks and publishes only the web port", () => {
+test("staging compose has no credential fallbacks and does not publish MinIO", () => {
   const source = readFileSync(path.join(root, "compose.staging.yaml"), "utf8");
   assert.equal(source.includes(":-"), false);
   assert.equal(source.includes("editagent-dev-password"), false);
@@ -115,6 +117,9 @@ test("staging compose has no credential fallbacks and publishes only the web por
   const minio =
     rendered.match(/\n {2}minio:\n(?<body>[\s\S]*?)(?=\n {2}[^\s])/)?.groups?.body ?? "";
   assert.equal(minio.includes("published:"), false);
+  const ingress =
+    rendered.match(/\n {2}object-ingress:\n(?<body>[\s\S]*?)(?=\n {2}[^\s])/)?.groups?.body ?? "";
+  assert.match(ingress, /host_ip: 127\.0\.0\.1/);
 });
 
 test("staging smoke and readiness scripts refuse to invent a host", () => {
@@ -143,7 +148,11 @@ test("supply-chain workflow publishes digests and blocks an unconfigured staging
   assert.match(workflow, /packages: write/);
   assert.match(workflow, /secrets\.GITHUB_TOKEN/);
   assert.match(workflow, /syft /);
-  assert.match(workflow, /trivy image --severity CRITICAL/);
+  assert.match(workflow, /trivy image --severity CRITICAL --exit-code 1/);
+  assert.match(workflow, /name: supply-chain-security/);
+  assert.match(workflow, /needs: \[security-gate, images\]/);
+  assert.match(workflow, /needs.publish.result == 'success'/);
+  assert.equal(workflow.includes("docker push"), false);
   assert.match(workflow, /environment: staging/);
   assert.match(workflow, /STAGING_DEPLOYMENT_BLOCKED/);
   assert.equal(workflow.includes(":latest"), false);
