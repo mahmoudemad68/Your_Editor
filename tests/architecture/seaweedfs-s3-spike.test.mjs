@@ -46,6 +46,8 @@ function docker(args) {
 }
 
 function writeSecrets(directory) {
+  // The image runs as uid 1000. A 0600 file owned by the GitHub runner is
+  // unreadable in the container, so S3 exits. The temp directory stays 0700.
   const key = () => randomBytes(32).toString("base64url");
   writeFileSync(
     path.join(directory, "security.toml"),
@@ -71,7 +73,7 @@ ui = false
 [filer.expose_directory_metadata]
 enabled = false
 `,
-    { mode: 0o600 },
+    { mode: 0o644 },
   );
   writeFileSync(
     path.join(directory, "s3.json"),
@@ -84,7 +86,7 @@ enabled = false
         },
       ],
     }),
-    { mode: 0o600 },
+    { mode: 0o644 },
   );
 }
 
@@ -231,7 +233,14 @@ test("secure SeaweedFS topology keeps private bytes behind S3", { timeout: 300_0
     const edged = run(isolate, ["apply-edge", appSubnet]);
     assert.equal(edged.status, 0, edged.stderr + edged.stdout);
     const ready = compose(["up", "-d", "--wait", "--wait-timeout", "120"], env);
-    assert.equal(ready.status, 0, ready.stderr + ready.stdout);
+    if (ready.status !== 0) {
+      const logs = compose(["logs", "--no-color", "--tail", "80", "s3"], env);
+      assert.equal(
+        ready.status,
+        0,
+        `${ready.stderr}${ready.stdout}\n${logs.stdout}\n${logs.stderr}`,
+      );
+    }
     note("ready");
 
     const direct = new S3ObjectStorage({

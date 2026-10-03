@@ -31,7 +31,7 @@ Observed memory after the adversarial upload: master 59 MiB, volume 135 MiB, fil
 
 ## Authentication
 
-Secrets are written at test runtime into a `0600` directory and mounted read-only at `/etc/seaweedfs/security.toml` and `/etc/seaweedfs/s3.json`. They are not baked into the image and are not committed. The previous `infra/seaweedfs-spike/s3.json` spike credentials were removed.
+Secrets are written at test runtime into a `0700` directory and mounted read-only at `/etc/seaweedfs/security.toml` and `/etc/seaweedfs/s3.json`. The files are `0644` so the image user, uid 1000, can read them when the host user is different. They are not baked into the image and are not committed. The previous `infra/seaweedfs-spike/s3.json` spike credentials were removed.
 
 `security.toml` sets four distinct keys:
 
