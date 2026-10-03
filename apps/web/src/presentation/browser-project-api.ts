@@ -1,3 +1,5 @@
+import { CORRELATION_HEADER, createCorrelationId } from "@editagent/shared";
+
 import type {
   ApiResult,
   BeginUpload,
@@ -51,7 +53,11 @@ export const browserProjectApi: ProjectApi = {
 
 async function request<T>(url: string, init?: RequestInit): Promise<ApiResult<T>> {
   try {
-    const response = await fetch(url, { ...init, cache: "no-store" });
+    const headers = new Headers(init?.headers);
+    if (!headers.has(CORRELATION_HEADER)) {
+      headers.set(CORRELATION_HEADER, createCorrelationId());
+    }
+    const response = await fetch(url, { ...init, headers, cache: "no-store" });
     const body: unknown = await response.json();
     if (isResult<T>(body)) {
       return body;

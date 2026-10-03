@@ -1,3 +1,5 @@
+import { acceptCorrelationId, createCorrelationId } from "@editagent/shared";
+
 import { loadWebConfig } from "../infrastructure/config";
 import { createHttpProjectApi } from "../infrastructure/project-api";
 import type {
@@ -9,8 +11,17 @@ import type {
   UploadDeclaration,
 } from "../project-contract";
 
-function api() {
-  return createHttpProjectApi({ baseUrl: loadWebConfig().apiBaseUrl });
+function api(correlationId?: string) {
+  return createHttpProjectApi({
+    baseUrl: loadWebConfig().apiBaseUrl,
+    ...(correlationId === undefined ? {} : { correlationId }),
+  });
+}
+
+export function correlationIdFromRequest(request: Request): string {
+  return (
+    acceptCorrelationId(request.headers.get("x-request-id") ?? undefined) ?? createCorrelationId()
+  );
 }
 
 export async function listProjects(): Promise<ApiResult<readonly ProjectRecord[]>> {
@@ -42,8 +53,9 @@ export async function beginUpload(
 export async function completeUpload(
   projectId: string,
   body: UploadDeclaration,
+  correlationId?: string,
 ): Promise<ApiResult<MediaAssetRecord>> {
-  return api().completeUpload(projectId, body);
+  return api(correlationId).completeUpload(projectId, body);
 }
 
 export async function getMediaDetails(

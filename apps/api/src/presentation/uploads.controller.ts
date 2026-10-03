@@ -12,6 +12,7 @@ import {
 } from "@nestjs/swagger";
 import { DomainError, projectId, type ProjectId } from "@editagent/domain";
 import { BeginMediaUpload, CompleteMediaUpload } from "../application/uploads.js";
+import { ApiRequestLog } from "./api-request-log.js";
 import { requireActor } from "./actor.js";
 import {
   BeginUploadResponseDto,
@@ -27,6 +28,7 @@ export class UploadsController {
   constructor(
     private readonly beginMediaUpload: BeginMediaUpload,
     private readonly completeMediaUpload: CompleteMediaUpload,
+    private readonly requestLog: ApiRequestLog,
   ) {}
 
   @Post()
@@ -77,6 +79,7 @@ export class UploadsController {
       parseProjectRouteId(rawProjectId),
       body,
     );
+    this.requestLog.jobAccepted("media.inspect", asset.id);
     return toMediaAssetResponse(asset);
   }
 }

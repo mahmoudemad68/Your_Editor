@@ -20,6 +20,22 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/ready": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["ReadyController_ready"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/projects": {
     parameters: {
       query?: never;
@@ -225,6 +241,25 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
+      /** @description The process is alive. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  ReadyController_ready: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The process can accept work. */
       200: {
         headers: {
           [name: string]: unknown;

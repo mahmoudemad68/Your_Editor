@@ -1,9 +1,16 @@
-import { keepProcessAlive } from "@editagent/shared";
+import {
+  keepProcessAlive,
+  startHealthServer,
+  startNoopTracing,
+  WORKER_HEALTH_PORT,
+} from "@editagent/shared";
 import { describeWorker } from "./application/describe.js";
 import { loadRenderWorkerConfig } from "./infrastructure/config.js";
 
 export function main(): void {
   loadRenderWorkerConfig();
+  startNoopTracing("render-worker");
+  startHealthServer(WORKER_HEALTH_PORT);
   process.stdout.write(`${describeWorker()}\n`);
   keepProcessAlive();
 }

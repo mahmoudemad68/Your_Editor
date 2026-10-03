@@ -1,4 +1,5 @@
 import "reflect-metadata";
+import { createServiceLogger, startNoopTracing } from "@editagent/shared";
 import { Pool } from "pg";
 import { createApiApplication } from "./create-api-application.js";
 import { ConfigurationError, loadApiConfig } from "./infrastructure/config.js";
@@ -11,6 +12,8 @@ import { S3ObjectStorage } from "./infrastructure/s3-object-storage.js";
 import { SystemClock } from "./infrastructure/system-clock.js";
 
 export async function bootstrap(): Promise<void> {
+  startNoopTracing("api");
+  const logger = createServiceLogger("api");
   const config = loadApiConfig();
   const pool = new Pool({ connectionString: config.databaseUrl });
   await applyMigrations(pool);
@@ -22,6 +25,7 @@ export async function bootstrap(): Promise<void> {
     objects: new S3ObjectStorage(config.objectStorage),
     mediaIds: new NodeMediaAssetIdGenerator(),
     presignTtlSeconds: config.objectStorage.presignTtlSeconds,
+    logger,
   });
   await app.listen(config.port, config.host);
 }

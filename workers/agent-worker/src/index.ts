@@ -1,10 +1,17 @@
-import { keepProcessAlive } from "@editagent/shared";
+import {
+  keepProcessAlive,
+  startHealthServer,
+  startNoopTracing,
+  WORKER_HEALTH_PORT,
+} from "@editagent/shared";
 import { describeWorker } from "./application/describe.js";
 import { loadAgentWorkerConfig } from "./infrastructure/config.js";
 import { agentToolsPackage } from "./infrastructure/marker.js";
 
 export function main(): void {
   loadAgentWorkerConfig();
+  startNoopTracing("agent-worker");
+  startHealthServer(WORKER_HEALTH_PORT);
   process.stdout.write(`${describeWorker()} (${agentToolsPackage})\n`);
   keepProcessAlive();
 }

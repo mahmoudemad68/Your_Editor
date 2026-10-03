@@ -1,9 +1,12 @@
+import { CORRELATION_HEADER } from "@editagent/shared";
+
 import { createGeneratedClient } from "../generated/client";
 import type { ApiResult, ProjectApi, RequestOptions, UploadDeclaration } from "../project-contract";
 
 export interface ProjectApiOptions {
   readonly baseUrl: string;
   readonly fetchImpl?: typeof fetch;
+  readonly correlationId?: string;
 }
 
 /**
@@ -12,7 +15,21 @@ export interface ProjectApiOptions {
  * US-118 will attach a verified credential to this same transport.
  */
 export function createHttpProjectApi(options: ProjectApiOptions): ProjectApi {
-  const client = createGeneratedClient(options.baseUrl, options.fetchImpl ?? fetch);
+  const baseFetch = options.fetchImpl ?? fetch;
+  const fetchImpl: typeof fetch =
+    options.correlationId === undefined
+      ? baseFetch
+      : (input, init) => {
+          const headers = new Headers(input instanceof Request ? input.headers : undefined);
+          new Headers(init?.headers).forEach((value, key) => {
+            headers.set(key, value);
+          });
+          if (!headers.has(CORRELATION_HEADER)) {
+            headers.set(CORRELATION_HEADER, options.correlationId ?? "");
+          }
+          return baseFetch(input, { ...init, headers });
+        };
+  const client = createGeneratedClient(options.baseUrl, fetchImpl);
   return {
     async listProjects() {
       try {

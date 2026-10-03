@@ -4,8 +4,11 @@ version = "0.0.0"
 description = "EditAgent AI worker scaffold. Perception models are later stories."
 requires-python = ">=3.11,<3.12"
 dependencies = [
+  "opentelemetry-api>=1.27,<2",
+  "opentelemetry-sdk>=1.27,<2",
   "pydantic>=2.10,<3",
   "pydantic-settings>=2.7,<3",
+  "structlog>=25.1,<26",
 ]
 
 [project.scripts]

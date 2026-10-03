@@ -8,3 +8,11 @@ export interface HealthStatus {
 export function getHealthStatus(): HealthStatus {
   return { status: "ok", modules: boundedModules.length };
 }
+
+export interface ReadyStatus {
+  readonly status: "ready";
+}
+
+export function getReadyStatus(): ReadyStatus {
+  return { status: "ready" };
+}
