@@ -47,3 +47,71 @@ HIGH findings remain on the Debian application images. They are reported and do 
 The GitHub Actions `ci` job still starts a Postgres service from the upstream `postgres:16-alpine` digest because a service container cannot run `infra/postgres/Dockerfile` without a published image. That upstream image still contains the old `gosu` binary. The image Compose deploys is the rebuilt one, and that rebuilt image scanned clean. The `ci` Redis service remains `redis:7.4-alpine`, which still has the two HIGH OpenSSL findings. The image Compose deploys is `infra/redis/Dockerfile`, which scanned clean.
 
 The critical gate is expected to pass for the images this workflow builds. HIGH findings are still open, so the security definition of done is not complete.
+
+## HIGH disposition register
+
+Active images in this local scan: api, web, render-worker, agent-worker, ai-worker, media-worker, postgres, redis, and seaweedfs. Instances: 0 critical and 342 high. Unique CVE and package pairs: 61. Postgres, Redis, and SeaweedFS contributed no HIGH or CRITICAL rows. MinIO is not in this register because it is not deployed. Nothing here is ignored or suppressed.
+
+| CVE             | Package                   | Images                                                         | Fixed version                | Disposition                                      |
+| --------------- | ------------------------- | -------------------------------------------------------------- | ---------------------------- | ------------------------------------------------ |
+| CVE-2026-102276 | `brace-expansion`         | agent-worker, api, media-worker, render-worker, web            | 5.0.10, 3.0.7, 2.1.5, 1.1.19 | upgrade to the fixed version                     |
+| CVE-2026-102278 | `brace-expansion`         | agent-worker, api, media-worker, render-worker, web            | 5.0.11, 3.0.8, 2.1.6, 1.1.20 | upgrade to the fixed version                     |
+| CVE-2026-13149  | `brace-expansion`         | agent-worker, api, media-worker, render-worker, web            | 5.0.7, 1.1.16, 2.1.2         | upgrade to the fixed version                     |
+| CVE-2026-14257  | `brace-expansion`         | agent-worker, api, media-worker, render-worker, web            | 5.0.8, 3.0.3, 2.1.3, 1.1.17  | upgrade to the fixed version                     |
+| CVE-2026-69152  | `brace-expansion`         | agent-worker, api, media-worker, render-worker, web            | 1.1.18, 2.1.4, 3.0.6, 5.0.9  | upgrade to the fixed version                     |
+| CVE-2026-76642  | `bsdutils`                | agent-worker, ai-worker, api, media-worker, render-worker, web | none                         | no fixed version in this database; keep reported |
+| CVE-2026-78408  | `bsdutils`                | agent-worker, ai-worker, api, media-worker, render-worker, web | none                         | no fixed version in this database; keep reported |
+| CVE-2026-78409  | `bsdutils`                | agent-worker, ai-worker, api, media-worker, render-worker, web | none                         | no fixed version in this database; keep reported |
+| CVE-2026-78410  | `bsdutils`                | agent-worker, ai-worker, api, media-worker, render-worker, web | none                         | no fixed version in this database; keep reported |
+| CVE-2026-93748  | `http-cache-semantics`    | agent-worker, api, media-worker, render-worker, web            | none                         | no fixed version in this database; keep reported |
+| CVE-2026-69192  | `ip-address`              | agent-worker, api, media-worker, render-worker, web            | 10.3.1                       | upgrade to the fixed version                     |
+| CVE-2026-23949  | `jaraco.context`          | ai-worker                                                      | 6.1.0                        | upgrade to the fixed version                     |
+| CVE-2026-54369  | `libacl1`                 | agent-worker, ai-worker, api, media-worker, render-worker, web | none                         | no fixed version in this database; keep reported |
+| CVE-2026-76642  | `libblkid1`               | agent-worker, ai-worker, api, media-worker, render-worker, web | none                         | no fixed version in this database; keep reported |
+| CVE-2026-78408  | `libblkid1`               | agent-worker, ai-worker, api, media-worker, render-worker, web | none                         | no fixed version in this database; keep reported |
+| CVE-2026-78409  | `libblkid1`               | agent-worker, ai-worker, api, media-worker, render-worker, web | none                         | no fixed version in this database; keep reported |
+| CVE-2026-78410  | `libblkid1`               | agent-worker, ai-worker, api, media-worker, render-worker, web | none                         | no fixed version in this database; keep reported |
+| CVE-2026-76642  | `liblastlog2-2`           | agent-worker, ai-worker, api, media-worker, render-worker, web | none                         | no fixed version in this database; keep reported |
+| CVE-2026-78408  | `liblastlog2-2`           | agent-worker, ai-worker, api, media-worker, render-worker, web | none                         | no fixed version in this database; keep reported |
+| CVE-2026-78409  | `liblastlog2-2`           | agent-worker, ai-worker, api, media-worker, render-worker, web | none                         | no fixed version in this database; keep reported |
+| CVE-2026-78410  | `liblastlog2-2`           | agent-worker, ai-worker, api, media-worker, render-worker, web | none                         | no fixed version in this database; keep reported |
+| CVE-2026-76642  | `libmount1`               | agent-worker, ai-worker, api, media-worker, render-worker, web | none                         | no fixed version in this database; keep reported |
+| CVE-2026-78408  | `libmount1`               | agent-worker, ai-worker, api, media-worker, render-worker, web | none                         | no fixed version in this database; keep reported |
+| CVE-2026-78409  | `libmount1`               | agent-worker, ai-worker, api, media-worker, render-worker, web | none                         | no fixed version in this database; keep reported |
+| CVE-2026-78410  | `libmount1`               | agent-worker, ai-worker, api, media-worker, render-worker, web | none                         | no fixed version in this database; keep reported |
+| CVE-2025-69720  | `libncursesw6`            | ai-worker                                                      | none                         | no fixed version in this database; keep reported |
+| CVE-2026-103111 | `libpcre2-8-0`            | agent-worker, ai-worker, api, media-worker, render-worker, web | 10.46-1~deb13u3              | upgrade to the fixed version                     |
+| CVE-2026-76642  | `libsmartcols1`           | agent-worker, ai-worker, api, media-worker, render-worker, web | none                         | no fixed version in this database; keep reported |
+| CVE-2026-78408  | `libsmartcols1`           | agent-worker, ai-worker, api, media-worker, render-worker, web | none                         | no fixed version in this database; keep reported |
+| CVE-2026-78409  | `libsmartcols1`           | agent-worker, ai-worker, api, media-worker, render-worker, web | none                         | no fixed version in this database; keep reported |
+| CVE-2026-78410  | `libsmartcols1`           | agent-worker, ai-worker, api, media-worker, render-worker, web | none                         | no fixed version in this database; keep reported |
+| CVE-2026-75804  | `libssl3t64`              | agent-worker, api, media-worker, render-worker, web            | 3.5.7-1~deb13u3              | upgrade to the fixed version                     |
+| CVE-2026-84782  | `libssl3t64`              | agent-worker, api, media-worker, render-worker, web            | 3.5.7-1~deb13u3              | upgrade to the fixed version                     |
+| CVE-2026-16742  | `libsystemd0`             | agent-worker, ai-worker, api, media-worker, render-worker, web | none                         | no fixed version in this database; keep reported |
+| CVE-2025-69720  | `libtinfo6`               | agent-worker, ai-worker, api, media-worker, render-worker, web | none                         | no fixed version in this database; keep reported |
+| CVE-2026-16742  | `libudev1`                | agent-worker, ai-worker, api, media-worker, render-worker, web | none                         | no fixed version in this database; keep reported |
+| CVE-2026-76642  | `libuuid1`                | agent-worker, ai-worker, api, media-worker, render-worker, web | none                         | no fixed version in this database; keep reported |
+| CVE-2026-78408  | `libuuid1`                | agent-worker, ai-worker, api, media-worker, render-worker, web | none                         | no fixed version in this database; keep reported |
+| CVE-2026-78409  | `libuuid1`                | agent-worker, ai-worker, api, media-worker, render-worker, web | none                         | no fixed version in this database; keep reported |
+| CVE-2026-78410  | `libuuid1`                | agent-worker, ai-worker, api, media-worker, render-worker, web | none                         | no fixed version in this database; keep reported |
+| CVE-2026-76642  | `login`                   | agent-worker, ai-worker, api, media-worker, render-worker, web | none                         | no fixed version in this database; keep reported |
+| CVE-2026-78408  | `login`                   | agent-worker, ai-worker, api, media-worker, render-worker, web | none                         | no fixed version in this database; keep reported |
+| CVE-2026-78409  | `login`                   | agent-worker, ai-worker, api, media-worker, render-worker, web | none                         | no fixed version in this database; keep reported |
+| CVE-2026-78410  | `login`                   | agent-worker, ai-worker, api, media-worker, render-worker, web | none                         | no fixed version in this database; keep reported |
+| CVE-2026-76642  | `mount`                   | agent-worker, ai-worker, api, media-worker, render-worker, web | none                         | no fixed version in this database; keep reported |
+| CVE-2026-78408  | `mount`                   | agent-worker, ai-worker, api, media-worker, render-worker, web | none                         | no fixed version in this database; keep reported |
+| CVE-2026-78409  | `mount`                   | agent-worker, ai-worker, api, media-worker, render-worker, web | none                         | no fixed version in this database; keep reported |
+| CVE-2026-78410  | `mount`                   | agent-worker, ai-worker, api, media-worker, render-worker, web | none                         | no fixed version in this database; keep reported |
+| CVE-2025-69720  | `ncurses-base`            | agent-worker, ai-worker, api, media-worker, render-worker, web | none                         | no fixed version in this database; keep reported |
+| CVE-2025-69720  | `ncurses-bin`             | agent-worker, ai-worker, api, media-worker, render-worker, web | none                         | no fixed version in this database; keep reported |
+| CVE-2026-75804  | `openssl-provider-legacy` | agent-worker, api, media-worker, render-worker, web            | 3.5.7-1~deb13u3              | upgrade to the fixed version                     |
+| CVE-2026-84782  | `openssl-provider-legacy` | agent-worker, api, media-worker, render-worker, web            | 3.5.7-1~deb13u3              | upgrade to the fixed version                     |
+| CVE-2026-9496   | `pacote`                  | agent-worker, api, media-worker, render-worker, web            | 21.5.1                       | upgrade to the fixed version                     |
+| CVE-2026-9538   | `perl-base`               | agent-worker, ai-worker, api, media-worker, render-worker, web | none                         | no fixed version in this database; keep reported |
+| CVE-2026-33671  | `picomatch`               | agent-worker, api, media-worker, render-worker, web            | 4.0.4, 3.0.2, 2.3.2          | upgrade to the fixed version                     |
+| CVE-2026-48815  | `sigstore`                | agent-worker, api, media-worker, render-worker, web            | 4.1.1                        | upgrade to the fixed version                     |
+| CVE-2026-76642  | `util-linux`              | agent-worker, ai-worker, api, media-worker, render-worker, web | none                         | no fixed version in this database; keep reported |
+| CVE-2026-78408  | `util-linux`              | agent-worker, ai-worker, api, media-worker, render-worker, web | none                         | no fixed version in this database; keep reported |
+| CVE-2026-78409  | `util-linux`              | agent-worker, ai-worker, api, media-worker, render-worker, web | none                         | no fixed version in this database; keep reported |
+| CVE-2026-78410  | `util-linux`              | agent-worker, ai-worker, api, media-worker, render-worker, web | none                         | no fixed version in this database; keep reported |
+| CVE-2026-24049  | `wheel`                   | ai-worker                                                      | 0.46.2                       | upgrade to the fixed version                     |
