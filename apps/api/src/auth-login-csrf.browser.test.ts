@@ -4,8 +4,8 @@
  */
 import "reflect-metadata";
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import { mkdtempSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { existsSync, mkdtempSync } from "node:fs";
 import http from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -54,7 +54,25 @@ function listen(server: http.Server): Promise<number> {
 }
 
 function chromePath(): string {
-  return process.env["CHROME_PATH"] ?? "/usr/local/bin/google-chrome";
+  const configured = process.env["CHROME_PATH"];
+  const candidates = [
+    configured,
+    "/usr/local/bin/google-chrome",
+    "/usr/bin/google-chrome",
+    "/usr/bin/google-chrome-stable",
+  ].filter((candidate): candidate is string => candidate !== undefined && candidate.length > 0);
+  const installed = candidates.find((candidate) => existsSync(candidate));
+  if (installed !== undefined) {
+    return installed;
+  }
+  const lookup = spawnSync("sh", ["-c", "command -v google-chrome"], { encoding: "utf8" });
+  const resolved = lookup.stdout.trim();
+  if (lookup.status === 0 && resolved.length > 0) {
+    return resolved;
+  }
+  throw new Error(
+    `google-chrome was not found. Set CHROME_PATH. Looked in ${candidates.join(", ")}.`,
+  );
 }
 
 test("a cross-site browser form cannot inject a sign-in session", async () => {
