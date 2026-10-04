@@ -23,7 +23,10 @@ x-ai-environment: &ai-environment
 
 services:
   postgres:
-    image: postgres:16.10-alpine
+    build:
+      context: .
+      dockerfile: infra/postgres/Dockerfile
+    image: editagent-postgres:local
     container_name: editagent-postgres
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-editagent}
@@ -42,7 +45,10 @@ services:
     restart: unless-stopped
 
   redis:
-    image: redis:7.4-alpine
+    build:
+      context: .
+      dockerfile: infra/redis/Dockerfile
+    image: editagent-redis:local
     container_name: editagent-redis
     command: ["redis-server", "--appendonly", "yes"]
     ports:

@@ -42,7 +42,7 @@ test("paused and stopped dependencies make /ready return 503", { timeout: 120_00
     "POSTGRES_PASSWORD=editagent-dev-password",
     "-e",
     "POSTGRES_DB=editagent",
-    "postgres:16.10-alpine",
+    "postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea",
     "-c",
     `port=${postgresPort}`,
   ]);

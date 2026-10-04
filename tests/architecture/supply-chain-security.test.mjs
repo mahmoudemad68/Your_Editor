@@ -31,13 +31,13 @@ test("compose images and Dockerfiles on main are the scan matrix", () => {
   }
   const composeImages = [...compose.matchAll(/^\s+image: (\S+)/gm)].map((match) => match[1]);
   const upstream = [...new Set(composeImages.filter((image) => !image.startsWith("editagent-")))];
-  assert.deepEqual(upstream.sort(), ["postgres:16.10-alpine", "redis:7.4-alpine"]);
-  for (const image of upstream) {
-    assert.equal(workflow.includes(image), true);
-  }
+  assert.deepEqual(upstream, []);
+  assert.equal(workflow.includes("postgres:16.10-alpine"), false);
+  assert.equal(workflow.includes("redis:7.4-alpine"), false);
   assert.equal(workflow.includes("tools/benchmarks/rendering/docker/Dockerfile"), false);
   assert.equal(workflow.includes("infra/object-ingress/Dockerfile"), false);
-  assert.equal(workflow.includes("infra/postgres/Dockerfile"), false);
+  assert.equal(workflow.includes("infra/postgres/Dockerfile"), true);
+  assert.equal(workflow.includes("infra/redis/Dockerfile"), true);
 });
 
 test("the security check reports high and critical findings and does not publish", () => {

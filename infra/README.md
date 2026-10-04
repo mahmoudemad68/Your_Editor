@@ -20,8 +20,8 @@ docker compose up
 
 | Service       | Image                           | Published port |
 | ------------- | ------------------------------- | -------------- |
-| postgres      | `postgres:16.10-alpine`         | 5432           |
-| redis         | `redis:7.4-alpine`              | 6379           |
+| postgres      | `editagent-postgres:local`      | 5432           |
+| redis         | `editagent-redis:local`         | 6379           |
 | minio         | `editagent-minio:local`         | 9000 and 9001  |
 | api           | `editagent-api:local`           | 3001           |
 | web           | `editagent-web:local`           | 3000           |

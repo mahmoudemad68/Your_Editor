@@ -133,6 +133,10 @@ jobs:
             dockerfile: workers/ai-worker/Dockerfile
           - service: minio
             dockerfile: infra/minio/Dockerfile
+          - service: postgres
+            dockerfile: infra/postgres/Dockerfile
+          - service: redis
+            dockerfile: infra/redis/Dockerfile
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -178,59 +182,10 @@ jobs:
           name: supply-chain-scan-${{ matrix.service }}
           path: ${{ matrix.service }}
 
-  platform:
-    name: platform ${{ matrix.service }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - service: postgres
-            image: postgres:16.10-alpine
-          - service: redis
-            image: redis:7.4-alpine
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v7
-
-      - name: Install Syft and Trivy
-        run: ./infra/scripts/install-supply-chain-tools.sh
-
-      - name: Pull image
-        run: docker pull "${{ matrix.image }}"
-
-      - name: Generate SBOM and scan
-        run: ./infra/scripts/supply-chain-scan-image.sh "${{ matrix.service }}" "${{ matrix.image }}"
-
-      - name: Upload SBOM
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: supply-chain-sbom-${{ matrix.service }}
-          if-no-files-found: ignore
-          path: sbom-${{ matrix.service }}.spdx.json
-
-      - name: Upload Trivy report
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: supply-chain-trivy-${{ matrix.service }}
-          if-no-files-found: ignore
-          path: |
-            trivy-${{ matrix.service }}.json
-            trivy-${{ matrix.service }}.version.txt
-
-      - name: Upload scan result
-        uses: actions/upload-artifact@v7
-        with:
-          name: supply-chain-scan-${{ matrix.service }}
-          path: ${{ matrix.service }}
-
   supply-chain-security:
     name: supply-chain-security
-    needs: [dependencies, images, platform]
-    if: always() && needs.dependencies.result != 'cancelled' && needs.images.result != 'cancelled' && needs.platform.result != 'cancelled'
+    needs: [dependencies, images]
+    if: always() && needs.dependencies.result != 'cancelled' && needs.images.result != 'cancelled'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

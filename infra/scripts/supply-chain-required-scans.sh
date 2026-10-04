@@ -3,6 +3,4 @@
 set -eu
 root=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 "$root/supply-chain-services.sh"
-printf '%s\n' postgres
-printf '%s\n' redis
 printf '%s\n' dependencies

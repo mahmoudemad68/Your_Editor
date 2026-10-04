@@ -19,13 +19,10 @@ Images built from Dockerfiles that `compose.yaml` already references:
 - `workers/agent-worker/Dockerfile`
 - `workers/ai-worker/Dockerfile`
 - `infra/minio/Dockerfile`
+- `infra/postgres/Dockerfile`
+- `infra/redis/Dockerfile`
 
-Upstream images pinned by `compose.yaml`:
-
-- `postgres:16.10-alpine`
-- `redis:7.4-alpine`
-
-`tools/benchmarks/rendering/docker/Dockerfile` is a research harness and is not a runtime service, so it is outside this matrix. Object ingress, a rebuilt Postgres image, and SeaweedFS are not on `main`, so this workflow does not scan them.
+`tools/benchmarks/rendering/docker/Dockerfile` is a research harness and is not a runtime service, so it is outside this matrix. Object ingress and SeaweedFS are not in this tree, so this workflow does not scan them.
 
 ## Policy
 

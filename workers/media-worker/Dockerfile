@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 # Production image for the media worker. Multi-stage, non-root, no secrets in the image.
 
-FROM node:22.23.2-bookworm-slim AS base
+FROM node:22.23.3-trixie-slim@sha256:b26b04c123d9ff8ab646ceb18b9d75a1173acf64b9a401094b906d27b29338d4 AS base
 ENV PNPM_HOME="/pnpm" \
     PATH="/pnpm:$PATH" \
     CI=true \
@@ -38,9 +38,9 @@ RUN pnpm --filter @editagent/media-worker... build \
     && pnpm --filter @editagent/media-worker --prod deploy --legacy /out \
     && rm -f /out/node_modules/.pnpm/node_modules/@editagent/media-worker
 
-FROM node:22.23.2-bookworm-slim AS runtime
+FROM node:22.23.3-trixie-slim@sha256:b26b04c123d9ff8ab646ceb18b9d75a1173acf64b9a401094b906d27b29338d4 AS runtime
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg=7:5.1.9-0+deb12u1 \
+    && apt-get install -y --no-install-recommends ffmpeg=7:7.1.5-0+deb13u1 \
     && rm -rf /var/lib/apt/lists/* \
     && ffprobe -version \
     && ffprobe -version | head -n 1 > /etc/editagent-ffprobe-release \
