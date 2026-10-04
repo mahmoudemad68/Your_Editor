@@ -10,6 +10,8 @@ const OPTIONS = {
 
 /** Argon2id password hasher. The encoding starts with `$argon2id$`. */
 export class Argon2idHasher implements PasswordHasher {
+  private readonly dummyHash = argon2.hash("editagent-unknown-account", OPTIONS);
+
   async hash(password: string): Promise<string> {
     return argon2.hash(password, OPTIONS);
   }
@@ -20,5 +22,9 @@ export class Argon2idHasher implements PasswordHasher {
     } catch {
       return false;
     }
+  }
+
+  async burn(password: string): Promise<void> {
+    await this.verify(await this.dummyHash, password);
   }
 }

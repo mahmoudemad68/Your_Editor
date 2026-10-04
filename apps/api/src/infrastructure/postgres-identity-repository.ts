@@ -148,7 +148,12 @@ export class PostgresRefreshSessionRepository implements RefreshSessionRepositor
       `INSERT INTO refresh_sessions (
          id, user_id, secret_hash, rotated_from_id, expires_at, revoked_at, created_at
        ) VALUES ($1, $2, $3, $4, $5, $6, $7)
-       ON CONFLICT (id) DO UPDATE SET revoked_at = EXCLUDED.revoked_at`,
+       ON CONFLICT (id) DO UPDATE SET
+         revoked_at = CASE
+           WHEN refresh_sessions.revoked_at IS NOT NULL THEN refresh_sessions.revoked_at
+           WHEN EXCLUDED.revoked_at IS NULL THEN NULL
+           ELSE GREATEST(EXCLUDED.revoked_at, refresh_sessions.created_at)
+         END`,
       [
         session.id,
         session.userId,
@@ -163,7 +168,9 @@ export class PostgresRefreshSessionRepository implements RefreshSessionRepositor
 
   async revokeAllForUser(userId: UserId, revokedAt: bigint): Promise<void> {
     await this.pool.query(
-      `UPDATE refresh_sessions SET revoked_at = $2 WHERE user_id = $1 AND revoked_at IS NULL`,
+      `UPDATE refresh_sessions
+       SET revoked_at = GREATEST($2::bigint, created_at)
+       WHERE user_id = $1 AND revoked_at IS NULL`,
       [userId, instantText(revokedAt)],
     );
   }
@@ -204,7 +211,7 @@ export class PostgresRefreshSessionRepository implements RefreshSessionRepositor
       }
       const consumed = await client.query(
         `UPDATE refresh_sessions
-         SET revoked_at = $2::bigint
+         SET revoked_at = GREATEST($2::bigint, created_at)
          WHERE id = $1 AND revoked_at IS NULL AND expires_at > $2::bigint`,
         [current.id, now.toString()],
       );
@@ -233,7 +240,9 @@ const SESSION_SELECT = `SELECT id::text AS id, user_id::text AS user_id, secret_
 
 async function revokeActive(client: PoolClient, userId: UserId, revokedAt: bigint): Promise<void> {
   await client.query(
-    `UPDATE refresh_sessions SET revoked_at = $2::bigint WHERE user_id = $1 AND revoked_at IS NULL`,
+    `UPDATE refresh_sessions
+     SET revoked_at = GREATEST($2::bigint, created_at)
+     WHERE user_id = $1 AND revoked_at IS NULL`,
     [userId, revokedAt.toString()],
   );
 }

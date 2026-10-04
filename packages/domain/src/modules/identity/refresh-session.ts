@@ -83,13 +83,14 @@ export class RefreshSession {
     if (this.revokedAt !== null) {
       return this;
     }
+    const when = now < this.createdAt ? this.createdAt : now;
     return new RefreshSession(
       this.id,
       this.userId,
       this.secretHash,
       this.rotatedFromId,
       this.expiresAt,
-      now,
+      when,
       this.createdAt,
     );
   }

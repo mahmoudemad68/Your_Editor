@@ -115,7 +115,12 @@ export class LoginUser {
     }
     const user = await this.users.findByEmail(normalized);
     const now = this.clock.now();
-    if (user === null || user.isLocked(now)) {
+    if (user === null) {
+      await this.passwords.burn(password);
+      throw new InvalidCredentialsError();
+    }
+    if (user.isLocked(now)) {
+      await this.passwords.verify(user.passwordHash, password);
       throw new InvalidCredentialsError();
     }
     const matches = await this.passwords.verify(user.passwordHash, password);

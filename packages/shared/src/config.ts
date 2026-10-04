@@ -31,6 +31,7 @@ export interface ApiConfig {
   readonly host: string;
   readonly authJwtSecret: string;
   readonly authCookieSecure: boolean;
+  readonly authClockSkewMs: number;
   readonly objectStorage: ApiObjectStorageConfig;
 }
 
@@ -218,6 +219,30 @@ const apiSchema = z
     }),
     AUTH_COOKIE_SECURE: z.string().optional(),
     EDITAGENT_RUNTIME: z.string().optional(),
+    AUTH_CLOCK_SKEW_MS: z
+      .string()
+      .optional()
+      .refine(
+        (value) => {
+          if (value === undefined) {
+            return true;
+          }
+          return /^-?[0-9]+$/.test(value);
+        },
+        { error: "AUTH_CLOCK_SKEW_MS must be a whole number of milliseconds." },
+      )
+      .refine(
+        (value) => {
+          if (value === undefined) {
+            return true;
+          }
+          const parsed = Number(value);
+          return parsed >= -86_400_000 && parsed <= 86_400_000;
+        },
+        {
+          error: "AUTH_CLOCK_SKEW_MS must be from -86400000 through 86400000.",
+        },
+      ),
   })
   .superRefine((env, context) => {
     const runtime = env.EDITAGENT_RUNTIME ?? "development";
@@ -229,6 +254,14 @@ const apiSchema = z
       });
     }
     const secure = env.AUTH_COOKIE_SECURE === undefined ? true : env.AUTH_COOKIE_SECURE === "true";
+    const skew = env.AUTH_CLOCK_SKEW_MS === undefined ? 0 : Number(env.AUTH_CLOCK_SKEW_MS);
+    if ((runtime === "staging" || runtime === "production") && skew !== 0) {
+      context.addIssue({
+        code: "custom",
+        path: ["AUTH_CLOCK_SKEW_MS"],
+        message: "AUTH_CLOCK_SKEW_MS must be 0 when EDITAGENT_RUNTIME is staging or production.",
+      });
+    }
     if ((runtime === "staging" || runtime === "production") && !secure) {
       context.addIssue({
         code: "custom",
@@ -246,6 +279,7 @@ const apiSchema = z
     authJwtSecret: env.AUTH_JWT_SECRET,
     authCookieSecure:
       env.AUTH_COOKIE_SECURE === undefined ? true : env.AUTH_COOKIE_SECURE === "true",
+    authClockSkewMs: env.AUTH_CLOCK_SKEW_MS === undefined ? 0 : Number(env.AUTH_CLOCK_SKEW_MS),
     objectStorage: {
       endpoint: env.S3_ENDPOINT,
       publicEndpoint: env.S3_PUBLIC_ENDPOINT,

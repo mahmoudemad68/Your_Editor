@@ -46,6 +46,10 @@ class FakeHasher implements PasswordHasher {
   async verify(passwordHash: string, password: string): Promise<boolean> {
     return passwordHash === (await this.hash(password));
   }
+
+  async burn(password: string): Promise<void> {
+    await this.verify(await this.hash("not-a-user"), password);
+  }
 }
 
 class FakeTokens implements SessionTokens {

@@ -16,8 +16,8 @@ const TEST_DATABASE = "editagent_us118_race";
 const SECRET = "local-development-jwt-secret-32chars";
 const PASSWORD = "correct-horse-battery";
 const WRONG = "not-the-password";
-const PAIR_TRIALS = 24;
-const LOCK_TRIALS = 20;
+const PAIR_TRIALS = 30;
+const LOCK_TRIALS = 30;
 
 function adminUrl(): string {
   return (
@@ -54,23 +54,31 @@ function sessionId(token: string): string {
   return token.slice(0, token.indexOf("."));
 }
 
-async function startServer(databaseUrl: string): Promise<{ child: ChildProcess; base: string }> {
+function serverEnv(databaseUrl: string, skewMs: number): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    DATABASE_URL: databaseUrl,
+    REDIS_URL: process.env["REDIS_URL"] ?? "redis://127.0.0.1:6379/0",
+    S3_ENDPOINT: process.env["S3_ENDPOINT"] ?? "http://127.0.0.1:9000",
+    S3_PUBLIC_ENDPOINT:
+      process.env["S3_PUBLIC_ENDPOINT"] ?? process.env["S3_ENDPOINT"] ?? "http://127.0.0.1:9000",
+    S3_BUCKET: process.env["S3_BUCKET"] ?? "editagent",
+    S3_ACCESS_KEY_ID: process.env["S3_ACCESS_KEY_ID"] ?? "editagent",
+    S3_SECRET_ACCESS_KEY: process.env["S3_SECRET_ACCESS_KEY"] ?? "editagent-dev-secret",
+    S3_REGION: process.env["S3_REGION"] ?? "us-east-1",
+    AUTH_JWT_SECRET: SECRET,
+    EDITAGENT_RUNTIME: "development",
+    AUTH_COOKIE_SECURE: "false",
+    AUTH_CLOCK_SKEW_MS: String(skewMs),
+  };
+}
+
+async function startServer(
+  databaseUrl: string,
+  skewMs = 0,
+): Promise<{ child: ChildProcess; base: string }> {
   const child = spawn(process.execPath, [path.resolve(__dirname, "auth-concurrency-server.js")], {
-    env: {
-      ...process.env,
-      DATABASE_URL: databaseUrl,
-      REDIS_URL: process.env["REDIS_URL"] ?? "redis://127.0.0.1:6379/0",
-      S3_ENDPOINT: process.env["S3_ENDPOINT"] ?? "http://127.0.0.1:9000",
-      S3_PUBLIC_ENDPOINT:
-        process.env["S3_PUBLIC_ENDPOINT"] ?? process.env["S3_ENDPOINT"] ?? "http://127.0.0.1:9000",
-      S3_BUCKET: process.env["S3_BUCKET"] ?? "editagent",
-      S3_ACCESS_KEY_ID: process.env["S3_ACCESS_KEY_ID"] ?? "editagent",
-      S3_SECRET_ACCESS_KEY: process.env["S3_SECRET_ACCESS_KEY"] ?? "editagent-dev-secret",
-      S3_REGION: process.env["S3_REGION"] ?? "us-east-1",
-      AUTH_JWT_SECRET: SECRET,
-      EDITAGENT_RUNTIME: "development",
-      AUTH_COOKIE_SECURE: "false",
-    },
+    env: serverEnv(databaseUrl, skewMs),
     stdio: ["ignore", "pipe", "pipe"],
   });
   const base = await new Promise<string>((resolve, reject) => {
@@ -170,6 +178,31 @@ function activeCount(rows: readonly SessionRow[]): number {
   return rows.filter((row) => row.revoked_at === null).length;
 }
 
+async function waitForLockWaiters(pool: Pool, expected: number): Promise<void> {
+  const started = Date.now();
+  while (Date.now() - started < 5_000) {
+    const result = await pool.query<{ count: number }>(
+      `SELECT count(*)::int AS count
+       FROM pg_stat_activity
+       WHERE datname = current_database() AND wait_event_type = 'Lock'`,
+    );
+    if ((result.rows[0]?.count ?? 0) >= expected) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error(`expected ${expected} sessions waiting on a lock`);
+}
+
+async function auditViolations(pool: Pool): Promise<number> {
+  const result = await pool.query<{ count: string }>(
+    `SELECT count(*)::text AS count
+     FROM refresh_sessions
+     WHERE revoked_at IS NOT NULL AND revoked_at < created_at`,
+  );
+  return Number(result.rows[0]?.count ?? "0");
+}
+
 test("refresh consumption and account lockout are atomic across two API processes", async () => {
   const admin = new Pool({ connectionString: adminUrl() });
   await admin.query(`DROP DATABASE IF EXISTS ${TEST_DATABASE} WITH (FORCE)`);
@@ -240,6 +273,23 @@ test("refresh consumption and account lockout are atomic across two API processe
     const fanoutRows = await sessionsFor(pool, "racer@example.test");
     assert.equal(fanoutRows.filter((row) => row.rotated_from_id === fanoutId).length, 1);
     assert.equal(activeCount(fanoutRows), 0);
+
+    const fourLogin = await postJson(left.base, "/auth/login", {
+      email: "racer@example.test",
+      password: PASSWORD,
+    });
+    const fourJar = cookieJar(fourLogin);
+    const fourId = sessionId(fourJar.get("editagent_refresh") ?? "");
+    const four = await together(
+      Array.from(
+        { length: 4 },
+        (_, index) => () => refresh(index % 2 === 0 ? left.base : right.base, fourJar),
+      ),
+    );
+    assert.equal(four.filter((response) => response.status === 200).length, 1);
+    const fourRows = await sessionsFor(pool, "racer@example.test");
+    assert.equal(fourRows.filter((row) => row.rotated_from_id === fourId).length, 1);
+    assert.equal(activeCount(fourRows), 0);
 
     const sequentialLogin = await postJson(left.base, "/auth/login", {
       email: "racer@example.test",
@@ -489,6 +539,120 @@ test("refresh consumption and account lockout are atomic across two API processe
   } finally {
     await stopServer(left.child);
     await stopServer(right.child);
+    await pool.end();
+  }
+});
+
+test("an earlier losing refresh cannot store revoked_at before created_at", async () => {
+  const databaseName = "editagent_us118_audit";
+  const admin = new Pool({ connectionString: adminUrl() });
+  await admin.query(`DROP DATABASE IF EXISTS ${databaseName} WITH (FORCE)`);
+  await admin.query(`CREATE DATABASE ${databaseName}`);
+  await admin.end();
+  const databaseUrl = withDatabase(adminUrl(), databaseName);
+  const pool = new Pool({ connectionString: databaseUrl });
+  await applyMigrations(pool);
+  const late = await startServer(databaseUrl, 0);
+  const early = await startServer(databaseUrl, -120_000);
+  const holder = await pool.connect();
+  try {
+    const registered = await postJson(late.base, "/auth/register", {
+      email: "audit@example.test",
+      password: PASSWORD,
+    });
+    assert.equal(registered.status, 201, await registered.clone().text());
+    const owner = await pool.query<{ id: string }>(
+      "SELECT id::text AS id FROM users WHERE email = $1",
+      ["audit@example.test"],
+    );
+    const ownerId = owner.rows[0]?.id ?? "";
+    await assert.rejects(
+      () =>
+        pool.query(
+          `INSERT INTO refresh_sessions (id, user_id, secret_hash, expires_at, revoked_at, created_at)
+           VALUES ($1, $2, $3, 50, 10, 30)`,
+          [createUuidV7(Date.now(), randomBytes(10)), ownerId, "d".repeat(64)],
+        ),
+      /refresh_sessions_revocation/,
+    );
+
+    for (let trial = 0; trial < 8; trial += 1) {
+      const loggedIn = await postJson(late.base, "/auth/login", {
+        email: "audit@example.test",
+        password: PASSWORD,
+      });
+      assert.equal(loggedIn.status, 200, await loggedIn.clone().text());
+      const jar = cookieJar(loggedIn);
+      await holder.query("BEGIN");
+      await holder.query("SELECT id FROM users WHERE id = $1 FOR UPDATE", [ownerId]);
+      const lateRefresh = refresh(late.base, jar);
+      await waitForLockWaiters(pool, 1);
+      const earlyRefresh = refresh(early.base, jar);
+      await waitForLockWaiters(pool, 2);
+      await holder.query("COMMIT");
+      const lateResponse = await lateRefresh;
+      const earlyResponse = await earlyRefresh;
+      assert.equal(lateResponse.status, 200, await lateResponse.clone().text());
+      assert.equal(earlyResponse.status, 401);
+      assert.equal(await auditViolations(pool), 0, `audit trial ${trial}`);
+      const presented = sessionId(jar.get("editagent_refresh") ?? "");
+      const rows = await sessionsFor(pool, "audit@example.test");
+      assert.equal(rows.filter((row) => row.rotated_from_id === presented).length, 1);
+      assert.equal(activeCount(rows), 0);
+      const rotated = cookieJar(lateResponse);
+      const again = await refresh(early.base, rotated);
+      assert.equal(again.status, 401);
+      assert.notEqual(again.status, 400);
+      const loggedOut = await fetch(`${late.base}/auth/logout`, {
+        method: "POST",
+        headers: {
+          cookie: cookieHeader(rotated),
+          "x-editagent-csrf": rotated.get("editagent_csrf") ?? "",
+        },
+      });
+      assert.equal(loggedOut.status, 204);
+      const cleared = loggedOut.headers.getSetCookie?.().join("\n") ?? "";
+      assert.match(cleared, /editagent_access=[^\n]*Max-Age=0/);
+      assert.match(cleared, /editagent_refresh=[^\n]*Max-Age=0/);
+    }
+
+    const kept = await postJson(late.base, "/auth/login", {
+      email: "audit@example.test",
+      password: PASSWORD,
+    });
+    assert.equal(kept.status, 200, await kept.clone().text());
+    const decoy = await postJson(late.base, "/auth/login", {
+      email: "audit@example.test",
+      password: PASSWORD,
+    });
+    assert.equal(decoy.status, 200, await decoy.clone().text());
+    const keptJar = cookieJar(kept);
+    const decoyJar = cookieJar(decoy);
+    assert.ok(keptJar.get("editagent_refresh")?.includes("."), "kept refresh cookie");
+    assert.ok(decoyJar.get("editagent_refresh")?.includes("."), "decoy refresh cookie");
+    const tampered = new Map(decoyJar);
+    tampered.set(
+      "editagent_refresh",
+      `${sessionId(decoyJar.get("editagent_refresh") ?? "")}.wrong-secret`,
+    );
+    const rejected = await refresh(late.base, tampered);
+    assert.equal(rejected.status, 401);
+    const afterTamper = await sessionsFor(pool, "audit@example.test");
+    assert.equal(
+      afterTamper.find((row) => row.id === sessionId(keptJar.get("editagent_refresh") ?? ""))
+        ?.revoked_at,
+      null,
+    );
+    assert.equal(
+      afterTamper.find((row) => row.id === sessionId(decoyJar.get("editagent_refresh") ?? ""))
+        ?.revoked_at,
+      null,
+    );
+  } finally {
+    await holder.query("ROLLBACK").catch(() => undefined);
+    holder.release();
+    await stopServer(late.child);
+    await stopServer(early.child);
     await pool.end();
   }
 });

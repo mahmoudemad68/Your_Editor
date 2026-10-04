@@ -3,6 +3,7 @@
  * It uses the same Postgres repositories and use cases as main.ts.
  */
 import "reflect-metadata";
+import { instant, type Instant } from "@editagent/domain";
 import { Pool } from "pg";
 import {
   LoginUser,
@@ -24,12 +25,21 @@ import {
   PostgresUserRepository,
 } from "./infrastructure/postgres-identity-repository.js";
 import { PostgresProjectRepository } from "./infrastructure/postgres-project-repository.js";
-import { SystemClock } from "./infrastructure/system-clock.js";
+import { type Clock } from "./application/clock.js";
+
+class SkewedClock implements Clock {
+  constructor(private readonly skewMs: bigint) {}
+
+  now(): Instant {
+    const value = BigInt(Date.now()) + this.skewMs;
+    return instant(value < 0n ? 0n : value);
+  }
+}
 
 async function main(): Promise<void> {
   const config = loadApiConfig();
   const pool = new Pool({ connectionString: config.databaseUrl });
-  const clock = new SystemClock();
+  const clock = new SkewedClock(BigInt(config.authClockSkewMs));
   const users = new PostgresUserRepository(pool);
   const sessions = new PostgresRefreshSessionRepository(pool);
   const passwords = new Argon2idHasher();

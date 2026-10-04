@@ -14,5 +14,9 @@ test("a refresh session expires and revocation is permanent", () => {
   const revoked = session.revoke(40n);
   assert.equal(revoked.isActive(50n), false);
   assert.equal(revoked.revoke(60n), revoked);
+  const clamped = session.revoke(1n);
+  assert.equal(clamped.revokedAt, session.createdAt);
+  assert.equal(clamped.isActive(50n), false);
+  assert.equal(clamped.revoke(2n), clamped);
   assert.deepEqual(RefreshSession.restore(revoked.toSnapshot()).toSnapshot(), revoked.toSnapshot());
 });

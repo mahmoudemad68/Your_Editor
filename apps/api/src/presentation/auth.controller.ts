@@ -23,6 +23,7 @@ import {
   ApiUnauthorizedResponse,
 } from "@nestjs/swagger";
 import { IsString, MaxLength, MinLength } from "class-validator";
+import { DomainError } from "@editagent/domain";
 import {
   AuthRateLimitedError,
   EmailAlreadyRegisteredError,
@@ -166,7 +167,11 @@ export class AuthController {
   ): Promise<void> {
     requireCsrf(request);
     const refreshToken = readCookie(headerValue(request.headers?.cookie), REFRESH_COOKIE);
-    await this.logoutUser.execute(refreshToken);
+    try {
+      await this.logoutUser.execute(refreshToken);
+    } catch {
+      // An already revoked or malformed token still ends the browser session.
+    }
     writeCookies(response, clearSessionCookies(this.cookieSecure));
   }
 }
@@ -198,8 +203,10 @@ function mapAuthError(error: unknown): Error {
   if (error instanceof AuthRateLimitedError) {
     return new HttpException(error.message, 429);
   }
-  if (error instanceof InvalidCredentialsError) {
-    return new UnauthorizedException(error.message);
+  if (error instanceof InvalidCredentialsError || error instanceof DomainError) {
+    return new UnauthorizedException(
+      error instanceof InvalidCredentialsError ? error.message : "Sign in is required.",
+    );
   }
   return error instanceof Error ? error : new UnauthorizedException("Sign in is required.");
 }

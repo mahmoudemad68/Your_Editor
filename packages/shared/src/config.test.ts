@@ -133,6 +133,20 @@ test("API config requires a long signing secret and treats only true as a secure
     () => parseApiConfig({ ...apiStorageEnv, EDITAGENT_RUNTIME: "lab" }),
     "EDITAGENT_RUNTIME",
   );
+  assertConfigError(
+    () =>
+      parseApiConfig({
+        ...apiStorageEnv,
+        EDITAGENT_RUNTIME: "staging",
+        AUTH_COOKIE_SECURE: "true",
+        AUTH_CLOCK_SKEW_MS: "-1000",
+      }),
+    "AUTH_CLOCK_SKEW_MS",
+  );
+  assert.equal(
+    parseApiConfig({ ...apiStorageEnv, AUTH_CLOCK_SKEW_MS: "-50" }).authClockSkewMs,
+    -50,
+  );
 });
 
 test("API config rejects a missing public object-storage endpoint and a bad presign TTL", () => {

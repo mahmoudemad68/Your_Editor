@@ -2,4 +2,6 @@
 export interface PasswordHasher {
   hash(password: string): Promise<string>;
   verify(passwordHash: string, password: string): Promise<boolean>;
+  /** Performs one verification when there is no comparable account secret. */
+  burn(password: string): Promise<void>;
 }
