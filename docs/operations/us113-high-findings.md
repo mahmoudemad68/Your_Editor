@@ -15,3 +15,5 @@ Local Trivy 0.75.0 on the remediated final images reported 55 distinct high find
 | Go modules with a fixed version            | `golang.org/x/net`, `golang.org/x/crypto`, `golang.org/x/text`, `google.golang.org/grpc` after 1.79.3, OpenTelemetry, `jsonparser`, `go-jose`, Thrift, Prometheus                    | removed from the release matrix                                  | Those modules were in the MinIO build. They leave the release with that image. Other images still need their own high findings cleared. |
 
 The critical gate is unchanged. High findings do not make the definition of done true.
+
+This fail-closed deployment change does not clear those findings and does not record an exception. The MinIO rows above left the release matrix with that image. The remaining Debian, Node, and Python highs still need an upstream fix or a rebuilt digest, then a rescan. Until that review is explicit, the security definition of done stays open.

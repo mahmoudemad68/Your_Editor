@@ -20,10 +20,7 @@ fi
 : "${S3_REGION:=us-east-1}"
 : "${S3_PORT:=19083}"
 
-./infra/seaweedfs/prepare-secrets.sh
-docker compose up -d postgres redis master volume filer s3
-./infra/seaweedfs/apply-compose-isolation.sh compose.yaml
-docker compose up -d --wait --wait-timeout 180 postgres redis master volume filer s3
+./infra/seaweedfs/secure-up.sh compose.yaml -- postgres redis master volume filer s3
 
 echo "Checking PostgreSQL"
 docker compose exec -T postgres sh -c 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT current_database();"'

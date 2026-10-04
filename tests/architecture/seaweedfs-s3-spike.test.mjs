@@ -689,30 +689,33 @@ test(
       .filter((name) => name.includes("minio"));
     const composeDev = (args) =>
       run("docker", ["compose", "-p", projectName, "-f", "compose.yaml", ...args], { env });
-    const up = composeDev(["up", "-d", "master", "volume", "filer", "s3", "object-ingress"]);
-    assert.equal(up.status, 0, up.stderr + up.stdout);
-    try {
-      const isolated = run(
-        path.join(root, "infra/seaweedfs/apply-compose-isolation.sh"),
-        ["compose.yaml", "-p", projectName],
-        { env },
-      );
-      assert.equal(isolated.status, 0, isolated.stderr + isolated.stdout);
-      assert.equal(isolated.stdout.includes("DOCKER-USER"), true, isolated.stdout);
-      assert.equal(isolated.stdout.includes("DROP"), true, isolated.stdout);
-      const ready = composeDev([
-        "up",
-        "-d",
-        "--wait",
-        "--wait-timeout",
-        "120",
+    const up = run(
+      path.join(root, "infra/seaweedfs/secure-up.sh"),
+      [
+        "compose.yaml",
+        "-p",
+        projectName,
+        "--",
         "master",
         "volume",
         "filer",
         "s3",
         "object-ingress",
-      ]);
-      assert.equal(ready.status, 0, ready.stderr + ready.stdout);
+      ],
+      { env },
+    );
+    assert.equal(up.status, 0, up.stderr + up.stdout);
+    const lines = up.stdout.split("\n");
+    const verifiedAt = lines.findIndex((line) => line.includes("isolation-verified"));
+    const blockedAt = lines.findIndex((line) => line.includes("bootstrap-host-blocked"));
+    const publishedAt = lines.findIndex((line) => line.includes("published-services-started"));
+    assert.equal(
+      verifiedAt >= 0 && blockedAt > verifiedAt && publishedAt > blockedAt,
+      true,
+      up.stdout,
+    );
+    assert.match(up.stdout, /bootstrap-host-blocked status=000 curl_exit=28/);
+    try {
       const storage = new S3ObjectStorage({
         endpoint: "http://127.0.0.1:19083",
         publicEndpoint: "http://127.0.0.1:19081",
@@ -768,13 +771,33 @@ test(
         await new Promise((resolve) => setTimeout(resolve, 1000));
       }
       assert.equal(readable, true);
-    } finally {
-      run(
-        path.join(root, "infra/seaweedfs/apply-compose-isolation.sh"),
-        ["remove", "compose.yaml", "-p", projectName],
-        { env },
+      assert.equal(composeDev(["up", "-d", "--force-recreate", "--no-deps", "filer"]).status, 0);
+      const recreatedIp = docker([
+        "inspect",
+        "-f",
+        '{{(index .NetworkSettings.Networks "editagent-storage-internal").IPAddress}}',
+        `${projectName}-filer-1`,
+      ]);
+      const recreated = probe(`http://${recreatedIp}:8888/`);
+      assertNoBytes(recreated, "recreated filer");
+      assert.equal(recreated.status, 0);
+      assert.equal(
+        docker(["inspect", "-f", "{{.HostConfig.RestartPolicy.Name}}", `${projectName}-filer-1`]),
+        "no",
       );
-      composeDev(["down", "-v"]);
+    } finally {
+      composeDev(["stop"]);
+      run(
+        "sh",
+        [
+          "-c",
+          '. .local/isolation-editagent-storage-it.state && infra/seaweedfs/install-host-isolation.sh remove "$saved_subnet" "$saved_bridge" "$saved_app_subnet" "$saved_app_bridge" "$saved_published"',
+        ],
+        {
+          env,
+        },
+      );
+      composeDev(["down"]);
       rmSync(secrets, { recursive: true, force: true });
       assert.equal(existsSync(secrets), false);
       const minioVolumesAfter = docker(["volume", "ls", "--format", "{{.Name}}"])
@@ -784,3 +807,38 @@ test(
     }
   },
 );
+
+test("secure-up fails closed without firewall privileges", () => {
+  const result = run(
+    "sudo",
+    ["-u", "nobody", "--", path.join(root, "infra/seaweedfs/secure-up.sh"), "compose.yaml"],
+    {},
+  );
+  assert.notEqual(result.status, 0);
+  assert.match(`${result.stderr}${result.stdout}`, /unsupported firewall/);
+});
+
+test("secure-up fails closed when the firewall backend is missing", () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "editagent-no-iptables-"));
+  const result = run(
+    path.join(root, "infra/seaweedfs/install-host-isolation.sh"),
+    ["apply", "10.254.0.0/24", "br-missing", "10.254.1.0/24", "br-missing2", "-"],
+    { env: { ...process.env, EDITAGENT_FIREWALL_BIN_DIR: directory } },
+  );
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /no iptables binary/);
+  rmSync(directory, { recursive: true, force: true });
+});
+
+test("firewall verify fails closed when the required rules are absent", () => {
+  const result = run(path.join(root, "infra/seaweedfs/install-host-isolation.sh"), [
+    "verify",
+    "10.254.0.0/24",
+    "br-not-a-bridge",
+    "10.254.1.0/24",
+    "br-not-another",
+    "-",
+  ]);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /not effective|unsupported firewall/);
+});

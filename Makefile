@@ -6,7 +6,7 @@ COMPOSE ?= docker compose
 
 help:
 	@printf '%s\n' \
-		'make up             Start the development stack and wait until it is healthy' \
+		'make up             Start the stack only after host isolation is verified' \
 		'make down           Stop the development stack' \
 		'make logs           Follow service logs' \
 		'make test           Run the workspace test suite' \
@@ -16,10 +16,7 @@ help:
 		'make staging-config Validate staging Compose when its environment is already exported'
 
 up:
-	./infra/seaweedfs/prepare-secrets.sh
-	$(COMPOSE) up -d
-	./infra/seaweedfs/apply-compose-isolation.sh compose.yaml
-	$(COMPOSE) up -d --wait --wait-timeout 300
+	./infra/seaweedfs/secure-up.sh compose.yaml
 
 down:
 	$(COMPOSE) down
@@ -34,10 +31,7 @@ seed:
 	./infra/scripts/seed.sh
 
 up-gpu:
-	./infra/seaweedfs/prepare-secrets.sh
-	$(COMPOSE) --profile gpu up -d --scale ai-worker=0
-	./infra/seaweedfs/apply-compose-isolation.sh compose.yaml --profile gpu
-	$(COMPOSE) --profile gpu up -d --wait --wait-timeout 300 --scale ai-worker=0
+	COMPOSE_PROFILES=gpu ./infra/seaweedfs/secure-up.sh compose.yaml
 
 compose-config:
 	./infra/scripts/validate-compose.sh

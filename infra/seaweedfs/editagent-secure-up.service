@@ -1,0 +1,14 @@
+[Unit]
+Description=EditAgent fail-closed startup
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/editagent
+ExecStart=/opt/editagent/infra/seaweedfs/secure-up.sh compose.staging.yaml
+ExecStop=/usr/bin/docker compose -f /opt/editagent/compose.staging.yaml stop
+
+[Install]
+WantedBy=multi-user.target

@@ -1,203 +1,255 @@
 #!/bin/sh
-# Host isolation for the integrated SeaweedFS topology.
-# This is not the disposable spike script. It drops the internal storage
-# subnet on the host and on other bridges, drops every port on the S3
-# container's application address except 8333, and rejects IPv6 on the
-# internal bridge. A missing firewall chain is a failure.
+# Subnet-scoped host isolation for the integrated SeaweedFS topology.
+# Rules are based on the network CIDR and bridge, not a discovered container IP.
+# Binaries are absolute paths. Privilege is root or non-interactive sudo.
+# A missing backend, chain, or privilege is a deployment failure.
 # Usage:
-#   install-host-isolation.sh apply <internal-subnet> <internal-bridge> <s3-app-ip> <app-bridge>
-#   install-host-isolation.sh verify <internal-subnet> <internal-bridge> <s3-app-ip> <app-bridge>
-#   install-host-isolation.sh remove <internal-subnet> <internal-bridge> <s3-app-ip> <app-bridge>
+#   install-host-isolation.sh apply <internal-subnet> <internal-bridge> <app-subnet> <app-bridge> <published-ports>
+#   install-host-isolation.sh verify <internal-subnet> <internal-bridge> <app-subnet> <app-bridge> <published-ports>
+#   install-host-isolation.sh remove <internal-subnet> <internal-bridge> <app-subnet> <app-bridge> <published-ports>
+# published-ports is a comma-separated list of container ports the host may open, or "-".
 set -eu
 
 action=${1:?apply, verify, or remove}
 subnet=${2:?internal subnet}
 bridge=${3:?internal bridge}
-s3_ip=${4:?s3 application address}
+app_subnet=${4:?application subnet}
 app_bridge=${5:?application bridge}
+published=${6:?published ports or -}
 
-ipt() {
-  if [ "$(id -u)" -eq 0 ]; then
-    command "$@"
-  elif command -v sudo >/dev/null 2>&1; then
-    sudo "$@"
+if [ "$(id -u)" -eq 0 ]; then
+  SUDO=""
+elif [ -x /usr/bin/sudo ] && /usr/bin/sudo -n true >/dev/null 2>&1; then
+  SUDO="/usr/bin/sudo -n"
+else
+  echo "unsupported firewall: root or non-interactive /usr/bin/sudo -n is required" >&2
+  exit 1
+fi
+
+run_bin() {
+  if [ -n "$SUDO" ]; then
+    # shellcheck disable=SC2086
+    $SUDO "$@"
   else
-    echo "unsupported firewall: root or sudo is required" >&2
-    exit 1
+    "$@"
   fi
 }
 
-TOOLS=""
-if command -v iptables-nft >/dev/null 2>&1; then
-  TOOLS="$TOOLS iptables-nft"
-elif command -v iptables >/dev/null 2>&1; then
-  TOOLS="$TOOLS iptables"
-fi
-if command -v iptables-legacy >/dev/null 2>&1; then
-  TOOLS="$TOOLS iptables-legacy"
-fi
-TOOLS=${TOOLS# }
-
-IP6TOOLS=""
-if command -v ip6tables-nft >/dev/null 2>&1; then
-  IP6TOOLS="$IP6TOOLS ip6tables-nft"
-elif command -v ip6tables >/dev/null 2>&1; then
-  IP6TOOLS="$IP6TOOLS ip6tables"
-fi
-if command -v ip6tables-legacy >/dev/null 2>&1; then
-  IP6TOOLS="$IP6TOOLS ip6tables-legacy"
-fi
-IP6TOOLS=${IP6TOOLS# }
-
-chain_present() {
-  ipt "$1" -S "$2" >/dev/null 2>&1
+search_dirs() {
+  if [ -n "${EDITAGENT_FIREWALL_BIN_DIR:-}" ]; then
+    printf '%s\n' "$EDITAGENT_FIREWALL_BIN_DIR"
+  else
+    printf '%s\n' /usr/sbin /sbin
+  fi
 }
 
-chain_present_any() {
-  chain=$1
-  for tool in $TOOLS; do
-    if chain_present "$tool" "$chain"; then
+find_bin() {
+  name=$1
+  dir=""
+  for dir in $(search_dirs); do
+    if [ -x "$dir/$name" ]; then
+      printf '%s\n' "$dir/$name"
       return 0
     fi
   done
   return 1
 }
 
+collect() {
+  found=""
+  name=""
+  for name in "$@"; do
+    if path=$(find_bin "$name"); then
+      case " $found " in
+        *" $path "*) ;;
+        *) found="$found $path" ;;
+      esac
+    fi
+  done
+  printf '%s\n' "${found# }"
+}
+
+TOOLS=$(collect iptables-nft iptables-legacy iptables)
+IP6TOOLS=$(collect ip6tables-nft ip6tables-legacy ip6tables)
+
+if [ -z "$TOOLS" ]; then
+  echo "unsupported firewall: no iptables binary under /usr/sbin or /sbin" >&2
+  exit 1
+fi
+
+chain_present() {
+  run_bin "$1" -S "$2" >/dev/null 2>&1
+}
+
+SELECTED=""
+for tool in $TOOLS; do
+  if chain_present "$tool" DOCKER-USER && chain_present "$tool" DOCKER-FORWARD && chain_present "$tool" OUTPUT; then
+    SELECTED="$SELECTED $tool"
+  else
+    echo "firewall backend skipped because Docker chains are absent: $tool" >&2
+  fi
+done
+SELECTED=${SELECTED# }
+if [ -z "$SELECTED" ]; then
+  echo "unsupported firewall: no backend has DOCKER-USER, DOCKER-FORWARD, and OUTPUT" >&2
+  echo "checked: $TOOLS" >&2
+  exit 1
+fi
+
+MESH="8333 8080 3000 3001 5432 6379 3200"
+PUBLISHED=""
+if [ "$published" != "-" ]; then
+  old_ifs=$IFS
+  IFS=,
+  for port in $published; do
+    case "$port" in
+      "" | *[!0-9]*)
+        echo "unsupported firewall: published port list is invalid" >&2
+        exit 1
+        ;;
+    esac
+    PUBLISHED="$PUBLISHED $port"
+  done
+  IFS=$old_ifs
+fi
+FORWARD_PORTS=$MESH
+for port in $PUBLISHED; do
+  case " $FORWARD_PORTS " in
+    *" $port "*) ;;
+    *) FORWARD_PORTS="$FORWARD_PORTS $port" ;;
+  esac
+done
+
 install_rule() {
   tool=$1
   shift
-  chain=$1
-  if ! chain_present "$tool" "$chain"; then
-    return 2
-  fi
   if [ "$action" = remove ]; then
-    ipt "$tool" -D "$@" >/dev/null 2>&1 || true
+    run_bin "$tool" -D "$@" >/dev/null 2>&1 || true
     return 0
   fi
-  ipt "$tool" -C "$@" >/dev/null 2>&1 || ipt "$tool" -I "$@"
+  run_bin "$tool" -C "$@" >/dev/null 2>&1 || run_bin "$tool" -I "$@"
 }
 
-require_one() {
+require_all() {
   description=$1
   shift
-  ok=0
-  for tool in $TOOLS; do
-    if install_rule "$tool" "$@"; then
-      ok=$((ok + 1))
-    else
-      status=$?
-      if [ "$status" -ne 2 ]; then
-        echo "firewall rule failed on $tool: $*" >&2
-        exit 1
-      fi
-    fi
-  done
-  if [ "$action" != remove ] && [ "$ok" -eq 0 ]; then
-    echo "unsupported firewall: $description" >&2
-    echo "checked backends: ${TOOLS:-none}" >&2
-    exit 1
-  fi
-}
-
-rule_visible() {
-  tool=$1
-  shift
-  chain=$1
-  chain_present "$tool" "$chain" && ipt "$tool" -C "$@" >/dev/null 2>&1
-}
-
-require_visible() {
-  description=$1
-  shift
-  for tool in $TOOLS; do
-    if rule_visible "$tool" "$@"; then
-      echo "$tool $*"
-      return 0
-    fi
-  done
-  echo "unsupported firewall: required rule is not effective: $description" >&2
-  echo "checked backends: ${TOOLS:-none}" >&2
-  exit 1
-}
-
-ipv6_policy() {
-  if [ -d "/sys/class/net/$bridge" ] && [ -f /proc/net/if_inet6 ]; then
-    if [ -z "$IP6TOOLS" ]; then
-      echo "unsupported firewall: the kernel has IPv6 and ip6tables is missing" >&2
+  tool=""
+  for tool in $SELECTED; do
+    if ! install_rule "$tool" "$@"; then
+      echo "firewall rule failed on $tool: $description" >&2
       exit 1
     fi
-    for tool in $IP6TOOLS; do
-      if [ "$action" = remove ]; then
-        ipt "$tool" -D FORWARD -i "$bridge" -j DROP >/dev/null 2>&1 || true
-        ipt "$tool" -D FORWARD -o "$bridge" -j DROP >/dev/null 2>&1 || true
-        ipt "$tool" -D OUTPUT -o "$bridge" -j DROP >/dev/null 2>&1 || true
-      else
-        ipt "$tool" -C FORWARD -i "$bridge" -j DROP >/dev/null 2>&1 || ipt "$tool" -I FORWARD -i "$bridge" -j DROP
-        ipt "$tool" -C FORWARD -o "$bridge" -j DROP >/dev/null 2>&1 || ipt "$tool" -I FORWARD -o "$bridge" -j DROP
-        ipt "$tool" -C OUTPUT -o "$bridge" -j DROP >/dev/null 2>&1 || ipt "$tool" -I OUTPUT -o "$bridge" -j DROP
-      fi
-    done
-    if [ "$action" = verify ]; then
-      tool=${IP6TOOLS%% *}
-      ipt "$tool" -C FORWARD -i "$bridge" -j DROP >/dev/null 2>&1
-      ipt "$tool" -C OUTPUT -o "$bridge" -j DROP >/dev/null 2>&1
-      echo "$tool FORWARD -i $bridge -j DROP"
-      echo "$tool OUTPUT -o $bridge -j DROP"
-    fi
-  elif [ "$action" = verify ]; then
-    echo "ipv6-policy: kernel has no IPv6 addresses"
-  fi
+  done
 }
 
-if [ "$action" = verify ]; then
-  echo "firewall-backends: ${TOOLS:-none}"
-  require_visible "internal return" DOCKER-USER -d "$subnet" -i "$bridge" -j RETURN
-  require_visible "internal drop" DOCKER-USER -d "$subnet" -j DROP
-  require_visible "host internal drop" OUTPUT -d "$subnet" -j DROP
-  if chain_present_any DOCKER-FORWARD; then
-    require_visible "internal bridge forward" DOCKER-FORWARD -i "$bridge" -j ACCEPT
-    require_visible "application bridge forward" DOCKER-FORWARD -i "$app_bridge" -j ACCEPT
+visible_all() {
+  description=$1
+  shift
+  tool=""
+  for tool in $SELECTED; do
+    if ! run_bin "$tool" -C "$@" >/dev/null 2>&1; then
+      echo "unsupported firewall: required rule is not effective on $tool: $description" >&2
+      exit 1
+    fi
+    echo "$tool $*"
+  done
+}
+
+ensure_ip6() {
+  tool=$1
+  shift
+  if [ "$action" = remove ]; then
+    run_bin "$tool" -D "$@" >/dev/null 2>&1 || true
+    return 0
   fi
-  require_visible "s3 port" DOCKER-USER -d "$s3_ip" -p tcp --dport 8333 -j RETURN
-  require_visible "s3 established" DOCKER-USER -d "$s3_ip" -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
-  require_visible "s3 other ports" DOCKER-USER -d "$s3_ip" -j DROP
-  require_visible "host s3 port" OUTPUT -d "$s3_ip" -p tcp --dport 8333 -j ACCEPT
-  require_visible "host s3 drop" OUTPUT -d "$s3_ip" -j DROP
-  ipv6_policy
-  exit 0
-fi
+  if [ "$action" = verify ]; then
+    run_bin "$tool" -C "$@" >/dev/null
+    echo "$tool $*"
+    return 0
+  fi
+  run_bin "$tool" -C "$@" >/dev/null 2>&1 || run_bin "$tool" -I "$@"
+}
+
+ipv6_rules() {
+  if [ ! -f /proc/net/if_inet6 ]; then
+    if [ "$action" = verify ]; then
+      echo "ipv6-policy: kernel has no IPv6"
+    fi
+    return 0
+  fi
+  if [ -z "$IP6TOOLS" ]; then
+    echo "unsupported firewall: the kernel has IPv6 and ip6tables is missing" >&2
+    exit 1
+  fi
+  tool=""
+  iface=""
+  for tool in $IP6TOOLS; do
+    for iface in "$bridge" "$app_bridge"; do
+      ensure_ip6 "$tool" FORWARD -i "$iface" -j DROP
+      ensure_ip6 "$tool" FORWARD -o "$iface" -j DROP
+      ensure_ip6 "$tool" OUTPUT -o "$iface" -j DROP
+    done
+  done
+}
+
+apply_v4() {
+  require_all "internal drop" DOCKER-USER -d "$subnet" -j DROP
+  require_all "internal return" DOCKER-USER -d "$subnet" -i "$bridge" -j RETURN
+  require_all "host internal drop" OUTPUT -d "$subnet" -j DROP
+  require_all "internal bridge forward" DOCKER-FORWARD -i "$bridge" -j ACCEPT
+  require_all "application bridge forward" DOCKER-FORWARD -i "$app_bridge" -j ACCEPT
+  require_all "app subnet drop" DOCKER-USER -d "$app_subnet" -j DROP
+  require_all "host app subnet drop" OUTPUT -d "$app_subnet" -j DROP
+  port=""
+  for port in $FORWARD_PORTS; do
+    require_all "app port $port" DOCKER-USER -d "$app_subnet" -p tcp --dport "$port" -j RETURN
+  done
+  for port in $PUBLISHED; do
+    require_all "host published $port" OUTPUT -d "$app_subnet" -p tcp --dport "$port" -j ACCEPT
+  done
+  require_all "app established" DOCKER-USER -d "$app_subnet" -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
+  require_all "host app established" OUTPUT -d "$app_subnet" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+}
 
 if [ "$action" = remove ]; then
-  if chain_present_any DOCKER-FORWARD; then
-    require_one "remove internal bridge forward" DOCKER-FORWARD -i "$bridge" -j ACCEPT
-    require_one "remove application bridge forward" DOCKER-FORWARD -i "$app_bridge" -j ACCEPT
-  fi
-  require_one "remove s3 established" DOCKER-USER -d "$s3_ip" -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
-  require_one "remove s3 port" DOCKER-USER -d "$s3_ip" -p tcp --dport 8333 -j RETURN
-  require_one "remove s3 drop" DOCKER-USER -d "$s3_ip" -j DROP
-  require_one "remove host s3 established" OUTPUT -d "$s3_ip" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
-  require_one "remove host s3 port" OUTPUT -d "$s3_ip" -p tcp --dport 8333 -j ACCEPT
-  require_one "remove host s3 drop" OUTPUT -d "$s3_ip" -j DROP
-  require_one "remove internal return" DOCKER-USER -d "$subnet" -i "$bridge" -j RETURN
-  require_one "remove internal drop" DOCKER-USER -d "$subnet" -j DROP
-  require_one "remove host internal drop" OUTPUT -d "$subnet" -j DROP
-  ipv6_policy
+  # Delete accepts before drops so a partial remove cannot leave a hole.
+  port=""
+  for port in $FORWARD_PORTS; do
+    require_all "remove app port $port" DOCKER-USER -d "$app_subnet" -p tcp --dport "$port" -j RETURN
+  done
+  for port in $PUBLISHED; do
+    require_all "remove host published $port" OUTPUT -d "$app_subnet" -p tcp --dport "$port" -j ACCEPT
+  done
+  require_all "remove app established" DOCKER-USER -d "$app_subnet" -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
+  require_all "remove host app established" OUTPUT -d "$app_subnet" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+  require_all "remove app drop" DOCKER-USER -d "$app_subnet" -j DROP
+  require_all "remove host app drop" OUTPUT -d "$app_subnet" -j DROP
+  require_all "remove internal return" DOCKER-USER -d "$subnet" -i "$bridge" -j RETURN
+  require_all "remove internal drop" DOCKER-USER -d "$subnet" -j DROP
+  require_all "remove host internal drop" OUTPUT -d "$subnet" -j DROP
+  require_all "remove internal forward" DOCKER-FORWARD -i "$bridge" -j ACCEPT
+  require_all "remove app forward" DOCKER-FORWARD -i "$app_bridge" -j ACCEPT
+  ipv6_rules
   echo "removed host isolation for $subnet"
   exit 0
 fi
 
-if chain_present_any DOCKER-FORWARD; then
-  require_one "internal bridge forward" DOCKER-FORWARD -i "$bridge" -j ACCEPT
-  require_one "application bridge forward" DOCKER-FORWARD -i "$app_bridge" -j ACCEPT
+if [ "$action" = verify ]; then
+  echo "firewall-backends: $SELECTED"
+  visible_all "internal return" DOCKER-USER -d "$subnet" -i "$bridge" -j RETURN
+  visible_all "internal drop" DOCKER-USER -d "$subnet" -j DROP
+  visible_all "host internal drop" OUTPUT -d "$subnet" -j DROP
+  visible_all "app subnet drop" DOCKER-USER -d "$app_subnet" -j DROP
+  visible_all "host app subnet drop" OUTPUT -d "$app_subnet" -j DROP
+  ipv6_rules
+  exit 0
 fi
-require_one "internal drop" DOCKER-USER -d "$subnet" -j DROP
-require_one "internal return" DOCKER-USER -d "$subnet" -i "$bridge" -j RETURN
-require_one "host internal drop" OUTPUT -d "$subnet" -j DROP
-require_one "s3 drop" DOCKER-USER -d "$s3_ip" -j DROP
-require_one "s3 port" DOCKER-USER -d "$s3_ip" -p tcp --dport 8333 -j RETURN
-require_one "s3 established" DOCKER-USER -d "$s3_ip" -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
-require_one "host s3 drop" OUTPUT -d "$s3_ip" -j DROP
-require_one "host s3 port" OUTPUT -d "$s3_ip" -p tcp --dport 8333 -j ACCEPT
-require_one "host s3 established" OUTPUT -d "$s3_ip" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
-ipv6_policy
-echo "applied host isolation for $subnet via $bridge s3=$s3_ip"
+
+if [ "$action" != apply ]; then
+  echo "unsupported firewall action: $action" >&2
+  exit 1
+fi
+
+apply_v4
+ipv6_rules
+echo "applied host isolation internal=$subnet app=$app_subnet"

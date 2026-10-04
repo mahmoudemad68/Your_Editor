@@ -6,15 +6,9 @@ set -eu
 ROOT="$(CDPATH= cd -- "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT"
 
-"$ROOT/infra/scripts/staging-preflight.sh" --compose
-
 export SEAWEED_SECRET_DIR="${SEAWEED_SECRET_DIR:-$ROOT/seaweedfs-secrets}"
 export SEAWEED_REQUIRE_S3_ENV=1
-"$ROOT/infra/seaweedfs/prepare-secrets.sh"
-
-docker compose -f compose.staging.yaml pull
-docker compose -f compose.staging.yaml up -d --no-build
-"$ROOT/infra/seaweedfs/apply-compose-isolation.sh" compose.staging.yaml
-docker compose -f compose.staging.yaml up -d --no-build --wait --wait-timeout 300
+export EDITAGENT_INSTALL_BOOT_UNIT=1
+"$ROOT/infra/seaweedfs/secure-up.sh" compose.staging.yaml
 
 echo "staging deploy finished without deleting volumes"

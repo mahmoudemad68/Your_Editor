@@ -5,6 +5,8 @@
 #   docker compose --profile gpu -f compose.staging.yaml up --scale ai-worker=0
 #
 # Do not run `docker compose down -v` here. That deletes staging data.
+# `docker compose up` is not a secure deployment. Use infra/scripts/staging-deploy.sh.
+# Services use restart "no" so a reboot cannot bring them up before host isolation.
 
 name: editagent-staging
 
@@ -41,7 +43,7 @@ services:
       timeout: 5s
       retries: 20
       start_period: 10s
-    restart: unless-stopped
+    restart: "no"
 
   redis:
     image: ${EDITAGENT_REDIS_IMAGE:?EDITAGENT_REDIS_IMAGE is required}
@@ -55,7 +57,7 @@ services:
       timeout: 3s
       retries: 20
       start_period: 5s
-    restart: unless-stopped
+    restart: "no"
 
   master:
     image: *seaweed-image
@@ -77,7 +79,7 @@ services:
       timeout: 5s
       retries: 20
       start_period: 10s
-    restart: unless-stopped
+    restart: "no"
 
   volume:
     image: *seaweed-image
@@ -102,7 +104,7 @@ services:
       timeout: 5s
       retries: 20
       start_period: 10s
-    restart: unless-stopped
+    restart: "no"
 
   filer:
     image: *seaweed-image
@@ -127,7 +129,7 @@ services:
       timeout: 5s
       retries: 20
       start_period: 10s
-    restart: unless-stopped
+    restart: "no"
 
   s3:
     image: *seaweed-image
@@ -141,7 +143,11 @@ services:
       - -port.lance=0
       - -iam=false
       - -config=/etc/seaweedfs/s3.json
-    networks: [default, storage_internal]
+    networks:
+      default:
+        ipv4_address: 10.113.91.10
+      storage_internal:
+        ipv4_address: 10.113.90.10
     volumes:
       - ${SEAWEED_SECRET_DIR:?SEAWEED_SECRET_DIR is required}/security.toml:/etc/seaweedfs/security.toml:ro
       - ${SEAWEED_SECRET_DIR:?SEAWEED_SECRET_DIR is required}/s3.json:/etc/seaweedfs/s3.json:ro
@@ -156,7 +162,7 @@ services:
       timeout: 5s
       retries: 20
       start_period: 10s
-    restart: unless-stopped
+    restart: "no"
 
   object-ingress:
     image: ${EDITAGENT_OBJECT_INGRESS_IMAGE:?EDITAGENT_OBJECT_INGRESS_IMAGE is required}
@@ -181,7 +187,7 @@ services:
       timeout: 3s
       retries: 20
       start_period: 5s
-    restart: unless-stopped
+    restart: "no"
 
   api:
     image: ${EDITAGENT_API_IMAGE:?EDITAGENT_API_IMAGE is required}
@@ -213,7 +219,7 @@ services:
       timeout: 5s
       retries: 20
       start_period: 30s
-    restart: unless-stopped
+    restart: "no"
 
   web:
     image: ${EDITAGENT_WEB_IMAGE:?EDITAGENT_WEB_IMAGE is required}
@@ -239,7 +245,7 @@ services:
       timeout: 5s
       retries: 20
       start_period: 20s
-    restart: unless-stopped
+    restart: "no"
 
   agent-worker:
     image: ${EDITAGENT_AGENT_WORKER_IMAGE:?EDITAGENT_AGENT_WORKER_IMAGE is required}
@@ -264,7 +270,7 @@ services:
       timeout: 3s
       retries: 20
       start_period: 20s
-    restart: unless-stopped
+    restart: "no"
 
   media-worker:
     image: ${EDITAGENT_MEDIA_WORKER_IMAGE:?EDITAGENT_MEDIA_WORKER_IMAGE is required}
@@ -294,7 +300,7 @@ services:
       timeout: 5s
       retries: 20
       start_period: 20s
-    restart: unless-stopped
+    restart: "no"
 
   render-worker:
     image: ${EDITAGENT_RENDER_WORKER_IMAGE:?EDITAGENT_RENDER_WORKER_IMAGE is required}
@@ -322,7 +328,7 @@ services:
       timeout: 3s
       retries: 20
       start_period: 20s
-    restart: unless-stopped
+    restart: "no"
 
   ai-worker:
     image: ${EDITAGENT_AI_WORKER_IMAGE:?EDITAGENT_AI_WORKER_IMAGE is required}
@@ -347,7 +353,7 @@ services:
       timeout: 5s
       retries: 20
       start_period: 20s
-    restart: unless-stopped
+    restart: "no"
 
   # Optional GPU profile. The default staging stack does not start this service.
   ai-worker-gpu:
@@ -383,15 +389,21 @@ services:
       timeout: 5s
       retries: 20
       start_period: 20s
-    restart: unless-stopped
+    restart: "no"
 
 networks:
   default:
     enable_ipv6: false
+    ipam:
+      config:
+        - subnet: 10.113.91.0/24
   storage_internal:
     name: editagent-staging-storage-internal
     enable_ipv6: false
     internal: true
+    ipam:
+      config:
+        - subnet: 10.113.90.0/24
 
 volumes:
   staging-postgres-data:

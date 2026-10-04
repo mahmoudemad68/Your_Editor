@@ -1,8 +1,8 @@
 # EditAgent local runtime (US-114).
 # Development placeholders only. Real credentials stay in an untracked .env.
-# `docker compose up` starts the non-GPU stack. The NVIDIA runtime is opt-in:
-#   docker compose --profile gpu up --scale ai-worker=0
-# or `make up-gpu`.
+# `docker compose up` is not a secure deployment. It can start storage before
+# the host firewall exists. Use `make up` or `infra/seaweedfs/secure-up.sh`.
+# The NVIDIA runtime is opt-in: `make up-gpu`.
 
 name: editagent
 
@@ -41,7 +41,7 @@ services:
       timeout: 5s
       retries: 20
       start_period: 10s
-    restart: unless-stopped
+    restart: "no"
 
   redis:
     image: redis:7.4-alpine
@@ -57,7 +57,7 @@ services:
       timeout: 3s
       retries: 20
       start_period: 5s
-    restart: unless-stopped
+    restart: "no"
 
   master:
     image: *seaweed-image
@@ -78,7 +78,7 @@ services:
       timeout: 5s
       retries: 20
       start_period: 10s
-    restart: unless-stopped
+    restart: "no"
 
   volume:
     image: *seaweed-image
@@ -102,7 +102,7 @@ services:
       timeout: 5s
       retries: 20
       start_period: 10s
-    restart: unless-stopped
+    restart: "no"
 
   filer:
     image: *seaweed-image
@@ -126,7 +126,7 @@ services:
       timeout: 5s
       retries: 20
       start_period: 10s
-    restart: unless-stopped
+    restart: "no"
 
   s3:
     image: *seaweed-image
@@ -139,7 +139,11 @@ services:
       - -port.lance=0
       - -iam=false
       - -config=/etc/seaweedfs/s3.json
-    networks: [default, storage_internal]
+    networks:
+      default:
+        ipv4_address: 10.113.89.10
+      storage_internal:
+        ipv4_address: 10.113.88.10
     ports:
       - "127.0.0.1:${S3_PORT:-19083}:8333"
     volumes:
@@ -153,7 +157,7 @@ services:
       timeout: 5s
       retries: 20
       start_period: 10s
-    restart: unless-stopped
+    restart: "no"
 
   object-ingress:
     build:
@@ -179,7 +183,7 @@ services:
       timeout: 3s
       retries: 20
       start_period: 5s
-    restart: unless-stopped
+    restart: "no"
 
   api:
     build:
@@ -396,10 +400,16 @@ services:
 networks:
   default:
     enable_ipv6: false
+    ipam:
+      config:
+        - subnet: 10.113.89.0/24
   storage_internal:
     name: editagent-storage-internal
     enable_ipv6: false
     internal: true
+    ipam:
+      config:
+        - subnet: 10.113.88.0/24
 
 volumes:
   postgres-data:

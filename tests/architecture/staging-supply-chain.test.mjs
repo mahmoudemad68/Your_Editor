@@ -158,6 +158,11 @@ test("supply-chain workflow publishes digests and blocks an unconfigured staging
   assert.match(workflow, /secrets\.GITHUB_TOKEN/);
   assert.match(workflow, /syft /);
   assert.match(workflow, /trivy image --severity CRITICAL --exit-code 1/);
+  const deploy = readFileSync(path.join(root, "infra/scripts/staging-deploy.sh"), "utf8");
+  const makefile = readFileSync(path.join(root, "Makefile"), "utf8");
+  assert.match(deploy, /secure-up\.sh/);
+  assert.equal(deploy.includes("up -d"), false);
+  assert.match(makefile, /secure-up\.sh compose\.yaml/);
   assert.match(workflow, /name: image seaweedfs/);
   assert.match(workflow, /4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d/);
   assert.equal(workflow.includes("dockerfile: infra/minio/Dockerfile"), false);

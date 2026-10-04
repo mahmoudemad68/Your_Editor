@@ -84,7 +84,7 @@ Merging to `main` runs the supply-chain workflow. Each image is built, given an 
 
 The `main` ruleset required status check, verified in this repository, is only `ci`. `supply-chain-security` is not a required check. Add it beside `ci` before a green security gate can block a merge. This document does not claim that setting is already enabled.
 
-When the names are present, the job copies the compose file and a mode-`600` env file, then runs `infra/scripts/staging-deploy.sh`. That script checks every image reference is `@sha256` pinned, prepares SeaweedFS secrets, pulls, starts the stack, and installs the host isolation rules before it waits for health. It does not run `docker compose down -v`.
+When the names are present, the job copies the compose file and a mode-`600` env file, then runs `infra/scripts/staging-deploy.sh`. That script calls `infra/seaweedfs/secure-up.sh`. The secure path checks privileges and digests, prepares secrets, creates networks without starting them, installs subnet firewall rules, proves the host cannot open an internal listener, and only then starts services. A failed check stops containers and does not delete volumes. `docker compose up` by itself is not this path. After a reboot the services stay stopped until the boot unit or `secure-up.sh` runs again, because their restart policy is `no`.
 
 Manual redeploy of an already built SHA, on the host:
 
