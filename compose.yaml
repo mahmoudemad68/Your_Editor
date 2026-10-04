@@ -75,12 +75,32 @@ services:
       - -ip.bind=0.0.0.0
       - -port=9333
       - -telemetry=false
-    networks: [storage_internal]
+      - -disableHttp
+    networks:
+      storage_internal:
+        ipv4_address: 172.30.210.10
     volumes:
       - seaweed-master:/data
       - ${SEAWEED_SECRET_DIR:-.local/seaweedfs}/security.toml:/etc/seaweedfs/security.toml:ro
+      - ${SEAWEED_SECRET_DIR:-.local/seaweedfs}/ca.crt:/etc/seaweedfs/ca.crt:ro
+      - ${SEAWEED_SECRET_DIR:-.local/seaweedfs}/seaweed.crt:/etc/seaweedfs/seaweed.crt:ro
+      - ${SEAWEED_SECRET_DIR:-.local/seaweedfs}/seaweed.key:/etc/seaweedfs/seaweed.key:ro
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9333/dir/status"]
+      test:
+        [
+          "CMD",
+          "curl",
+          "--fail",
+          "--silent",
+          "--show-error",
+          "--cacert",
+          "/etc/seaweedfs/ca.crt",
+          "--cert",
+          "/etc/seaweedfs/seaweed.crt",
+          "--key",
+          "/etc/seaweedfs/seaweed.key",
+          "https://127.0.0.1:9333/healthz",
+        ]
       interval: 3s
       timeout: 3s
       retries: 30
@@ -99,10 +119,16 @@ services:
       - -ip=seaweed-volume
       - -ip.bind=0.0.0.0
       - -port=8080
-    networks: [storage_internal]
+      - -whiteList=172.30.210.10,172.30.210.11,172.30.210.12,172.30.210.13
+    networks:
+      storage_internal:
+        ipv4_address: 172.30.210.11
     volumes:
       - seaweed-volume:/data
       - ${SEAWEED_SECRET_DIR:-.local/seaweedfs}/security.toml:/etc/seaweedfs/security.toml:ro
+      - ${SEAWEED_SECRET_DIR:-.local/seaweedfs}/ca.crt:/etc/seaweedfs/ca.crt:ro
+      - ${SEAWEED_SECRET_DIR:-.local/seaweedfs}/seaweed.crt:/etc/seaweedfs/seaweed.crt:ro
+      - ${SEAWEED_SECRET_DIR:-.local/seaweedfs}/seaweed.key:/etc/seaweedfs/seaweed.key:ro
     depends_on:
       seaweed-master:
         condition: service_healthy
@@ -127,10 +153,15 @@ services:
       - -ip.bind=0.0.0.0
       - -port=8888
       - -disableDirListing
-    networks: [storage_internal]
+    networks:
+      storage_internal:
+        ipv4_address: 172.30.210.12
     volumes:
       - seaweed-filer:/data
       - ${SEAWEED_SECRET_DIR:-.local/seaweedfs}/security.toml:/etc/seaweedfs/security.toml:ro
+      - ${SEAWEED_SECRET_DIR:-.local/seaweedfs}/ca.crt:/etc/seaweedfs/ca.crt:ro
+      - ${SEAWEED_SECRET_DIR:-.local/seaweedfs}/seaweed.crt:/etc/seaweedfs/seaweed.crt:ro
+      - ${SEAWEED_SECRET_DIR:-.local/seaweedfs}/seaweed.key:/etc/seaweedfs/seaweed.key:ro
     depends_on:
       seaweed-volume:
         condition: service_healthy
@@ -157,11 +188,17 @@ services:
       - -port.lance=0
       - -iam=false
       - -config=/etc/seaweedfs/s3.json
-    networks: [storage_internal, default]
+    networks:
+      storage_internal:
+        ipv4_address: 172.30.210.13
+      default: {}
     ports:
       - "127.0.0.1:${S3_PORT:-${MINIO_PORT:-9000}}:8333"
     volumes:
       - ${SEAWEED_SECRET_DIR:-.local/seaweedfs}/security.toml:/etc/seaweedfs/security.toml:ro
+      - ${SEAWEED_SECRET_DIR:-.local/seaweedfs}/ca.crt:/etc/seaweedfs/ca.crt:ro
+      - ${SEAWEED_SECRET_DIR:-.local/seaweedfs}/seaweed.crt:/etc/seaweedfs/seaweed.crt:ro
+      - ${SEAWEED_SECRET_DIR:-.local/seaweedfs}/seaweed.key:/etc/seaweedfs/seaweed.key:ro
       - ${SEAWEED_SECRET_DIR:-.local/seaweedfs}/s3.json:/etc/seaweedfs/s3.json:ro
     depends_on:
       seaweed-filer:
@@ -391,6 +428,11 @@ networks:
     internal: true
     driver: bridge
     enable_ipv6: false
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.30.210.0/24
+          gateway: 172.30.210.1
 
 volumes:
   postgres-data:

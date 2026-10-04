@@ -16,7 +16,9 @@ help:
 
 up:
 	./infra/seaweedfs/prepare-secrets.sh
+	./infra/seaweedfs/ensure-storage-network.sh
 	$(COMPOSE) up -d --wait --wait-timeout 300
+	./infra/seaweedfs/apply-host-isolation.sh --install
 
 down:
 	$(COMPOSE) down
@@ -32,7 +34,9 @@ seed:
 
 up-gpu:
 	./infra/seaweedfs/prepare-secrets.sh
+	./infra/seaweedfs/ensure-storage-network.sh
 	$(COMPOSE) --profile gpu up -d --wait --wait-timeout 300 --scale ai-worker=0
+	./infra/seaweedfs/apply-host-isolation.sh --install
 
 compose-config:
 	./infra/scripts/validate-compose.sh

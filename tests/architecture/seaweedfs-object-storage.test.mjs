@@ -68,6 +68,8 @@ test("the S3 contract runs after the workspace install", () => {
   const startup = workflow.slice(start, pnpmSetup);
   assert.match(startup, /curl -fsS http:\/\/127\.0\.0\.1:9000\/status/);
   assert.match(startup, /ensure_bucket\.py/);
+  assert.match(startup, /apply-host-isolation\.sh --install/);
+  assert.match(startup, /verify-trust-boundary\.sh/);
   assert.equal(startup.includes("seaweedfs-s3-contract.mjs"), false);
   assert.match(
     read("tests/architecture/seaweedfs-s3-contract.mjs"),
@@ -95,4 +97,37 @@ test("object migration refuses to delete historical volumes", () => {
   );
   assert.notEqual(rejected.status, 0);
   assert.match(`${rejected.stdout}${rejected.stderr}`, /does not delete/);
+});
+
+test("storage components keep fixed addresses and reject anonymous master HTTP", () => {
+  const compose = read("compose.yaml");
+  const network = read("infra/seaweedfs/storage-network.env");
+  const secrets = read("infra/seaweedfs/prepare-secrets.sh");
+  const isolation = read("infra/seaweedfs/apply-host-isolation.sh");
+  const verify = read("infra/seaweedfs/verify-trust-boundary.sh");
+  assert.match(compose, /-disableHttp/);
+  assert.match(compose, /https:\/\/127\.0\.0\.1:9333\/healthz/);
+  assert.equal(compose.includes("/dir/status"), false);
+  assert.match(network, /SEAWEED_SUBNET=172\.30\.210\.0\/24/);
+  assert.match(network, /SEAWEED_MASTER_IP=172\.30\.210\.10/);
+  assert.match(network, /SEAWEED_VOLUME_IP=172\.30\.210\.11/);
+  assert.match(network, /SEAWEED_FILER_IP=172\.30\.210\.12/);
+  assert.match(network, /SEAWEED_S3_IP=172\.30\.210\.13/);
+  for (const ip of ["172.30.210.10", "172.30.210.11", "172.30.210.12", "172.30.210.13"]) {
+    assert.equal(compose.includes(ip), true, ip);
+  }
+  assert.match(
+    compose,
+    /-whiteList=172\.30\.210\.10,172\.30\.210\.11,172\.30\.210\.12,172\.30\.210\.13/,
+  );
+  assert.match(secrets, /\[https\.master\]/);
+  assert.match(secrets, /\[grpc\.client\]/);
+  assert.match(secrets, /allowed_commonNames = "editagent-seaweed"/);
+  assert.match(isolation, /DOCKER-USER/);
+  assert.match(isolation, /ExecStartPost/);
+  assert.match(isolation, /-j DROP/);
+  assert.match(verify, /dir\/assign/);
+  assert.match(verify, /master issued a write token/);
+  assert.equal(verify.includes("console.log"), false);
+  assert.match(read("Makefile"), /apply-host-isolation\.sh --install/);
 });

@@ -21,7 +21,9 @@ fi
 : "${S3_PORT:=${MINIO_PORT:-9000}}"
 
 ./infra/seaweedfs/prepare-secrets.sh
+./infra/seaweedfs/ensure-storage-network.sh
 docker compose up -d --wait --wait-timeout 180 postgres redis seaweed-master seaweed-volume seaweed-filer seaweed-s3
+./infra/seaweedfs/apply-host-isolation.sh --install
 
 echo "Checking PostgreSQL"
 docker compose exec -T postgres sh -c 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT current_database();"'

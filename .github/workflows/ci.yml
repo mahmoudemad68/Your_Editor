@@ -59,10 +59,13 @@ jobs:
         run: |
           set -eu
           ./infra/seaweedfs/prepare-secrets.sh
+          ./infra/seaweedfs/ensure-storage-network.sh
           docker compose up -d --wait --wait-timeout 180 \
             seaweed-master seaweed-volume seaweed-filer seaweed-s3
+          ./infra/seaweedfs/apply-host-isolation.sh --install
           curl -fsS http://127.0.0.1:9000/status >/dev/null
           S3_HOST=127.0.0.1 S3_PORT=9000 python3 infra/scripts/ensure_bucket.py
+          ./infra/seaweedfs/verify-trust-boundary.sh
 
       - name: Install pnpm
         uses: pnpm/action-setup@v6
