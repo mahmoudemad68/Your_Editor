@@ -334,7 +334,7 @@ Admin authority does not cross the Project boundary. Worker egress for MVP harde
 
 ### 11.1 Deployment
 
-Local and staging runtime is Docker Compose with PostgreSQL, Redis, and MinIO (US-114, ADR-004, ADR-005). Services run as non-root once the hardened-container story is in place. A missing required environment variable stops the process before it serves traffic (NFR-PORT-02). The web client is a browser. There is no native mobile client (section 8.3).
+Local and staging runtime is Docker Compose with PostgreSQL, Redis, and SeaweedFS (US-114, ADR-004, ADR-005). Services run as non-root once the hardened-container story is in place. A missing required environment variable stops the process before it serves traffic (NFR-PORT-02). The web client is a browser. There is no native mobile client (section 8.3).
 
 ### 11.2 Hardware
 
