@@ -921,10 +921,16 @@ test("firewall verify rejects a DROP placed ahead of the internal RETURN", () =>
       bridgeOf(app),
       "8080",
     ];
-    const toolsFor = (family) =>
-      family === "ip6"
-        ? ["ip6tables-nft", "ip6tables-legacy"]
-        : ["iptables-nft", "iptables-legacy"];
+    const toolsFor = (family) => {
+      const candidates =
+        family === "ip6"
+          ? ["ip6tables-nft", "ip6tables-legacy"]
+          : ["iptables-nft", "iptables-legacy"];
+      const chain = family === "ip6" ? "FORWARD" : "DOCKER-USER";
+      const present = candidates.filter((tool) => run("sudo", [tool, "-S", chain]).status === 0);
+      assert.ok(present.length > 0, `no ${family} backend has ${chain}`);
+      return present;
+    };
     const mutate = (family, args) => {
       for (const tool of toolsFor(family)) {
         const inserted = run("sudo", [tool, ...args]);
