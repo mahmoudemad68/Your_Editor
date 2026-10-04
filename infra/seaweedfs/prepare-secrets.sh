@@ -28,18 +28,23 @@ if [ -z "$uid" ] || [ -z "$gid" ] || [ "$uid" = "0" ] || [ "$gid" = "0" ]; then
   exit 1
 fi
 
-DIR="$dir" S3_ACCESS_KEY_ID="$S3_ACCESS_KEY_ID" S3_SECRET_ACCESS_KEY="$S3_SECRET_ACCESS_KEY" python3 - <<'PY'
+stage=$(mktemp -d)
+trap 'rm -rf "$stage"' EXIT
+STAGE="$stage" DIR="$dir" S3_ACCESS_KEY_ID="$S3_ACCESS_KEY_ID" S3_SECRET_ACCESS_KEY="$S3_SECRET_ACCESS_KEY" python3 - <<'PY'
 import json
 import os
 import secrets
 from pathlib import Path
 
-directory = Path(os.environ["DIR"])
-security = directory / "security.toml"
+destination = Path(os.environ["DIR"])
+stage = Path(os.environ["STAGE"])
+
+def key():
+    return secrets.token_urlsafe(32)
+
+security = destination / "security.toml"
 if not security.exists():
-    def key():
-        return secrets.token_urlsafe(32)
-    security.write_text(
+    (stage / "security.toml").write_text(
         "\n".join(
             [
                 "[jwt.signing]",
@@ -67,37 +72,47 @@ if not security.exists():
             ]
         )
     )
-identity = {
-    "identities": [
+(stage / "s3.json").write_text(
+    json.dumps(
         {
-            "name": "editagent",
-            "credentials": [
+            "identities": [
                 {
-                    "accessKey": os.environ["S3_ACCESS_KEY_ID"],
-                    "secretKey": os.environ["S3_SECRET_ACCESS_KEY"],
+                    "name": "editagent",
+                    "credentials": [
+                        {
+                            "accessKey": os.environ["S3_ACCESS_KEY_ID"],
+                            "secretKey": os.environ["S3_SECRET_ACCESS_KEY"],
+                        }
+                    ],
+                    "actions": ["Admin", "Read", "Write", "List", "Tagging"],
                 }
-            ],
-            "actions": ["Admin", "Read", "Write", "List", "Tagging"],
+            ]
         }
-    ]
-}
-(directory / "s3.json").write_text(json.dumps(identity))
+    )
+)
 PY
 
-own() {
+install_secret() {
+  src=$1
+  dest=$2
   if [ "$(id -u)" -eq 0 ]; then
-    chown "$uid:$gid" "$@"
-    chmod 600 "$@"
-  elif command -v sudo >/dev/null 2>&1; then
-    sudo chown "$uid:$gid" "$@"
-    sudo chmod 600 "$@"
+    cp "$src" "$dest"
+    chown "$uid:$gid" "$dest"
+    chmod 600 "$dest"
+  elif [ -x /usr/bin/sudo ] && /usr/bin/sudo -n true >/dev/null 2>&1; then
+    /usr/bin/sudo -n cp "$src" "$dest"
+    /usr/bin/sudo -n chown "$uid:$gid" "$dest"
+    /usr/bin/sudo -n chmod 600 "$dest"
   else
-    echo "cannot chown SeaweedFS secrets to ${uid}:${gid}; root or sudo is required" >&2
+    echo "cannot install SeaweedFS secrets for ${uid}:${gid}; root or sudo -n is required" >&2
     exit 1
   fi
 }
 
-own "$dir/security.toml" "$dir/s3.json"
+if [ -f "$stage/security.toml" ]; then
+  install_secret "$stage/security.toml" "$dir/security.toml"
+fi
+install_secret "$stage/s3.json" "$dir/s3.json"
 
 for file in "$dir/security.toml" "$dir/s3.json"; do
   mode=$(stat -c '%a' "$file")

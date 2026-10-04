@@ -6,7 +6,15 @@
 import assert from "node:assert/strict";
 import { createHash, randomBytes } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  mkdtempSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { createRequire } from "node:module";
 import path from "node:path";
@@ -726,12 +734,13 @@ test(
       });
       const body = Buffer.from(marker);
       const hash = createHash("sha256").update(body).digest("hex");
-      const key = `compose/${hash}.mp4`;
+      const nonce = randomBytes(4).toString("hex");
+      const key = `compose/${nonce}/${hash}.mp4`;
       await storage.ensureBucket();
       await storage.put(key, body, "video/mp4", hash);
       assert.equal((await storage.stat(key))?.checksumSha256Hex, hash);
       const presigned = await storage.presignPut({
-        key: `compose-signed/${hash}.mp4`,
+        key: `compose-signed/${nonce}/${hash}.mp4`,
         contentType: "video/mp4",
         checksumSha256Hex: hash,
         expiresInSeconds: 90,
@@ -754,16 +763,20 @@ test(
         '{{(index .NetworkSettings.Networks "editagent-storage-internal").IPAddress}}',
         `${projectName}-filer-1`,
       ]);
-      const filer = probe(`http://${filerIp}:8888/buckets/editagent/compose-signed/${hash}.mp4`);
+      const filer = probe(
+        `http://${filerIp}:8888/buckets/editagent/compose-signed/${nonce}/${hash}.mp4`,
+      );
       assertNoBytes(filer, "compose filer");
       assert.notEqual(filer.status, 200);
-      const unsigned = probe(`http://127.0.0.1:19083/editagent/compose-signed/${hash}.mp4`);
+      const unsigned = probe(
+        `http://127.0.0.1:19083/editagent/compose-signed/${nonce}/${hash}.mp4`,
+      );
       assertNoBytes(unsigned, "compose s3");
       assert.equal(unsigned.status, 403);
       assert.equal(composeDev(["restart", "s3", "filer", "volume"]).status, 0);
       let readable = false;
       for (let attempt = 0; attempt < 40; attempt += 1) {
-        const again = await storage.stat(`compose-signed/${hash}.mp4`).catch(() => null);
+        const again = await storage.stat(`compose-signed/${nonce}/${hash}.mp4`).catch(() => null);
         if (again?.checksumSha256Hex === hash) {
           readable = true;
           break;
@@ -797,7 +810,7 @@ test(
           env,
         },
       );
-      composeDev(["down"]);
+      composeDev(["down", "-v"]);
       rmSync(secrets, { recursive: true, force: true });
       assert.equal(existsSync(secrets), false);
       const minioVolumesAfter = docker(["volume", "ls", "--format", "{{.Name}}"])
@@ -809,13 +822,15 @@ test(
 );
 
 test("secure-up fails closed without firewall privileges", () => {
-  const result = run(
-    "sudo",
-    ["-u", "nobody", "--", path.join(root, "infra/seaweedfs/secure-up.sh"), "compose.yaml"],
-    {},
-  );
+  const directory = mkdtempSync(path.join(tmpdir(), "editagent-nobody-"));
+  chmodSync(directory, 0o755);
+  const script = path.join(directory, "secure-up.sh");
+  copyFileSync(path.join(root, "infra/seaweedfs/secure-up.sh"), script);
+  chmodSync(script, 0o755);
+  const result = run("sudo", ["-u", "nobody", "--", script, "compose.yaml"], {});
   assert.notEqual(result.status, 0);
   assert.match(`${result.stderr}${result.stdout}`, /unsupported firewall/);
+  rmSync(directory, { recursive: true, force: true });
 });
 
 test("secure-up fails closed when the firewall backend is missing", () => {
