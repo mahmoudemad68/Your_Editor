@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   ConflictException,
   Controller,
@@ -19,6 +20,7 @@ import {
   ApiOkResponse,
   ApiOperation,
   ApiTags,
+  ApiProperty,
   ApiTooManyRequestsResponse,
   ApiUnauthorizedResponse,
 } from "@nestjs/swagger";
@@ -28,11 +30,13 @@ import {
   AuthRateLimitedError,
   EmailAlreadyRegisteredError,
   InvalidCredentialsError,
+  InvalidRegistrationError,
   LoginUser,
   LogoutUser,
   RefreshAccess,
   RegisterUser,
 } from "../application/authentication.js";
+import { clientAddress } from "./client-address.js";
 import {
   clearSessionCookies,
   CSRF_COOKIE,
@@ -44,10 +48,12 @@ import {
 } from "./auth-cookies.js";
 
 class CredentialsBody {
+  @ApiProperty({ format: "email", maxLength: 254, example: "owner@example.test" })
   @IsString()
   @MaxLength(254)
   email!: string;
 
+  @ApiProperty({ format: "password", minLength: 12, maxLength: 200 })
   @IsString()
   @MinLength(12)
   @MaxLength(200)
@@ -67,6 +73,7 @@ interface CookieReply {
 
 export const AUTH_NOW = "AUTH_NOW";
 export const AUTH_COOKIE_SECURE = "AUTH_COOKIE_SECURE";
+export const AUTH_TRUSTED_PROXIES = "AUTH_TRUSTED_PROXIES";
 
 @ApiTags("auth")
 @Controller("auth")
@@ -78,6 +85,7 @@ export class AuthController {
     private readonly logoutUser: LogoutUser,
     @Inject(AUTH_NOW) private readonly now: () => bigint,
     @Inject(AUTH_COOKIE_SECURE) private readonly cookieSecure: boolean,
+    @Inject(AUTH_TRUSTED_PROXIES) private readonly trustedProxies: readonly string[],
   ) {}
 
   @Post("register")
@@ -97,7 +105,7 @@ export class AuthController {
       const session = await this.registerUser.execute(
         body.email,
         body.password,
-        clientKey(request),
+        clientKey(request, this.trustedProxies),
       );
       writeCookies(response, sessionCookies(session, this.now(), this.cookieSecure));
       return { id: session.userId, email: session.email };
@@ -119,7 +127,11 @@ export class AuthController {
     @Res({ passthrough: true }) response: CookieReply,
   ): Promise<{ id: string; email: string }> {
     try {
-      const session = await this.loginUser.execute(body.email, body.password, clientKey(request));
+      const session = await this.loginUser.execute(
+        body.email,
+        body.password,
+        clientKey(request, this.trustedProxies),
+      );
       writeCookies(response, sessionCookies(session, this.now(), this.cookieSecure));
       return { id: session.userId, email: session.email };
     } catch (error) {
@@ -188,8 +200,12 @@ function writeCookies(response: CookieReply, cookies: readonly string[]): void {
   response.setHeader("Set-Cookie", cookies);
 }
 
-function clientKey(request: HeaderRequest): string {
-  return request.socket?.remoteAddress ?? request.ip ?? "unknown";
+function clientKey(request: HeaderRequest, trustedProxies: readonly string[]): string {
+  return clientAddress(
+    request.socket?.remoteAddress ?? request.ip,
+    headerValue(request.headers?.["x-forwarded-for"]),
+    trustedProxies,
+  );
 }
 
 function headerValue(value: string | string[] | undefined): string | undefined {
@@ -199,6 +215,9 @@ function headerValue(value: string | string[] | undefined): string | undefined {
 function mapAuthError(error: unknown): Error {
   if (error instanceof EmailAlreadyRegisteredError) {
     return new ConflictException(error.message);
+  }
+  if (error instanceof InvalidRegistrationError) {
+    return new BadRequestException(error.message);
   }
   if (error instanceof AuthRateLimitedError) {
     return new HttpException(error.message, 429);

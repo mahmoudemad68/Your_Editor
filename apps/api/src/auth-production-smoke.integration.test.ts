@@ -42,6 +42,7 @@ function runtimeEnv(databaseUrl: string, runtime: string, cookieSecure: string, 
     AUTH_JWT_SECRET: SECRET,
     EDITAGENT_RUNTIME: runtime,
     AUTH_COOKIE_SECURE: cookieSecure,
+    AUTH_TRUSTED_ORIGINS: "https://staging.editagent.test",
   };
 }
 

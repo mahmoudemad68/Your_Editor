@@ -47,6 +47,8 @@ async function main(): Promise<void> {
       tokens,
       now: () => clock.now(),
       cookieSecure: false,
+      trustedOrigins: [],
+      trustedProxies: [],
     },
   });
   const target = path.resolve(__dirname, "openapi.json");

@@ -1,6 +1,15 @@
+import { DomainError } from "../../kernel/error.js";
 import { type UserId } from "../../kernel/id.js";
 import { type RefreshSession } from "./refresh-session.js";
 import { type User } from "./user.js";
+
+/** Two registrations stored the same email. The HTTP layer maps this to 409. */
+export class AccountEmailConflict extends DomainError {
+  constructor() {
+    super("An account with that email already exists.");
+    this.name = "AccountEmailConflict";
+  }
+}
 
 export type FailedAttemptResult = "recorded" | "locked" | "missing";
 export type ClearAttemptsResult = "cleared" | "locked" | "missing";
@@ -51,6 +60,15 @@ export interface RefreshSessionRepository {
   findById(id: string): Promise<RefreshSession | null>;
   save(session: RefreshSession): Promise<void>;
   revokeAllForUser(userId: UserId, revokedAt: bigint): Promise<void>;
+  /**
+   * Revokes the presented session and every replacement rotated from it.
+   * The account row is locked before the session rows, matching rotation.
+   */
+  endSession(
+    sessionId: string,
+    now: bigint,
+    presentedSecretHash: string,
+  ): Promise<"ended" | "rejected">;
   /**
    * Consumes an active refresh session at most once and inserts its replacement
    * in the same transaction. `decide` and `beforeCommit` run while that account

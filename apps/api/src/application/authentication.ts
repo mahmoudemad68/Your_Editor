@@ -1,11 +1,14 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import {
+  AccountEmailConflict,
   createUuidV7,
+  DomainError,
   normalizeEmail,
   RefreshSession,
   type RefreshSessionRepository,
   User,
   userId,
+  uuidV7,
   type UserId,
   type UserRepository,
 } from "@editagent/domain";
@@ -35,6 +38,13 @@ export class InvalidCredentialsError extends Error {
   constructor() {
     super("Email or password is incorrect.");
     this.name = "InvalidCredentialsError";
+  }
+}
+
+export class InvalidRegistrationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "InvalidRegistrationError";
   }
 }
 
@@ -71,7 +81,15 @@ export class RegisterUser {
     if (password.length < MIN_PASSWORD || password.length > MAX_PASSWORD) {
       throw new InvalidCredentialsError();
     }
-    const normalized = normalizeEmail(email);
+    let normalized: string;
+    try {
+      normalized = normalizeEmail(email);
+    } catch (error) {
+      if (error instanceof DomainError) {
+        throw new InvalidRegistrationError("Email is not valid.");
+      }
+      throw error;
+    }
     if ((await this.users.findByEmail(normalized)) !== null) {
       throw new EmailAlreadyRegisteredError();
     }
@@ -82,7 +100,14 @@ export class RegisterUser {
       await this.passwords.hash(password),
       now,
     );
-    await this.users.save(user);
+    try {
+      await this.users.save(user);
+    } catch (error) {
+      if (error instanceof AccountEmailConflict) {
+        throw new EmailAlreadyRegisteredError();
+      }
+      throw error;
+    }
     return openSession(this.sessions, this.tokens, user, now, null);
   }
 
@@ -147,6 +172,7 @@ export class RefreshAccess {
   async execute(refreshToken: string): Promise<AuthenticatedSession> {
     const now = this.clock.now();
     const parsed = parseRefreshToken(refreshToken);
+    requireSessionId(parsed.id);
     const secret = randomBytes(32).toString("base64url");
     let accessToken = "";
     let accessExpiresAt = now;
@@ -213,11 +239,8 @@ export class LogoutUser {
     } catch {
       return;
     }
-    const current = await this.sessions.findById(parsed.id);
-    if (current === null || !secretMatches(current.secretHash, parsed.secret)) {
-      return;
-    }
-    await this.sessions.save(current.revoke(this.clock.now()));
+    requireSessionId(parsed.id);
+    await this.sessions.endSession(parsed.id, this.clock.now(), hashSecret(parsed.secret));
   }
 }
 
@@ -248,6 +271,17 @@ async function openSession(
     refreshExpiresAt: session.expiresAt,
     csrfToken: randomBytes(32).toString("base64url"),
   };
+}
+
+function requireSessionId(id: string): void {
+  try {
+    uuidV7(id);
+  } catch (error) {
+    if (error instanceof DomainError) {
+      throw new InvalidCredentialsError();
+    }
+    throw error;
+  }
 }
 
 function parseRefreshToken(token: string): { id: string; secret: string } {

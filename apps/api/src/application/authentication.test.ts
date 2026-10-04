@@ -1,18 +1,12 @@
 import { createHash, randomBytes } from "node:crypto";
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import {
-  createUuidV7,
-  DomainError,
-  instant,
-  type Instant,
-  type UserId,
-  userId,
-} from "@editagent/domain";
+import { createUuidV7, instant, type Instant, type UserId, userId } from "@editagent/domain";
 import {
   AuthRateLimitedError,
   EmailAlreadyRegisteredError,
   InvalidCredentialsError,
+  InvalidRegistrationError,
   LoginUser,
   LogoutUser,
   RefreshAccess,
@@ -95,7 +89,10 @@ test("registration rejects a duplicate email and stores no plaintext password", 
     () => register.execute("owner@example.test", PASSWORD, "client"),
     EmailAlreadyRegisteredError,
   );
-  await assert.rejects(() => register.execute("nope", PASSWORD, "client"), DomainError);
+  await assert.rejects(
+    () => register.execute("nope", PASSWORD, "client"),
+    InvalidRegistrationError,
+  );
 });
 
 test("login failures lock the account without a distinct error", async () => {
@@ -159,6 +156,27 @@ test("one refresh token cannot be consumed twice in the same process", async () 
     const next = fulfilled.value.refreshToken.slice(0, fulfilled.value.refreshToken.indexOf("."));
     assert.notEqual((await sessions.findById(next))?.revokedAt, null);
   }
+});
+
+test("a refresh id that is not a uuid never reaches the session store", async () => {
+  const users = new InMemoryUserRepository();
+  const sessions = new InMemoryRefreshSessionRepository();
+  const clock = new MutableClock(instant(1_700_000_000_000n));
+  let queried = false;
+  const guarded = new Proxy(sessions, {
+    get(target, property, receiver) {
+      if (property === "rotate" || property === "findById" || property === "endSession") {
+        return () => {
+          queried = true;
+          throw new Error("persistence was queried");
+        };
+      }
+      return Reflect.get(target, property, receiver);
+    },
+  });
+  const refresh = new RefreshAccess(users, guarded, new FakeTokens(), clock);
+  await assert.rejects(() => refresh.execute("not-a-uuid.secret"), InvalidCredentialsError);
+  assert.equal(queried, false);
 });
 
 test("credential endpoints stop after the client limit", async () => {

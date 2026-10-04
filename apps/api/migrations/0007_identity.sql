@@ -33,6 +33,25 @@ CREATE TABLE refresh_sessions (
 
 CREATE INDEX refresh_sessions_user_id ON refresh_sessions (user_id);
 
-ALTER TABLE project_memberships
-  ADD CONSTRAINT project_memberships_user_id_fkey
-  FOREIGN KEY (user_id) REFERENCES users (id);
+-- Historical memberships may name a principal that has no account.
+-- Those rows stay. No password is created for them.
+-- Every new membership must name an account. Existing rows are checked
+-- only when all of them already do.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM project_memberships AS membership
+    LEFT JOIN users AS account ON account.id = membership.user_id
+    WHERE account.id IS NULL
+  ) THEN
+    ALTER TABLE project_memberships
+      ADD CONSTRAINT project_memberships_user_id_fkey
+      FOREIGN KEY (user_id) REFERENCES users (id)
+      NOT VALID;
+  ELSE
+    ALTER TABLE project_memberships
+      ADD CONSTRAINT project_memberships_user_id_fkey
+      FOREIGN KEY (user_id) REFERENCES users (id);
+  END IF;
+END $$;

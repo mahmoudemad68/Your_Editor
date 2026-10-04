@@ -94,6 +94,8 @@ services:
       AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:-local-development-jwt-secret-32chars}
       EDITAGENT_RUNTIME: ${EDITAGENT_RUNTIME:-development}
       AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-true}
+      AUTH_TRUSTED_ORIGINS: ${AUTH_TRUSTED_ORIGINS:-http://localhost:3000}
+      AUTH_TRUSTED_PROXIES: ${AUTH_TRUSTED_PROXIES:-}
       <<: *object-storage
       S3_PUBLIC_ENDPOINT: http://localhost:${MINIO_PORT:-9000}
     ports:

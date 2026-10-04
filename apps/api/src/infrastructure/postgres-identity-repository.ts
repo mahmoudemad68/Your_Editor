@@ -1,4 +1,6 @@
+import { timingSafeEqual } from "node:crypto";
 import {
+  AccountEmailConflict,
   type ClearAttemptsResult,
   type FailedAttemptResult,
   RefreshSession,
@@ -46,26 +48,33 @@ export class PostgresUserRepository implements UserRepository {
   }
 
   async save(user: User): Promise<void> {
-    await this.pool.query(
-      `INSERT INTO users (
-         id, email, password_hash, operator_role, failed_login_count, locked_until, created_at, updated_at
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-       ON CONFLICT (id) DO UPDATE SET
-         email = EXCLUDED.email,
-         password_hash = EXCLUDED.password_hash,
-         operator_role = EXCLUDED.operator_role,
-         updated_at = EXCLUDED.updated_at`,
-      [
-        user.id,
-        user.email,
-        user.passwordHash,
-        user.operatorRole,
-        user.failedLoginCount,
-        instantText(user.lockedUntil),
-        instantText(user.createdAt),
-        instantText(user.updatedAt),
-      ],
-    );
+    try {
+      await this.pool.query(
+        `INSERT INTO users (
+           id, email, password_hash, operator_role, failed_login_count, locked_until, created_at, updated_at
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         ON CONFLICT (id) DO UPDATE SET
+           email = EXCLUDED.email,
+           password_hash = EXCLUDED.password_hash,
+           operator_role = EXCLUDED.operator_role,
+           updated_at = EXCLUDED.updated_at`,
+        [
+          user.id,
+          user.email,
+          user.passwordHash,
+          user.operatorRole,
+          user.failedLoginCount,
+          instantText(user.lockedUntil),
+          instantText(user.createdAt),
+          instantText(user.updatedAt),
+        ],
+      );
+    } catch (error) {
+      if (isEmailConflict(error)) {
+        throw new AccountEmailConflict();
+      }
+      throw error;
+    }
   }
 
   async recordFailedAttempt(
@@ -231,6 +240,52 @@ export class PostgresRefreshSessionRepository implements RefreshSessionRepositor
       client.release();
     }
   }
+
+  async endSession(
+    sessionId: string,
+    now: bigint,
+    presentedSecretHash: string,
+  ): Promise<"ended" | "rejected"> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const preview = await client.query<SessionRow>(SESSION_SELECT + " WHERE id = $1", [
+        sessionId,
+      ]);
+      const owner = preview.rows[0]?.user_id;
+      if (owner === undefined) {
+        await client.query("COMMIT");
+        return "rejected";
+      }
+      await client.query("SELECT id FROM users WHERE id = $1 FOR UPDATE", [owner]);
+      const locked = await client.query<SessionRow>(SESSION_SELECT + " WHERE id = $1", [sessionId]);
+      const current = locked.rows[0];
+      if (current === undefined || !sameSecretHash(current.secret_hash, presentedSecretHash)) {
+        await client.query("COMMIT");
+        return "rejected";
+      }
+      await client.query(
+        `WITH RECURSIVE chain AS (
+           SELECT id FROM refresh_sessions WHERE id = $1 AND user_id = $2
+           UNION
+           SELECT child.id
+           FROM refresh_sessions AS child
+           JOIN chain ON child.rotated_from_id = chain.id
+         )
+         UPDATE refresh_sessions
+         SET revoked_at = GREATEST($3::bigint, created_at)
+         WHERE id IN (SELECT id FROM chain) AND revoked_at IS NULL`,
+        [current.id, current.user_id, now.toString()],
+      );
+      await client.query("COMMIT");
+      return "ended";
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
 }
 
 const SESSION_SELECT = `SELECT id::text AS id, user_id::text AS user_id, secret_hash,
@@ -262,6 +317,23 @@ async function insertSession(client: PoolClient, session: RefreshSession): Promi
       session.createdAt.toString(),
     ],
   );
+}
+
+function isEmailConflict(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    "constraint" in error &&
+    error.code === "23505" &&
+    error.constraint === "users_email_unique"
+  );
+}
+
+function sameSecretHash(stored: string, presented: string): boolean {
+  const left = Buffer.from(stored);
+  const right = Buffer.from(presented);
+  return left.length === right.length && timingSafeEqual(left, right);
 }
 
 function instantText(value: bigint | null): string | null {

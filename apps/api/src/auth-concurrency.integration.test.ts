@@ -54,7 +54,7 @@ function sessionId(token: string): string {
   return token.slice(0, token.indexOf("."));
 }
 
-function serverEnv(databaseUrl: string, skewMs: number): NodeJS.ProcessEnv {
+function serverEnv(databaseUrl: string, skewMs: number, delayMs: number): NodeJS.ProcessEnv {
   return {
     ...process.env,
     DATABASE_URL: databaseUrl,
@@ -70,15 +70,19 @@ function serverEnv(databaseUrl: string, skewMs: number): NodeJS.ProcessEnv {
     EDITAGENT_RUNTIME: "development",
     AUTH_COOKIE_SECURE: "false",
     AUTH_CLOCK_SKEW_MS: String(skewMs),
+    AUTH_POST_COMMIT_DELAY_MS: String(delayMs),
+    AUTH_TRUSTED_ORIGINS: "",
+    AUTH_TRUSTED_PROXIES: "",
   };
 }
 
 async function startServer(
   databaseUrl: string,
   skewMs = 0,
+  delayMs = 0,
 ): Promise<{ child: ChildProcess; base: string }> {
   const child = spawn(process.execPath, [path.resolve(__dirname, "auth-concurrency-server.js")], {
-    env: serverEnv(databaseUrl, skewMs),
+    env: serverEnv(databaseUrl, skewMs, delayMs),
     stdio: ["ignore", "pipe", "pipe"],
   });
   const base = await new Promise<string>((resolve, reject) => {
@@ -653,6 +657,118 @@ test("an earlier losing refresh cannot store revoked_at before created_at", asyn
     holder.release();
     await stopServer(late.child);
     await stopServer(early.child);
+    await pool.end();
+  }
+});
+
+test("logout and refresh cannot leave a usable replacement session", async () => {
+  const databaseName = "editagent_us118_logout";
+  const admin = new Pool({ connectionString: adminUrl() });
+  await admin.query(`DROP DATABASE IF EXISTS ${databaseName} WITH (FORCE)`);
+  await admin.query(`CREATE DATABASE ${databaseName}`);
+  await admin.end();
+  const databaseUrl = withDatabase(adminUrl(), databaseName);
+  const pool = new Pool({ connectionString: databaseUrl });
+  await applyMigrations(pool);
+  const refreshServer = await startServer(databaseUrl, 0, 1_500);
+  const logoutServer = await startServer(databaseUrl, 0, 0);
+  const holder = await pool.connect();
+  try {
+    const registered = await postJson(logoutServer.base, "/auth/register", {
+      email: "logout-race@example.test",
+      password: PASSWORD,
+    });
+    assert.equal(registered.status, 201, await registered.clone().text());
+    const owner = await pool.query<{ id: string }>(
+      "SELECT id::text AS id FROM users WHERE email = $1",
+      ["logout-race@example.test"],
+    );
+    const ownerId = owner.rows[0]?.id ?? "";
+
+    for (let trial = 0; trial < 8; trial += 1) {
+      const loggedIn = await postJson(logoutServer.base, "/auth/login", {
+        email: "logout-race@example.test",
+        password: PASSWORD,
+      });
+      assert.equal(loggedIn.status, 200, await loggedIn.clone().text());
+      const jar = cookieJar(loggedIn);
+      const presented = sessionId(jar.get("editagent_refresh") ?? "");
+      const refreshing = refresh(refreshServer.base, jar);
+      const appeared = Date.now();
+      let replacement = "";
+      while (replacement.length === 0 && Date.now() - appeared < 5_000) {
+        const rows = await sessionsFor(pool, "logout-race@example.test");
+        replacement = rows.find((row) => row.rotated_from_id === presented)?.id ?? "";
+        if (replacement.length === 0) {
+          await new Promise((resolve) => setTimeout(resolve, 15));
+        }
+      }
+      assert.notEqual(replacement, "", `refresh did not commit on trial ${trial}`);
+      const loggedOut = await fetch(`${logoutServer.base}/auth/logout`, {
+        method: "POST",
+        headers: {
+          cookie: cookieHeader(jar),
+          "x-editagent-csrf": jar.get("editagent_csrf") ?? "",
+        },
+      });
+      assert.equal(loggedOut.status, 204);
+      const refreshState = await Promise.race([
+        refreshing.then(() => "returned"),
+        new Promise((resolve) => setImmediate(() => resolve("pending"))),
+      ]);
+      assert.equal(
+        refreshState,
+        "pending",
+        `trial ${trial} returned refresh cookies before logout`,
+      );
+      const refreshed = await refreshing;
+      assert.equal(refreshed.status, 200, await refreshed.clone().text());
+      const rotated = cookieJar(refreshed);
+      const reused = await refresh(logoutServer.base, rotated);
+      assert.equal(reused.status, 401);
+      const row = await pool.query<{ revoked_at: string | null }>(
+        "SELECT revoked_at::text AS revoked_at FROM refresh_sessions WHERE id = $1",
+        [sessionId(rotated.get("editagent_refresh") ?? replacement)],
+      );
+      assert.notEqual(row.rows[0]?.revoked_at, null, `trial ${trial} left a usable replacement`);
+    }
+
+    for (let trial = 0; trial < 8; trial += 1) {
+      const loggedIn = await postJson(logoutServer.base, "/auth/login", {
+        email: "logout-race@example.test",
+        password: PASSWORD,
+      });
+      const jar = cookieJar(loggedIn);
+      const presented = sessionId(jar.get("editagent_refresh") ?? "");
+      await holder.query("BEGIN");
+      await holder.query("SELECT id FROM users WHERE id = $1 FOR UPDATE", [ownerId]);
+      const loggingOut = fetch(`${logoutServer.base}/auth/logout`, {
+        method: "POST",
+        headers: {
+          cookie: cookieHeader(jar),
+          "x-editagent-csrf": jar.get("editagent_csrf") ?? "",
+        },
+      });
+      await waitForLockWaiters(pool, 1);
+      const refreshing = refresh(refreshServer.base, jar);
+      await waitForLockWaiters(pool, 2);
+      await holder.query("COMMIT");
+      const loggedOut = await loggingOut;
+      const refreshed = await refreshing;
+      assert.equal(loggedOut.status, 204);
+      assert.equal(refreshed.status, 401);
+      const rows = await sessionsFor(pool, "logout-race@example.test");
+      assert.equal(
+        rows.filter((row) => row.rotated_from_id === presented && row.revoked_at === null).length,
+        0,
+      );
+      assert.equal(rows.find((row) => row.id === presented)?.revoked_at === null, false);
+    }
+  } finally {
+    await holder.query("ROLLBACK").catch(() => undefined);
+    holder.release();
+    await stopServer(refreshServer.child);
+    await stopServer(logoutServer.child);
     await pool.end();
   }
 });

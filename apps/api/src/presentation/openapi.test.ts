@@ -82,4 +82,15 @@ test("the build writes an OpenAPI document for the Project routes", () => {
   for (const status of ["204", "401", "403"]) {
     assert.ok(logout?.responses?.[status], `POST /auth/logout ${status}`);
   }
+  const credentials = Object.values(document.components?.schemas ?? {}).find((schema) => {
+    if (schema === undefined || !("properties" in schema) || schema.properties === undefined) {
+      return false;
+    }
+    return "email" in schema.properties && "password" in schema.properties;
+  });
+  assert.ok(credentials, "credentials schema");
+  if (credentials && "properties" in credentials && credentials.properties) {
+    assert.equal(credentials.properties["email"] === undefined, false);
+    assert.equal(credentials.properties["password"] === undefined, false);
+  }
 });

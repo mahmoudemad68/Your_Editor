@@ -32,6 +32,9 @@ export interface ApiConfig {
   readonly authJwtSecret: string;
   readonly authCookieSecure: boolean;
   readonly authClockSkewMs: number;
+  readonly authPostCommitDelayMs: number;
+  readonly authTrustedOrigins: readonly string[];
+  readonly authTrustedProxies: readonly string[];
   readonly objectStorage: ApiObjectStorageConfig;
 }
 
@@ -219,6 +222,14 @@ const apiSchema = z
     }),
     AUTH_COOKIE_SECURE: z.string().optional(),
     EDITAGENT_RUNTIME: z.string().optional(),
+    AUTH_TRUSTED_ORIGINS: z.string().optional(),
+    AUTH_TRUSTED_PROXIES: z.string().optional(),
+    AUTH_POST_COMMIT_DELAY_MS: z
+      .string()
+      .optional()
+      .refine((value) => value === undefined || /^[0-9]+$/.test(value), {
+        error: "AUTH_POST_COMMIT_DELAY_MS must be a non-negative whole number of milliseconds.",
+      }),
     AUTH_CLOCK_SKEW_MS: z
       .string()
       .optional()
@@ -255,6 +266,24 @@ const apiSchema = z
     }
     const secure = env.AUTH_COOKIE_SECURE === undefined ? true : env.AUTH_COOKIE_SECURE === "true";
     const skew = env.AUTH_CLOCK_SKEW_MS === undefined ? 0 : Number(env.AUTH_CLOCK_SKEW_MS);
+    const delay =
+      env.AUTH_POST_COMMIT_DELAY_MS === undefined ? 0 : Number(env.AUTH_POST_COMMIT_DELAY_MS);
+    const origins = splitList(env.AUTH_TRUSTED_ORIGINS);
+    if ((runtime === "staging" || runtime === "production") && origins.length === 0) {
+      context.addIssue({
+        code: "custom",
+        path: ["AUTH_TRUSTED_ORIGINS"],
+        message:
+          "AUTH_TRUSTED_ORIGINS must list the HTTPS site origins allowed to submit sign-in when EDITAGENT_RUNTIME is staging or production.",
+      });
+    }
+    if ((runtime === "staging" || runtime === "production") && delay !== 0) {
+      context.addIssue({
+        code: "custom",
+        path: ["AUTH_POST_COMMIT_DELAY_MS"],
+        message: "AUTH_POST_COMMIT_DELAY_MS must be 0 outside development.",
+      });
+    }
     if ((runtime === "staging" || runtime === "production") && skew !== 0) {
       context.addIssue({
         code: "custom",
@@ -280,6 +309,10 @@ const apiSchema = z
     authCookieSecure:
       env.AUTH_COOKIE_SECURE === undefined ? true : env.AUTH_COOKIE_SECURE === "true",
     authClockSkewMs: env.AUTH_CLOCK_SKEW_MS === undefined ? 0 : Number(env.AUTH_CLOCK_SKEW_MS),
+    authPostCommitDelayMs:
+      env.AUTH_POST_COMMIT_DELAY_MS === undefined ? 0 : Number(env.AUTH_POST_COMMIT_DELAY_MS),
+    authTrustedOrigins: splitList(env.AUTH_TRUSTED_ORIGINS),
+    authTrustedProxies: splitList(env.AUTH_TRUSTED_PROXIES),
     objectStorage: {
       endpoint: env.S3_ENDPOINT,
       publicEndpoint: env.S3_PUBLIC_ENDPOINT,
@@ -368,6 +401,16 @@ const storageWorkerSchema = z
       region: env.S3_REGION,
     },
   }));
+
+function splitList(value: string | undefined): readonly string[] {
+  if (value === undefined || value.trim().length === 0) {
+    return [];
+  }
+  return value
+    .split(",")
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+}
 
 function parseProcessEnv<T>(processName: string, schema: z.ZodType<T>, env: EnvSource): T {
   const result = schema.safeParse(env);

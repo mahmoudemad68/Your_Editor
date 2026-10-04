@@ -59,6 +59,8 @@ export async function bootstrap(): Promise<void> {
     tokens,
     now: () => clock.now(),
     cookieSecure: config.authCookieSecure,
+    trustedOrigins: config.authTrustedOrigins,
+    trustedProxies: config.authTrustedProxies,
   };
   const jobs = new PostgresJobRepository(pool);
   const queue = new BullMqJobQueue(config.redisUrl);

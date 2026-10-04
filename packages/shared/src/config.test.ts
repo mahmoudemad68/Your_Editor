@@ -104,6 +104,7 @@ test("API config requires a long signing secret and treats only true as a secure
       ...apiStorageEnv,
       EDITAGENT_RUNTIME: "staging",
       AUTH_COOKIE_SECURE: "true",
+      AUTH_TRUSTED_ORIGINS: "https://staging.editagent.test",
     }).authCookieSecure,
     true,
   );
@@ -117,7 +118,11 @@ test("API config requires a long signing secret and treats only true as a secure
     "AUTH_COOKIE_SECURE",
   );
   assert.equal(
-    parseApiConfig({ ...apiStorageEnv, EDITAGENT_RUNTIME: "production" }).authCookieSecure,
+    parseApiConfig({
+      ...apiStorageEnv,
+      EDITAGENT_RUNTIME: "production",
+      AUTH_TRUSTED_ORIGINS: "https://editagent.test",
+    }).authCookieSecure,
     true,
   );
   assertConfigError(
@@ -139,6 +144,7 @@ test("API config requires a long signing secret and treats only true as a secure
         ...apiStorageEnv,
         EDITAGENT_RUNTIME: "staging",
         AUTH_COOKIE_SECURE: "true",
+        AUTH_TRUSTED_ORIGINS: "https://staging.editagent.test",
         AUTH_CLOCK_SKEW_MS: "-1000",
       }),
     "AUTH_CLOCK_SKEW_MS",

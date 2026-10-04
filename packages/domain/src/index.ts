@@ -46,6 +46,7 @@ export { Component } from "./modules/components/index.js";
 export { Critique } from "./modules/critic/index.js";
 export { Clip, Effect, Timeline, Track } from "./modules/editing/index.js";
 export {
+  AccountEmailConflict,
   normalizeEmail,
   operatorRole,
   RefreshSession,

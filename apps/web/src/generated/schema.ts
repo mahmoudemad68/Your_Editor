@@ -291,7 +291,15 @@ export interface components {
       streams: components["schemas"]["MediaStreamDto"][] | null;
       inspectionError: string | null;
     };
-    CredentialsBody: Record<string, never>;
+    CredentialsBody: {
+      /**
+       * Format: email
+       * @example owner@example.test
+       */
+      email: string;
+      /** Format: password */
+      password: string;
+    };
   };
   responses: never;
   parameters: never;

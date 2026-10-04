@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import {
   type ClearAttemptsResult,
   type FailedAttemptResult,
@@ -82,6 +83,40 @@ export class InMemoryRefreshSessionRepository implements RefreshSessionRepositor
     }
   }
 
+  async endSession(
+    sessionId: string,
+    now: bigint,
+    presentedSecretHash: string,
+  ): Promise<"ended" | "rejected"> {
+    return this.exclusive(async () => {
+      const current = this.byId.get(sessionId);
+      if (current === undefined || !sameHash(current.secretHash, presentedSecretHash)) {
+        return "rejected";
+      }
+      const chain = new Set<string>();
+      const pending = [sessionId];
+      while (pending.length > 0) {
+        const id = pending.pop();
+        if (id === undefined || chain.has(id)) {
+          continue;
+        }
+        chain.add(id);
+        for (const session of this.byId.values()) {
+          if (session.rotatedFromId === id) {
+            pending.push(session.id);
+          }
+        }
+      }
+      for (const id of chain) {
+        const session = this.byId.get(id);
+        if (session !== undefined) {
+          this.byId.set(id, session.revoke(now));
+        }
+      }
+      return "ended";
+    });
+  }
+
   async rotate(
     sessionId: string,
     now: bigint,
@@ -132,4 +167,10 @@ export class InMemoryRefreshSessionRepository implements RefreshSessionRepositor
     );
     return run;
   }
+}
+
+function sameHash(stored: string, presented: string): boolean {
+  const left = Buffer.from(stored);
+  const right = Buffer.from(presented);
+  return left.length === right.length && timingSafeEqual(left, right);
 }

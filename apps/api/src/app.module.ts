@@ -32,7 +32,12 @@ import {
 import { MediaController } from "./presentation/media.controller.js";
 import { ProjectsController } from "./presentation/projects.controller.js";
 import { UploadsController } from "./presentation/uploads.controller.js";
-import { AUTH_COOKIE_SECURE, AUTH_NOW, AuthController } from "./presentation/auth.controller.js";
+import {
+  AUTH_COOKIE_SECURE,
+  AUTH_NOW,
+  AUTH_TRUSTED_PROXIES,
+  AuthController,
+} from "./presentation/auth.controller.js";
 import {
   LoginUser,
   LogoutUser,
@@ -60,6 +65,8 @@ export interface ApiComposition {
     readonly tokens: SessionTokens;
     readonly now: () => bigint;
     readonly cookieSecure: boolean;
+    readonly trustedOrigins: readonly string[];
+    readonly trustedProxies: readonly string[];
   };
 }
 
@@ -91,6 +98,7 @@ export class AppModule {
               { provide: LogoutUser, useValue: composition.auth.logout },
               { provide: AUTH_NOW, useValue: composition.auth.now },
               { provide: AUTH_COOKIE_SECURE, useValue: composition.auth.cookieSecure },
+              { provide: AUTH_TRUSTED_PROXIES, useValue: composition.auth.trustedProxies },
             ]),
         {
           provide: CreateProject,

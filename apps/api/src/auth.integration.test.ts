@@ -88,6 +88,8 @@ async function startApi(limit: number): Promise<RunningApi> {
       tokens,
       now: () => clock.now(),
       cookieSecure: false,
+      trustedOrigins: [],
+      trustedProxies: [],
     },
   });
   await app.listen(0, "127.0.0.1");

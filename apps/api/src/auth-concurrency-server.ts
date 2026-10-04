@@ -24,6 +24,12 @@ import {
   PostgresRefreshSessionRepository,
   PostgresUserRepository,
 } from "./infrastructure/postgres-identity-repository.js";
+import {
+  type RefreshRotation,
+  type RefreshSession,
+  type RefreshSessionRepository,
+  type RotationDecision,
+} from "@editagent/domain";
 import { PostgresProjectRepository } from "./infrastructure/postgres-project-repository.js";
 import { type Clock } from "./application/clock.js";
 
@@ -41,7 +47,10 @@ async function main(): Promise<void> {
   const pool = new Pool({ connectionString: config.databaseUrl });
   const clock = new SkewedClock(BigInt(config.authClockSkewMs));
   const users = new PostgresUserRepository(pool);
-  const sessions = new PostgresRefreshSessionRepository(pool);
+  const sessions = withPostCommitDelay(
+    new PostgresRefreshSessionRepository(pool),
+    config.authPostCommitDelayMs,
+  );
   const passwords = new Argon2idHasher();
   const tokens = new JwtSessionTokens(config.authJwtSecret);
   const rateLimit = new LoginRateLimit(100_000, 60_000);
@@ -61,6 +70,8 @@ async function main(): Promise<void> {
       tokens,
       now: () => clock.now(),
       cookieSecure: config.authCookieSecure,
+      trustedOrigins: config.authTrustedOrigins,
+      trustedProxies: config.authTrustedProxies,
     },
   });
   await app.listen(0, "127.0.0.1");
@@ -69,6 +80,32 @@ async function main(): Promise<void> {
     throw new Error("expected a port");
   }
   process.stdout.write(`AUTH_SERVER_READY port=${address.port}\n`);
+}
+
+function withPostCommitDelay(
+  inner: PostgresRefreshSessionRepository,
+  delayMs: number,
+): RefreshSessionRepository {
+  if (delayMs === 0) {
+    return inner;
+  }
+  return {
+    findById: (id) => inner.findById(id),
+    save: (session) => inner.save(session),
+    revokeAllForUser: (userId, revokedAt) => inner.revokeAllForUser(userId, revokedAt),
+    endSession: (sessionId, now, presentedSecretHash) =>
+      inner.endSession(sessionId, now, presentedSecretHash),
+    rotate: async (
+      sessionId: string,
+      now: bigint,
+      decide: (current: RefreshSession | null) => RotationDecision | Promise<RotationDecision>,
+      beforeCommit?: (replacement: RefreshSession) => Promise<void>,
+    ): Promise<RefreshRotation> => {
+      const result = await inner.rotate(sessionId, now, decide, beforeCommit);
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      return result;
+    },
+  };
 }
 
 main().catch((error: unknown) => {
