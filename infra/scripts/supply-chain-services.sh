@@ -7,4 +7,5 @@ printf '%s\n' \
   render-worker \
   agent-worker \
   ai-worker \
-  object-ingress
+  object-ingress \
+  postgres

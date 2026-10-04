@@ -142,6 +142,14 @@ recover_bytes="$(wc -c <"$recover_payload" | tr -d ' ')"
 recover_declaration="$(python3 -c 'import json,sys; print(json.dumps({"filename":"recover.mp4","mimeType":"video/mp4","byteSize":int(sys.argv[1]),"sha256":sys.argv[2]}))' "$recover_bytes" "$recover_hash")"
 recover_correlation="${correlation}-recover"
 
+# redis-restore-trap:begin
+restore_redis() {
+  docker compose -f "$COMPOSE_FILE" start redis >/dev/null 2>&1 || true
+}
+trap restore_redis EXIT
+trap 'restore_redis; trap - INT; kill -s INT $$' INT
+trap 'restore_redis; trap - TERM; kill -s TERM $$' TERM
+# redis-restore-trap:end
 docker compose -f "$COMPOSE_FILE" stop redis
 recover_upload="$(mktemp)"
 recover_begin="$(curl -sS -o "$recover_upload" -w '%{http_code}' \

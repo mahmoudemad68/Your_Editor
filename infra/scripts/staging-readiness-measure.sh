@@ -39,7 +39,7 @@ before_redis="${before##* }"
 
 i=0
 while [ "$i" -lt 20 ]; do
-  curl -sS -o /dev/null "$api/ready" || true
+  curl -sS --connect-timeout 2 --max-time 5 -o /dev/null "$api/ready" || true
   i=$((i + 1))
 done
 during="$(sample during)"
@@ -62,7 +62,11 @@ fi
 
 if [ -n "${STAGING_SILENT_API_URL:-}" ]; then
   silent="${STAGING_SILENT_API_URL%/}"
-  result="$(curl -sS -o /dev/null -w '%{http_code} %{time_total}' "$silent/ready" || printf '%s\n' '000 9')"
+  result="$(curl -sS --connect-timeout 2 --max-time 2 -o /dev/null -w '%{http_code} %{time_total}' "$silent/ready" || true)"
+  if [ -z "${result:-}" ]; then
+    echo "silent dependency curl produced no result" >&2
+    exit 1
+  fi
   code="${result%% *}"
   elapsed="${result##* }"
   python3 -c 'import sys; raise SystemExit(0 if float(sys.argv[1]) <= 2 else 1)' "$elapsed" || {

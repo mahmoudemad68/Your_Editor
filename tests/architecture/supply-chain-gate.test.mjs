@@ -44,6 +44,8 @@ test("a failed SeaweedFS scan blocks every image publish", () => {
     "agent-worker",
     "ai-worker",
     "object-ingress",
+    "postgres",
+    "redis",
   ]) {
     writeFileSync(path.join(scanDir, service), "pass\n");
   }

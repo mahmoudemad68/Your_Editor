@@ -21,7 +21,16 @@ updates:
           - "*"
 
   - package-ecosystem: docker
-    directory: /
+    directories:
+      - /apps/api
+      - /apps/web
+      - /infra/minio
+      - /infra/object-ingress
+      - /infra/postgres
+      - /workers/agent-worker
+      - /workers/ai-worker
+      - /workers/media-worker
+      - /workers/render-worker
     schedule:
       interval: weekly
       day: monday

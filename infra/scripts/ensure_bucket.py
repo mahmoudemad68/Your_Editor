@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
-"""Create the development MinIO bucket if it is missing.
+"""Create the configured S3 bucket if it is missing.
 
-This is infrastructure bootstrap. It is not an application storage adapter.
+Staging talks to SeaweedFS with S3_ACCESS_KEY_ID. Development seed still
+accepts the MinIO variable names. This is infrastructure bootstrap, not the
+application storage adapter.
 """
 
 import datetime
@@ -24,12 +26,16 @@ def _signing_key(secret: str, date_stamp: str, region: str) -> bytes:
 
 
 def main() -> int:
-    access_key = os.environ.get("MINIO_ROOT_USER", "editagent")
-    secret_key = os.environ.get("MINIO_ROOT_PASSWORD", "editagent-dev-secret")
+    access_key = os.environ.get("S3_ACCESS_KEY_ID") or os.environ.get(
+        "MINIO_ROOT_USER", "editagent"
+    )
+    secret_key = os.environ.get("S3_SECRET_ACCESS_KEY") or os.environ.get(
+        "MINIO_ROOT_PASSWORD", "editagent-dev-secret"
+    )
     bucket = os.environ.get("S3_BUCKET", "editagent")
     region = os.environ.get("S3_REGION", "us-east-1")
-    host = os.environ.get("MINIO_HOST", "127.0.0.1")
-    port = os.environ.get("MINIO_PORT", "9000")
+    host = os.environ.get("S3_HOST") or os.environ.get("MINIO_HOST", "127.0.0.1")
+    port = os.environ.get("S3_PORT") or os.environ.get("MINIO_PORT", "9000")
     endpoint = f"{host}:{port}"
 
     now = datetime.datetime.now(datetime.timezone.utc)

@@ -4,7 +4,9 @@ Trivy `0.75.0`, vulnerability database updated `2026-10-03T14:28:08Z`, scanned o
 
 An instance is one CVE on one package. A distinct CVE is the identifier, counted once even when several packages carry it. The independent QA count for Object Ingress was 59 instances and 21 distinct CVEs. Those are not interchangeable, and this document does not reuse that total for the rebuilt images.
 
-The critical publish gate is unchanged and still does not fail on high findings. Nothing here is a Trivy exception. The security definition of done stays open while any high finding remains.
+The critical publish gate is unchanged and still does not fail on high findings. Nothing here is a Trivy exception. The security definition of done stays open while any high finding remains. These eight CVEs still need an explicit human security decision. This review did not accept them.
+
+Staging Postgres is no longer the upstream `gosu` binary built with Go 1.24.6. `infra/postgres/Dockerfile` recompiles that helper with Go 1.25.14 so CVE-2025-68121 is absent from the image Trivy scans. That is a rebuild, not an ignore rule. Redis `7.4-alpine` had no critical findings in this database and is now part of the same critical gate.
 
 ## Final inventory
 

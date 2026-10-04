@@ -40,6 +40,8 @@ jobs:
             dockerfile: workers/ai-worker/Dockerfile
           - service: object-ingress
             dockerfile: infra/object-ingress/Dockerfile
+          - service: postgres
+            dockerfile: infra/postgres/Dockerfile
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -58,6 +60,7 @@ jobs:
         run: |
           set -eu
           docker build \
+            --platform linux/amd64 \
             --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
             --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
             -f "${{ matrix.dockerfile }}" \
@@ -106,16 +109,35 @@ jobs:
     name: platform image digests
     runs-on: ubuntu-latest
     steps:
-      - name: Resolve pinned Postgres and Redis digests
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Install Syft and Trivy
+        run: ./infra/scripts/install-supply-chain-tools.sh
+
+      - name: Resolve and scan the Redis digest
         run: |
           set -eu
-          docker pull postgres:16.10-alpine
           docker pull redis:7.4-alpine
-          postgres="$(docker image inspect postgres:16.10-alpine --format '{{index .RepoDigests 0}}')"
           redis="$(docker image inspect redis:7.4-alpine --format '{{index .RepoDigests 0}}')"
-          printf 'EDITAGENT_POSTGRES_IMAGE=%s\n' "$postgres" > platform-digests.txt
-          printf 'EDITAGENT_REDIS_IMAGE=%s\n' "$redis" >> platform-digests.txt
+          printf 'EDITAGENT_REDIS_IMAGE=%s\n' "$redis" > platform-digests.txt
           grep -q '@sha256:' platform-digests.txt
+          syft redis:7.4-alpine -o spdx-json=sbom-redis.spdx.json
+          test -s sbom-redis.spdx.json
+          trivy image --severity CRITICAL --exit-code 1 redis:7.4-alpine
+          printf 'pass\n' > redis
+
+      - name: Upload Redis SBOM
+        uses: actions/upload-artifact@v7
+        with:
+          name: supply-chain-redis
+          path: sbom-redis.spdx.json
+
+      - name: Upload Redis scan result
+        uses: actions/upload-artifact@v7
+        with:
+          name: supply-chain-scan-redis
+          path: redis
 
       - name: Upload platform digests
         uses: actions/upload-artifact@v7
@@ -163,8 +185,8 @@ jobs:
 
   security-gate:
     name: supply-chain-security
-    needs: [images, seaweedfs]
-    if: always() && needs.images.result != 'cancelled' && needs.seaweedfs.result != 'cancelled'
+    needs: [images, seaweedfs, platform-digests]
+    if: always() && needs.images.result != 'cancelled' && needs.seaweedfs.result != 'cancelled' && needs.platform-digests.result != 'cancelled'
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -244,6 +266,7 @@ jobs:
       STAGING_SSH_KNOWN_HOSTS: ${{ secrets.STAGING_SSH_KNOWN_HOSTS }}
       POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
       S3_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
+      STAGING_GHCR_TOKEN: ${{ secrets.STAGING_GHCR_TOKEN }}
       POSTGRES_USER: ${{ vars.POSTGRES_USER }}
       POSTGRES_DB: ${{ vars.POSTGRES_DB }}
       S3_ACCESS_KEY_ID: ${{ vars.S3_ACCESS_KEY_ID }}
@@ -255,6 +278,8 @@ jobs:
       STAGING_OBJECTS_PORT: ${{ vars.STAGING_OBJECTS_PORT }}
       STAGING_WEB_URL: ${{ vars.STAGING_WEB_URL }}
       STAGING_API_URL: ${{ vars.STAGING_API_URL }}
+      STAGING_SILENT_API_URL: ${{ vars.STAGING_SILENT_API_URL }}
+      STAGING_GHCR_USER: ${{ vars.STAGING_GHCR_USER }}
       STAGING_DEPLOY_PATH: ${{ vars.STAGING_DEPLOY_PATH }}
       MEDIA_INSPECT_QUEUE: ${{ vars.MEDIA_INSPECT_QUEUE }}
     steps:
@@ -279,11 +304,12 @@ jobs:
           missing=""
           for name in \
             STAGING_HOST STAGING_SSH_USER STAGING_SSH_KEY STAGING_SSH_KNOWN_HOSTS \
-            POSTGRES_PASSWORD S3_SECRET_ACCESS_KEY \
+            POSTGRES_PASSWORD S3_SECRET_ACCESS_KEY STAGING_GHCR_TOKEN \
             POSTGRES_USER POSTGRES_DB S3_ACCESS_KEY_ID \
             S3_BUCKET S3_REGION S3_PUBLIC_ENDPOINT STAGING_BIND_IP STAGING_WEB_PORT \
             STAGING_OBJECTS_PORT \
-            STAGING_WEB_URL STAGING_API_URL STAGING_DEPLOY_PATH MEDIA_INSPECT_QUEUE
+            STAGING_WEB_URL STAGING_API_URL STAGING_SILENT_API_URL \
+            STAGING_GHCR_USER STAGING_DEPLOY_PATH MEDIA_INSPECT_QUEUE
           do
             eval "value=\${$name-}"
             if [ -z "$value" ]; then
@@ -299,46 +325,53 @@ jobs:
 
       - name: Deploy digest-pinned images and run smoke tests
         run: |
-          set -eu
+          set -euo pipefail
           umask 077
           install -d "$HOME/.ssh"
           printf '%s\n' "$STAGING_SSH_KEY" > "$HOME/.ssh/staging"
           printf '%s\n' "$STAGING_SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
           chmod 600 "$HOME/.ssh/staging" "$HOME/.ssh/known_hosts"
           env_file="$(mktemp)"
-          {
-            printf 'POSTGRES_USER=%s\n' "$POSTGRES_USER"
-            printf 'POSTGRES_PASSWORD=%s\n' "$POSTGRES_PASSWORD"
-            printf 'POSTGRES_DB=%s\n' "$POSTGRES_DB"
-            printf 'S3_ACCESS_KEY_ID=%s\n' "$S3_ACCESS_KEY_ID"
-            printf 'S3_SECRET_ACCESS_KEY=%s\n' "$S3_SECRET_ACCESS_KEY"
-            printf 'S3_BUCKET=%s\n' "$S3_BUCKET"
-            printf 'S3_REGION=%s\n' "$S3_REGION"
-            printf 'S3_PUBLIC_ENDPOINT=%s\n' "$S3_PUBLIC_ENDPOINT"
-            printf 'STAGING_BIND_IP=%s\n' "$STAGING_BIND_IP"
-            printf 'STAGING_WEB_PORT=%s\n' "$STAGING_WEB_PORT"
-            printf 'STAGING_OBJECTS_PORT=%s\n' "$STAGING_OBJECTS_PORT"
-            printf 'MEDIA_INSPECT_QUEUE=%s\n' "$MEDIA_INSPECT_QUEUE"
-            printf 'EDITAGENT_API_IMAGE=%s\n' "$(cat supply-chain/digest-api.txt)"
-            printf 'EDITAGENT_WEB_IMAGE=%s\n' "$(cat supply-chain/digest-web.txt)"
-            printf 'EDITAGENT_MEDIA_WORKER_IMAGE=%s\n' "$(cat supply-chain/digest-media-worker.txt)"
-            printf 'EDITAGENT_RENDER_WORKER_IMAGE=%s\n' "$(cat supply-chain/digest-render-worker.txt)"
-            printf 'EDITAGENT_AGENT_WORKER_IMAGE=%s\n' "$(cat supply-chain/digest-agent-worker.txt)"
-            printf 'EDITAGENT_AI_WORKER_IMAGE=%s\n' "$(cat supply-chain/digest-ai-worker.txt)"
-            printf 'EDITAGENT_OBJECT_INGRESS_IMAGE=%s\n' "$(cat supply-chain/digest-object-ingress.txt)"
-            printf 'EDITAGENT_SEAWEEDFS_IMAGE=%s\n' "chrislusf/seaweedfs@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d"
-            cat supply-chain/platform-digests.txt
-          } > "$env_file"
+          export EDITAGENT_API_IMAGE="$(cat supply-chain/digest-api.txt)"
+          export EDITAGENT_WEB_IMAGE="$(cat supply-chain/digest-web.txt)"
+          export EDITAGENT_MEDIA_WORKER_IMAGE="$(cat supply-chain/digest-media-worker.txt)"
+          export EDITAGENT_RENDER_WORKER_IMAGE="$(cat supply-chain/digest-render-worker.txt)"
+          export EDITAGENT_AGENT_WORKER_IMAGE="$(cat supply-chain/digest-agent-worker.txt)"
+          export EDITAGENT_AI_WORKER_IMAGE="$(cat supply-chain/digest-ai-worker.txt)"
+          export EDITAGENT_OBJECT_INGRESS_IMAGE="$(cat supply-chain/digest-object-ingress.txt)"
+          export EDITAGENT_POSTGRES_IMAGE="$(cat supply-chain/digest-postgres.txt)"
+          export EDITAGENT_SEAWEEDFS_IMAGE="chrislusf/seaweedfs@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d"
+          # shellcheck disable=SC1091
+          . ./supply-chain/platform-digests.txt
+          python3 infra/scripts/write-staging-env.py "$env_file" \
+            POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB \
+            S3_ACCESS_KEY_ID S3_SECRET_ACCESS_KEY S3_BUCKET S3_REGION S3_PUBLIC_ENDPOINT \
+            STAGING_BIND_IP STAGING_WEB_PORT STAGING_OBJECTS_PORT MEDIA_INSPECT_QUEUE \
+            EDITAGENT_API_IMAGE EDITAGENT_WEB_IMAGE EDITAGENT_MEDIA_WORKER_IMAGE \
+            EDITAGENT_RENDER_WORKER_IMAGE EDITAGENT_AGENT_WORKER_IMAGE EDITAGENT_AI_WORKER_IMAGE \
+            EDITAGENT_OBJECT_INGRESS_IMAGE EDITAGENT_POSTGRES_IMAGE EDITAGENT_REDIS_IMAGE \
+            EDITAGENT_SEAWEEDFS_IMAGE
+          quoted_web="$(printf '%q' "$STAGING_WEB_URL")"
+          quoted_api="$(printf '%q' "$STAGING_API_URL")"
+          quoted_silent="$(printf '%q' "$STAGING_SILENT_API_URL")"
+          quoted_user="$(printf '%q' "$STAGING_GHCR_USER")"
           ssh -i "$HOME/.ssh/staging" -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
             "$STAGING_SSH_USER@$STAGING_HOST" "install -d -m 700 '$STAGING_DEPLOY_PATH'"
           scp -i "$HOME/.ssh/staging" -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
             compose.staging.yaml "$STAGING_SSH_USER@$STAGING_HOST:$STAGING_DEPLOY_PATH/compose.staging.yaml"
-          scp -i "$HOME/.ssh/staging" -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
-            -r infra "$STAGING_SSH_USER@$STAGING_HOST:$STAGING_DEPLOY_PATH/infra"
+          ssh -i "$HOME/.ssh/staging" -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+            "$STAGING_SSH_USER@$STAGING_HOST" \
+            "rm -rf '$STAGING_DEPLOY_PATH/infra' && mkdir -p '$STAGING_DEPLOY_PATH/infra'"
+          tar -C infra -cf - . | ssh -i "$HOME/.ssh/staging" -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+            "$STAGING_SSH_USER@$STAGING_HOST" \
+            "tar -C '$STAGING_DEPLOY_PATH/infra' -xf -"
           ssh -i "$HOME/.ssh/staging" -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
             "$STAGING_SSH_USER@$STAGING_HOST" \
             "umask 077; cat > '$STAGING_DEPLOY_PATH/staging.env'" < "$env_file"
+          printf '%s' "$STAGING_GHCR_TOKEN" | ssh -i "$HOME/.ssh/staging" -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+            "$STAGING_SSH_USER@$STAGING_HOST" \
+            "umask 077; docker login ghcr.io --username $quoted_user --password-stdin"
           ssh -i "$HOME/.ssh/staging" -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
             "$STAGING_SSH_USER@$STAGING_HOST" \
-            "set -eu; cd '$STAGING_DEPLOY_PATH'; set -a; . ./staging.env; set +a; chmod 600 staging.env; ./infra/scripts/staging-deploy.sh; COMPOSE_FILE=compose.staging.yaml STAGING_WEB_URL='$STAGING_WEB_URL' STAGING_API_URL='$STAGING_API_URL' ./infra/scripts/staging-smoke.sh; COMPOSE_FILE=compose.staging.yaml STAGING_API_URL='$STAGING_API_URL' ./infra/scripts/staging-readiness-measure.sh"
+            "set -eu; cd '$STAGING_DEPLOY_PATH'; set -a; . ./staging.env; set +a; chmod 600 staging.env; ./infra/scripts/staging-deploy.sh; COMPOSE_FILE=compose.staging.yaml STAGING_WEB_URL=$quoted_web STAGING_API_URL=$quoted_api ./infra/scripts/staging-smoke.sh; COMPOSE_FILE=compose.staging.yaml STAGING_API_URL=$quoted_api STAGING_SILENT_API_URL=$quoted_silent ./infra/scripts/staging-readiness-measure.sh"
           rm -f "$env_file"

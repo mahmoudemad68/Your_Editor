@@ -26,7 +26,9 @@ SeaweedFS is not rebuilt. Staging pulls `chrislusf/seaweedfs@sha256:4e61d15fd359
 
 `<owner>` is the GitHub owner in lowercase. The tag is the full Git SHA. The workflow records `name@sha256:<digest>` and a Syft SPDX SBOM for each image. Staging must use the digest form. Tags `:latest` and `:local` are rejected.
 
-Postgres `16.10-alpine` and Redis `7.4-alpine` are not rebuilt. The same workflow records the registry digest it pulled so staging does not keep floating tags.
+Application images are built with `--platform linux/amd64`. A staging host must be linux/amd64. The supply-chain tool installer can run on arm64, but it does not publish arm64 application images.
+
+Postgres for staging is built from `infra/postgres/Dockerfile`. That image starts from `postgres:16.13-alpine` and replaces the upstream `gosu` binary, which was compiled with Go 1.24.6 (`CVE-2025-68121`), with the same gosu source compiled by Go 1.25.14. Redis `7.4-alpine` is not rebuilt. The workflow records its digest, writes a Syft SBOM, and fails the platform job on a critical Trivy finding. Both results are mandatory for the security gate.
 
 Pull requests build and scan the same images and upload SBOMs. They do not push to GHCR and they do not deploy.
 
@@ -44,6 +46,7 @@ Secrets:
 - `STAGING_SSH_KNOWN_HOSTS`
 - `POSTGRES_PASSWORD`
 - `S3_SECRET_ACCESS_KEY`
+- `STAGING_GHCR_TOKEN` a read:packages token that stays valid between deploys. The Actions `GITHUB_TOKEN` expires when the job ends, so it cannot authorize a later pull.
 
 Variables:
 
@@ -58,6 +61,8 @@ Variables:
 - `STAGING_OBJECTS_PORT`
 - `STAGING_WEB_URL`
 - `STAGING_API_URL`
+- `STAGING_SILENT_API_URL` an API whose dependency does not answer, used by the readiness measurement
+- `STAGING_GHCR_USER`
 - `STAGING_DEPLOY_PATH`
 - `MEDIA_INSPECT_QUEUE`
 
@@ -69,20 +74,20 @@ Image digests are workflow outputs, not environment secrets.
 
 Provision this before expecting a deploy to succeed. This repository does not create the host.
 
-1. A Linux host with Docker Engine and Docker Compose v2. CPU is enough. NVIDIA is optional and only used with `--profile gpu`.
+1. A linux/amd64 host with Docker Engine and Docker Compose v2. CPU is enough. NVIDIA is optional and only used with `--profile gpu`. The host logs in to `ghcr.io` with `STAGING_GHCR_USER` and `STAGING_GHCR_TOKEN` before images are pulled.
 2. A persistent disk for the Compose volumes `staging-postgres-data`, `staging-redis-data`, `staging-seaweed-master`, `staging-seaweed-volume`, and `staging-seaweed-filer`. Leave any existing MinIO volume on that disk. Do not mount it as SeaweedFS data and do not delete it during this cutover.
 3. A non-root deploy user that can run Docker.
 4. OpenSSH with a dedicated key. Record that key as `STAGING_SSH_KEY` and the host key as `STAGING_SSH_KNOWN_HOSTS`.
 5. Host firewall tooling: `iptables` or `iptables-nft`, and `ip6tables` when the kernel has IPv6. `staging-deploy.sh` runs `infra/seaweedfs/apply-compose-isolation.sh` after Compose creates the networks and fails if the rules are not effective. IPv6 must stay disabled on the internal storage network. Compose publishes the web port and the object ingress, both bound to `STAGING_BIND_IP`. Master, volume, filer, and the S3 gateway have no host ports. The ingress forwards signed object requests and refuses `/minio/` and `Action=` STS calls. Run the isolation script again after a host reboot.
 6. A reverse proxy or SSH tunnel from the operators to that web port. Point `STAGING_WEB_URL` and `STAGING_API_URL` at the URLs the smoke test can call. The API is on the Compose network at `http://api:3001` and is not published.
-7. Clone this repository at `STAGING_DEPLOY_PATH`. The workflow copies `compose.staging.yaml`, `infra/`, and `staging.env` onto that path. It does not delete the directory.
+7. Clone this repository at `STAGING_DEPLOY_PATH`. The workflow replaces `infra/` with the contents of this run's `infra` directory, copies `compose.staging.yaml`, and writes a mode-`600` `staging.env`. It does not nest a second `infra` directory and it does not delete the deploy path. Values are shell-quoted so `$`, quotes, backticks, and `#` stay data when the file is sourced. `staging-deploy.sh` then creates `S3_BUCKET` on the SeaweedFS S3 gateway with `S3_ACCESS_KEY_ID`.
 8. Confirm `node`, `python3`, `curl`, and `sha256sum` exist on the host. The smoke script uses them.
 
 ## Deploy
 
 Merging to `main` runs the supply-chain workflow. Each image is built, given an SBOM, and scanned with `trivy image --severity CRITICAL --exit-code 1`. The job `supply-chain-security` passes only when every mandatory scan result is `pass`. The publish job runs only after that gate and only on a push to `main`. A failed scan, including the pinned SeaweedFS image, skips publish, so no `docker push` runs. Deploy runs only after publish succeeds. If any staging name above is empty, the deploy job prints `STAGING_DEPLOYMENT_BLOCKED` and exits. It does not invent a host.
 
-The `main` ruleset required status check, verified in this repository, is only `ci`. `supply-chain-security` is not a required check. Add it beside `ci` before a green security gate can block a merge. This document does not claim that setting is already enabled.
+The `main` ruleset required status check is only `ci`. `supply-chain-security` is not a required check. An attempt to add it beside `ci` returned HTTP 403, `Resource not accessible by integration`, and the ruleset was left unchanged. A repository admin has to add that check before a green security gate can block a merge.
 
 When the names are present, the job copies the compose file and a mode-`600` env file, then runs `infra/scripts/staging-deploy.sh`. That script calls `infra/seaweedfs/secure-up.sh`. The secure path checks privileges, requires `EDITAGENT_SEAWEEDFS_IMAGE` to be the approved SeaweedFS digest, refuses the development S3 secret, prepares secrets, creates networks without starting them, installs subnet firewall rules, proves an internal listener is open to its own network and blocked on the host, and only then starts services. The host probe succeeds only when curl exits 28 and the internal subnet DROP counter increases. Any other curl exit fails closed. A failed check stops containers and does not delete volumes. `docker compose up` by itself is not this path. The boot unit `editagent-secure-up.service` loads that same env file with a required systemd `EnvironmentFile` and runs `secure-up.sh`. Its `ExecStop` is `docker compose stop`. There is no unit restart policy that starts containers on its own. Container restart policy stays `no`, so a reboot or Docker restart does not start services until that unit runs. A missing or world-readable env file fails the boot and leaves services stopped.
 
