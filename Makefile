@@ -15,6 +15,7 @@ help:
 		'make compose-config Validate the default Compose file and the gpu profile'
 
 up:
+	./infra/seaweedfs/prepare-secrets.sh
 	$(COMPOSE) up -d --wait --wait-timeout 300
 
 down:
@@ -30,6 +31,7 @@ seed:
 	./infra/scripts/seed.sh
 
 up-gpu:
+	./infra/seaweedfs/prepare-secrets.sh
 	$(COMPOSE) --profile gpu up -d --wait --wait-timeout 300 --scale ai-worker=0
 
 compose-config:

@@ -24,7 +24,7 @@ updates:
     directories:
       - /apps/api
       - /apps/web
-      - /infra/minio
+      - /infra/seaweedfs
       - /infra/postgres
       - /infra/redis
       - /workers/agent-worker

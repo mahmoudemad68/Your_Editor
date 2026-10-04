@@ -20,6 +20,7 @@ coverage.xml
 .env
 .env.*
 !.env.example
+.local/
 *.log
 .DS_Store
 .husky/_

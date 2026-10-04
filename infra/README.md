@@ -18,17 +18,20 @@ docker compose up
 
 ## Services
 
-| Service       | Image                           | Published port |
-| ------------- | ------------------------------- | -------------- |
-| postgres      | `editagent-postgres:local`      | 5432           |
-| redis         | `editagent-redis:local`         | 6379           |
-| minio         | `editagent-minio:local`         | 9000 and 9001  |
-| api           | `editagent-api:local`           | 3001           |
-| web           | `editagent-web:local`           | 3000           |
-| agent-worker  | `editagent-agent-worker:local`  | none           |
-| media-worker  | `editagent-media-worker:local`  | none           |
-| render-worker | `editagent-render-worker:local` | none           |
-| ai-worker     | `editagent-ai-worker:local`     | none           |
+| Service        | Image                           | Published port |
+| -------------- | ------------------------------- | -------------- |
+| postgres       | `editagent-postgres:local`      | 5432           |
+| redis          | `editagent-redis:local`         | 6379           |
+| seaweed-master | `editagent-seaweedfs:local`     | none           |
+| seaweed-volume | `editagent-seaweedfs:local`     | none           |
+| seaweed-filer  | `editagent-seaweedfs:local`     | none           |
+| seaweed-s3     | `editagent-seaweedfs:local`     | 127.0.0.1:9000 |
+| api            | `editagent-api:local`           | 3001           |
+| web            | `editagent-web:local`           | 3000           |
+| agent-worker   | `editagent-agent-worker:local`  | none           |
+| media-worker   | `editagent-media-worker:local`  | none           |
+| render-worker  | `editagent-render-worker:local` | none           |
+| ai-worker      | `editagent-ai-worker:local`     | none           |
 
 Worker containers become healthy after typed configuration loads. A ready file at `/tmp/editagent.ready` is process plumbing so Compose can see that. It is not a queue consumer. The API health check calls the existing `/health` route. The web health check calls `/`.
 
@@ -42,13 +45,13 @@ Dockerfiles:
 - `workers/media-worker/Dockerfile`
 - `workers/render-worker/Dockerfile`
 - `workers/ai-worker/Dockerfile`
-- `infra/minio/Dockerfile`
+- `infra/seaweedfs/Dockerfile`
 
 Application images are multi-stage. The runtime stage runs as uid 10001. Development passwords are not copied into those images. Compose injects them from `.env` or from the placeholders in `compose.yaml`. `.env.example` lists the placeholders. `.env` is git-ignored.
 
-`docker.io/minio/minio` was removed from Docker Hub. The development object store is still MinIO (ADR-005). `infra/minio/Dockerfile` builds that release from the official `minio/minio` source instead of a community republish. The pinned tag is `RELEASE.2025-10-15T17-29-55Z`, commit `9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a`. The image sets `MINIO_RELEASE=RELEASE` during compilation so `minio --version` reports that tag. Build tools stay in the first stage. The image contains no MinIO credentials.
+Object storage is SeaweedFS. `infra/seaweedfs/Dockerfile` pins `chrislusf/seaweedfs@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d`. Master, volume, and filer attach only to the internal `storage_internal` network and publish no ports. The S3 gateway is the only published listener, on `127.0.0.1:9000`. `make up` writes `security.toml` and `s3.json` as mode `0600` owned by the image user before Compose starts. Application images stay on uid 10001.
 
-The entrypoint starts as root only to create `/data` and give it to the `minio` user. It then executes the server with `su-exec`, so the MinIO process runs as uid 1000. Application images stay on uid 10001.
+The historical MinIO volume name `minio-data` stays in the Compose file and is not mounted. Migration copies objects through the S3 API and does not delete that volume. See [docs/operations/seaweedfs-object-storage.md](../docs/operations/seaweedfs-object-storage.md).
 
 ## GPU profile
 

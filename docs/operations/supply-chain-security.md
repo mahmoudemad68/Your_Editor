@@ -18,11 +18,11 @@ Images built from Dockerfiles that `compose.yaml` already references:
 - `workers/render-worker/Dockerfile`
 - `workers/agent-worker/Dockerfile`
 - `workers/ai-worker/Dockerfile`
-- `infra/minio/Dockerfile`
+- `infra/seaweedfs/Dockerfile`
 - `infra/postgres/Dockerfile`
 - `infra/redis/Dockerfile`
 
-`tools/benchmarks/rendering/docker/Dockerfile` is a research harness and is not a runtime service, so it is outside this matrix. Object ingress and SeaweedFS are not in this tree, so this workflow does not scan them.
+`tools/benchmarks/rendering/docker/Dockerfile` is a research harness and is not a runtime service, so it is outside this matrix. The SeaweedFS image is the digest pinned in `infra/seaweedfs/Dockerfile`. Master, volume, filer, and the S3 gateway share that one image, so the workflow scans it once. Object ingress is not in this tree.
 
 ## Policy
 

@@ -132,7 +132,7 @@ test("the security gate rejects a missing or failed scan and accepts a complete 
     "render-worker",
     "agent-worker",
     "ai-worker",
-    "minio",
+    "seaweedfs",
     "postgres",
     "redis",
     "dependencies",
@@ -148,11 +148,11 @@ test("the security gate rejects a missing or failed scan and accepts a complete 
 
   const failed = mkdtempSync(path.join(tmpdir(), "editagent-scans-"));
   for (const service of required) {
-    writeFileSync(path.join(failed, service), service === "minio" ? "fail\n" : "pass\n");
+    writeFileSync(path.join(failed, service), service === "seaweedfs" ? "fail\n" : "pass\n");
   }
   const failedResult = run(gate, [], { env: { ...process.env, SCAN_DIR: failed } });
   assert.notEqual(failedResult.status, 0);
-  assert.match(failedResult.stderr, /minio/);
+  assert.match(failedResult.stderr, /seaweedfs/);
 
   const passed = mkdtempSync(path.join(tmpdir(), "editagent-scans-"));
   for (const service of required) {

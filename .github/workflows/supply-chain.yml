@@ -131,8 +131,8 @@ jobs:
             dockerfile: workers/agent-worker/Dockerfile
           - service: ai-worker
             dockerfile: workers/ai-worker/Dockerfile
-          - service: minio
-            dockerfile: infra/minio/Dockerfile
+          - service: seaweedfs
+            dockerfile: infra/seaweedfs/Dockerfile
           - service: postgres
             dockerfile: infra/postgres/Dockerfile
           - service: redis

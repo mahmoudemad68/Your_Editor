@@ -1,6 +1,6 @@
 #!/bin/sh
 # Images built from Dockerfiles that compose.yaml references.
-# Object ingress and SeaweedFS are not in this tree.
+# Object ingress is not in this tree.
 printf '%s\n' \
   api \
   web \
@@ -8,6 +8,6 @@ printf '%s\n' \
   render-worker \
   agent-worker \
   ai-worker \
-  minio \
+  seaweedfs \
   postgres \
   redis
