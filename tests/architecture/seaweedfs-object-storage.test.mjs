@@ -55,6 +55,30 @@ test("the active stack publishes only the SeaweedFS S3 gateway", () => {
   assert.equal(read(".github/dependabot.yml").includes("/infra/minio"), false);
 });
 
+test("the S3 contract runs after the workspace install", () => {
+  const workflow = read(".github/workflows/ci.yml");
+  const pnpmSetup = workflow.indexOf("name: Install pnpm");
+  const nodeSetup = workflow.indexOf("name: Setup Node.js");
+  const install = workflow.indexOf("pnpm install --frozen-lockfile");
+  const contract = workflow.indexOf("node tests/architecture/seaweedfs-s3-contract.mjs");
+  const start = workflow.indexOf("name: Start SeaweedFS");
+  assert.equal(pnpmSetup > 0 && nodeSetup > pnpmSetup, true);
+  assert.equal(install > nodeSetup, true);
+  assert.equal(contract > install, true);
+  const startup = workflow.slice(start, pnpmSetup);
+  assert.match(startup, /curl -fsS http:\/\/127\.0\.0\.1:9000\/status/);
+  assert.match(startup, /ensure_bucket\.py/);
+  assert.equal(startup.includes("seaweedfs-s3-contract.mjs"), false);
+  assert.match(
+    read("tests/architecture/seaweedfs-s3-contract.mjs"),
+    /If-None-Match duplicate returned 412/,
+  );
+  assert.match(
+    read("tests/architecture/seaweedfs-s3-contract.mjs"),
+    /anonymous GET returned the private object/,
+  );
+});
+
 test("object migration refuses to delete historical volumes", () => {
   const script = read("infra/scripts/migrate-minio-objects.py");
   const backup = read("infra/seaweedfs/backup-volumes.sh");

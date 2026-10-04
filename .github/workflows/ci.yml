@@ -63,7 +63,6 @@ jobs:
             seaweed-master seaweed-volume seaweed-filer seaweed-s3
           curl -fsS http://127.0.0.1:9000/status >/dev/null
           S3_HOST=127.0.0.1 S3_PORT=9000 python3 infra/scripts/ensure_bucket.py
-          node tests/architecture/seaweedfs-s3-contract.mjs
 
       - name: Install pnpm
         uses: pnpm/action-setup@v6
@@ -139,6 +138,9 @@ jobs:
 
       - name: Install workspace dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Check SeaweedFS S3 contract
+        run: node tests/architecture/seaweedfs-s3-contract.mjs
 
       - name: Build
         run: pnpm build
