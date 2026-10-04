@@ -5,7 +5,14 @@
 
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -74,6 +81,12 @@ test("the security check reports high and critical findings and does not publish
   assert.equal(workflow.includes("--ignore-unfixed"), false);
   assert.equal(read(".gitleaks.toml").includes("editagent-dev-password"), true);
   assert.equal(read(".gitleaks.toml").includes("editagent-dev-secret"), true);
+});
+
+test("dependabot watches the deployed postgres and redis images", () => {
+  const dependabot = read(".github/dependabot.yml");
+  assert.match(dependabot, /-\s+\/infra\/postgres\n/);
+  assert.match(dependabot, /-\s+\/infra\/redis\n/);
 });
 
 test("dependabot only watches directories that exist", () => {
@@ -403,6 +416,185 @@ test("the Python audit includes locked development dependencies", () => {
   for (const name of ["ruff==", "mypy==", "pytest==", "import-linter=="]) {
     assert.equal(exported.includes(name), true, name);
   }
+});
+
+test("scanner archives are pinned and are not extracted before a checksum", () => {
+  const script = read("infra/scripts/install-supply-chain-tools.sh");
+  assert.equal(/curl[^\n]*\|[^\n]*tar/.test(script), false);
+  for (const pin of [
+    "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb",
+    "e4a487ee7ccd7d3a7f7ec08657610aa3606637dab924210b3aee62570fb4b080",
+    "c6e65abddb348e25f10549df887045629cf28cc72453cd1c63acb717316b3f3f",
+    "a1ee9f6ffb7d112b64ff726a2a0717c21175c1114361391f4a132956751a13b3",
+    "54a87372498168b2d033e876fd41fa4e8035b872699e525a57046e1f2f09c860",
+    "ee6d4566373a05b344bc6b5f1706f14419bf9338ba39ff686e247deefe9b8818",
+  ]) {
+    assert.equal(script.includes(pin), true, pin);
+  }
+  const installer = path.join(root, "infra/scripts/install-supply-chain-tools.sh");
+  const corrupted = path.join(
+    mkdtempSync(path.join(tmpdir(), "editagent-archive-")),
+    "corrupt.tar.gz",
+  );
+  writeFileSync(corrupted, "this is not the gitleaks release archive\n");
+  const rejected = run(installer, [
+    "--verify-archive",
+    "gitleaks_8.30.1_linux_x64.tar.gz",
+    corrupted,
+  ]);
+  assert.notEqual(rejected.status, 0);
+  assert.match(spawnText(rejected), /checksum mismatch for gitleaks_8.30.1_linux_x64.tar.gz/);
+
+  const missing = run(installer, [
+    "--verify-archive",
+    "trivy_0.75.0_Linux-64bit.tar.gz",
+    path.join(tmpdir(), "editagent-missing-archive.tar.gz"),
+  ]);
+  assert.notEqual(missing.status, 0);
+  assert.match(spawnText(missing), /missing archive: trivy_0.75.0_Linux-64bit.tar.gz/);
+
+  const emptyDir = mkdtempSync(path.join(tmpdir(), "editagent-empty-archive-"));
+  const emptyArchive = path.join(emptyDir, "empty.tar.gz");
+  writeFileSync(emptyArchive, "");
+  const empty = run(installer, [
+    "--verify-archive",
+    "syft_1.54.0_linux_amd64.tar.gz",
+    emptyArchive,
+  ]);
+  assert.notEqual(empty.status, 0);
+  assert.match(spawnText(empty), /empty archive: syft_1.54.0_linux_amd64.tar.gz/);
+});
+
+test("a corrupted scanner archive is rejected before tar runs", () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "editagent-scanner-install-"));
+  const bin = path.join(directory, "bin");
+  const marker = path.join(directory, "tar-ran");
+  const fakeBin = path.join(directory, "fake-bin");
+  mkdirSync(fakeBin);
+  writeFileSync(path.join(fakeBin, "tar"), `#!/bin/sh\ntouch ${JSON.stringify(marker)}\nexit 0\n`);
+  chmodSync(path.join(fakeBin, "tar"), 0o755);
+  const corrupted = path.join(directory, "gitleaks.tar.gz");
+  writeFileSync(corrupted, "not a release archive\n");
+  const result = run(path.join(root, "infra/scripts/install-supply-chain-tools.sh"), ["gitleaks"], {
+    env: {
+      ...process.env,
+      PATH: `${fakeBin}:/usr/bin:/bin`,
+      SUPPLY_CHAIN_BIN: bin,
+      SUPPLY_CHAIN_URL_GITLEAKS: `file://${corrupted}`,
+    },
+  });
+  assert.notEqual(result.status, 0);
+  assert.match(spawnText(result), /checksum mismatch/);
+  assert.equal(existsSync(marker), false);
+  assert.equal(existsSync(path.join(bin, "gitleaks")), false);
+});
+
+test("a preinstalled scanner with the wrong version is rejected", () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "editagent-scanner-version-"));
+  const fakeBin = path.join(directory, "path");
+  const dest = path.join(directory, "dest");
+  const marker = path.join(directory, "curl-ran");
+  mkdirSync(fakeBin);
+  writeFileSync(path.join(fakeBin, "gitleaks"), "#!/bin/sh\nprintf '%s\\n' 1.2.3\n");
+  writeFileSync(path.join(fakeBin, "trivy"), "#!/bin/sh\nprintf '%s\\n' 'Version: 0.1.0'\n");
+  writeFileSync(path.join(fakeBin, "syft"), "#!/bin/sh\nprintf '%s\\n' 'Version:       0.1.0'\n");
+  writeFileSync(path.join(fakeBin, "curl"), `#!/bin/sh\ntouch ${JSON.stringify(marker)}\nexit 1\n`);
+  for (const name of ["gitleaks", "trivy", "syft", "curl"]) {
+    chmodSync(path.join(fakeBin, name), 0o755);
+  }
+  const result = run(path.join(root, "infra/scripts/install-supply-chain-tools.sh"), ["all"], {
+    env: {
+      ...process.env,
+      PATH: `${fakeBin}:/usr/bin:/bin`,
+      SUPPLY_CHAIN_BIN: dest,
+    },
+  });
+  assert.notEqual(result.status, 0);
+  assert.match(spawnText(result), /preinstalled gitleaks/);
+  assert.match(spawnText(result), /does not match required version 8\.30\.1/);
+  assert.equal(existsSync(marker), false);
+  assert.equal(existsSync(path.join(dest, "gitleaks")), false);
+});
+
+test("a preinstalled scanner at the pinned version is kept", () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "editagent-scanner-match-"));
+  const fakeBin = path.join(directory, "path");
+  const dest = path.join(directory, "dest");
+  const marker = path.join(directory, "curl-ran");
+  mkdirSync(fakeBin);
+  writeFileSync(
+    path.join(fakeBin, "gitleaks"),
+    "#!/bin/sh\nif [ \"$1\" = version ]; then printf '%s\\n' 8.30.1; exit 0; fi\nexit 1\n",
+  );
+  writeFileSync(path.join(fakeBin, "curl"), `#!/bin/sh\ntouch ${JSON.stringify(marker)}\nexit 1\n`);
+  chmodSync(path.join(fakeBin, "gitleaks"), 0o755);
+  chmodSync(path.join(fakeBin, "curl"), 0o755);
+  const result = run(path.join(root, "infra/scripts/install-supply-chain-tools.sh"), ["gitleaks"], {
+    env: {
+      ...process.env,
+      PATH: `${fakeBin}:/usr/bin:/bin`,
+      SUPPLY_CHAIN_BIN: dest,
+    },
+  });
+  assert.equal(result.status, 0, spawnText(result));
+  assert.match(result.stdout, /using preinstalled gitleaks 8\.30\.1/);
+  assert.equal(existsSync(marker), false);
+  assert.equal(existsSync(path.join(dest, "gitleaks")), false);
+});
+
+test("redis rejects OpenSSL older than the patched revision", () => {
+  const dockerfile = read("infra/redis/Dockerfile");
+  const script = read("infra/redis/require-openssl.sh");
+  assert.equal(dockerfile.includes("libcrypto3="), false);
+  assert.equal(dockerfile.includes("libssl3="), false);
+  assert.match(dockerfile, /apk add --no-cache --upgrade libcrypto3 libssl3/);
+  assert.match(dockerfile, /require-openssl\.sh 3\.3\.7-r2/);
+  assert.match(script, /apk version -t/);
+
+  const directory = mkdtempSync(path.join(tmpdir(), "editagent-openssl-"));
+  const fakeBin = path.join(directory, "bin");
+  mkdirSync(fakeBin);
+  writeFileSync(
+    path.join(fakeBin, "apk"),
+    `#!/bin/sh
+if [ "$1" = version ] && [ "$2" = -t ]; then
+  ${JSON.stringify(process.execPath)} -e 'const [a,b]=process.argv.slice(1); const parse=(v)=>{const m=/^(\\d+)\\.(\\d+)\\.(\\d+)-r(\\d+)$/.exec(v); if(!m) process.exit(2); return m.slice(1).map(Number)}; const left=parse(a); const right=parse(b); for (let i=0;i<4;i++){ if(left[i]!==right[i]) { process.stdout.write(left[i]<right[i]?"<":">"); process.exit(0)} } process.stdout.write("=")' "$3" "$4"
+  exit 0
+fi
+echo "unexpected apk $*" >&2
+exit 1
+`,
+  );
+  chmodSync(path.join(fakeBin, "apk"), 0o755);
+  const checker = path.join(root, "infra/redis/require-openssl.sh");
+  const database = (crypto, ssl) => {
+    const file = path.join(mkdtempSync(path.join(directory, "db-")), "installed");
+    writeFileSync(file, `P:libcrypto3\nV:${crypto}\nP:libssl3\nV:${ssl}\n`);
+    return file;
+  };
+  const envFor = (file) => ({
+    ...process.env,
+    PATH: `${fakeBin}:/usr/bin:/bin`,
+    OPENSSL_INSTALLED_DB: file,
+  });
+  const current = run(checker, ["3.3.7-r2"], { env: envFor(database("3.3.7-r2", "3.3.7-r2")) });
+  assert.equal(current.status, 0, spawnText(current));
+  assert.match(current.stdout, /libcrypto3 3\.3\.7-r2/);
+  const newer = run(checker, ["3.3.7-r2"], { env: envFor(database("3.3.8-r0", "3.4.0-r1")) });
+  assert.equal(newer.status, 0, spawnText(newer));
+  const older = run(checker, ["3.3.7-r2"], { env: envFor(database("3.3.7-r1", "3.3.7-r2")) });
+  assert.notEqual(older.status, 0);
+  assert.match(spawnText(older), /libcrypto3 3\.3\.7-r1 is older than required 3\.3\.7-r2/);
+  const partial = path.join(directory, "partial");
+  writeFileSync(partial, "P:libcrypto3\nV:3.3.7-r2\n");
+  const partialResult = run(checker, ["3.3.7-r2"], { env: envFor(partial) });
+  assert.notEqual(partialResult.status, 0);
+  assert.match(spawnText(partialResult), /missing package: libssl3/);
+  const absent = run(checker, ["3.3.7-r2"], {
+    env: envFor(path.join(directory, "does-not-exist")),
+  });
+  assert.notEqual(absent.status, 0);
+  assert.match(spawnText(absent), /missing Alpine installed database/);
 });
 
 function spawnText(result) {

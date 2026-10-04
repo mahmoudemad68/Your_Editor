@@ -29,7 +29,7 @@ Media-worker FFmpeg moves from Debian 12 `7:5.1.9-0+deb12u1` to Debian 13 `7:7.1
 
 Postgres is now built from `infra/postgres/Dockerfile`. The base is `postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea` (PostgreSQL 16.15, Alpine 3.24), which no longer contains CVE-2026-31789. `gosu` 1.19 is recompiled with Go 1.25.14 from `github.com/tianon/gosu@v0.0.0-20260606051551-40506998e34a`, the same approach as the US-113 image, so CVE-2025-68121 is absent. The local scan reported zero critical and zero high findings. `postgres --version` prints 16.15 and `gosu --version` prints `1.19 (go1.25.14)`.
 
-Redis stays on 7.4.11. `infra/redis/Dockerfile` upgrades `libcrypto3` and `libssl3` from `3.3.7-r1` to `3.3.7-r2`, which clears HIGH CVE-2026-75804 and CVE-2026-84782. The local HIGH,CRITICAL scan reported zero findings. `redis-server --version` prints `v=7.4.11`.
+Redis stays on 7.4.11. `infra/redis/Dockerfile` upgrades `libcrypto3` and `libssl3` through the signed Alpine index and rejects any revision older than `3.3.7-r2`, which is the fix for HIGH CVE-2026-75804 and CVE-2026-84782. A newer revision still builds. The local HIGH,CRITICAL scan reported zero findings. `redis-server --version` prints `v=7.4.11`.
 
 MinIO is still built from tag `RELEASE.2025-10-15T17-29-55Z`, commit `9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a`. The toolchain is Go 1.25.14, which removes CVE-2025-68121. The build also upgrades `google.golang.org/grpc` to v1.79.3 and `github.com/rabbitmq/amqp091-go` to v1.13.0, which removes CVE-2026-33186, CVE-2026-77405, CVE-2026-77408, and CVE-2026-77411. `minio --version` still reports that upstream release and commit, with runtime `go1.25.14`.
 
