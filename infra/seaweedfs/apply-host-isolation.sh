@@ -50,27 +50,22 @@ subnet="$SEAWEED_SUBNET"
 gateway="$SEAWEED_GATEWAY_IP"
 s3="$SEAWEED_S3_IP"
 
-backends=""
-for candidate in iptables-nft iptables-legacy iptables; do
+# Call the iptables names Docker and the host actually dispatch. The resolved
+# xtables multi-binary rejects iptables arguments when executed by its real path.
+resolved=""
+for candidate in iptables-nft iptables-legacy; do
   if ! command -v "$candidate" >/dev/null 2>&1; then
     continue
   fi
   if "$candidate" -S DOCKER-USER >/dev/null 2>&1; then
-    case " $backends " in
-      *" $candidate "*) ;;
-      *) backends="$backends $candidate" ;;
-    esac
+    resolved="$resolved $candidate"
   fi
 done
-# `iptables` is often a symlink to one of the two backends already recorded.
-resolved=""
-for candidate in $backends; do
-  target="$(readlink -f "$(command -v "$candidate")")"
-  case " $resolved " in
-    *" $target "*) ;;
-    *) resolved="$resolved $target" ;;
-  esac
-done
+if [ -z "$resolved" ] && command -v iptables >/dev/null 2>&1; then
+  if iptables -S DOCKER-USER >/dev/null 2>&1; then
+    resolved="iptables"
+  fi
+fi
 if [ -z "$resolved" ]; then
   echo "DOCKER-USER is missing. Start Docker before installing storage isolation." >&2
   exit 1

@@ -41,7 +41,9 @@ curl_code() {
   body="$1"
   headers="$2"
   shift 2
-  curl -sS -o "$body" -D "$headers" -w '%{http_code}' --max-time 3 "$@" || true
+  : >"$body"
+  : >"$headers"
+  curl -s -o "$body" -D "$headers" -w '%{http_code}' --max-time 3 "$@" || true
 }
 
 token_or_fid() {
@@ -101,21 +103,25 @@ docker exec \
 set +e
 auth=0
 fid=0
-assign=$(curl -sS -D /tmp/ah -o /tmp/ab -w "%{http_code}" --max-time 3 "http://$MASTER:9333/dir/assign" || true)
+: >/tmp/ah
+: >/tmp/ab
+assign=$(curl -s -D /tmp/ah -o /tmp/ab -w "%{http_code}" --max-time 3 "http://$MASTER:9333/dir/assign" || true)
 if grep -qi "^authorization:" /tmp/ah; then auth=1; fi
 if grep -q "\"fid\"" /tmp/ab; then fid=1; fi
 https_assign=$(curl -sk -o /dev/null -w "%{http_code}" --max-time 3 "https://$MASTER:9333/dir/assign" || true)
 cluster=$(curl -sk -o /dev/null -w "%{http_code}" --max-time 3 "https://$MASTER:9333/cluster/status" || true)
 ui=$(curl -sk -o /dev/null -w "%{http_code}" --max-time 3 "https://$MASTER:9333/" || true)
 grpc=$(curl -sk -o /dev/null -w "%{http_code}" --max-time 3 "https://$MASTER:19333/" || true)
-vol_put=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 3 -X PUT --data-binary x "http://$VOLUME:8080/3,aaaaaaaa" || true)
-vol_get=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 3 "http://$VOLUME:8080/" || true)
+vol_put=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 -X PUT --data-binary x "http://$VOLUME:8080/3,aaaaaaaa" || true)
+vol_get=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 "http://$VOLUME:8080/" || true)
 vol_grpc=$(curl -sk -o /dev/null -w "%{http_code}" --max-time 3 "https://$VOLUME:18080/" || true)
-filer_get=$(curl -sS -o /tmp/fb -w "%{http_code}" --max-time 3 "http://$FILER:8888/buckets/$BUCKET/$KEY_PATH" || true)
-filer_del=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 3 -X DELETE "http://$FILER:8888/buckets/$BUCKET/$KEY_PATH" || true)
+: >/tmp/fb
+filer_get=$(curl -s -o /tmp/fb -w "%{http_code}" --max-time 3 "http://$FILER:8888/buckets/$BUCKET/$KEY_PATH" || true)
+filer_del=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 -X DELETE "http://$FILER:8888/buckets/$BUCKET/$KEY_PATH" || true)
 filer_grpc=$(curl -sk -o /dev/null -w "%{http_code}" --max-time 3 "https://$FILER:18888/" || true)
-s3_get=$(curl -sS -o /tmp/sb -w "%{http_code}" --max-time 3 "http://$S3IP:8333/$BUCKET/$KEY_PATH" || true)
-s3_status=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 3 "http://$S3IP:8333/status" || true)
+: >/tmp/sb
+s3_get=$(curl -s -o /tmp/sb -w "%{http_code}" --max-time 3 "http://$S3IP:8333/$BUCKET/$KEY_PATH" || true)
+s3_status=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 "http://$S3IP:8333/status" || true)
 match=0
 if [ -f /tmp/sb ] && grep -F -x -q "$PROBE" /tmp/sb; then match=1; fi
 filer_match=0
@@ -124,6 +130,7 @@ echo "assign=$assign auth=$auth fid=$fid https_assign=$https_assign cluster=$clu
 ' >"$tmpdir/attacker.out"
 
 report="$(cat "$tmpdir/attacker.out")"
+echo "unauthorized-client $report"
 echo "$report" | grep -q 'auth=0' || fail "unauthorized client received a write token"
 echo "$report" | grep -q 'fid=0' || fail "unauthorized client received a file id"
 echo "$report" | grep -q 's3_match=0' || fail "unauthorized client read the private object through S3"
@@ -198,13 +205,17 @@ other_report="$(docker exec \
   -e KEY_PATH="$key_path" \
   -e PROBE="$probe" \
   "$other" sh -c '
-assign=$(curl -sS -D /tmp/h -o /tmp/b -w "%{http_code}" --max-time 2 "http://$MASTER:9333/dir/assign" || true)
+: >/tmp/h
+: >/tmp/b
+: >/tmp/fb
+: >/tmp/sb
+assign=$(curl -s -D /tmp/h -o /tmp/b -w "%{http_code}" --max-time 2 "http://$MASTER:9333/dir/assign" || true)
 auth=0; fid=0
 if grep -qi "^authorization:" /tmp/h; then auth=1; fi
 if grep -q "\"fid\"" /tmp/b; then fid=1; fi
-vol=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 2 -X PUT --data-binary x "http://$VOLUME:8080/3,aaaaaaaa" || true)
-filer=$(curl -sS -o /tmp/fb -w "%{http_code}" --max-time 2 "http://$FILER:8888/buckets/$BUCKET/$KEY_PATH" || true)
-s3=$(curl -sS -o /tmp/sb -w "%{http_code}" --max-time 2 "http://$S3IP:8333/$BUCKET/$KEY_PATH" || true)
+vol=$(curl -s -o /dev/null -w "%{http_code}" --max-time 2 -X PUT --data-binary x "http://$VOLUME:8080/3,aaaaaaaa" || true)
+filer=$(curl -s -o /tmp/fb -w "%{http_code}" --max-time 2 "http://$FILER:8888/buckets/$BUCKET/$KEY_PATH" || true)
+s3=$(curl -s -o /tmp/sb -w "%{http_code}" --max-time 2 "http://$S3IP:8333/$BUCKET/$KEY_PATH" || true)
 match=0
 if grep -F -x -q "$PROBE" /tmp/sb 2>/dev/null; then match=1; fi
 fmatch=0
@@ -212,6 +223,7 @@ if grep -F -x -q "$PROBE" /tmp/fb 2>/dev/null; then fmatch=1; fi
 echo "assign=$assign auth=$auth fid=$fid vol=$vol filer=$filer s3=$s3 s3_match=$match filer_match=$fmatch"
 ')"
 docker rm -f "$other" >/dev/null
+echo "unrelated-network $other_report"
 echo "$other_report" | grep -q 'auth=0' || fail "unrelated network received a write token"
 echo "$other_report" | grep -q 'fid=0' || fail "unrelated network received a file id"
 echo "$other_report" | grep -q 's3_match=0' || fail "unrelated network read the private object"
