@@ -28,7 +28,7 @@ after(() => {
   restoreContainer(redisName);
 });
 
-test("paused and stopped dependencies make /ready return 503", { timeout: 120_000 }, async () => {
+test("paused and stopped dependencies make /ready return 503", { timeout: 180_000 }, async () => {
   docker([
     "run",
     "-d",
@@ -73,6 +73,7 @@ test("paused and stopped dependencies make /ready return 503", { timeout: 120_00
         "editagent",
       ]).status === 0,
     "postgres",
+    postgresName,
   );
   await waitFor(
     () =>
@@ -210,15 +211,19 @@ function restoreContainer(name) {
   spawnSync("docker", ["rm", "-f", name], { encoding: "utf8" });
 }
 
-async function waitFor(ready, label) {
+async function waitFor(ready, label, containerName) {
   const started = Date.now();
-  while (Date.now() - started < 30_000) {
+  while (Date.now() - started < 60_000) {
     if (await ready()) {
       return;
     }
     await delay(200);
   }
-  throw new Error(`${label} did not become ready`);
+  const logs = containerName
+    ? spawnSync("docker", ["logs", containerName], { encoding: "utf8" })
+    : undefined;
+  const detail = logs ? `\n${logs.stdout ?? ""}${logs.stderr ?? ""}` : "";
+  throw new Error(`${label} did not become ready${detail}`);
 }
 
 function listening(server) {
