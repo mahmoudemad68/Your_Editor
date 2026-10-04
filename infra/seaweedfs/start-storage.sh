@@ -26,14 +26,24 @@ cd "$root"
 
 ./infra/seaweedfs/prepare-secrets.sh
 ./infra/seaweedfs/ensure-storage-network.sh
+docker compose build seaweed-master
 
 # Stop first so a running volume cannot serve /status while rules change.
 docker compose stop seaweed-s3 seaweed-filer seaweed-volume seaweed-master >/dev/null 2>&1 || true
-docker compose create seaweed-master seaweed-volume seaweed-filer seaweed-s3 >/dev/null
+docker compose create --force-recreate \
+  seaweed-master seaweed-volume seaweed-filer seaweed-s3 >/dev/null
 
 ./infra/seaweedfs/apply-host-isolation.sh
 ./infra/seaweedfs/apply-host-isolation.sh --check
 
+# `docker start` returns while the entrypoint is waiting. `compose start`
+# waits for health and would deadlock on that wait.
+docker start \
+  "$(docker compose ps -aq seaweed-master)" \
+  "$(docker compose ps -aq seaweed-volume)" \
+  "$(docker compose ps -aq seaweed-filer)" \
+  "$(docker compose ps -aq seaweed-s3)"
+./infra/seaweedfs/apply-container-firewall.sh
 docker compose up -d --wait --wait-timeout 180 \
   seaweed-master seaweed-volume seaweed-filer seaweed-s3
 

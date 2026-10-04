@@ -148,6 +148,13 @@ test("storage components keep fixed addresses and reject anonymous master HTTP",
     starter.indexOf("apply-host-isolation.sh") < starter.indexOf("docker compose up"),
     true,
   );
+  assert.equal(
+    starter.indexOf("apply-container-firewall.sh") < starter.indexOf("docker compose up -d --wait"),
+    true,
+  );
   assert.match(starter, /REBOOT_PERSISTENCE=open/);
+  assert.match(read("infra/seaweedfs/Dockerfile"), /editagent-entrypoint.sh/);
+  assert.match(read("infra/seaweedfs/docker-entrypoint.sh"), /firewall\.ready/);
+  assert.match(read("infra/seaweedfs/apply-container-firewall.sh"), /seaweed-volume 8080 18080/);
   assert.match(read("Makefile"), /start-storage\.sh/);
 });
