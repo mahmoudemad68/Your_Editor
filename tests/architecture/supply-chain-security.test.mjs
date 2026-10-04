@@ -1,0 +1,269 @@
+/**
+ * The supply-chain workflow scans dependencies and the images compose.yaml
+ * already builds or pins. It does not publish images or deploy staging.
+ */
+
+import assert from "node:assert/strict";
+import { execFileSync, spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { test } from "node:test";
+
+const root = path.resolve(import.meta.dirname, "../..");
+
+function read(relativePath) {
+  return readFileSync(path.join(root, relativePath), "utf8");
+}
+
+function run(command, args, options = {}) {
+  return spawnSync(command, args, { encoding: "utf8", ...options });
+}
+
+test("compose images and Dockerfiles on main are the scan matrix", () => {
+  const workflow = read(".github/workflows/supply-chain.yml");
+  const compose = read("compose.yaml");
+  const dockerfiles = [...workflow.matchAll(/dockerfile: (\S+)/g)].map((match) => match[1]);
+  const composeDockerfiles = [...compose.matchAll(/dockerfile: (\S+)/g)].map((match) => match[1]);
+  assert.deepEqual([...new Set(dockerfiles)].sort(), [...new Set(composeDockerfiles)].sort());
+  for (const dockerfile of dockerfiles) {
+    read(dockerfile);
+  }
+  const composeImages = [...compose.matchAll(/^\s+image: (\S+)/gm)].map((match) => match[1]);
+  const upstream = [...new Set(composeImages.filter((image) => !image.startsWith("editagent-")))];
+  assert.deepEqual(upstream.sort(), ["postgres:16.10-alpine", "redis:7.4-alpine"]);
+  for (const image of upstream) {
+    assert.equal(workflow.includes(image), true);
+  }
+  assert.equal(workflow.includes("tools/benchmarks/rendering/docker/Dockerfile"), false);
+  assert.equal(workflow.includes("infra/object-ingress/Dockerfile"), false);
+  assert.equal(workflow.includes("infra/postgres/Dockerfile"), false);
+});
+
+test("the security check reports high and critical findings and does not publish", () => {
+  const workflow = read(".github/workflows/supply-chain.yml");
+  const scanner = read("infra/scripts/supply-chain-scan-image.sh");
+  assert.match(workflow, /supply-chain-security:\n {4}name: supply-chain-security/);
+  assert.match(workflow, /actions\/checkout@v7/);
+  assert.match(workflow, /actions\/upload-artifact@v7/);
+  assert.match(workflow, /actions\/download-artifact@v7/);
+  assert.match(workflow, /pnpm\/action-setup@v6/);
+  assert.match(workflow, /actions\/setup-node@v7/);
+  assert.match(workflow, /actions\/setup-python@v7/);
+  assert.match(workflow, /astral-sh\/setup-uv@v10\.2\.0/);
+  assert.match(workflow, /gitleaks detect/);
+  assert.match(workflow, /pnpm audit --json/);
+  assert.match(workflow, /supply-chain-findings\.py/);
+  assert.match(scanner, /--severity HIGH,CRITICAL/);
+  assert.match(scanner, /--severity CRITICAL --exit-code 1/);
+  assert.match(scanner, /spdx-json=/);
+  assert.match(scanner, /vulnerability ignore file is not allowed/);
+  assert.equal(workflow.includes("docker push"), false);
+  assert.equal(workflow.includes("packages: write"), false);
+  assert.equal(workflow.includes("environment: staging"), false);
+  assert.equal(workflow.includes("ghcr.io"), false);
+  assert.equal(scanner.includes("--ignore-unfixed"), false);
+  assert.equal(scanner.includes("trivyignore"), true);
+  assert.equal(workflow.includes("--ignore-unfixed"), false);
+  assert.equal(read(".gitleaks.toml").includes("editagent-dev-password"), true);
+  assert.equal(read(".gitleaks.toml").includes("editagent-dev-secret"), true);
+});
+
+test("dependabot only watches directories that exist", () => {
+  const dependabot = read(".github/dependabot.yml");
+  const directories = [...dependabot.matchAll(/directory: (\S+)|- (\/\S+)/g)].map(
+    (match) => match[1] ?? match[2],
+  );
+  assert.equal(directories.length > 0, true);
+  for (const directory of directories) {
+    const relative = directory === "/" ? "package.json" : `${directory.slice(1)}/Dockerfile`;
+    if (directory === "/workers/ai-worker") {
+      read("workers/ai-worker/pyproject.toml");
+      continue;
+    }
+    read(relative);
+  }
+});
+
+test("a vulnerability ignore file stops the scan before a tool runs", () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "editagent-ignore-"));
+  writeFileSync(path.join(directory, ".trivyignore"), "CVE-2020-0001\n");
+  const result = run(
+    path.join(root, "infra/scripts/supply-chain-scan-image.sh"),
+    ["api", "example"],
+    {
+      cwd: directory,
+    },
+  );
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /vulnerability ignore file is not allowed/);
+});
+
+test("the security gate rejects a missing or failed scan and accepts a complete pass", () => {
+  const required = execFileSync(path.join(root, "infra/scripts/supply-chain-required-scans.sh"), {
+    encoding: "utf8",
+  })
+    .trim()
+    .split("\n");
+  assert.deepEqual(required, [
+    "api",
+    "web",
+    "media-worker",
+    "render-worker",
+    "agent-worker",
+    "ai-worker",
+    "minio",
+    "postgres",
+    "redis",
+    "dependencies",
+  ]);
+  const gate = path.join(root, "infra/scripts/supply-chain-security-gate.sh");
+  const missing = mkdtempSync(path.join(tmpdir(), "editagent-scans-"));
+  for (const service of required.slice(0, -1)) {
+    writeFileSync(path.join(missing, service), "pass\n");
+  }
+  const rejected = run(gate, [], { env: { ...process.env, SCAN_DIR: missing } });
+  assert.notEqual(rejected.status, 0);
+  assert.match(rejected.stderr, /dependencies/);
+
+  const failed = mkdtempSync(path.join(tmpdir(), "editagent-scans-"));
+  for (const service of required) {
+    writeFileSync(path.join(failed, service), service === "minio" ? "fail\n" : "pass\n");
+  }
+  const failedResult = run(gate, [], { env: { ...process.env, SCAN_DIR: failed } });
+  assert.notEqual(failedResult.status, 0);
+  assert.match(failedResult.stderr, /minio/);
+
+  const passed = mkdtempSync(path.join(tmpdir(), "editagent-scans-"));
+  for (const service of required) {
+    writeFileSync(path.join(passed, service), "pass\n");
+  }
+  const passedResult = run(gate, [], { env: { ...process.env, SCAN_DIR: passed } });
+  assert.equal(passedResult.status, 0, passedResult.stderr);
+  assert.match(passedResult.stdout, /supply-chain security gate passed/);
+});
+
+test("node and Python reports keep high findings and fail on critical ones", () => {
+  const nodeReport = path.join(root, "infra/scripts/node-audit-report.py");
+  const highFile = path.join(mkdtempSync(path.join(tmpdir(), "editagent-node-")), "audit.json");
+  writeFileSync(
+    highFile,
+    JSON.stringify({
+      advisories: {
+        1: {
+          severity: "high",
+          module_name: "example",
+          cves: ["CVE-2026-1000"],
+          title: "example high",
+        },
+      },
+    }),
+  );
+  const high = run("python3", [nodeReport, highFile]);
+  assert.equal(high.status, 0, high.stderr);
+  assert.match(high.stdout, /HIGH Node vulnerabilities/);
+  assert.match(high.stdout, /CVE-2026-1000/);
+
+  const criticalFile = path.join(mkdtempSync(path.join(tmpdir(), "editagent-node-")), "audit.json");
+  writeFileSync(
+    criticalFile,
+    JSON.stringify({
+      vulnerabilities: {
+        example: {
+          severity: "critical",
+          via: [{ title: "example critical", url: "CVE-2026-2000" }],
+        },
+      },
+    }),
+  );
+  const critical = run("python3", [nodeReport, criticalFile]);
+  assert.equal(critical.status, 1);
+  assert.match(critical.stdout, /CRITICAL Node vulnerabilities/);
+
+  const unknown = run("python3", [
+    nodeReport,
+    writeJson(mkdtempSync(path.join(tmpdir(), "editagent-node-")), { unexpected: true }),
+  ]);
+  assert.equal(unknown.status, 1);
+  assert.match(unknown.stderr, /not recognized/);
+
+  const highPython = pythonAudit("HIGH");
+  assert.equal(highPython.status, 0, highPython.stderr);
+  assert.match(highPython.stdout, /High Python vulnerabilities/);
+  const criticalPython = pythonAudit("CRITICAL");
+  assert.equal(criticalPython.status, 1);
+  assert.match(criticalPython.stdout, /Critical Python vulnerabilities/);
+});
+
+test("Trivy findings are printed for high and critical rows", () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "editagent-trivy-"));
+  writeFileSync(
+    path.join(directory, "trivy-api.json"),
+    JSON.stringify({
+      Results: [
+        {
+          Target: "api",
+          Vulnerabilities: [
+            {
+              VulnerabilityID: "CVE-2026-3000",
+              Severity: "HIGH",
+              PkgName: "libc",
+              InstalledVersion: "1",
+              FixedVersion: "2",
+            },
+            {
+              VulnerabilityID: "CVE-2026-3001",
+              Severity: "CRITICAL",
+              PkgName: "openssl",
+              InstalledVersion: "3",
+            },
+            {
+              VulnerabilityID: "CVE-2026-3002",
+              Severity: "LOW",
+              PkgName: "ignore-me",
+              InstalledVersion: "1",
+            },
+          ],
+        },
+      ],
+    }),
+  );
+  const result = run("python3", [
+    path.join(root, "infra/scripts/supply-chain-findings.py"),
+    directory,
+  ]);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /CVE-2026-3000/);
+  assert.match(result.stdout, /CVE-2026-3001/);
+  assert.match(result.stdout, /fixed=none/);
+  assert.equal(result.stdout.includes("CVE-2026-3002"), false);
+  assert.match(result.stdout, /critical=1 high=1/);
+});
+
+function writeJson(directory, value) {
+  const file = path.join(directory, "audit.json");
+  writeFileSync(file, JSON.stringify(value));
+  return file;
+}
+
+function pythonAudit(severity) {
+  const directory = mkdtempSync(path.join(tmpdir(), "editagent-python-"));
+  const vector =
+    severity === "CRITICAL"
+      ? "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+      : "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N";
+  writeFileSync(
+    path.join(directory, "CVE-2026-4000.json"),
+    JSON.stringify({ severity: [{ type: "CVSS_V3", score: vector }] }),
+  );
+  const report = path.join(directory, "report.json");
+  writeFileSync(
+    report,
+    JSON.stringify({
+      dependencies: [{ name: "demo", version: "1", vulns: [{ id: "CVE-2026-4000" }] }],
+    }),
+  );
+  return run("python3", [path.join(root, "infra/scripts/python_audit_report.py"), report, "1"], {
+    env: { ...process.env, PYTHON_AUDIT_OSV_FIXTURE: directory },
+  });
+}

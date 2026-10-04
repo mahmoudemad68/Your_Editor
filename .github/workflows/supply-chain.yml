@@ -1,0 +1,262 @@
+name: Supply chain
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: supply-chain-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dependencies:
+    name: dependencies
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          cache: pnpm
+          node-version-file: .nvmrc
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v10.2.0
+        with:
+          cache-python: true
+          enable-cache: true
+          ignore-nothing-to-cache: true
+          python-version: "3.11"
+          version: "0.12.20"
+
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install secret scanner
+        run: ./infra/scripts/install-supply-chain-tools.sh gitleaks
+
+      - name: Scan for secrets
+        id: secrets
+        run: |
+          set +e
+          mkdir -p supply-chain-evidence
+          gitleaks detect \
+            --source . \
+            --redact \
+            --config .gitleaks.toml \
+            --report-path supply-chain-evidence/gitleaks.json \
+            --report-format json \
+            --exit-code 1
+          echo "status=$?" >> "${GITHUB_OUTPUT}"
+
+      - name: Scan Node dependencies
+        id: node
+        run: |
+          set +e
+          mkdir -p supply-chain-evidence
+          pnpm audit --json > supply-chain-evidence/node-audit.json
+          python3 infra/scripts/node-audit-report.py supply-chain-evidence/node-audit.json
+          echo "status=$?" >> "${GITHUB_OUTPUT}"
+
+      - name: Scan Python dependencies
+        id: python
+        env:
+          SUPPLY_CHAIN_EVIDENCE: supply-chain-evidence
+        run: |
+          set +e
+          ./infra/scripts/audit-python.sh
+          echo "status=$?" >> "${GITHUB_OUTPUT}"
+
+      - name: Record dependency scan pass
+        run: |
+          set -eu
+          test "${{ steps.secrets.outputs.status }}" = "0"
+          test "${{ steps.node.outputs.status }}" = "0"
+          test "${{ steps.python.outputs.status }}" = "0"
+          printf 'pass\n' > dependencies
+
+      - name: Upload dependency evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: supply-chain-dependencies
+          if-no-files-found: ignore
+          path: supply-chain-evidence/
+
+      - name: Upload dependency scan result
+        uses: actions/upload-artifact@v7
+        with:
+          name: supply-chain-scan-dependencies
+          path: dependencies
+
+  images:
+    name: image ${{ matrix.service }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: api
+            dockerfile: apps/api/Dockerfile
+          - service: web
+            dockerfile: apps/web/Dockerfile
+          - service: media-worker
+            dockerfile: workers/media-worker/Dockerfile
+          - service: render-worker
+            dockerfile: workers/render-worker/Dockerfile
+          - service: agent-worker
+            dockerfile: workers/agent-worker/Dockerfile
+          - service: ai-worker
+            dockerfile: workers/ai-worker/Dockerfile
+          - service: minio
+            dockerfile: infra/minio/Dockerfile
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Build image
+        run: |
+          set -eu
+          docker build \
+            --platform linux/amd64 \
+            --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
+            --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
+            -f "${{ matrix.dockerfile }}" \
+            -t "editagent-${{ matrix.service }}:${GITHUB_SHA}" \
+            .
+
+      - name: Install Syft and Trivy
+        run: ./infra/scripts/install-supply-chain-tools.sh
+
+      - name: Generate SBOM and scan
+        run: ./infra/scripts/supply-chain-scan-image.sh "${{ matrix.service }}" "editagent-${{ matrix.service }}:${GITHUB_SHA}"
+
+      - name: Upload SBOM
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: supply-chain-sbom-${{ matrix.service }}
+          if-no-files-found: ignore
+          path: sbom-${{ matrix.service }}.spdx.json
+
+      - name: Upload Trivy report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: supply-chain-trivy-${{ matrix.service }}
+          if-no-files-found: ignore
+          path: |
+            trivy-${{ matrix.service }}.json
+            trivy-${{ matrix.service }}.version.txt
+
+      - name: Upload scan result
+        uses: actions/upload-artifact@v7
+        with:
+          name: supply-chain-scan-${{ matrix.service }}
+          path: ${{ matrix.service }}
+
+  platform:
+    name: platform ${{ matrix.service }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: postgres
+            image: postgres:16.10-alpine
+          - service: redis
+            image: redis:7.4-alpine
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Install Syft and Trivy
+        run: ./infra/scripts/install-supply-chain-tools.sh
+
+      - name: Pull image
+        run: docker pull "${{ matrix.image }}"
+
+      - name: Generate SBOM and scan
+        run: ./infra/scripts/supply-chain-scan-image.sh "${{ matrix.service }}" "${{ matrix.image }}"
+
+      - name: Upload SBOM
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: supply-chain-sbom-${{ matrix.service }}
+          if-no-files-found: ignore
+          path: sbom-${{ matrix.service }}.spdx.json
+
+      - name: Upload Trivy report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: supply-chain-trivy-${{ matrix.service }}
+          if-no-files-found: ignore
+          path: |
+            trivy-${{ matrix.service }}.json
+            trivy-${{ matrix.service }}.version.txt
+
+      - name: Upload scan result
+        uses: actions/upload-artifact@v7
+        with:
+          name: supply-chain-scan-${{ matrix.service }}
+          path: ${{ matrix.service }}
+
+  supply-chain-security:
+    name: supply-chain-security
+    needs: [dependencies, images, platform]
+    if: always() && needs.dependencies.result != 'cancelled' && needs.images.result != 'cancelled' && needs.platform.result != 'cancelled'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Download scan results
+        uses: actions/download-artifact@v7
+        with:
+          pattern: supply-chain-scan-*
+          merge-multiple: true
+          path: scan-results
+        continue-on-error: true
+
+      - name: Download vulnerability reports
+        uses: actions/download-artifact@v7
+        with:
+          pattern: supply-chain-trivy-*
+          merge-multiple: true
+          path: trivy-reports
+        continue-on-error: true
+
+      - name: Report high and critical findings
+        run: python3 infra/scripts/supply-chain-findings.py trivy-reports
+
+      - name: Require every scan to pass
+        env:
+          SCAN_DIR: scan-results
+        run: ./infra/scripts/supply-chain-security-gate.sh
