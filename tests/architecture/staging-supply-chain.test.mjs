@@ -39,7 +39,9 @@ function stagingEnv() {
     EDITAGENT_RENDER_WORKER_IMAGE: pinned("editagent-render-worker"),
     EDITAGENT_AGENT_WORKER_IMAGE: pinned("editagent-agent-worker"),
     EDITAGENT_AI_WORKER_IMAGE: pinned("editagent-ai-worker"),
-    EDITAGENT_MINIO_IMAGE: pinned("editagent-minio"),
+    EDITAGENT_SEAWEEDFS_IMAGE:
+      "chrislusf/seaweedfs@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d",
+    SEAWEED_SECRET_DIR: "/run/editagent/seaweedfs",
     EDITAGENT_OBJECT_INGRESS_IMAGE: pinned("editagent-object-ingress"),
     EDITAGENT_POSTGRES_IMAGE: pinned("postgres"),
     EDITAGENT_REDIS_IMAGE: pinned("redis"),
@@ -80,7 +82,7 @@ test("a synthetic secret fixture fails gitleaks and the repository does not", ()
   }
 });
 
-test("staging compose has no credential fallbacks and does not publish MinIO", () => {
+test("staging compose has no credential fallbacks and does not publish storage internals", () => {
   const source = readFileSync(path.join(root, "compose.staging.yaml"), "utf8");
   assert.equal(source.includes(":-"), false);
   assert.equal(source.includes("editagent-dev-password"), false);
@@ -114,9 +116,16 @@ test("staging compose has no credential fallbacks and does not publish MinIO", (
   const redis =
     rendered.match(/\n {2}redis:\n(?<body>[\s\S]*?)(?=\n {2}[^\s])/)?.groups?.body ?? "";
   assert.equal(redis.includes("published:"), false);
-  const minio =
-    rendered.match(/\n {2}minio:\n(?<body>[\s\S]*?)(?=\n {2}[^\s])/)?.groups?.body ?? "";
-  assert.equal(minio.includes("published:"), false);
+  for (const service of ["master", "volume", "filer", "s3"]) {
+    const body =
+      rendered.match(new RegExp(`\\n {2}${service}:\\n(?<body>[\\s\\S]*?)(?=\\n {2}[^\\s])`))
+        ?.groups?.body ?? "";
+    assert.equal(body.includes("published:"), false, `${service} must not be published`);
+  }
+  assert.match(
+    rendered,
+    /chrislusf\/seaweedfs@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d/,
+  );
   const ingress =
     rendered.match(/\n {2}object-ingress:\n(?<body>[\s\S]*?)(?=\n {2}[^\s])/)?.groups?.body ?? "";
   assert.match(ingress, /host_ip: 127\.0\.0\.1/);
@@ -149,6 +158,9 @@ test("supply-chain workflow publishes digests and blocks an unconfigured staging
   assert.match(workflow, /secrets\.GITHUB_TOKEN/);
   assert.match(workflow, /syft /);
   assert.match(workflow, /trivy image --severity CRITICAL --exit-code 1/);
+  assert.match(workflow, /name: image seaweedfs/);
+  assert.match(workflow, /4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d/);
+  assert.equal(workflow.includes("dockerfile: infra/minio/Dockerfile"), false);
   assert.match(workflow, /name: supply-chain-security/);
   assert.match(workflow, /needs: \[security-gate, images\]/);
   assert.match(workflow, /needs.publish.result == 'success'/);

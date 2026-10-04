@@ -6,7 +6,7 @@ set -eu
 scan_dir=${SCAN_DIR:?SCAN_DIR is required}
 root=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 
-for service in $("$root/supply-chain-services.sh"); do
+for service in $("$root/supply-chain-required-scans.sh"); do
   result="$scan_dir/$service"
   if [ ! -f "$result" ]; then
     echo "security gate rejected $service: scan result missing" >&2

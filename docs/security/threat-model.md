@@ -111,4 +111,4 @@ US-114 is a runtime and configuration baseline.
 
 ## Accepted architecture, unchanged
 
-ADR-004 still selects Redis and BullMQ. This threat model does not add BullMQ. ADR-005 still selects PostgreSQL and MinIO. The development MinIO image is built from the official `minio/minio` source at `RELEASE.2025-10-15T17-29-55Z`; the product decision is still MinIO. ADR-006 still keeps provider secrets in worker configuration. The agent worker schema has optional provider fields and does not call a provider.
+ADR-004 still selects Redis and BullMQ. This threat model does not add BullMQ. ADR-005 selects PostgreSQL and S3-compatible storage. The 2026-10-04 revision uses SeaweedFS for development and staging instead of MinIO. ADR-006 still keeps provider secrets in worker configuration. The agent worker schema has optional provider fields and does not call a provider.

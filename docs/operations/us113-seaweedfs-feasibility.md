@@ -1,6 +1,6 @@
 # SeaweedFS feasibility proof
 
-This is an investigation. MinIO remains the development and staging object store. ADR-005 stays Accepted. The proposed revision in that record is not approved. `compose.yaml` and `compose.staging.yaml` were not switched to SeaweedFS, and no MinIO volume was mounted, migrated, or deleted.
+This page is the disposable proof that Independent QA reviewed at `b075d38e22ce7888e32255c9f7912887c81627c9`. The owner later accepted the ADR-005 revision. Development and staging now use the same image and component split. The spike Compose file remains the original proof. It is not the staging firewall. No MinIO volume was mounted, migrated, or deleted.
 
 Independent QA rejected `weed mini` at `5c973b5c0d74c2c3b9200639c408f2e47970b53c`. The Filer HTTP listener on port 8888 returned a private object with no credentials. The S3 API rejected the same unsigned request. That mini topology is not a candidate.
 

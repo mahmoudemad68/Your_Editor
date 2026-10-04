@@ -46,4 +46,4 @@ Pick one authorized path:
 1. Procure a named AIStor release and accept its license, then replace the image and re-scan it.
 2. Approve an ADR that replaces MinIO, then run the compatibility tests above.
 
-A disposable SeaweedFS 4.48 secure topology is recorded in `docs/operations/us113-seaweedfs-feasibility.md`. Independent QA rejected `weed mini`. The multi-component proof passed locally and is waiting for another independent pass. It does not approve a replacement. Until an owner accepts either path, the MinIO image fails the critical scan, the security gate fails, and no image is published.
+The project owner accepted the SeaweedFS revision of ADR-005 on 2026-10-04 in a comment on PR #18. Development and staging Compose now use that topology. The MinIO image is no longer in the release matrix. The pinned SeaweedFS digest is scanned with the same critical gate. One failed scan still blocks every publish. AIStor was not procured. Independent Integration QA of this integrated change is still required, and PR #18 stays unmerged until that review and the release gates pass.

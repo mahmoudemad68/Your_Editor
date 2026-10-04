@@ -10,8 +10,10 @@ name: editagent-staging
 
 x-database-url: &database-url postgresql://${POSTGRES_USER:?POSTGRES_USER is required}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:?POSTGRES_DB is required}
 
+x-seaweed-image: &seaweed-image ${EDITAGENT_SEAWEEDFS_IMAGE:?EDITAGENT_SEAWEEDFS_IMAGE is required}
+
 x-object-storage: &object-storage
-  S3_ENDPOINT: http://minio:9000
+  S3_ENDPOINT: http://s3:8333
   S3_BUCKET: ${S3_BUCKET:?S3_BUCKET is required}
   S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:?S3_ACCESS_KEY_ID is required}
   S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:?S3_SECRET_ACCESS_KEY is required}
@@ -55,21 +57,101 @@ services:
       start_period: 5s
     restart: unless-stopped
 
-  minio:
-    image: ${EDITAGENT_MINIO_IMAGE:?EDITAGENT_MINIO_IMAGE is required}
-    pull_policy: always
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
-    command: ["server", "/data", "--console-address", ":9001"]
+  master:
+    image: *seaweed-image
+    pull_policy: if_not_present
+    command:
+      - master
+      - -ip=master
+      - -ip.bind=0.0.0.0
+      - -port=9333
+      - -mdir=/data
+      - -telemetry=false
+    networks: [storage_internal]
     volumes:
-      - staging-minio-data:/data
-    # No host ports. The object ingress is the external object entry point.
-    # Sharing the Docker network, or reaching this container's bridge address
-    # from the host, still reaches the MinIO API. Unpublished ports are not
-    # same-host isolation.
+      - staging-seaweed-master:/data
+      - ${SEAWEED_SECRET_DIR:?SEAWEED_SECRET_DIR is required}/security.toml:/etc/seaweedfs/security.toml:ro
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9000/minio/health/live"]
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9333/dir/status"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+
+  volume:
+    image: *seaweed-image
+    pull_policy: if_not_present
+    command:
+      - volume
+      - -dir=/data
+      - -max=8
+      - -mserver=master:9333
+      - -ip=volume
+      - -ip.bind=0.0.0.0
+      - -port=8080
+    networks: [storage_internal]
+    volumes:
+      - staging-seaweed-volume:/data
+      - ${SEAWEED_SECRET_DIR:?SEAWEED_SECRET_DIR is required}/security.toml:/etc/seaweedfs/security.toml:ro
+    depends_on:
+      - master
+    healthcheck:
+      test: ["CMD-SHELL", "wget -S -O /dev/null http://volume:8080/ 2>&1 | grep -q HTTP/"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+
+  filer:
+    image: *seaweed-image
+    pull_policy: if_not_present
+    command:
+      - filer
+      - -master=master:9333
+      - -ip=filer
+      - -ip.bind=0.0.0.0
+      - -port=8888
+      - -defaultStoreDir=/data
+      - -disableDirListing
+    networks: [storage_internal]
+    volumes:
+      - staging-seaweed-filer:/data
+      - ${SEAWEED_SECRET_DIR:?SEAWEED_SECRET_DIR is required}/security.toml:/etc/seaweedfs/security.toml:ro
+    depends_on:
+      - volume
+    healthcheck:
+      test: ["CMD-SHELL", "wget -S -O /dev/null http://filer:8888/ 2>&1 | grep -q HTTP/"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+
+  s3:
+    image: *seaweed-image
+    pull_policy: if_not_present
+    command:
+      - s3
+      - -filer=filer:8888
+      - -ip.bind=0.0.0.0
+      - -port=8333
+      - -port.iceberg=0
+      - -port.lance=0
+      - -iam=false
+      - -config=/etc/seaweedfs/s3.json
+    networks: [default, storage_internal]
+    volumes:
+      - ${SEAWEED_SECRET_DIR:?SEAWEED_SECRET_DIR is required}/security.toml:/etc/seaweedfs/security.toml:ro
+      - ${SEAWEED_SECRET_DIR:?SEAWEED_SECRET_DIR is required}/s3.json:/etc/seaweedfs/s3.json:ro
+    depends_on:
+      - filer
+    # No host port. Object Ingress is the external object entry point.
+    # The host firewall drops this container's other listeners and the
+    # internal storage subnet. Unpublished ports alone are not isolation.
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8333/status"]
       interval: 5s
       timeout: 5s
       retries: 20
@@ -80,12 +162,12 @@ services:
     image: ${EDITAGENT_OBJECT_INGRESS_IMAGE:?EDITAGENT_OBJECT_INGRESS_IMAGE is required}
     pull_policy: always
     environment:
-      MINIO_UPSTREAM: http://minio:9000
+      MINIO_UPSTREAM: http://s3:8333
       PORT: "8080"
     ports:
       - "${STAGING_BIND_IP:?STAGING_BIND_IP is required}:${STAGING_OBJECTS_PORT:?STAGING_OBJECTS_PORT is required}:8080"
     depends_on:
-      minio:
+      s3:
         condition: service_healthy
     healthcheck:
       test:
@@ -117,7 +199,7 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      minio:
+      s3:
         condition: service_healthy
     healthcheck:
       test:
@@ -198,7 +280,7 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      minio:
+      s3:
         condition: service_healthy
     healthcheck:
       test:
@@ -226,7 +308,7 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      minio:
+      s3:
         condition: service_healthy
     healthcheck:
       test:
@@ -251,7 +333,7 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      minio:
+      s3:
         condition: service_healthy
     healthcheck:
       test:
@@ -287,7 +369,7 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      minio:
+      s3:
         condition: service_healthy
     healthcheck:
       test:
@@ -303,7 +385,19 @@ services:
       start_period: 20s
     restart: unless-stopped
 
+networks:
+  default:
+    enable_ipv6: false
+  storage_internal:
+    name: editagent-staging-storage-internal
+    enable_ipv6: false
+    internal: true
+
 volumes:
   staging-postgres-data:
   staging-redis-data:
-  staging-minio-data:
+  # staging-minio-data is not declared. An existing volume must be copied
+  # through the S3 API and must not be deleted by Compose.
+  staging-seaweed-master:
+  staging-seaweed-volume:
+  staging-seaweed-filer:

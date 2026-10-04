@@ -16,6 +16,9 @@ help:
 		'make staging-config Validate staging Compose when its environment is already exported'
 
 up:
+	./infra/seaweedfs/prepare-secrets.sh
+	$(COMPOSE) up -d
+	./infra/seaweedfs/apply-compose-isolation.sh compose.yaml
 	$(COMPOSE) up -d --wait --wait-timeout 300
 
 down:
@@ -31,6 +34,9 @@ seed:
 	./infra/scripts/seed.sh
 
 up-gpu:
+	./infra/seaweedfs/prepare-secrets.sh
+	$(COMPOSE) --profile gpu up -d --scale ai-worker=0
+	./infra/seaweedfs/apply-compose-isolation.sh compose.yaml --profile gpu
 	$(COMPOSE) --profile gpu up -d --wait --wait-timeout 300 --scale ai-worker=0
 
 compose-config:

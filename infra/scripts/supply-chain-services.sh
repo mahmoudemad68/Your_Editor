@@ -7,5 +7,4 @@ printf '%s\n' \
   render-worker \
   agent-worker \
   ai-worker \
-  minio \
   object-ingress

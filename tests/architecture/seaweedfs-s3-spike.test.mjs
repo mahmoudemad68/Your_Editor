@@ -657,3 +657,130 @@ test("secure SeaweedFS topology keeps private bytes behind S3", { timeout: 300_0
     assert.deepEqual(minioVolumesAfter, minioVolumesBefore);
   }
 });
+
+test(
+  "development Compose SeaweedFS topology keeps the adapter guarantees",
+  { timeout: 300_000 },
+  async () => {
+    const secrets = mkdtempSync(path.join(tmpdir(), "seaweed-compose-secrets-"));
+    const projectName = "editagent-storage-it";
+    const env = {
+      ...process.env,
+      SEAWEED_SECRET_DIR: secrets,
+      S3_ACCESS_KEY_ID: "editagent",
+      S3_SECRET_ACCESS_KEY: "editagent-dev-secret",
+      S3_PORT: "19083",
+      OBJECTS_PORT: "19081",
+    };
+    const prepared = run(path.join(root, "infra/seaweedfs/prepare-secrets.sh"), [], { env });
+    assert.equal(prepared.status, 0, prepared.stderr + prepared.stdout);
+    const runtimeUid = Number(prepared.stdout.match(/uid=(\d+)/)?.[1]);
+    const runtimeGid = Number(prepared.stdout.match(/gid=(\d+)/)?.[1]);
+    assert.equal(runtimeUid > 0, true, prepared.stdout);
+    for (const name of ["security.toml", "s3.json"]) {
+      const fileStat = statSync(path.join(secrets, name));
+      assert.equal(fileStat.mode & 0o777, 0o600);
+      assert.equal(fileStat.uid, runtimeUid);
+      assert.equal(fileStat.gid, runtimeGid);
+    }
+    assert.equal(statSync(secrets).mode & 0o777, 0o700);
+    const minioVolumesBefore = docker(["volume", "ls", "--format", "{{.Name}}"])
+      .split("\n")
+      .filter((name) => name.includes("minio"));
+    const composeDev = (args) =>
+      run("docker", ["compose", "-p", projectName, "-f", "compose.yaml", ...args], { env });
+    const up = composeDev(["up", "-d", "master", "volume", "filer", "s3", "object-ingress"]);
+    assert.equal(up.status, 0, up.stderr + up.stdout);
+    try {
+      const isolated = run(
+        path.join(root, "infra/seaweedfs/apply-compose-isolation.sh"),
+        ["compose.yaml", "-p", projectName],
+        { env },
+      );
+      assert.equal(isolated.status, 0, isolated.stderr + isolated.stdout);
+      assert.equal(isolated.stdout.includes("DOCKER-USER"), true, isolated.stdout);
+      assert.equal(isolated.stdout.includes("DROP"), true, isolated.stdout);
+      const ready = composeDev([
+        "up",
+        "-d",
+        "--wait",
+        "--wait-timeout",
+        "120",
+        "master",
+        "volume",
+        "filer",
+        "s3",
+        "object-ingress",
+      ]);
+      assert.equal(ready.status, 0, ready.stderr + ready.stdout);
+      const storage = new S3ObjectStorage({
+        endpoint: "http://127.0.0.1:19083",
+        publicEndpoint: "http://127.0.0.1:19081",
+        bucket: "editagent",
+        accessKeyId: "editagent",
+        secretAccessKey: "editagent-dev-secret",
+        region: "us-east-1",
+      });
+      const body = Buffer.from(marker);
+      const hash = createHash("sha256").update(body).digest("hex");
+      const key = `compose/${hash}.mp4`;
+      await storage.ensureBucket();
+      await storage.put(key, body, "video/mp4", hash);
+      assert.equal((await storage.stat(key))?.checksumSha256Hex, hash);
+      const presigned = await storage.presignPut({
+        key: `compose-signed/${hash}.mp4`,
+        contentType: "video/mp4",
+        checksumSha256Hex: hash,
+        expiresInSeconds: 90,
+        onlyIfAbsent: true,
+      });
+      assert.equal(new URL(presigned.url).host, "127.0.0.1:19081");
+      assert.equal(
+        (await fetch(presigned.url, { method: "PUT", headers: presigned.requiredHeaders, body }))
+          .status,
+        200,
+      );
+      assert.equal(
+        (await fetch(presigned.url, { method: "PUT", headers: presigned.requiredHeaders, body }))
+          .status,
+        412,
+      );
+      const filerIp = docker([
+        "inspect",
+        "-f",
+        '{{(index .NetworkSettings.Networks "editagent-storage-internal").IPAddress}}',
+        `${projectName}-filer-1`,
+      ]);
+      const filer = probe(`http://${filerIp}:8888/buckets/editagent/compose-signed/${hash}.mp4`);
+      assertNoBytes(filer, "compose filer");
+      assert.notEqual(filer.status, 200);
+      const unsigned = probe(`http://127.0.0.1:19083/editagent/compose-signed/${hash}.mp4`);
+      assertNoBytes(unsigned, "compose s3");
+      assert.equal(unsigned.status, 403);
+      assert.equal(composeDev(["restart", "s3", "filer", "volume"]).status, 0);
+      let readable = false;
+      for (let attempt = 0; attempt < 40; attempt += 1) {
+        const again = await storage.stat(`compose-signed/${hash}.mp4`).catch(() => null);
+        if (again?.checksumSha256Hex === hash) {
+          readable = true;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
+      assert.equal(readable, true);
+    } finally {
+      run(
+        path.join(root, "infra/seaweedfs/apply-compose-isolation.sh"),
+        ["remove", "compose.yaml", "-p", projectName],
+        { env },
+      );
+      composeDev(["down", "-v"]);
+      rmSync(secrets, { recursive: true, force: true });
+      assert.equal(existsSync(secrets), false);
+      const minioVolumesAfter = docker(["volume", "ls", "--format", "{{.Name}}"])
+        .split("\n")
+        .filter((name) => name.includes("minio"));
+      assert.deepEqual(minioVolumesAfter, minioVolumesBefore);
+    }
+  },
+);

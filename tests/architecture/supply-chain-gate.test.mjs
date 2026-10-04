@@ -34,7 +34,7 @@ function runPublish(scanDir) {
   return { ...result, logExists: existsSync(log) };
 }
 
-test("a failed MinIO scan blocks every image publish", () => {
+test("a failed SeaweedFS scan blocks every image publish", () => {
   const scanDir = mkdtempSync(path.join(tmpdir(), "editagent-scans-"));
   for (const service of [
     "api",
@@ -47,10 +47,10 @@ test("a failed MinIO scan blocks every image publish", () => {
   ]) {
     writeFileSync(path.join(scanDir, service), "pass\n");
   }
-  writeFileSync(path.join(scanDir, "minio"), "fail\n");
+  writeFileSync(path.join(scanDir, "seaweedfs"), "fail\n");
   const result = runPublish(scanDir);
   assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /rejected minio/);
+  assert.match(result.stderr, /rejected seaweedfs/);
   assert.equal(result.stdout.includes("published scanned images"), false);
   assert.equal(result.logExists, false);
 });

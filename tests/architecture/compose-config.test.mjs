@@ -10,11 +10,15 @@ const defaultServices = [
   "agent-worker",
   "ai-worker",
   "api",
+  "filer",
+  "master",
   "media-worker",
-  "minio",
+  "object-ingress",
   "postgres",
   "redis",
   "render-worker",
+  "s3",
+  "volume",
   "web",
 ];
 

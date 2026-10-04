@@ -38,8 +38,6 @@ jobs:
             dockerfile: workers/agent-worker/Dockerfile
           - service: ai-worker
             dockerfile: workers/ai-worker/Dockerfile
-          - service: minio
-            dockerfile: infra/minio/Dockerfile
           - service: object-ingress
             dockerfile: infra/object-ingress/Dockerfile
     steps:
@@ -125,10 +123,48 @@ jobs:
           name: supply-chain-platform
           path: platform-digests.txt
 
+  seaweedfs:
+    name: image seaweedfs
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Install Syft and Trivy
+        run: ./infra/scripts/install-supply-chain-tools.sh
+
+      - name: Pull the approved SeaweedFS digest
+        run: docker pull chrislusf/seaweedfs@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d
+
+      - name: Generate SBOM
+        run: |
+          set -eu
+          syft chrislusf/seaweedfs@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d -o spdx-json=sbom-seaweedfs.spdx.json
+          test -s sbom-seaweedfs.spdx.json
+
+      - name: Upload SBOM
+        uses: actions/upload-artifact@v7
+        with:
+          name: supply-chain-seaweedfs
+          path: sbom-seaweedfs.spdx.json
+
+      - name: Scan image for critical vulnerabilities
+        run: trivy image --severity CRITICAL --exit-code 1 chrislusf/seaweedfs@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d
+
+      - name: Record scan pass
+        run: printf 'pass\n' > seaweedfs
+
+      - name: Upload scan result
+        uses: actions/upload-artifact@v7
+        with:
+          name: supply-chain-scan-seaweedfs
+          path: seaweedfs
+
   security-gate:
     name: supply-chain-security
-    needs: images
-    if: always() && needs.images.result != 'cancelled'
+    needs: [images, seaweedfs]
+    if: always() && needs.images.result != 'cancelled' && needs.seaweedfs.result != 'cancelled'
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -207,11 +243,9 @@ jobs:
       STAGING_SSH_KEY: ${{ secrets.STAGING_SSH_KEY }}
       STAGING_SSH_KNOWN_HOSTS: ${{ secrets.STAGING_SSH_KNOWN_HOSTS }}
       POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
-      MINIO_ROOT_PASSWORD: ${{ secrets.MINIO_ROOT_PASSWORD }}
       S3_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
       POSTGRES_USER: ${{ vars.POSTGRES_USER }}
       POSTGRES_DB: ${{ vars.POSTGRES_DB }}
-      MINIO_ROOT_USER: ${{ vars.MINIO_ROOT_USER }}
       S3_ACCESS_KEY_ID: ${{ vars.S3_ACCESS_KEY_ID }}
       S3_BUCKET: ${{ vars.S3_BUCKET }}
       S3_REGION: ${{ vars.S3_REGION }}
@@ -245,8 +279,8 @@ jobs:
           missing=""
           for name in \
             STAGING_HOST STAGING_SSH_USER STAGING_SSH_KEY STAGING_SSH_KNOWN_HOSTS \
-            POSTGRES_PASSWORD MINIO_ROOT_PASSWORD S3_SECRET_ACCESS_KEY \
-            POSTGRES_USER POSTGRES_DB MINIO_ROOT_USER S3_ACCESS_KEY_ID \
+            POSTGRES_PASSWORD S3_SECRET_ACCESS_KEY \
+            POSTGRES_USER POSTGRES_DB S3_ACCESS_KEY_ID \
             S3_BUCKET S3_REGION S3_PUBLIC_ENDPOINT STAGING_BIND_IP STAGING_WEB_PORT \
             STAGING_OBJECTS_PORT \
             STAGING_WEB_URL STAGING_API_URL STAGING_DEPLOY_PATH MEDIA_INSPECT_QUEUE
@@ -276,8 +310,6 @@ jobs:
             printf 'POSTGRES_USER=%s\n' "$POSTGRES_USER"
             printf 'POSTGRES_PASSWORD=%s\n' "$POSTGRES_PASSWORD"
             printf 'POSTGRES_DB=%s\n' "$POSTGRES_DB"
-            printf 'MINIO_ROOT_USER=%s\n' "$MINIO_ROOT_USER"
-            printf 'MINIO_ROOT_PASSWORD=%s\n' "$MINIO_ROOT_PASSWORD"
             printf 'S3_ACCESS_KEY_ID=%s\n' "$S3_ACCESS_KEY_ID"
             printf 'S3_SECRET_ACCESS_KEY=%s\n' "$S3_SECRET_ACCESS_KEY"
             printf 'S3_BUCKET=%s\n' "$S3_BUCKET"
@@ -293,8 +325,8 @@ jobs:
             printf 'EDITAGENT_RENDER_WORKER_IMAGE=%s\n' "$(cat supply-chain/digest-render-worker.txt)"
             printf 'EDITAGENT_AGENT_WORKER_IMAGE=%s\n' "$(cat supply-chain/digest-agent-worker.txt)"
             printf 'EDITAGENT_AI_WORKER_IMAGE=%s\n' "$(cat supply-chain/digest-ai-worker.txt)"
-            printf 'EDITAGENT_MINIO_IMAGE=%s\n' "$(cat supply-chain/digest-minio.txt)"
             printf 'EDITAGENT_OBJECT_INGRESS_IMAGE=%s\n' "$(cat supply-chain/digest-object-ingress.txt)"
+            printf 'EDITAGENT_SEAWEEDFS_IMAGE=%s\n' "chrislusf/seaweedfs@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d"
             cat supply-chain/platform-digests.txt
           } > "$env_file"
           ssh -i "$HOME/.ssh/staging" -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
