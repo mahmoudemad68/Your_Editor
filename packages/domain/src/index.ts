@@ -45,8 +45,20 @@ export { AgentRun, CreativeMemory } from "./modules/agent/index.js";
 export { Component } from "./modules/components/index.js";
 export { Critique } from "./modules/critic/index.js";
 export { Clip, Effect, Timeline, Track } from "./modules/editing/index.js";
-export { User, operatorRole } from "./modules/identity/index.js";
-export type { OperatorRole, UserRepository, UserSnapshot } from "./modules/identity/index.js";
+export {
+  normalizeEmail,
+  operatorRole,
+  RefreshSession,
+  requireArgon2idHash,
+  User,
+} from "./modules/identity/index.js";
+export type {
+  OperatorRole,
+  RefreshSessionRepository,
+  RefreshSessionSnapshot,
+  UserRepository,
+  UserSnapshot,
+} from "./modules/identity/index.js";
 export { Job, JobAttempt, jobStatus } from "./modules/jobs/index.js";
 export type {
   EnqueueJobCommand,

@@ -1,6 +1,6 @@
 # Domain model and ER design
 
-US-104 records the initial domain model. US-120 adds the Project and ProjectMembership migration in `apps/api/migrations`. `project_memberships.user_id` is a UUID without a foreign key. The User table and that foreign key wait for US-118, so this story does not create the authentication schema. Later stories own the other adapters.
+US-104 records the initial domain model. US-120 adds the Project and ProjectMembership migration in `apps/api/migrations`. US-118 adds `users`, `refresh_sessions`, and the `project_memberships.user_id` foreign key in `0007_identity.sql`. Later stories own the other adapters.
 
 The domain package holds entities, value objects, invariants, and repository interfaces. It does not import an ORM, a database driver, or infrastructure. No ORM product is selected here. When a story adds a repository, the mapping lives in that story's infrastructure adapter and the domain interface stays free of column decorators.
 
@@ -16,7 +16,7 @@ These aggregates have one repository interface each, in the owning module:
 
 | Aggregate    | Repository               | Module   | Soft delete                               |
 | ------------ | ------------------------ | -------- | ----------------------------------------- |
-| User         | `UserRepository`         | Identity | No. Credential storage is US-118.         |
+| User         | `UserRepository`         | Identity | No. Credentials are argon2id hashes.      |
 | Project      | `ProjectRepository`      | Projects | Yes. `deletedAt` set by `deleteProject`.  |
 | MediaAsset   | `MediaAssetRepository`   | Media    | No in this slice.                         |
 | DerivedAsset | `DerivedAssetRepository` | Media    | No. A DerivedAsset is not a MediaAsset.   |
@@ -56,8 +56,8 @@ erDiagram
 
   User {
     uuidv7 id PK
-    string email UK "planned US-118"
-    string passwordHash "planned argon2id US-118"
+    string email UK
+    string passwordHash "argon2id"
     string operatorRole "admin or null"
     bigint createdAt
     bigint updatedAt
@@ -66,7 +66,7 @@ erDiagram
   RefreshSession {
     uuidv7 id PK
     uuidv7 userId FK
-    string secretHash "planned not the raw token"
+    string secretHash "not the raw token"
     uuidv7 rotatedFromId FK "nullable"
     bigint expiresAt
     bigint revokedAt "null while active"

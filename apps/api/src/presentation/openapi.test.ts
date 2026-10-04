@@ -66,4 +66,20 @@ test("the build writes an OpenAPI document for the Project routes", () => {
     assert.equal(projectSchema.properties["revision"], undefined);
     assert.equal(projectSchema.properties["passwordHash"], undefined);
   }
+  const register = document.paths["/auth/register"]?.post;
+  const login = document.paths["/auth/login"]?.post;
+  const refresh = document.paths["/auth/refresh"]?.post;
+  const logout = document.paths["/auth/logout"]?.post;
+  for (const status of ["201", "400", "401", "409", "429"]) {
+    assert.ok(register?.responses?.[status], `POST /auth/register ${status}`);
+  }
+  for (const status of ["200", "400", "401", "429"]) {
+    assert.ok(login?.responses?.[status], `POST /auth/login ${status}`);
+  }
+  for (const status of ["200", "401", "403"]) {
+    assert.ok(refresh?.responses?.[status], `POST /auth/refresh ${status}`);
+  }
+  for (const status of ["204", "401", "403"]) {
+    assert.ok(logout?.responses?.[status], `POST /auth/logout ${status}`);
+  }
 });

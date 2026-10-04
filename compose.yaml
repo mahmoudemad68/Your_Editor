@@ -91,6 +91,8 @@ services:
       REDIS_URL: redis://redis:6379/0
       PORT: "3001"
       HOST: "0.0.0.0"
+      AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:-local-development-jwt-secret-32chars}
+      AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-false}
       <<: *object-storage
       S3_PUBLIC_ENDPOINT: http://localhost:${MINIO_PORT:-9000}
     ports:

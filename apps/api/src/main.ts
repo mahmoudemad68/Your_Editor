@@ -9,8 +9,21 @@ import {
 } from "@editagent/job-queue";
 import { createServiceLogger, startNoopTracing } from "@editagent/shared";
 import { Pool } from "pg";
+import {
+  LoginUser,
+  LogoutUser,
+  RefreshAccess,
+  RegisterUser,
+} from "./application/authentication.js";
+import { LoginRateLimit } from "./application/login-rate-limit.js";
 import { createApiApplication } from "./create-api-application.js";
+import { Argon2idHasher } from "./infrastructure/argon2id-hasher.js";
 import { ConfigurationError, loadApiConfig } from "./infrastructure/config.js";
+import { JwtSessionTokens } from "./infrastructure/jwt-session-tokens.js";
+import {
+  PostgresRefreshSessionRepository,
+  PostgresUserRepository,
+} from "./infrastructure/postgres-identity-repository.js";
 import { applyMigrations } from "./infrastructure/migrate.js";
 import { NodeMediaAssetIdGenerator } from "./infrastructure/node-media-asset-id-generator.js";
 import { NodeProjectIdGenerator } from "./infrastructure/node-project-id-generator.js";
@@ -33,6 +46,20 @@ export async function bootstrap(): Promise<void> {
   });
   await applyMigrations(pool);
   const clock = new SystemClock();
+  const users = new PostgresUserRepository(pool);
+  const sessions = new PostgresRefreshSessionRepository(pool);
+  const passwords = new Argon2idHasher();
+  const tokens = new JwtSessionTokens(config.authJwtSecret);
+  const rateLimit = new LoginRateLimit(30, 60_000);
+  const auth = {
+    register: new RegisterUser(users, sessions, passwords, tokens, clock, rateLimit),
+    login: new LoginUser(users, sessions, passwords, tokens, clock, rateLimit),
+    refresh: new RefreshAccess(users, sessions, tokens, clock),
+    logout: new LogoutUser(sessions, clock),
+    tokens,
+    now: () => clock.now(),
+    cookieSecure: config.authCookieSecure,
+  };
   const jobs = new PostgresJobRepository(pool);
   const queue = new BullMqJobQueue(config.redisUrl);
   const publication = new PostgresUploadPublication({
@@ -59,6 +86,7 @@ export async function bootstrap(): Promise<void> {
       check: () => postgresAndRedisReady(pool, config.redisUrl),
     },
     publication,
+    auth,
   });
   await app.listen(config.port, config.host);
 }

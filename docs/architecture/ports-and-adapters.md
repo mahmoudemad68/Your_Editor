@@ -67,22 +67,22 @@ Each aggregate has one repository port. ORM types stay in the adapter. The domai
 
 Names match the domain interfaces. This slice does not use an `I` prefix. A row marked later is a planned port, not an interface in the package yet.
 
-| Port                     | Module     | Aggregate                 | In this slice |
-| ------------------------ | ---------- | ------------------------- | ------------- |
-| `UserRepository`         | Identity   | User                      | Yes           |
-| `ProjectRepository`      | Projects   | Project                   | Yes           |
-| `MediaAssetRepository`   | Media      | MediaAsset                | Yes           |
-| `DerivedAssetRepository` | Media      | DerivedAsset              | Yes           |
-| `JobRepository`          | Jobs       | Job                       | Yes           |
-| `SessionRepository`      | Identity   | Refresh session           | Later, US-118 |
-| `AnalysisRepository`     | Analysis   | MediaAnalysis             | Later         |
-| `TimelineRepository`     | Editing    | Timeline                  | Later         |
-| `AgentRunRepository`     | Agent      | AgentRun                  | Later         |
-| `AssetRepository`        | Assets     | Asset                     | Later         |
-| `ComponentRepository`    | Components | Component manifest record | Later         |
-| `CritiqueRepository`     | Critic     | Critique                  | Later         |
+| Port                       | Module     | Aggregate                 | In this slice |
+| -------------------------- | ---------- | ------------------------- | ------------- |
+| `UserRepository`           | Identity   | User                      | Yes           |
+| `ProjectRepository`        | Projects   | Project                   | Yes           |
+| `MediaAssetRepository`     | Media      | MediaAsset                | Yes           |
+| `DerivedAssetRepository`   | Media      | DerivedAsset              | Yes           |
+| `JobRepository`            | Jobs       | Job                       | Yes           |
+| `RefreshSessionRepository` | Identity   | Refresh session           | Yes           |
+| `AnalysisRepository`       | Analysis   | MediaAnalysis             | Later         |
+| `TimelineRepository`       | Editing    | Timeline                  | Later         |
+| `AgentRunRepository`       | Agent      | AgentRun                  | Later         |
+| `AssetRepository`          | Assets     | Asset                     | Later         |
+| `ComponentRepository`      | Components | Component manifest record | Later         |
+| `CritiqueRepository`       | Critic     | Critique                  | Later         |
 
-Persistence mapping is an infrastructure concern. `PostgresProjectRepository` in the API infrastructure layer implements `ProjectRepository` and restores rows with `Project.restore`. `project_memberships.user_id` does not reference a User table until US-118.
+Persistence mapping is an infrastructure concern. `PostgresProjectRepository` in the API infrastructure layer implements `ProjectRepository` and restores rows with `Project.restore`. `0007_identity.sql` adds `users`, `refresh_sessions`, and the `project_memberships.user_id` foreign key.
 
 ## Model ports
 

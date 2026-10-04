@@ -32,6 +32,14 @@ import {
 import { MediaController } from "./presentation/media.controller.js";
 import { ProjectsController } from "./presentation/projects.controller.js";
 import { UploadsController } from "./presentation/uploads.controller.js";
+import { AUTH_COOKIE_SECURE, AUTH_NOW, AuthController } from "./presentation/auth.controller.js";
+import {
+  LoginUser,
+  LogoutUser,
+  RefreshAccess,
+  RegisterUser,
+} from "./application/authentication.js";
+import { type SessionTokens } from "./application/session-tokens.js";
 
 export interface ApiComposition {
   readonly projects: ProjectRepository;
@@ -44,6 +52,15 @@ export interface ApiComposition {
   readonly logger?: JsonLogger;
   readonly publication?: UploadPublication;
   readonly readiness?: ReadinessProbe;
+  readonly auth?: {
+    readonly register: RegisterUser;
+    readonly login: LoginUser;
+    readonly refresh: RefreshAccess;
+    readonly logout: LogoutUser;
+    readonly tokens: SessionTokens;
+    readonly now: () => bigint;
+    readonly cookieSecure: boolean;
+  };
 }
 
 function createFallbackLogger(): JsonLogger {
@@ -62,8 +79,19 @@ export class AppModule {
         ProjectsController,
         UploadsController,
         MediaController,
+        ...(composition.auth === undefined ? [] : [AuthController]),
       ],
       providers: [
+        ...(composition.auth === undefined
+          ? []
+          : [
+              { provide: RegisterUser, useValue: composition.auth.register },
+              { provide: LoginUser, useValue: composition.auth.login },
+              { provide: RefreshAccess, useValue: composition.auth.refresh },
+              { provide: LogoutUser, useValue: composition.auth.logout },
+              { provide: AUTH_NOW, useValue: composition.auth.now },
+              { provide: AUTH_COOKIE_SECURE, useValue: composition.auth.cookieSecure },
+            ]),
         {
           provide: CreateProject,
           useValue: new CreateProject(composition.projects, composition.ids, composition.clock),

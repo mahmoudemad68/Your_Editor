@@ -29,6 +29,8 @@ export interface ApiConfig {
   readonly redisUrl: string;
   readonly port: number;
   readonly host: string;
+  readonly authJwtSecret: string;
+  readonly authCookieSecure: boolean;
   readonly objectStorage: ApiObjectStorageConfig;
 }
 
@@ -208,12 +210,24 @@ const apiSchema = z
       "Set it to the object-storage region, for example us-east-1.",
     ),
     S3_PRESIGN_TTL_SECONDS: presignTtlSeconds(),
+    AUTH_JWT_SECRET: requiredString(
+      "AUTH_JWT_SECRET",
+      "Set it to a random signing secret of at least 32 characters. Do not reuse a password.",
+    ).refine((value) => value.length >= 32, {
+      error: "AUTH_JWT_SECRET must be at least 32 characters.",
+    }),
+    AUTH_COOKIE_SECURE: z
+      .string()
+      .optional()
+      .transform((value) => value === "true"),
   })
   .transform((env): ApiConfig => ({
     databaseUrl: env.DATABASE_URL,
     redisUrl: env.REDIS_URL,
     port: env.PORT,
     host: env.HOST,
+    authJwtSecret: env.AUTH_JWT_SECRET,
+    authCookieSecure: env.AUTH_COOKIE_SECURE,
     objectStorage: {
       endpoint: env.S3_ENDPOINT,
       publicEndpoint: env.S3_PUBLIC_ENDPOINT,

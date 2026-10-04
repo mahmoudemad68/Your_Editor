@@ -67,7 +67,7 @@ describe("Postgres ProjectRepository", { concurrency: 1 }, () => {
     await pool.end();
   });
 
-  test("migrations apply on a clean database and defer the User foreign key", async () => {
+  test("migrations apply on a clean database and reference users from memberships", async () => {
     const applied = await applyMigrations(pool);
     assert.deepEqual(applied, [
       "0001_projects.sql",
@@ -76,6 +76,7 @@ describe("Postgres ProjectRepository", { concurrency: 1 }, () => {
       "0004_media_inspection_revision.sql",
       "0005_jobs.sql",
       "0006_inspect_publication_outbox.sql",
+      "0007_identity.sql",
     ]);
     const again = await applyMigrations(pool);
     assert.deepEqual(again, []);
@@ -98,10 +99,18 @@ describe("Postgres ProjectRepository", { concurrency: 1 }, () => {
        FROM pg_constraint
        WHERE conrelid = 'project_memberships'::regclass AND contype = 'f'`,
     );
-    assert.equal(foreignKeys.rowCount, 1);
-    assert.match(foreignKeys.rows[0]?.definition ?? "", /project_id/);
-    assert.match(foreignKeys.rows[0]?.definition ?? "", /projects/);
-    assert.doesNotMatch(foreignKeys.rows[0]?.definition ?? "", /users/i);
+    assert.equal(foreignKeys.rowCount, 2);
+    const definitions = foreignKeys.rows.map((row) => row.definition).join("\n");
+    assert.match(definitions, /project_id/);
+    assert.match(definitions, /projects/);
+    assert.match(definitions, /users/);
+    for (const id of [OWNER, EDITOR, VIEWER, STRANGER]) {
+      await pool.query(
+        `INSERT INTO users (id, email, password_hash, failed_login_count, created_at, updated_at)
+         VALUES ($1, $2, $3, 0, 10, 10)`,
+        [id, `${id}@example.test`, "$argon2id$v=19$m=19456,t=2,p=1$c2FsdA$aGFzaA"],
+      );
+    }
   });
 
   test("create persists the Project and its Owner membership together", async () => {

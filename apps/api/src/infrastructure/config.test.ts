@@ -15,6 +15,7 @@ const apiEnv = {
   S3_ACCESS_KEY_ID: "editagent",
   S3_SECRET_ACCESS_KEY: "editagent-dev-secret",
   S3_REGION: "us-east-1",
+  AUTH_JWT_SECRET: "local-development-jwt-secret-32chars",
 };
 
 test("the API configuration boundary rejects a missing database URL", () => {
@@ -65,4 +66,6 @@ test("a present database URL is returned unchanged", () => {
   assert.equal(config.objectStorage.endpoint, "http://minio:9000");
   assert.equal(config.objectStorage.publicEndpoint, "http://localhost:9000");
   assert.equal(config.objectStorage.presignTtlSeconds, 900);
+  assert.equal(config.authJwtSecret, "local-development-jwt-secret-32chars");
+  assert.equal(config.authCookieSecure, false);
 });

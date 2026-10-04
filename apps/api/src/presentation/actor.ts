@@ -5,7 +5,7 @@ const ACTOR_USER_ID = Symbol("editagent.actorUserId");
 
 /**
  * Authentication boundary for Project commands.
- * US-118 will call bindActor after it verifies a credential.
+ * Request authentication calls bindActor only after an access token verifies.
  * This module does not read a user id from the body or from a request header.
  */
 export function bindActor(request: object, actorUserId: UserId): void {

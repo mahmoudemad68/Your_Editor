@@ -23,7 +23,9 @@ COPY workers/agent-worker/package.json workers/agent-worker/package.json
 COPY workers/media-worker/package.json workers/media-worker/package.json
 COPY workers/render-worker/package.json workers/render-worker/package.json
 COPY workers/ai-worker/package.json workers/ai-worker/package.json
-RUN pnpm install --frozen-lockfile --ignore-scripts
+# pnpm 10 runs dependency scripts only for pnpm.onlyBuiltDependencies.
+# argon2 must build here. --ignore-scripts would skip that native module too.
+RUN pnpm install --frozen-lockfile
 
 FROM deps AS build
 COPY tsconfig.base.json ./
