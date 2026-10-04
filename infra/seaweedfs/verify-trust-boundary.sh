@@ -114,6 +114,11 @@ ui=$(curl -sk -o /dev/null -w "%{http_code}" --max-time 3 "https://$MASTER:9333/
 grpc=$(curl -sk -o /dev/null -w "%{http_code}" --max-time 3 "https://$MASTER:19333/" || true)
 vol_put=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 -X PUT --data-binary x "http://$VOLUME:8080/3,aaaaaaaa" || true)
 vol_get=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 "http://$VOLUME:8080/" || true)
+vol_del=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 -X DELETE "http://$VOLUME:8080/3,aaaaaaaa" || true)
+: >/tmp/vs
+vol_status=$(curl -s -o /tmp/vs -w "%{http_code}" --max-time 3 "http://$VOLUME:8080/status" || true)
+vol_topology=0
+if grep -q DiskStatuses /tmp/vs || grep -q '"Volumes"' /tmp/vs; then vol_topology=1; fi
 vol_grpc=$(curl -sk -o /dev/null -w "%{http_code}" --max-time 3 "https://$VOLUME:18080/" || true)
 : >/tmp/fb
 filer_get=$(curl -s -o /tmp/fb -w "%{http_code}" --max-time 3 "http://$FILER:8888/buckets/$BUCKET/$KEY_PATH" || true)
@@ -126,7 +131,7 @@ match=0
 if [ -f /tmp/sb ] && grep -F -x -q "$PROBE" /tmp/sb; then match=1; fi
 filer_match=0
 if [ -f /tmp/fb ] && grep -F -x -q "$PROBE" /tmp/fb; then filer_match=1; fi
-echo "assign=$assign auth=$auth fid=$fid https_assign=$https_assign cluster=$cluster ui=$ui grpc=$grpc vol_put=$vol_put vol_get=$vol_get vol_grpc=$vol_grpc filer_get=$filer_get filer_del=$filer_del filer_grpc=$filer_grpc s3_get=$s3_get s3_match=$match filer_match=$filer_match s3_status=$s3_status"
+echo "assign=$assign auth=$auth fid=$fid https_assign=$https_assign cluster=$cluster ui=$ui grpc=$grpc vol_put=$vol_put vol_get=$vol_get vol_del=$vol_del vol_status=$vol_status vol_topology=$vol_topology vol_grpc=$vol_grpc filer_get=$filer_get filer_del=$filer_del filer_grpc=$filer_grpc s3_get=$s3_get s3_match=$match filer_match=$filer_match s3_status=$s3_status"
 ' >"$tmpdir/attacker.out"
 
 report="$(cat "$tmpdir/attacker.out")"
@@ -136,6 +141,7 @@ echo "$report" | grep -q 'fid=0' || fail "unauthorized client received a file id
 echo "$report" | grep -q 's3_match=0' || fail "unauthorized client read the private object through S3"
 echo "$report" | grep -q 'filer_match=0' || fail "unauthorized client read the private object through Filer"
 echo "$report" | grep -q 's3_status=200' || fail "unauthorized client could not reach the S3 gateway, so the negative results are inconclusive"
+echo "$report" | grep -q 'vol_topology=0' || fail "unauthorized client received volume topology"
 
 value() {
   echo "$report" | sed -n "s/.*\\b$1=\\([^ ]*\\).*/\\1/p"
@@ -149,7 +155,7 @@ for name in https_assign cluster ui grpc vol_grpc filer_grpc; do
   esac
 done
 
-for name in vol_put vol_get filer_get; do
+for name in vol_put vol_get vol_del vol_status filer_get; do
   code="$(value "$name")"
   case "$code" in
     200|201|204) fail "unauthorized client succeeded at $name" ;;
@@ -177,6 +183,9 @@ host_blocked() {
   shift
   code="$(curl_code "$tmpdir/host.body" "$tmpdir/host.hdr" "$@")"
   token_or_fid "$tmpdir/host.hdr" "$tmpdir/host.body"
+  if grep -q DiskStatuses "$tmpdir/host.body" || grep -q '"Volumes"' "$tmpdir/host.body"; then
+    fail "host received volume topology"
+  fi
   if [ "$code" != "000" ]; then
     fail "host reached $label"
   fi
@@ -187,6 +196,8 @@ host_blocked "master https" -k "https://$SEAWEED_MASTER_IP:9333/cluster/status"
 host_blocked "master ui" -k "https://$SEAWEED_MASTER_IP:9333/"
 host_blocked "master grpc" -k "https://$SEAWEED_MASTER_IP:19333/"
 host_blocked "volume" "http://$SEAWEED_VOLUME_IP:8080/"
+host_blocked "volume status" "http://$SEAWEED_VOLUME_IP:8080/status"
+host_blocked "volume grpc" -k "https://$SEAWEED_VOLUME_IP:18080/"
 host_blocked "filer" "http://$SEAWEED_FILER_IP:8888/buckets/$bucket/$key_path"
 s3_code="$(curl_code "$tmpdir/s3.body" "$tmpdir/s3.hdr" "$endpoint/status")"
 if [ "$s3_code" != "200" ]; then
@@ -214,13 +225,17 @@ auth=0; fid=0
 if grep -qi "^authorization:" /tmp/h; then auth=1; fi
 if grep -q "\"fid\"" /tmp/b; then fid=1; fi
 vol=$(curl -s -o /dev/null -w "%{http_code}" --max-time 2 -X PUT --data-binary x "http://$VOLUME:8080/3,aaaaaaaa" || true)
+: >/tmp/vs
+vol_status=$(curl -s -o /tmp/vs -w "%{http_code}" --max-time 2 "http://$VOLUME:8080/status" || true)
+vol_topology=0
+if grep -q DiskStatuses /tmp/vs || grep -q '"Volumes"' /tmp/vs; then vol_topology=1; fi
 filer=$(curl -s -o /tmp/fb -w "%{http_code}" --max-time 2 "http://$FILER:8888/buckets/$BUCKET/$KEY_PATH" || true)
 s3=$(curl -s -o /tmp/sb -w "%{http_code}" --max-time 2 "http://$S3IP:8333/$BUCKET/$KEY_PATH" || true)
 match=0
 if grep -F -x -q "$PROBE" /tmp/sb 2>/dev/null; then match=1; fi
 fmatch=0
 if grep -F -x -q "$PROBE" /tmp/fb 2>/dev/null; then fmatch=1; fi
-echo "assign=$assign auth=$auth fid=$fid vol=$vol filer=$filer s3=$s3 s3_match=$match filer_match=$fmatch"
+echo "assign=$assign auth=$auth fid=$fid vol=$vol vol_status=$vol_status vol_topology=$vol_topology filer=$filer s3=$s3 s3_match=$match filer_match=$fmatch"
 ')"
 docker rm -f "$other" >/dev/null
 echo "unrelated-network $other_report"
@@ -228,11 +243,30 @@ echo "$other_report" | grep -q 'auth=0' || fail "unrelated network received a wr
 echo "$other_report" | grep -q 'fid=0' || fail "unrelated network received a file id"
 echo "$other_report" | grep -q 's3_match=0' || fail "unrelated network read the private object"
 echo "$other_report" | grep -q 'filer_match=0' || fail "unrelated network read the private object through Filer"
-for name in assign vol filer; do
+for name in assign vol vol_status filer; do
   code="$(echo "$other_report" | sed -n "s/.*\\b$name=\\([^ ]*\\).*/\\1/p")"
   if [ "$code" != "000" ]; then
     fail "unrelated network reached $name"
   fi
 done
+echo "$other_report" | grep -q 'vol_topology=0' || fail "unrelated network received volume topology"
+
+peer="$(docker compose exec -T seaweed-filer sh -c 'code=$(curl -s -o /tmp/vs -w "%{http_code}" --max-time 3 http://'"$SEAWEED_VOLUME_IP"':8080/status || true); topo=0; if grep -q DiskStatuses /tmp/vs; then topo=1; fi; printf "%s %s\n" "$code" "$topo"')"
+echo "filer-to-volume-status $peer"
+case "$peer" in
+  "200 1") ;;
+  *) fail "filer can no longer reach volume status, so the allow rules are too tight" ;;
+esac
+
+s3_handshake="$(docker compose exec -T seaweed-s3 sh -c 'curl -sv --max-time 3 --cacert /etc/seaweedfs/ca.crt --cert /etc/seaweedfs/s3.crt --key /etc/seaweedfs/s3.key https://'"$SEAWEED_VOLUME_IP"':18080/ >/tmp/out 2>/tmp/err || true; if grep -q "bad certificate" /tmp/err; then echo rejected; elif grep -q "< HTTP/" /tmp/err; then echo accepted; else echo rejected; fi')"
+master_handshake="$(docker compose exec -T seaweed-master sh -c 'curl -sv --max-time 3 --cacert /etc/seaweedfs/ca.crt --cert /etc/seaweedfs/master.crt --key /etc/seaweedfs/master.key https://'"$SEAWEED_VOLUME_IP"':18080/ >/tmp/out 2>/tmp/err || true; if grep -q "bad certificate" /tmp/err; then echo rejected; elif grep -q "< HTTP/" /tmp/err; then echo accepted; else echo rejected; fi')"
+echo "s3-cert-volume-grpc $s3_handshake"
+echo "master-cert-volume-grpc $master_handshake"
+if [ "$s3_handshake" != "rejected" ]; then
+  fail "s3 certificate completed a volume gRPC handshake"
+fi
+if [ "$master_handshake" != "accepted" ]; then
+  fail "master certificate was rejected by volume gRPC"
+fi
 
 echo "trust boundary holds attacker=${attacker_ip}"

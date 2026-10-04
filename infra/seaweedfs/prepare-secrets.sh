@@ -47,43 +47,95 @@ read_file() {
   fi
 }
 
-san_ready=0
-if [ -f "$dir/ca.crt" ] && [ -f "$dir/ca.key" ] && [ -f "$dir/seaweed.crt" ] && [ -f "$dir/seaweed.key" ]; then
-  san="$(read_file "$dir/seaweed.crt" | openssl x509 -noout -ext subjectAltName 2>/dev/null || true)"
-  san_ready=1
-  for name in seaweed-master seaweed-volume seaweed-filer seaweed-s3 \
-    "$SEAWEED_MASTER_IP" "$SEAWEED_VOLUME_IP" "$SEAWEED_FILER_IP" "$SEAWEED_S3_IP" 127.0.0.1; do
-    case "$san" in
-      *"$name"*) ;;
-      *) san_ready=0 ;;
-    esac
-  done
-fi
-
-if [ "$san_ready" -ne 1 ]; then
+load_ca() {
   if [ -f "$dir/ca.crt" ] && [ -f "$dir/ca.key" ]; then
     read_file "$dir/ca.crt" >"$stage/ca.crt"
     read_file "$dir/ca.key" >"$stage/ca.key"
     chmod 600 "$stage/ca.key" "$stage/ca.crt"
-  else
-    openssl req -x509 -newkey rsa:2048 -sha256 -days 3650 -nodes \
-      -keyout "$stage/ca.key" -out "$stage/ca.crt" \
-      -subj "/CN=editagent-seaweed-ca" >/dev/null 2>&1
+    return
   fi
-  cat >"$stage/san.cnf" <<EOF
+  openssl req -x509 -newkey rsa:2048 -sha256 -days 3650 -nodes \
+    -keyout "$stage/ca.key" -out "$stage/ca.crt" \
+    -subj "/CN=editagent-seaweed-ca" >/dev/null 2>&1
+  chmod 600 "$stage/ca.key" "$stage/ca.crt"
+}
+
+issue_role() {
+  role="$1"
+  cn="$2"
+  dns_name="$3"
+  ip="$4"
+  extra_san="$5"
+  cat >"$stage/${role}.cnf" <<EOF
 basicConstraints=CA:FALSE
 keyUsage=digitalSignature,keyEncipherment
 extendedKeyUsage=serverAuth,clientAuth
-subjectAltName=DNS:seaweed-master,DNS:seaweed-volume,DNS:seaweed-filer,DNS:seaweed-s3,DNS:localhost,IP:127.0.0.1,IP:${SEAWEED_MASTER_IP},IP:${SEAWEED_VOLUME_IP},IP:${SEAWEED_FILER_IP},IP:${SEAWEED_S3_IP}
+subjectAltName=DNS:${dns_name},IP:${ip}${extra_san}
 EOF
   openssl req -newkey rsa:2048 -sha256 -nodes \
-    -keyout "$stage/seaweed.key" -out "$stage/seaweed.csr" \
-    -subj "/CN=editagent-seaweed" >/dev/null 2>&1
-  openssl x509 -req -in "$stage/seaweed.csr" -sha256 -days 825 \
+    -keyout "$stage/${role}.key" -out "$stage/${role}.csr" \
+    -subj "/CN=${cn}" >/dev/null 2>&1
+  openssl x509 -req -in "$stage/${role}.csr" -sha256 -days 825 \
     -CA "$stage/ca.crt" -CAkey "$stage/ca.key" -CAserial "$stage/ca.srl" -CAcreateserial \
-    -out "$stage/seaweed.crt" -extfile "$stage/san.cnf" >/dev/null 2>&1
-  rm -f "$stage/seaweed.csr"
-  chmod 600 "$stage/ca.key" "$stage/ca.crt" "$stage/seaweed.key" "$stage/seaweed.crt"
+    -out "$stage/${role}.crt" -extfile "$stage/${role}.cnf" >/dev/null 2>&1
+  rm -f "$stage/${role}.csr" "$stage/${role}.cnf"
+  chmod 600 "$stage/${role}.key" "$stage/${role}.crt"
+}
+
+role_ok() {
+  role="$1"
+  cn="$2"
+  dns_name="$3"
+  ip="$4"
+  if [ ! -f "$dir/${role}.crt" ] || [ ! -f "$dir/${role}.key" ]; then
+    return 1
+  fi
+  meta="$(read_file "$dir/${role}.crt" | openssl x509 -noout -subject -ext subjectAltName 2>/dev/null || true)"
+  case "$meta" in
+    *"CN=${cn}"*|*"CN = ${cn}"*) ;;
+    *) return 1 ;;
+  esac
+  case "$meta" in
+    *"$dns_name"*) ;;
+    *) return 1 ;;
+  esac
+  case "$meta" in
+    *"$ip"*) ;;
+    *) return 1 ;;
+  esac
+  return 0
+}
+
+load_ca
+# Master also answers the in-container health check on 127.0.0.1.
+if role_ok master editagent-master seaweed-master "$SEAWEED_MASTER_IP" && \
+  read_file "$dir/master.crt" | openssl x509 -noout -ext subjectAltName 2>/dev/null | grep -q "127.0.0.1"; then
+  read_file "$dir/master.crt" >"$stage/master.crt"
+  read_file "$dir/master.key" >"$stage/master.key"
+  chmod 600 "$stage/master.crt" "$stage/master.key"
+else
+  issue_role master editagent-master seaweed-master "$SEAWEED_MASTER_IP" ",IP:127.0.0.1"
+fi
+if role_ok volume editagent-volume seaweed-volume "$SEAWEED_VOLUME_IP"; then
+  read_file "$dir/volume.crt" >"$stage/volume.crt"
+  read_file "$dir/volume.key" >"$stage/volume.key"
+  chmod 600 "$stage/volume.crt" "$stage/volume.key"
+else
+  issue_role volume editagent-volume seaweed-volume "$SEAWEED_VOLUME_IP" ""
+fi
+if role_ok filer editagent-filer seaweed-filer "$SEAWEED_FILER_IP"; then
+  read_file "$dir/filer.crt" >"$stage/filer.crt"
+  read_file "$dir/filer.key" >"$stage/filer.key"
+  chmod 600 "$stage/filer.crt" "$stage/filer.key"
+else
+  issue_role filer editagent-filer seaweed-filer "$SEAWEED_FILER_IP" ""
+fi
+if role_ok s3 editagent-s3 seaweed-s3 "$SEAWEED_S3_IP"; then
+  read_file "$dir/s3.crt" >"$stage/s3.crt"
+  read_file "$dir/s3.key" >"$stage/s3.key"
+  chmod 600 "$stage/s3.crt" "$stage/s3.key"
+else
+  issue_role s3 editagent-s3 seaweed-s3 "$SEAWEED_S3_IP" ""
 fi
 
 if [ -f "$dir/security.toml" ]; then
@@ -119,32 +171,32 @@ tls = "\n".join(
         'ca = "/etc/seaweedfs/ca.crt"',
         "",
         "[grpc.master]",
-        'cert = "/etc/seaweedfs/seaweed.crt"',
-        'key = "/etc/seaweedfs/seaweed.key"',
-        'allowed_commonNames = "editagent-seaweed"',
+        'cert = "/etc/seaweedfs/master.crt"',
+        'key = "/etc/seaweedfs/master.key"',
+        'allowed_commonNames = "editagent-volume,editagent-filer,editagent-s3"',
         "",
         "[grpc.volume]",
-        'cert = "/etc/seaweedfs/seaweed.crt"',
-        'key = "/etc/seaweedfs/seaweed.key"',
-        'allowed_commonNames = "editagent-seaweed"',
+        'cert = "/etc/seaweedfs/volume.crt"',
+        'key = "/etc/seaweedfs/volume.key"',
+        'allowed_commonNames = "editagent-master,editagent-filer"',
         "",
         "[grpc.filer]",
-        'cert = "/etc/seaweedfs/seaweed.crt"',
-        'key = "/etc/seaweedfs/seaweed.key"',
-        'allowed_commonNames = "editagent-seaweed"',
+        'cert = "/etc/seaweedfs/filer.crt"',
+        'key = "/etc/seaweedfs/filer.key"',
+        'allowed_commonNames = "editagent-s3,editagent-filer"',
         "",
         "[grpc.s3]",
-        'cert = "/etc/seaweedfs/seaweed.crt"',
-        'key = "/etc/seaweedfs/seaweed.key"',
-        'allowed_commonNames = "editagent-seaweed"',
+        'cert = "/etc/seaweedfs/s3.crt"',
+        'key = "/etc/seaweedfs/s3.key"',
+        'allowed_commonNames = "editagent-s3"',
         "",
         "[grpc.client]",
-        'cert = "/etc/seaweedfs/seaweed.crt"',
-        'key = "/etc/seaweedfs/seaweed.key"',
+        'cert = "/etc/seaweedfs/s3.crt"',
+        'key = "/etc/seaweedfs/s3.key"',
         "",
         "[https.master]",
-        'cert = "/etc/seaweedfs/seaweed.crt"',
-        'key = "/etc/seaweedfs/seaweed.key"',
+        'cert = "/etc/seaweedfs/master.crt"',
+        'key = "/etc/seaweedfs/master.key"',
         'ca = "/etc/seaweedfs/ca.crt"',
         "",
     ]
@@ -218,19 +270,33 @@ docker run --rm --user root --entrypoint sh \
     cp /stage/s3.json /secrets/s3.json
     if [ -f /stage/ca.crt ]; then cp /stage/ca.crt /secrets/ca.crt; fi
     if [ -f /stage/ca.key ]; then cp /stage/ca.key /secrets/ca.key; fi
-    if [ -f /stage/seaweed.crt ]; then cp /stage/seaweed.crt /secrets/seaweed.crt; fi
-    if [ -f /stage/seaweed.key ]; then cp /stage/seaweed.key /secrets/seaweed.key; fi
     if [ -f /stage/ca.srl ]; then cp /stage/ca.srl /secrets/ca.srl; fi
+    for role in master volume filer s3; do
+      cp "/stage/${role}.crt" "/secrets/${role}.crt"
+      cp "/stage/${role}.key" "/secrets/${role}.key"
+    done
+    # The old shared identity could impersonate every role. Remove it.
+    rm -f /secrets/seaweed.crt /secrets/seaweed.key
     chown seaweed:seaweed \
       /secrets/security.toml /secrets/s3.json \
-      /secrets/ca.crt /secrets/ca.key /secrets/seaweed.crt /secrets/seaweed.key
+      /secrets/ca.crt /secrets/ca.key \
+      /secrets/master.crt /secrets/master.key \
+      /secrets/volume.crt /secrets/volume.key \
+      /secrets/filer.crt /secrets/filer.key \
+      /secrets/s3.crt /secrets/s3.key
     if [ -f /secrets/ca.srl ]; then chown seaweed:seaweed /secrets/ca.srl; chmod 600 /secrets/ca.srl; fi
     chmod 600 /secrets/security.toml /secrets/s3.json \
-      /secrets/ca.crt /secrets/ca.key /secrets/seaweed.crt /secrets/seaweed.key
+      /secrets/ca.crt /secrets/ca.key \
+      /secrets/master.crt /secrets/master.key \
+      /secrets/volume.crt /secrets/volume.key \
+      /secrets/filer.crt /secrets/filer.key \
+      /secrets/s3.crt /secrets/s3.key
     chmod 700 /secrets'
 
 uid="$(docker run --rm --entrypoint id "$image" seaweed | sed -n 's/.*uid=\([0-9][0-9]*\).*/\1/p')"
-for file in "$dir/security.toml" "$dir/s3.json" "$dir/ca.crt" "$dir/ca.key" "$dir/seaweed.crt" "$dir/seaweed.key"; do
+for file in "$dir/security.toml" "$dir/s3.json" "$dir/ca.crt" "$dir/ca.key" \
+  "$dir/master.crt" "$dir/master.key" "$dir/volume.crt" "$dir/volume.key" \
+  "$dir/filer.crt" "$dir/filer.key" "$dir/s3.crt" "$dir/s3.key"; do
   mode="$(stat -c '%a' "$file")"
   owner="$(stat -c '%u' "$file")"
   if [ "$mode" != "600" ] || [ "$owner" != "$uid" ]; then
@@ -238,7 +304,7 @@ for file in "$dir/security.toml" "$dir/s3.json" "$dir/ca.crt" "$dir/ca.key" "$di
     exit 1
   fi
 done
-for file in s3.json ca.key seaweed.key; do
+for file in s3.json ca.key master.key volume.key filer.key s3.key; do
   if docker run --rm --user 65534:65534 --entrypoint sh \
     -v "$dir/$file:/check:ro" "$image" -c 'test -r /check'; then
     echo "unrelated uid can read $file" >&2

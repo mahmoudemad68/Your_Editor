@@ -68,7 +68,7 @@ test("the S3 contract runs after the workspace install", () => {
   const startup = workflow.slice(start, pnpmSetup);
   assert.match(startup, /curl -fsS http:\/\/127\.0\.0\.1:9000\/status/);
   assert.match(startup, /ensure_bucket\.py/);
-  assert.match(startup, /apply-host-isolation\.sh --install/);
+  assert.match(startup, /start-storage\.sh/);
   assert.match(startup, /verify-trust-boundary\.sh/);
   assert.equal(startup.includes("seaweedfs-s3-contract.mjs"), false);
   assert.match(
@@ -122,12 +122,32 @@ test("storage components keep fixed addresses and reject anonymous master HTTP",
   );
   assert.match(secrets, /\[https\.master\]/);
   assert.match(secrets, /\[grpc\.client\]/);
-  assert.match(secrets, /allowed_commonNames = "editagent-seaweed"/);
+  assert.match(secrets, /allowed_commonNames = "editagent-volume,editagent-filer,editagent-s3"/);
+  assert.match(secrets, /allowed_commonNames = "editagent-master,editagent-filer"/);
+  assert.equal(secrets.includes('allowed_commonNames = "editagent-seaweed"'), false);
   assert.match(isolation, /DOCKER-USER/);
   assert.match(isolation, /ExecStartPost/);
   assert.match(isolation, /-j DROP/);
+  assert.match(isolation, /ESTABLISHED,RELATED/);
+  assert.match(isolation, /still allows the whole subnet/);
+  const master = compose.slice(
+    compose.indexOf("  seaweed-master:"),
+    compose.indexOf("  seaweed-volume:"),
+  );
+  assert.match(master, /restart: "no"/);
+  assert.match(master, /disable_ipv6/);
+  assert.match(master, /master\.crt/);
+  assert.equal(master.includes("seaweed.crt"), false);
   assert.match(verify, /dir\/assign/);
+  assert.match(verify, /vol_status/);
+  assert.match(verify, /DiskStatuses/);
   assert.match(verify, /master issued a write token/);
   assert.equal(verify.includes("console.log"), false);
-  assert.match(read("Makefile"), /apply-host-isolation\.sh --install/);
+  const starter = read("infra/seaweedfs/start-storage.sh");
+  assert.equal(
+    starter.indexOf("apply-host-isolation.sh") < starter.indexOf("docker compose up"),
+    true,
+  );
+  assert.match(starter, /REBOOT_PERSISTENCE=open/);
+  assert.match(read("Makefile"), /start-storage\.sh/);
 });
