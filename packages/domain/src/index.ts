@@ -53,9 +53,13 @@ export {
   User,
 } from "./modules/identity/index.js";
 export type {
+  ClearAttemptsResult,
+  FailedAttemptResult,
   OperatorRole,
+  RefreshRotation,
   RefreshSessionRepository,
   RefreshSessionSnapshot,
+  RotationDecision,
   UserRepository,
   UserSnapshot,
 } from "./modules/identity/index.js";

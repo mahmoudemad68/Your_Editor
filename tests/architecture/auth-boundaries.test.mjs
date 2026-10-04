@@ -31,6 +31,9 @@ test("production authentication does not honor a development actor header", () =
     .map((file) => readFileSync(file, "utf8"))
     .join("\n");
 
+  const compose = readFileSync(path.join(root, "compose.yaml"), "utf8");
+  assert.match(compose, /AUTH_COOKIE_SECURE: \$\{AUTH_COOKIE_SECURE:-true\}/);
+  assert.doesNotMatch(compose, /AUTH_COOKIE_SECURE:-false/);
   assert.match(main, /Argon2idHasher/);
   assert.match(main, /JwtSessionTokens/);
   assert.match(main, /auth,/);

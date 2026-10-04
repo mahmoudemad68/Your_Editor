@@ -120,14 +120,14 @@ export class LoginUser {
     }
     const matches = await this.passwords.verify(user.passwordHash, password);
     if (!matches) {
-      await this.users.save(user.recordFailedLogin(now, LOCK_AFTER, LOCK_FOR_MS));
+      await this.users.recordFailedAttempt(user.id, now, LOCK_AFTER, LOCK_FOR_MS);
       throw new InvalidCredentialsError();
     }
-    const cleared = user.failedLoginCount === 0 ? user : user.clearFailedLogins(now);
-    if (cleared !== user) {
-      await this.users.save(cleared);
+    const cleared = await this.users.clearFailedAttempts(user.id, now);
+    if (cleared !== "cleared") {
+      throw new InvalidCredentialsError();
     }
-    return openSession(this.sessions, this.tokens, cleared, now, null);
+    return openSession(this.sessions, this.tokens, user, now, null);
   }
 }
 
@@ -142,20 +142,53 @@ export class RefreshAccess {
   async execute(refreshToken: string): Promise<AuthenticatedSession> {
     const now = this.clock.now();
     const parsed = parseRefreshToken(refreshToken);
-    const current = await this.sessions.findById(parsed.id);
-    if (current === null || !secretMatches(current.secretHash, parsed.secret)) {
+    const secret = randomBytes(32).toString("base64url");
+    let accessToken = "";
+    let accessExpiresAt = now;
+    const rotation = await this.sessions.rotate(
+      parsed.id,
+      now,
+      (current) => {
+        if (current === null || !secretMatches(current.secretHash, parsed.secret)) {
+          return { action: "reject" };
+        }
+        if (!current.isActive(now)) {
+          return { action: "reuse" };
+        }
+        return {
+          action: "replace",
+          replacement: RefreshSession.issue(
+            createUuidV7(Number(now), randomBytes(10)),
+            current.userId,
+            hashSecret(secret),
+            now,
+            now + REFRESH_TTL_MS,
+            current.id,
+          ),
+        };
+      },
+      async (replacement) => {
+        const access = await this.tokens.issueAccess(replacement.userId, now);
+        accessToken = access.token;
+        accessExpiresAt = access.expiresAt;
+      },
+    );
+    if (rotation.outcome !== "consumed") {
       throw new InvalidCredentialsError();
     }
-    if (!current.isActive(now)) {
-      await this.sessions.revokeAllForUser(current.userId, now);
-      throw new InvalidCredentialsError();
-    }
-    const user = await this.users.findById(current.userId);
+    const user = await this.users.findById(rotation.userId);
     if (user === null) {
       throw new InvalidCredentialsError();
     }
-    await this.sessions.save(current.revoke(now));
-    return openSession(this.sessions, this.tokens, user, now, current.id);
+    return {
+      userId: user.id,
+      email: user.email,
+      accessToken,
+      accessExpiresAt,
+      refreshToken: `${rotation.replacement.id}.${secret}`,
+      refreshExpiresAt: rotation.replacement.expiresAt,
+      csrfToken: randomBytes(32).toString("base64url"),
+    };
   }
 }
 

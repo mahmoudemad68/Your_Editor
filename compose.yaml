@@ -92,7 +92,8 @@ services:
       PORT: "3001"
       HOST: "0.0.0.0"
       AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:-local-development-jwt-secret-32chars}
-      AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-false}
+      EDITAGENT_RUNTIME: ${EDITAGENT_RUNTIME:-development}
+      AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-true}
       <<: *object-storage
       S3_PUBLIC_ENDPOINT: http://localhost:${MINIO_PORT:-9000}
     ports:

@@ -216,10 +216,27 @@ const apiSchema = z
     ).refine((value) => value.length >= 32, {
       error: "AUTH_JWT_SECRET must be at least 32 characters.",
     }),
-    AUTH_COOKIE_SECURE: z
-      .string()
-      .optional()
-      .transform((value) => value === "true"),
+    AUTH_COOKIE_SECURE: z.string().optional(),
+    EDITAGENT_RUNTIME: z.string().optional(),
+  })
+  .superRefine((env, context) => {
+    const runtime = env.EDITAGENT_RUNTIME ?? "development";
+    if (runtime !== "development" && runtime !== "staging" && runtime !== "production") {
+      context.addIssue({
+        code: "custom",
+        path: ["EDITAGENT_RUNTIME"],
+        message: "EDITAGENT_RUNTIME must be development, staging, or production.",
+      });
+    }
+    const secure = env.AUTH_COOKIE_SECURE === undefined ? true : env.AUTH_COOKIE_SECURE === "true";
+    if ((runtime === "staging" || runtime === "production") && !secure) {
+      context.addIssue({
+        code: "custom",
+        path: ["AUTH_COOKIE_SECURE"],
+        message:
+          "AUTH_COOKIE_SECURE must be true when EDITAGENT_RUNTIME is staging or production. Staging cannot send authentication cookies without the Secure attribute.",
+      });
+    }
   })
   .transform((env): ApiConfig => ({
     databaseUrl: env.DATABASE_URL,
@@ -227,7 +244,8 @@ const apiSchema = z
     port: env.PORT,
     host: env.HOST,
     authJwtSecret: env.AUTH_JWT_SECRET,
-    authCookieSecure: env.AUTH_COOKIE_SECURE,
+    authCookieSecure:
+      env.AUTH_COOKIE_SECURE === undefined ? true : env.AUTH_COOKIE_SECURE === "true",
     objectStorage: {
       endpoint: env.S3_ENDPOINT,
       publicEndpoint: env.S3_PUBLIC_ENDPOINT,

@@ -140,6 +140,23 @@ test("a reused refresh token revokes every session for that account", async () =
   await logout.execute(rotated.refreshToken);
 });
 
+test("one refresh token cannot be consumed twice in the same process", async () => {
+  const { register, refresh, sessions } = harness();
+  const first = await register.execute("owner@example.test", PASSWORD, "client");
+  const results = await Promise.allSettled([
+    refresh.execute(first.refreshToken),
+    refresh.execute(first.refreshToken),
+  ]);
+  assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
+  const presented = first.refreshToken.slice(0, first.refreshToken.indexOf("."));
+  assert.notEqual((await sessions.findById(presented))?.revokedAt, null);
+  const fulfilled = results.find((result) => result.status === "fulfilled");
+  if (fulfilled?.status === "fulfilled") {
+    const next = fulfilled.value.refreshToken.slice(0, fulfilled.value.refreshToken.indexOf("."));
+    assert.notEqual((await sessions.findById(next))?.revokedAt, null);
+  }
+});
+
 test("credential endpoints stop after the client limit", async () => {
   const { register } = harness(1);
   await register.execute("owner@example.test", PASSWORD, "client");

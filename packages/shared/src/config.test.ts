@@ -75,7 +75,7 @@ test("API config parses a database URL and applies port and host defaults", () =
   assert.equal(config.objectStorage.publicEndpoint, "http://localhost:9000");
   assert.equal(config.objectStorage.presignTtlSeconds, 900);
   assert.equal(config.authJwtSecret, "local-development-jwt-secret-32chars");
-  assert.equal(config.authCookieSecure, false);
+  assert.equal(config.authCookieSecure, true);
 });
 
 test("API config accepts an explicit port and host", () => {
@@ -98,6 +98,40 @@ test("API config requires a long signing secret and treats only true as a secure
   assert.equal(
     parseApiConfig({ ...apiStorageEnv, AUTH_COOKIE_SECURE: "false" }).authCookieSecure,
     false,
+  );
+  assert.equal(
+    parseApiConfig({
+      ...apiStorageEnv,
+      EDITAGENT_RUNTIME: "staging",
+      AUTH_COOKIE_SECURE: "true",
+    }).authCookieSecure,
+    true,
+  );
+  assertConfigError(
+    () =>
+      parseApiConfig({
+        ...apiStorageEnv,
+        EDITAGENT_RUNTIME: "staging",
+        AUTH_COOKIE_SECURE: "false",
+      }),
+    "AUTH_COOKIE_SECURE",
+  );
+  assert.equal(
+    parseApiConfig({ ...apiStorageEnv, EDITAGENT_RUNTIME: "production" }).authCookieSecure,
+    true,
+  );
+  assertConfigError(
+    () =>
+      parseApiConfig({
+        ...apiStorageEnv,
+        EDITAGENT_RUNTIME: "production",
+        AUTH_COOKIE_SECURE: "false",
+      }),
+    "AUTH_COOKIE_SECURE",
+  );
+  assertConfigError(
+    () => parseApiConfig({ ...apiStorageEnv, EDITAGENT_RUNTIME: "lab" }),
+    "EDITAGENT_RUNTIME",
   );
 });
 

@@ -193,7 +193,7 @@ erDiagram
 
 `Video`, `Audio`, and `Image` are not separate tables. They are the `kind` discriminator on `MediaAsset`.
 
-`RefreshSession` is the persisted refresh/rotation record for US-118. An access JWT is not stored. `secretHash` is the stored secret, not the token the browser holds. `revokedAt` and `rotatedFromId` are the revocation and rotation state. `expiresAt` is the session expiry.
+`RefreshSession` is the persisted refresh/rotation record for US-118. An access JWT is not stored. `secretHash` is the stored secret, not the token the browser holds. `revokedAt` and `rotatedFromId` are the revocation and rotation state. `expiresAt` is the session expiry. Consuming a refresh token revokes that row and inserts its replacement in one transaction, so one presented token cannot create two active sessions. A wrong password increments `failed_login_count` with one conditional update.
 
 `UploadSession` stores the overall multipart upload for US-123: who started it, the server storage key, the provider upload id, status, and expiry. `UploadPart` stores each successful part. The key is `(uploadSessionId, partNumber)`. `etag` is what completion must send back, in part-number order. A failed part is simply absent, so parts 1, 2, and 4 can be stored while part 3 is not. A reload reads those rows and does not resend them. `completedPartCount` may be cached for display. It is not the source of truth. The S3 multipart API is not implemented here.
 

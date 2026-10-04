@@ -67,5 +67,5 @@ test("a present database URL is returned unchanged", () => {
   assert.equal(config.objectStorage.publicEndpoint, "http://localhost:9000");
   assert.equal(config.objectStorage.presignTtlSeconds, 900);
   assert.equal(config.authJwtSecret, "local-development-jwt-secret-32chars");
-  assert.equal(config.authCookieSecure, false);
+  assert.equal(config.authCookieSecure, true);
 });

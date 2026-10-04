@@ -1,4 +1,8 @@
-/** Process-local limit for credential endpoints. A lockout is stored on the account. */
+/**
+ * Process-local limit for credential endpoints. It does not coordinate across
+ * API processes. Account lockout is the cross-process control and lives in the
+ * user repository as one conditional SQL update.
+ */
 export class LoginRateLimit {
   private readonly hits = new Map<string, number[]>();
 
