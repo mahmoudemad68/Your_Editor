@@ -335,8 +335,9 @@ jobs:
             compose.staging.yaml "$STAGING_SSH_USER@$STAGING_HOST:$STAGING_DEPLOY_PATH/compose.staging.yaml"
           scp -i "$HOME/.ssh/staging" -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
             -r infra "$STAGING_SSH_USER@$STAGING_HOST:$STAGING_DEPLOY_PATH/infra"
-          scp -i "$HOME/.ssh/staging" -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
-            "$env_file" "$STAGING_SSH_USER@$STAGING_HOST:$STAGING_DEPLOY_PATH/staging.env"
+          ssh -i "$HOME/.ssh/staging" -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+            "$STAGING_SSH_USER@$STAGING_HOST" \
+            "umask 077; cat > '$STAGING_DEPLOY_PATH/staging.env'" < "$env_file"
           ssh -i "$HOME/.ssh/staging" -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
             "$STAGING_SSH_USER@$STAGING_HOST" \
             "set -eu; cd '$STAGING_DEPLOY_PATH'; set -a; . ./staging.env; set +a; chmod 600 staging.env; ./infra/scripts/staging-deploy.sh; COMPOSE_FILE=compose.staging.yaml STAGING_WEB_URL='$STAGING_WEB_URL' STAGING_API_URL='$STAGING_API_URL' ./infra/scripts/staging-smoke.sh; COMPOSE_FILE=compose.staging.yaml STAGING_API_URL='$STAGING_API_URL' ./infra/scripts/staging-readiness-measure.sh"

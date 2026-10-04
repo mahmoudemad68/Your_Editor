@@ -11,6 +11,7 @@ import {
   copyFileSync,
   existsSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -722,7 +723,14 @@ test(
       true,
       up.stdout,
     );
-    assert.match(up.stdout, /bootstrap-host-blocked status=000 curl_exit=28/);
+    assert.match(up.stdout, /bootstrap-listener-open/);
+    const blocked = up.stdout.match(
+      /bootstrap-host-blocked status=000 curl_exit=28 drops_before=(\d+) drops_after=(\d+)/,
+    );
+    assert.ok(blocked, up.stdout);
+    assert.equal(Number(blocked[2]) > Number(blocked[1]), true, up.stdout);
+    const listenerAt = lines.findIndex((line) => line.includes("bootstrap-listener-open"));
+    assert.equal(listenerAt > verifiedAt && listenerAt < blockedAt, true, up.stdout);
     try {
       const storage = new S3ObjectStorage({
         endpoint: "http://127.0.0.1:19083",
@@ -845,6 +853,351 @@ test("secure-up fails closed when the firewall backend is missing", () => {
   rmSync(directory, { recursive: true, force: true });
 });
 
+test("firewall verify rejects a DROP placed ahead of the internal RETURN", () => {
+  const internal = "editagent-order-internal";
+  const app = "editagent-order-app";
+  const created = [];
+  let internalBridge = "br-missing";
+  let appBridge = "br-missing";
+  const cleanup = () => {
+    for (const name of [internal, app]) {
+      const id = run("docker", ["network", "inspect", name, "--format", "{{.Id}}"]);
+      if (id.status !== 0) {
+        continue;
+      }
+      const bridge = `br-${id.stdout.trim().slice(0, 12)}`;
+      const subnet = run("docker", [
+        "network",
+        "inspect",
+        name,
+        "--format",
+        "{{(index .IPAM.Config 0).Subnet}}",
+      ]).stdout.trim();
+      run("sudo", ["iptables-nft", "-D", "DOCKER-USER", "-d", subnet, "-j", "DROP"]);
+      run("sudo", ["iptables-legacy", "-D", "DOCKER-USER", "-d", subnet, "-j", "DROP"]);
+      void bridge;
+    }
+  };
+  try {
+    docker(["network", "create", "--subnet", "10.254.20.0/24", "--ipv6=false", internal]);
+    docker(["network", "create", "--subnet", "10.254.21.0/24", "--ipv6=false", app]);
+    created.push(internal, app);
+    const bridgeOf = (name) => {
+      const id = docker(["network", "inspect", name, "--format", "{{.Id}}"]);
+      return `br-${id.slice(0, 12)}`;
+    };
+    internalBridge = bridgeOf(internal);
+    appBridge = bridgeOf(app);
+    const install = path.join(root, "infra/seaweedfs/install-host-isolation.sh");
+    const applied = run(install, [
+      "apply",
+      "10.254.20.0/24",
+      bridgeOf(internal),
+      "10.254.21.0/24",
+      bridgeOf(app),
+      "8080",
+    ]);
+    assert.equal(applied.status, 0, applied.stderr + applied.stdout);
+    const verified = run(install, [
+      "verify",
+      "10.254.20.0/24",
+      bridgeOf(internal),
+      "10.254.21.0/24",
+      bridgeOf(app),
+      "8080",
+    ]);
+    assert.equal(verified.status, 0, verified.stderr + verified.stdout);
+    assert.match(verified.stdout, /firewall-backend-effective:/);
+    assert.match(verified.stdout, /order-ok DOCKER-USER/);
+    assert.match(verified.stdout, /order-ok OUTPUT/);
+    assert.match(verified.stdout, /ipv4-forward-ok/);
+    assert.match(verified.stdout, /ipv6-policy: drop|kernel has no IPv6/);
+    const verifyArgs = [
+      "verify",
+      "10.254.20.0/24",
+      bridgeOf(internal),
+      "10.254.21.0/24",
+      bridgeOf(app),
+      "8080",
+    ];
+    const toolsFor = (family) =>
+      family === "ip6"
+        ? ["ip6tables-nft", "ip6tables-legacy"]
+        : ["iptables-nft", "iptables-legacy"];
+    const mutate = (family, args) => {
+      for (const tool of toolsFor(family)) {
+        const inserted = run("sudo", [tool, ...args]);
+        assert.equal(inserted.status, 0, `${tool} ${args.join(" ")} ${inserted.stderr}`);
+      }
+    };
+    const unmutate = (family, args) => {
+      for (const tool of toolsFor(family)) {
+        run("sudo", [tool, ...args]);
+      }
+    };
+    mutate("ip4", ["-I", "DOCKER-USER", "-d", "10.254.20.0/24", "-j", "DROP"]);
+    const dropFirst = run(install, verifyArgs);
+    unmutate("ip4", ["-D", "DOCKER-USER", "-d", "10.254.20.0/24", "-j", "DROP"]);
+    assert.notEqual(dropFirst.status, 0);
+    assert.match(dropFirst.stderr, /must precede/);
+    mutate("ip4", ["-I", "DOCKER-USER", "-d", "10.254.20.0/24", "-i", appBridge, "-j", "ACCEPT"]);
+    const foreign = run(install, verifyArgs);
+    unmutate("ip4", ["-D", "DOCKER-USER", "-d", "10.254.20.0/24", "-i", appBridge, "-j", "ACCEPT"]);
+    assert.notEqual(foreign.status, 0);
+    assert.match(foreign.stderr, /another bridge/);
+    mutate("ip4", [
+      "-D",
+      "DOCKER-USER",
+      "-d",
+      "10.254.21.0/24",
+      "-p",
+      "tcp",
+      "--dport",
+      "8080",
+      "-j",
+      "RETURN",
+    ]);
+    mutate("ip4", [
+      "-A",
+      "DOCKER-USER",
+      "-d",
+      "10.254.21.0/24",
+      "-p",
+      "tcp",
+      "--dport",
+      "8080",
+      "-j",
+      "RETURN",
+    ]);
+    const portOrder = run(install, verifyArgs);
+    unmutate("ip4", [
+      "-D",
+      "DOCKER-USER",
+      "-d",
+      "10.254.21.0/24",
+      "-p",
+      "tcp",
+      "--dport",
+      "8080",
+      "-j",
+      "RETURN",
+    ]);
+    const portRestored = run(install, [
+      "apply",
+      "10.254.20.0/24",
+      bridgeOf(internal),
+      "10.254.21.0/24",
+      bridgeOf(app),
+      "8080",
+    ]);
+    assert.equal(portRestored.status, 0, portRestored.stderr + portRestored.stdout);
+    assert.notEqual(portOrder.status, 0);
+    assert.match(portOrder.stderr, /published port 8080 must precede/);
+    mutate("ip4", [
+      "-D",
+      "OUTPUT",
+      "-d",
+      "10.254.21.0/24",
+      "-p",
+      "tcp",
+      "--dport",
+      "8080",
+      "-j",
+      "ACCEPT",
+    ]);
+    const missingPort = run(install, verifyArgs);
+    const restored = run(install, [
+      "apply",
+      "10.254.20.0/24",
+      bridgeOf(internal),
+      "10.254.21.0/24",
+      bridgeOf(app),
+      "8080",
+    ]);
+    assert.equal(restored.status, 0, restored.stderr + restored.stdout);
+    assert.notEqual(missingPort.status, 0);
+    assert.match(missingPort.stderr, /not effective|published/);
+    mutate("ip6", ["-I", "FORWARD", "-i", internalBridge, "-j", "ACCEPT"]);
+    const ipv6 = run(install, verifyArgs);
+    unmutate("ip6", ["-D", "FORWARD", "-i", internalBridge, "-j", "ACCEPT"]);
+    assert.notEqual(ipv6.status, 0);
+    assert.match(ipv6.stderr, /IPv6 FORWARD accepts|before DROP/);
+  } finally {
+    run(path.join(root, "infra/seaweedfs/install-host-isolation.sh"), [
+      "remove",
+      "10.254.20.0/24",
+      internalBridge,
+      "10.254.21.0/24",
+      appBridge,
+      "8080",
+    ]);
+    cleanup();
+    for (const name of created) {
+      run("docker", ["network", "rm", name]);
+    }
+  }
+});
+
+test(
+  "bridge recreation stays stopped until secure-up restores isolation",
+  { timeout: 180_000 },
+  () => {
+    const secrets = mkdtempSync(path.join(tmpdir(), "seaweed-recover-"));
+    const projectName = "editagent-recover";
+    const env = {
+      ...process.env,
+      SEAWEED_SECRET_DIR: secrets,
+      S3_ACCESS_KEY_ID: "editagent",
+      S3_SECRET_ACCESS_KEY: "editagent-dev-secret",
+    };
+    const secure = (args) =>
+      run(
+        path.join(root, "infra/seaweedfs/secure-up.sh"),
+        ["compose.yaml", "-p", projectName, ...args],
+        {
+          env,
+        },
+      );
+    const composeRecover = (args) =>
+      run("docker", ["compose", "-p", projectName, "-f", "compose.yaml", ...args], { env });
+    try {
+      const first = secure(["--", "master"]);
+      assert.equal(first.status, 0, first.stderr + first.stdout);
+      assert.match(first.stdout, /bootstrap-listener-open/);
+      assert.match(first.stdout, /curl_exit=28/);
+      assert.equal(composeRecover(["stop", "master"]).status, 0);
+      const stopped = composeRecover(["ps", "-q", "--status", "running"]);
+      assert.equal(stopped.stdout.trim(), "");
+      assert.equal(composeRecover(["rm", "-f", "master"]).status, 0);
+      run("docker", ["network", "rm", "editagent-storage-internal"]);
+      const second = secure(["--", "master"]);
+      assert.equal(second.status, 0, second.stderr + second.stdout);
+      assert.match(second.stdout, /isolation-verified/);
+      assert.match(second.stdout, /curl_exit=28/);
+      const policy = docker([
+        "inspect",
+        "-f",
+        "{{.HostConfig.RestartPolicy.Name}}",
+        `${projectName}-master-1`,
+      ]);
+      assert.equal(policy, "no");
+    } finally {
+      composeRecover(["stop"]);
+      run(
+        "sh",
+        [
+          "-c",
+          '. .local/isolation-editagent-recover.state && infra/seaweedfs/install-host-isolation.sh remove "$saved_subnet" "$saved_bridge" "$saved_app_subnet" "$saved_app_bridge" "$saved_published"',
+        ],
+        { env },
+      );
+      composeRecover(["down"]);
+      run("docker", ["network", "rm", `${projectName}_default`]);
+      rmSync(secrets, { recursive: true, force: true });
+    }
+  },
+);
+
+test("firewall installation failure leaves services stopped", { timeout: 120_000 }, () => {
+  const secrets = mkdtempSync(path.join(tmpdir(), "seaweed-fw-fail-"));
+  const empty = mkdtempSync(path.join(tmpdir(), "editagent-empty-fw-"));
+  const projectName = "editagent-fw-fail";
+  const env = {
+    ...process.env,
+    SEAWEED_SECRET_DIR: secrets,
+    S3_ACCESS_KEY_ID: "editagent",
+    S3_SECRET_ACCESS_KEY: "editagent-dev-secret",
+    EDITAGENT_FIREWALL_BIN_DIR: empty,
+  };
+  const result = run(
+    path.join(root, "infra/seaweedfs/secure-up.sh"),
+    ["compose.yaml", "-p", projectName, "--", "master"],
+    { env },
+  );
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /fail-closed|unsupported firewall/);
+  const running = run(
+    "docker",
+    ["compose", "-p", projectName, "-f", "compose.yaml", "ps", "-q", "--status", "running"],
+    { env },
+  );
+  assert.equal(running.stdout.trim(), "");
+  run("docker", ["compose", "-p", projectName, "-f", "compose.yaml", "down"], { env });
+  rmSync(secrets, { recursive: true, force: true });
+  rmSync(empty, { recursive: true, force: true });
+});
+
+test("staging boot rejects a missing or readable environment file", () => {
+  const missing = run(path.join(root, "infra/seaweedfs/secure-up.sh"), ["compose.staging.yaml"], {
+    env: { ...process.env, EDITAGENT_ENV_FILE: path.join(tmpdir(), "missing-staging.env") },
+  });
+  assert.notEqual(missing.status, 0);
+  assert.match(missing.stderr, /environment file is missing/);
+  const readable = mkdtempSync(path.join(tmpdir(), "editagent-env-"));
+  const envFile = path.join(readable, "staging.env");
+  writeFileSync(envFile, "POSTGRES_USER=editagent\n", { mode: 0o644 });
+  const loose = run(path.join(root, "infra/seaweedfs/secure-up.sh"), ["compose.staging.yaml"], {
+    env: { ...process.env, EDITAGENT_ENV_FILE: envFile },
+  });
+  assert.notEqual(loose.status, 0);
+  assert.match(loose.stderr, /0600 or 0400/);
+  const digest = `example.invalid/image@sha256:${"ab".repeat(32)}`;
+  const valid = [
+    `EDITAGENT_API_IMAGE=${digest}`,
+    `EDITAGENT_WEB_IMAGE=${digest}`,
+    `EDITAGENT_MEDIA_WORKER_IMAGE=${digest}`,
+    `EDITAGENT_RENDER_WORKER_IMAGE=${digest}`,
+    `EDITAGENT_AGENT_WORKER_IMAGE=${digest}`,
+    `EDITAGENT_AI_WORKER_IMAGE=${digest}`,
+    `EDITAGENT_OBJECT_INGRESS_IMAGE=${digest}`,
+    `EDITAGENT_POSTGRES_IMAGE=${digest}`,
+    `EDITAGENT_REDIS_IMAGE=${digest}`,
+    `EDITAGENT_SEAWEEDFS_IMAGE=${image}`,
+    "S3_ACCESS_KEY_ID=staging-access",
+    "S3_SECRET_ACCESS_KEY=staging-secret-not-default",
+    "",
+  ].join("\n");
+  writeFileSync(envFile, valid.replace(image, `${digest}`));
+  chmodSync(envFile, 0o600);
+  const wrongDigest = run(
+    path.join(root, "infra/seaweedfs/secure-up.sh"),
+    ["compose.staging.yaml"],
+    {
+      env: { ...process.env, EDITAGENT_ENV_FILE: envFile },
+    },
+  );
+  assert.notEqual(wrongDigest.status, 0);
+  assert.match(wrongDigest.stderr, /approved SeaweedFS digest/);
+  writeFileSync(envFile, valid.replace("staging-secret-not-default", "editagent-dev-secret"));
+  chmodSync(envFile, 0o600);
+  const devSecret = run(path.join(root, "infra/seaweedfs/secure-up.sh"), ["compose.staging.yaml"], {
+    env: { ...process.env, EDITAGENT_ENV_FILE: envFile },
+  });
+  assert.notEqual(devSecret.status, 0);
+  assert.match(devSecret.stderr, /development S3 secret/);
+  rmSync(readable, { recursive: true, force: true });
+});
+
+test("bootstrap probe rejects curl failures that are not a firewall timeout", () => {
+  const evaluate = path.join(root, "infra/seaweedfs/evaluate-bootstrap-probe.sh");
+  for (const exitCode of ["0", "7", "28", "52", "56"]) {
+    const unchanged = run(evaluate, [exitCode, "4", "4"]);
+    assert.notEqual(unchanged.status, 0, exitCode);
+  }
+  for (const exitCode of ["0", "7", "52", "56"]) {
+    const increased = run(evaluate, [exitCode, "4", "9"]);
+    assert.notEqual(increased.status, 0, increased.stderr);
+    assert.match(increased.stderr, /curl exit/);
+  }
+  const timeout = run(evaluate, ["28", "4", "5"]);
+  assert.equal(timeout.status, 0, timeout.stderr);
+  const refused = run("curl", ["-sS", "-m", "1", "-o", "/dev/null", "http://127.0.0.1:1/"]);
+  assert.equal(refused.status, 7);
+  const generic = run(evaluate, [String(refused.status), "1", "2"]);
+  assert.notEqual(generic.status, 0);
+  assert.match(generic.stderr, /expected timeout 28/);
+});
+
 test("firewall verify fails closed when the required rules are absent", () => {
   const result = run(path.join(root, "infra/seaweedfs/install-host-isolation.sh"), [
     "verify",
@@ -856,4 +1209,47 @@ test("firewall verify fails closed when the required rules are absent", () => {
   ]);
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /not effective|unsupported firewall/);
+});
+
+test("checked-in boot unit requires the staging environment file", () => {
+  const unit = readFileSync(path.join(root, "infra/seaweedfs/editagent-secure-up.service"), "utf8");
+  const generated = readFileSync(path.join(root, "infra/seaweedfs/secure-up.sh"), "utf8");
+  assert.match(unit, /^EnvironmentFile=\/opt\/editagent\/staging\.env$/m);
+  assert.equal(unit.includes("EnvironmentFile=-"), false);
+  assert.match(
+    unit,
+    /^ExecStart=\/opt\/editagent\/infra\/seaweedfs\/secure-up\.sh compose\.staging\.yaml$/m,
+  );
+  assert.match(
+    unit,
+    /^ExecStop=\/usr\/bin\/docker compose -f \/opt\/editagent\/compose\.staging\.yaml stop$/m,
+  );
+  assert.equal(/^Restart=/m.test(unit), false);
+  assert.match(generated, /EnvironmentFile=\$env_file/);
+  assert.equal(generated.includes("EnvironmentFile=-"), false);
+  assert.match(generated, /SEAWEED_REQUIRE_S3_ENV=1/);
+});
+
+test(
+  "isolated systemd boots the unit from the staging environment file",
+  { timeout: 420_000 },
+  () => {
+    const result = run(path.join(root, "infra/seaweedfs/systemd-boot-probe.sh"), [], {
+      timeout: 400_000,
+    });
+    assert.equal(result.status, 0, result.stderr + result.stdout);
+    assert.match(result.stdout, /missing-env=unit-failed-before-exec/);
+    assert.match(result.stdout, /readable-env=fail-closed/);
+    assert.match(result.stdout, /valid-env=loaded-and-fail-closed/);
+    assert.match(result.stdout, /services-started=no/);
+  },
+);
+
+test("isolated dockerd restart leaves restart=no containers stopped", { timeout: 420_000 }, () => {
+  const result = run(path.join(root, "infra/seaweedfs/docker-restart-probe.sh"), [], {
+    timeout: 400_000,
+  });
+  assert.equal(result.status, 0, result.stderr + result.stdout);
+  assert.match(result.stdout, /after stay-down=false no/);
+  assert.match(result.stdout, /come-back=true always/);
 });

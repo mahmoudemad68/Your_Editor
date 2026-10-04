@@ -14,6 +14,17 @@ COPY packages/schemas/src/job-envelope.schema.json ./src/editagent_ai_worker/inf
 RUN uv sync --frozen --no-dev --no-editable
 
 FROM python:3.11.17-slim-trixie@sha256:45037981b62b34b44602584fccbc4d884d5f7dc92c7ee86bb38a698a79fe1e51 AS runtime
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+      libpcre2-8-0=10.46-1~deb13u3 \
+      libssl3t64=3.5.7-1~deb13u3 \
+      openssl-provider-legacy=3.5.7-1~deb13u3 \
+    && rm -rf /var/lib/apt/lists/* \
+    && rm -rf /usr/local/lib/python3.11/site-packages/setuptools \
+      /usr/local/lib/python3.11/site-packages/setuptools-*.dist-info \
+      /usr/local/lib/python3.11/site-packages/pip \
+      /usr/local/lib/python3.11/site-packages/pip-*.dist-info \
+      /usr/local/bin/pip /usr/local/bin/pip3
 RUN groupadd --system --gid 10001 editagent \
     && useradd --system --uid 10001 --gid 10001 --home-dir /home/editagent --create-home --shell /usr/sbin/nologin editagent
 WORKDIR /app

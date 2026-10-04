@@ -12,6 +12,10 @@ dir=${SEAWEED_SECRET_DIR:-"$ROOT/.local/seaweedfs"}
 if [ "${SEAWEED_REQUIRE_S3_ENV:-}" = "1" ]; then
   : "${S3_ACCESS_KEY_ID:?S3_ACCESS_KEY_ID is required}"
   : "${S3_SECRET_ACCESS_KEY:?S3_SECRET_ACCESS_KEY is required}"
+  if [ "$S3_SECRET_ACCESS_KEY" = "editagent-dev-secret" ]; then
+    echo "staging refuses the development S3 secret" >&2
+    exit 1
+  fi
 else
   : "${S3_ACCESS_KEY_ID:=editagent}"
   : "${S3_SECRET_ACCESS_KEY:=editagent-dev-secret}"

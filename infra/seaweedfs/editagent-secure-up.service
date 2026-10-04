@@ -1,12 +1,17 @@
 [Unit]
 Description=EditAgent fail-closed startup
-After=docker.service
+After=docker.service network-online.target
 Requires=docker.service
+Wants=network-online.target
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
 WorkingDirectory=/opt/editagent
+Environment=SEAWEED_REQUIRE_S3_ENV=1
+Environment=EDITAGENT_ENV_FILE=/opt/editagent/staging.env
+Environment=EDITAGENT_INSTALL_BOOT_UNIT=0
+EnvironmentFile=/opt/editagent/staging.env
 ExecStart=/opt/editagent/infra/seaweedfs/secure-up.sh compose.staging.yaml
 ExecStop=/usr/bin/docker compose -f /opt/editagent/compose.staging.yaml stop
 

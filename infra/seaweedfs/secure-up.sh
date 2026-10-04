@@ -8,7 +8,6 @@ set -eu
 
 ROOT="$(CDPATH= cd -- "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT"
-unset EDITAGENT_FIREWALL_BIN_DIR
 
 file=${1:?compose file}
 shift
@@ -27,6 +26,10 @@ log() {
   printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"
 }
 
+APPROVED_SEAWEED_IMAGE="chrislusf/seaweedfs@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d"
+
+log "secure-up-invoked"
+
 if [ "$(id -u)" -ne 0 ]; then
   if [ ! -x /usr/bin/sudo ] || ! /usr/bin/sudo -n true >/dev/null 2>&1; then
     echo "unsupported firewall: root or non-interactive /usr/bin/sudo -n is required" >&2
@@ -44,6 +47,34 @@ fail_closed() {
   compose stop >/dev/null 2>&1 || true
   exit 1
 }
+
+if [ "$(basename "$file")" = "compose.staging.yaml" ]; then
+  env_file=${EDITAGENT_ENV_FILE:-$ROOT/staging.env}
+  if [ ! -f "$env_file" ]; then
+    fail_closed "staging environment file is missing: $env_file"
+  fi
+  env_mode=$(stat -c '%a' "$env_file")
+  case "$env_mode" in
+    600 | 400) ;;
+    *) fail_closed "staging environment file must be mode 0600 or 0400, found $env_mode" ;;
+  esac
+  set -a
+  # shellcheck disable=SC1090
+  . "$env_file"
+  set +a
+  export SEAWEED_REQUIRE_S3_ENV=1
+  if [ -z "${S3_ACCESS_KEY_ID:-}" ] || [ -z "${S3_SECRET_ACCESS_KEY:-}" ]; then
+    fail_closed "staging S3 credentials are required"
+  fi
+  if [ "$S3_SECRET_ACCESS_KEY" = "editagent-dev-secret" ]; then
+    fail_closed "staging refuses the development S3 secret"
+  fi
+  if [ "${EDITAGENT_SEAWEEDFS_IMAGE:-}" != "$APPROVED_SEAWEED_IMAGE" ]; then
+    fail_closed "EDITAGENT_SEAWEEDFS_IMAGE must be the approved SeaweedFS digest"
+  fi
+  "$ROOT/infra/scripts/staging-preflight.sh" || fail_closed "staging preflight"
+  log "staging-env-loaded"
+fi
 
 if ! docker info >/dev/null 2>&1; then
   echo "fail-closed: docker is not available" >&2
@@ -68,27 +99,53 @@ fi
 meta=$(compose config --format json | python3 -c '
 import json, sys
 doc = json.load(sys.stdin)
-internal = ""
-for key, network in doc.get("networks", {}).items():
-    if key == "storage_internal":
-        internal = network.get("name") or key
-project = doc.get("name") or ""
 ports = set()
 for service in doc.get("services", {}).values():
     for item in service.get("ports") or []:
         target = item.get("target")
         if target:
             ports.add(str(target))
-if not internal or not project:
-    sys.exit("compose project or storage_internal network is missing")
-print(project)
-print(internal)
+try:
+    internal = doc["networks"]["storage_internal"]
+    application = doc["networks"]["default"]
+except KeyError:
+    sys.exit("compose project is missing storage_internal or the default network")
+def subnet(network):
+    return network["ipam"]["config"][0]["subnet"]
+print(doc.get("name") or "")
+print(internal.get("name") or "storage_internal")
+print(subnet(internal))
+print("1" if internal.get("internal") else "0")
+print(application.get("name") or "default")
+print(subnet(application))
 print(",".join(sorted(ports)) or "-")
 ') || fail_closed "cannot read compose networks"
 project=$(printf '%s\n' "$meta" | sed -n '1p')
 internal=$(printf '%s\n' "$meta" | sed -n '2p')
-published=$(printf '%s\n' "$meta" | sed -n '3p')
-app_net="${project}_default"
+internal_subnet_config=$(printf '%s\n' "$meta" | sed -n '3p')
+internal_flag=$(printf '%s\n' "$meta" | sed -n '4p')
+app_net=$(printf '%s\n' "$meta" | sed -n '5p')
+app_subnet_config=$(printf '%s\n' "$meta" | sed -n '6p')
+published=$(printf '%s\n' "$meta" | sed -n '7p')
+if ! docker network inspect "$internal" >/dev/null 2>&1; then
+  if [ "$internal_flag" = "1" ]; then
+    docker network create --label com.docker.compose.project="$project" \
+      --label com.docker.compose.network=storage_internal \
+      --subnet "$internal_subnet_config" --ipv6=false --internal "$internal" ||
+      fail_closed "could not create the internal network"
+  else
+    docker network create --label com.docker.compose.project="$project" \
+      --label com.docker.compose.network=storage_internal \
+      --subnet "$internal_subnet_config" --ipv6=false "$internal" ||
+      fail_closed "could not create the internal network"
+  fi
+fi
+if ! docker network inspect "$app_net" >/dev/null 2>&1; then
+  docker network create --label com.docker.compose.project="$project" \
+    --label com.docker.compose.network=default \
+    --subnet "$app_subnet_config" --ipv6=false "$app_net" ||
+    fail_closed "could not create the application network"
+fi
 
 for network in "$internal" "$app_net"; do
   enabled=$(docker network inspect "$network" --format '{{.EnableIPv6}}')
@@ -137,16 +194,22 @@ if ! docker run -d --name "$probe" --network "$internal" --entrypoint nc "$image
   fail_closed "could not start the bootstrap probe"
 fi
 probe_ip=$(docker inspect "$probe" --format '{{(index .NetworkSettings.Networks "'"$internal"'").IPAddress}}')
+if ! docker run --rm --network "$internal" --entrypoint nc "$image" -z -w 2 "$probe_ip" 8888; then
+  docker rm -f "$probe" >/dev/null 2>&1 || true
+  fail_closed "bootstrap listener was not reachable from the internal network"
+fi
+log "bootstrap-listener-open ip=$probe_ip"
+before_drop=$("$ROOT/infra/seaweedfs/install-host-isolation.sh" drop-count "$subnet" "$bridge" "$app_subnet" "$app_bridge" "$published" | awk '/^total / { print $2 }')
 probe_started=$(date +%s%3N)
 probe_exit=0
 probe_code=$(curl -sS -m 1 -o /dev/null -w '%{http_code}' "http://${probe_ip}:8888/") || probe_exit=$?
 probe_finished=$(date +%s%3N)
+after_drop=$("$ROOT/infra/seaweedfs/install-host-isolation.sh" drop-count "$subnet" "$bridge" "$app_subnet" "$app_bridge" "$published" | awk '/^total / { print $2 }')
 docker rm -f "$probe" >/dev/null
-# DROP exceeds the timeout (curl exit 28). A completed connection is exit 0 or 52.
-log "bootstrap-host-blocked status=${probe_code:-000} curl_exit=${probe_exit} ip=$probe_ip started_ms=$probe_started finished_ms=$probe_finished"
-if [ "$probe_exit" -eq 0 ] || [ "$probe_exit" -eq 52 ]; then
-  fail_closed "host reached an internal listener before services started"
-fi
+log "bootstrap-host-blocked status=${probe_code:-000} curl_exit=${probe_exit} drops_before=${before_drop:-0} drops_after=${after_drop:-0} ip=$probe_ip started_ms=$probe_started finished_ms=$probe_finished"
+"$ROOT/infra/seaweedfs/evaluate-bootstrap-probe.sh" \
+  "$probe_exit" "${before_drop:-0}" "${after_drop:-0}" ||
+  fail_closed "bootstrap probe did not prove firewall isolation"
 
 unpublished=""
 published_services=""
@@ -200,15 +263,29 @@ chmod 600 "$state_file"
 
 if [ "${EDITAGENT_INSTALL_BOOT_UNIT:-}" = "1" ] && [ -d /run/systemd/system ]; then
   unit=/etc/systemd/system/editagent-secure-up.service
+  env_file=${EDITAGENT_ENV_FILE:-$ROOT/staging.env}
+  if [ ! -f "$env_file" ]; then
+    fail_closed "boot unit environment file is missing: $env_file"
+  fi
+  env_mode=$(stat -c '%a' "$env_file")
+  case "$env_mode" in
+    600 | 400) ;;
+    *) fail_closed "boot unit environment file must be mode 0600 or 0400, found $env_mode" ;;
+  esac
   unit_body="[Unit]
 Description=EditAgent fail-closed startup
-After=docker.service
+After=docker.service network-online.target
 Requires=docker.service
+Wants=network-online.target
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
 WorkingDirectory=$ROOT
+Environment=SEAWEED_REQUIRE_S3_ENV=1
+Environment=EDITAGENT_ENV_FILE=$env_file
+Environment=EDITAGENT_INSTALL_BOOT_UNIT=0
+EnvironmentFile=$env_file
 ExecStart=$ROOT/infra/seaweedfs/secure-up.sh $file
 ExecStop=/usr/bin/docker compose -f $ROOT/$file stop
 

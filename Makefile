@@ -16,7 +16,7 @@ help:
 		'make staging-config Validate staging Compose when its environment is already exported'
 
 up:
-	./infra/seaweedfs/secure-up.sh compose.yaml
+	unset EDITAGENT_FIREWALL_BIN_DIR; ./infra/seaweedfs/secure-up.sh compose.yaml
 
 down:
 	$(COMPOSE) down
@@ -31,7 +31,7 @@ seed:
 	./infra/scripts/seed.sh
 
 up-gpu:
-	COMPOSE_PROFILES=gpu ./infra/seaweedfs/secure-up.sh compose.yaml
+	unset EDITAGENT_FIREWALL_BIN_DIR; COMPOSE_PROFILES=gpu ./infra/seaweedfs/secure-up.sh compose.yaml
 
 compose-config:
 	./infra/scripts/validate-compose.sh

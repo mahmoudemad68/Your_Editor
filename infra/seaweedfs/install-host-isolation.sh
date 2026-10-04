@@ -170,6 +170,75 @@ ensure_ip6() {
   run_bin "$tool" -C "$@" >/dev/null 2>&1 || run_bin "$tool" -I "$@"
 }
 
+require_effective_backend() {
+  if [ -n "${EDITAGENT_FIREWALL_BIN_DIR:-}" ]; then
+    return 0
+  fi
+  driver=$(docker info --format '{{.FirewallBackend.Driver}}' 2>/dev/null || true)
+  if [ "$driver" != "iptables" ]; then
+    echo "unsupported firewall: docker firewall backend is '${driver:-unknown}', expected iptables" >&2
+    exit 1
+  fi
+  resolved=$(readlink -f /usr/sbin/iptables 2>/dev/null || readlink -f /sbin/iptables || true)
+  case "$resolved" in
+    *nft*) name=iptables-nft ;;
+    *legacy*) name=iptables-legacy ;;
+    *)
+      echo "unsupported firewall: docker iptables resolves to ${resolved:-missing}" >&2
+      exit 1
+      ;;
+  esac
+  if ! EFFECTIVE=$(find_bin "$name"); then
+    echo "unsupported firewall: effective backend $name is not installed" >&2
+    exit 1
+  fi
+  case " $SELECTED " in
+    *" $EFFECTIVE "*) ;;
+    *)
+      echo "unsupported firewall: docker uses $EFFECTIVE but Docker chains are absent there" >&2
+      exit 1
+      ;;
+  esac
+  echo "firewall-backend-effective: $EFFECTIVE driver=$driver"
+}
+
+assert_ipv4_forward() {
+  tool=$1
+  run_bin "$tool" -S FORWARD | python3 -c '
+import sys
+lines = [line for line in sys.stdin.read().splitlines() if line.startswith("-A ")]
+if not lines or lines[0] != "-A FORWARD -j DOCKER-USER":
+    sys.exit("IPv4 FORWARD does not reach DOCKER-USER before other rules")
+print("ipv4-forward-ok")
+'
+}
+
+assert_ipv6_order() {
+  tool=$1
+  chain=$2
+  export BRIDGE="$bridge" APP_BRIDGE="$app_bridge" CHAIN="$chain"
+  run_bin "$tool" -S "$chain" | python3 -c '
+import os, sys
+lines = [line for line in sys.stdin.read().splitlines() if line.startswith("-A ")]
+chain = os.environ["CHAIN"]
+ifaces = [os.environ["BRIDGE"], os.environ["APP_BRIDGE"]]
+directions = ["-i", "-o"] if chain == "FORWARD" else ["-o"]
+for iface in ifaces:
+    for direction in directions:
+        drop_at = -1
+        for index, line in enumerate(lines):
+            if f"{direction} {iface}" in line and "-j DROP" in line:
+                drop_at = index
+                break
+        if drop_at < 0:
+            sys.exit(f"IPv6 {chain} is missing DROP for {direction} {iface}")
+        for line in lines[:drop_at]:
+            if f"{direction} {iface}" in line and ("-j ACCEPT" in line or "-j RETURN" in line):
+                sys.exit(f"IPv6 {chain} accepts {iface} before DROP")
+print(f"ipv6-order-ok {chain}")
+'
+}
+
 ipv6_rules() {
   if [ ! -f /proc/net/if_inet6 ]; then
     if [ "$action" = verify ]; then
@@ -189,7 +258,14 @@ ipv6_rules() {
       ensure_ip6 "$tool" FORWARD -o "$iface" -j DROP
       ensure_ip6 "$tool" OUTPUT -o "$iface" -j DROP
     done
+    if [ "$action" = verify ]; then
+      assert_ipv6_order "$tool" FORWARD
+      assert_ipv6_order "$tool" OUTPUT
+    fi
   done
+  if [ "$action" = verify ]; then
+    echo "ipv6-policy: drop"
+  fi
 }
 
 apply_v4() {
@@ -234,13 +310,93 @@ if [ "$action" = remove ]; then
   exit 0
 fi
 
+assert_order() {
+  tool=$1
+  chain=$2
+  export SUBNET="$subnet" BRIDGE="$bridge" APP_SUBNET="$app_subnet" PUBLISHED="$PUBLISHED" CHAIN="$chain"
+  run_bin "$tool" -S "$chain" | python3 -c '
+import os, sys
+lines = [line for line in sys.stdin.read().splitlines() if line.startswith("-A ")]
+subnet = os.environ["SUBNET"]
+bridge = os.environ["BRIDGE"]
+app = os.environ["APP_SUBNET"]
+published = os.environ["PUBLISHED"].split()
+chain = os.environ["CHAIN"]
+accept = "RETURN" if chain == "DOCKER-USER" else "ACCEPT"
+
+def first(predicate):
+    for index, line in enumerate(lines):
+        if predicate(line):
+            return index
+    return -1
+
+if chain == "DOCKER-USER":
+    internal_return = first(lambda line: f"-d {subnet}" in line and f"-i {bridge}" in line and "-j RETURN" in line)
+    internal_drop = first(lambda line: f"-d {subnet}" in line and "-i " not in line and "-j DROP" in line)
+    if internal_return < 0 or internal_drop < 0 or internal_return > internal_drop:
+        sys.exit(f"{chain}: internal RETURN must precede the subnet DROP")
+    for line in lines[:internal_drop]:
+        if "-j ACCEPT" not in line and "-j RETURN" not in line:
+            continue
+        if f"-d {subnet}" not in line and " -d " in line:
+            continue
+        if f"-d {subnet}" in line and f"-i {bridge}" in line:
+            continue
+        sys.exit(f"{chain}: a rule before the internal DROP can expose that subnet through another bridge: {line}")
+else:
+    internal_drop = first(lambda line: f"-d {subnet}" in line and "-j DROP" in line)
+    if internal_drop < 0:
+        sys.exit(f"{chain}: host DROP for the internal subnet is missing")
+app_drop = first(lambda line: f"-d {app}" in line and "-j DROP" in line and "--dport" not in line and "conntrack" not in line)
+established = first(lambda line: f"-d {app}" in line and "conntrack" in line and f"-j {accept}" in line)
+if app_drop < 0 or established < 0 or established > app_drop:
+    sys.exit(f"{chain}: established traffic must precede the application subnet DROP")
+for port in published:
+    allowed = first(lambda line, port=port: f"-d {app}" in line and f"--dport {port}" in line and f"-j {accept}" in line)
+    if allowed < 0 or allowed > app_drop:
+        sys.exit(f"{chain}: published port {port} must precede the application subnet DROP")
+print(f"order-ok {chain}")
+'
+}
+
+drop_packets() {
+  tool=$1
+  run_bin "$tool" -nvx -L OUTPUT | awk -v subnet="$subnet" '
+    $3 == "DROP" && $9 == subnet { sum += $1; found = 1 }
+    END { print sum + 0 }
+  '
+}
+
+if [ "$action" = "drop-count" ]; then
+  total=0
+  for tool in $SELECTED; do
+    count=$(drop_packets "$tool")
+    echo "$tool $count"
+    total=$((total + count))
+  done
+  echo "total $total"
+  exit 0
+fi
+
 if [ "$action" = verify ]; then
+  require_effective_backend
   echo "firewall-backends: $SELECTED"
+  for tool in $SELECTED; do
+    assert_ipv4_forward "$tool"
+  done
   visible_all "internal return" DOCKER-USER -d "$subnet" -i "$bridge" -j RETURN
   visible_all "internal drop" DOCKER-USER -d "$subnet" -j DROP
   visible_all "host internal drop" OUTPUT -d "$subnet" -j DROP
   visible_all "app subnet drop" DOCKER-USER -d "$app_subnet" -j DROP
   visible_all "host app subnet drop" OUTPUT -d "$app_subnet" -j DROP
+  for port in $PUBLISHED; do
+    visible_all "published $port" OUTPUT -d "$app_subnet" -p tcp --dport "$port" -j ACCEPT
+    visible_all "forward $port" DOCKER-USER -d "$app_subnet" -p tcp --dport "$port" -j RETURN
+  done
+  for tool in $SELECTED; do
+    assert_order "$tool" DOCKER-USER
+    assert_order "$tool" OUTPUT
+  done
   ipv6_rules
   exit 0
 fi
@@ -250,6 +406,7 @@ if [ "$action" != apply ]; then
   exit 1
 fi
 
+require_effective_backend
 apply_v4
 ipv6_rules
 echo "applied host isolation internal=$subnet app=$app_subnet"

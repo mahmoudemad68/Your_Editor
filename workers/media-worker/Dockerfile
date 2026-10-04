@@ -40,6 +40,7 @@ RUN pnpm --filter @editagent/media-worker... build \
 
 FROM node:22.23.3-alpine3.23@sha256:baf676f7d0e552f3231945c2f979055ca121bce128c152f7a34e6bd1728b1c5a AS runtime
 RUN apk add --no-cache ffmpeg=8.0.1-r1 \
+    && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx \
     && ffprobe -version \
     && ffprobe -version | head -n 1 > /etc/editagent-ffprobe-release \
     && addgroup -S -g 10001 editagent \
