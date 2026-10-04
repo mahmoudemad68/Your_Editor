@@ -152,6 +152,10 @@ jobs:
             -t "editagent-${{ matrix.service }}:${GITHUB_SHA}" \
             .
 
+      - name: Probe media containers
+        if: matrix.service == 'media-worker'
+        run: ./infra/scripts/verify-media-ffmpeg.sh "editagent-${{ matrix.service }}:${GITHUB_SHA}"
+
       - name: Install Syft and Trivy
         run: ./infra/scripts/install-supply-chain-tools.sh
 

@@ -542,6 +542,26 @@ test("a preinstalled scanner at the pinned version is kept", () => {
   assert.equal(existsSync(path.join(dest, "gitleaks")), false);
 });
 
+test("media-worker FFmpeg is built without libxml2 or MPEG-DASH", () => {
+  const dockerfile = read("workers/media-worker/Dockerfile");
+  const build = read("workers/media-worker/build-ffmpeg.sh");
+  const verify = read("infra/scripts/verify-media-ffmpeg.sh");
+  assert.equal(dockerfile.includes("ffmpeg=7:"), false);
+  assert.match(dockerfile, /build-ffmpeg\.sh/);
+  assert.match(dockerfile, /libxml2 must not be installed/);
+  assert.match(dockerfile, /USER 10001:10001/);
+  assert.match(build, /--disable-libxml2/);
+  assert.equal(build.includes("--enable-libxml2"), false);
+  assert.equal(build.includes("dash"), true);
+  assert.match(build, /de668509caf9e35e3cd162473441fdb29538c6d96ed080292b3cf9e6fc5d558f/);
+  assert.match(build, /MPEG-DASH demuxer was built/);
+  assert.match(verify, /sample\.webm/);
+  assert.match(verify, /sample\.mkv/);
+  assert.match(verify, /Invalid data found when processing input/);
+  const workflow = read(".github/workflows/supply-chain.yml");
+  assert.match(workflow, /verify-media-ffmpeg\.sh/);
+});
+
 test("redis rejects OpenSSL older than the patched revision", () => {
   const dockerfile = read("infra/redis/Dockerfile");
   const script = read("infra/redis/require-openssl.sh");
