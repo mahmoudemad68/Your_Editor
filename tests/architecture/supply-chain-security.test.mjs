@@ -343,19 +343,24 @@ test("a placeholder allowlist does not hide another secret on the same line", ()
     `password=editagent-dev-password slack=${secret}\n`,
   );
   const config = path.join(root, ".gitleaks.toml");
-  const placeholder = run("gitleaks", [
-    "detect",
-    "--no-git",
-    "--source",
-    path.join(directory, "placeholder.txt"),
-    "--config",
-    config,
-    "--redact",
-    "--exit-code",
-    "1",
-  ]);
-  assert.equal(placeholder.status, 0, placeholder.stdout + placeholder.stderr);
-  const mixed = run("gitleaks", [
+  const gitleaks = gitleaksCommand();
+  const placeholder = run(
+    gitleaks,
+    [
+      "detect",
+      "--no-git",
+      "--source",
+      path.join(directory, "placeholder.txt"),
+      "--config",
+      config,
+      "--redact",
+      "--exit-code",
+      "1",
+    ],
+    { env: process.env },
+  );
+  assert.equal(placeholder.status, 0, spawnText(placeholder));
+  const mixed = run(gitleaks, [
     "detect",
     "--no-git",
     "--source",
@@ -366,7 +371,7 @@ test("a placeholder allowlist does not hide another secret on the same line", ()
     "--exit-code",
     "1",
   ]);
-  assert.equal(mixed.status, 1, mixed.stdout + mixed.stderr);
+  assert.equal(mixed.status, 1, spawnText(mixed));
 });
 
 test("the Python audit includes locked development dependencies", () => {
@@ -399,6 +404,31 @@ test("the Python audit includes locked development dependencies", () => {
     assert.equal(exported.includes(name), true, name);
   }
 });
+
+function spawnText(result) {
+  return `${result.stdout ?? ""}${result.stderr ?? ""}${result.error?.message ?? ""}`;
+}
+
+function gitleaksCommand() {
+  const found = run("gitleaks", ["version"]);
+  if (found.status === 0) {
+    return "gitleaks";
+  }
+  const bin = mkdtempSync(path.join(tmpdir(), "editagent-gitleaks-bin-"));
+  const install = run(
+    path.join(root, "infra/scripts/install-supply-chain-tools.sh"),
+    ["gitleaks"],
+    {
+      env: {
+        ...process.env,
+        SUPPLY_CHAIN_BIN: bin,
+        PATH: "/usr/bin:/bin",
+      },
+    },
+  );
+  assert.equal(install.status, 0, spawnText(install));
+  return path.join(bin, "gitleaks");
+}
 
 function writeJson(directory, value) {
   const file = path.join(directory, "audit.json");
