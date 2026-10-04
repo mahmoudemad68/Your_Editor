@@ -5,8 +5,8 @@ useDefault = true
 
 [allowlist]
 description = "Local Compose placeholders. They are not staging or production credentials."
-regexTarget = "line"
+regexTarget = "secret"
 regexes = [
-  '''editagent-dev-password''',
-  '''editagent-dev-secret''',
+  '''^editagent-dev-password$''',
+  '''^editagent-dev-secret$''',
 ]

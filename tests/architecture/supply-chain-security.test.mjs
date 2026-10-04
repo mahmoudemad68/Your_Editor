@@ -5,7 +5,7 @@
 
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -55,14 +55,21 @@ test("the security check reports high and critical findings and does not publish
   assert.match(workflow, /pnpm audit --json/);
   assert.match(workflow, /supply-chain-findings\.py/);
   assert.match(scanner, /--severity HIGH,CRITICAL/);
-  assert.match(scanner, /--severity CRITICAL --exit-code 1/);
+  assert.match(scanner, /--severity CRITICAL \\\n\s+--exit-code 1/);
   assert.match(scanner, /spdx-json=/);
   assert.match(scanner, /vulnerability ignore file is not allowed/);
   assert.equal(workflow.includes("docker push"), false);
   assert.equal(workflow.includes("packages: write"), false);
   assert.equal(workflow.includes("environment: staging"), false);
   assert.equal(workflow.includes("ghcr.io"), false);
-  assert.equal(scanner.includes("--ignore-unfixed"), false);
+  assert.match(scanner, /--ignore-unfixed=false/);
+  assert.equal(
+    scanner.replaceAll("--ignore-unfixed=false", "").includes("--ignore-unfixed"),
+    false,
+  );
+  assert.match(scanner, /--config=/);
+  assert.match(scanner, /--ignorefile=/);
+  assert.match(scanner, /--secret-config=/);
   assert.equal(scanner.includes("trivyignore"), true);
   assert.equal(workflow.includes("--ignore-unfixed"), false);
   assert.equal(read(".gitleaks.toml").includes("editagent-dev-password"), true);
@@ -240,10 +247,185 @@ test("Trivy findings are printed for high and critical rows", () => {
   assert.match(result.stdout, /critical=1 high=1/);
 });
 
+test("a CVSS 4.0 critical vector fails and an unscored finding cannot pass", () => {
+  const critical = pythonAuditVector(
+    "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:N/SC:N/SI:N/SA:N",
+    "CVSS_V4",
+  );
+  assert.equal(critical.status, 1);
+  assert.match(critical.stdout, /Critical Python vulnerabilities/);
+
+  const missing = pythonAuditDocument({ id: "PYSEC-2026-1" });
+  assert.equal(missing.status, 1);
+  assert.match(missing.stdout, /no severity/);
+
+  const broken = pythonAuditDocument({
+    id: "PYSEC-2026-2",
+    severity: [{ type: "CVSS_V4", score: "CVSS:4.0/AV:N" }],
+  });
+  assert.equal(broken.status, 1);
+  assert.match(broken.stdout, /Unparseable Python vulnerability severities/);
+});
+
+test("repository Trivy configuration cannot hide a critical finding", () => {
+  for (const config of [
+    "vulnerability:\n  ignore-unfixed: true\n",
+    "ignorefile: custom.trivyignore\n",
+  ]) {
+    const directory = mkdtempSync(path.join(tmpdir(), "editagent-trivy-config-"));
+    writeFileSync(path.join(directory, "trivy.yaml"), config);
+    writeFileSync(path.join(directory, "custom.trivyignore"), "CVE-2026-9999\n");
+    const bin = path.join(directory, "bin");
+    mkdirSync(bin);
+    const log = path.join(directory, "trivy-args.log");
+    writeFileSync(
+      path.join(bin, "syft"),
+      '#!/bin/sh\nfor arg in "$@"; do case "$arg" in spdx-json=*) printf \'{ }\\n\' > "${arg#spdx-json=}" ;; esac; done\nexit 0\n',
+    );
+    writeFileSync(
+      path.join(bin, "trivy"),
+      `#!/bin/sh
+printf '%s\\n' "$*" >> ${JSON.stringify(log)}
+if [ "$1" = "version" ]; then
+  echo Version: test
+  exit 0
+fi
+printf '%s\\n' "$*" | grep -q -- '--config=' || exit 0
+printf '%s\\n' "$*" | grep -q -- '--ignorefile=' || exit 0
+printf '%s\\n' "$*" | grep -q -- '--secret-config=' || exit 0
+printf '%s\\n' "$*" | grep -q -- '--ignore-unfixed=false' || exit 0
+output=""
+previous=""
+for arg in "$@"; do
+  if [ "$previous" = "--output" ]; then
+    output=$arg
+  fi
+  previous=$arg
+done
+if [ -n "$output" ]; then
+  printf '%s\\n' '{"Results":[{"Vulnerabilities":[{"VulnerabilityID":"CVE-2026-9999","Severity":"CRITICAL","PkgName":"openssl","InstalledVersion":"1"}]}]}' > "$output"
+  exit 0
+fi
+if printf '%s\\n' "$*" | grep -q -- '--exit-code 1'; then
+  exit 1
+fi
+exit 0
+`,
+    );
+    chmodSync(path.join(bin, "syft"), 0o755);
+    chmodSync(path.join(bin, "trivy"), 0o755);
+    const result = run(
+      path.join(root, "infra/scripts/supply-chain-scan-image.sh"),
+      ["api", "example"],
+      { cwd: directory, env: { ...process.env, PATH: `${bin}:${process.env.PATH}` } },
+    );
+    assert.notEqual(result.status, 0, result.stdout + result.stderr);
+    assert.equal(readFileSync(log, "utf8").includes("--ignore-unfixed=false"), true);
+    assert.equal(readFileSync(log, "utf8").includes("--config="), true);
+    assert.equal(readFileSync(log, "utf8").includes("--ignorefile="), true);
+    assert.equal(readFileSync(log, "utf8").includes("--exit-code 1"), true);
+    let passExists = true;
+    try {
+      readFileSync(path.join(directory, "api"), "utf8");
+    } catch {
+      passExists = false;
+    }
+    assert.equal(passExists, false);
+  }
+});
+
+test("a placeholder allowlist does not hide another secret on the same line", () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "editagent-gitleaks-"));
+  const secret = ["xoxb-123456789012", "-1234567890123", "-abcdefghijklmnopqrstuvwx"].join("");
+  writeFileSync(path.join(directory, "placeholder.txt"), "password=editagent-dev-password\n");
+  writeFileSync(
+    path.join(directory, "mixed.txt"),
+    `password=editagent-dev-password slack=${secret}\n`,
+  );
+  const config = path.join(root, ".gitleaks.toml");
+  const placeholder = run("gitleaks", [
+    "detect",
+    "--no-git",
+    "--source",
+    path.join(directory, "placeholder.txt"),
+    "--config",
+    config,
+    "--redact",
+    "--exit-code",
+    "1",
+  ]);
+  assert.equal(placeholder.status, 0, placeholder.stdout + placeholder.stderr);
+  const mixed = run("gitleaks", [
+    "detect",
+    "--no-git",
+    "--source",
+    path.join(directory, "mixed.txt"),
+    "--config",
+    config,
+    "--redact",
+    "--exit-code",
+    "1",
+  ]);
+  assert.equal(mixed.status, 1, mixed.stdout + mixed.stderr);
+});
+
+test("the Python audit includes locked development dependencies", () => {
+  const script = read("infra/scripts/audit-python.sh");
+  assert.equal(script.includes("--no-dev"), false);
+  assert.match(script, /--all-groups/);
+  assert.match(script, /unset UV_NO_DEV/);
+  assert.match(script, /unset UV_NO_GROUP/);
+  assert.match(script, /unset UV_NO_DEFAULT_GROUPS/);
+  const exportEnv = { ...process.env };
+  delete exportEnv.UV_NO_DEV;
+  delete exportEnv.UV_NO_GROUP;
+  delete exportEnv.UV_NO_DEFAULT_GROUPS;
+  const exported = execFileSync(
+    "uv",
+    [
+      "export",
+      "--project",
+      path.join(root, "workers/ai-worker"),
+      "--frozen",
+      "--all-groups",
+      "--no-emit-project",
+      "--no-hashes",
+      "--format",
+      "requirements-txt",
+    ],
+    { encoding: "utf8", env: exportEnv },
+  );
+  for (const name of ["ruff==", "mypy==", "pytest==", "import-linter=="]) {
+    assert.equal(exported.includes(name), true, name);
+  }
+});
+
 function writeJson(directory, value) {
   const file = path.join(directory, "audit.json");
   writeFileSync(file, JSON.stringify(value));
   return file;
+}
+
+function pythonAuditVector(vector, type) {
+  return pythonAuditDocument({
+    id: "CVE-2026-4000",
+    severity: [{ type, score: vector }],
+  });
+}
+
+function pythonAuditDocument(document) {
+  const directory = mkdtempSync(path.join(tmpdir(), "editagent-python-"));
+  writeFileSync(path.join(directory, `${document.id}.json`), JSON.stringify(document));
+  const report = path.join(directory, "report.json");
+  writeFileSync(
+    report,
+    JSON.stringify({
+      dependencies: [{ name: "demo", version: "1", vulns: [{ id: document.id }] }],
+    }),
+  );
+  return run("python3", [path.join(root, "infra/scripts/python_audit_report.py"), report, "1"], {
+    env: { ...process.env, PYTHON_AUDIT_OSV_FIXTURE: directory },
+  });
 }
 
 function pythonAudit(severity) {

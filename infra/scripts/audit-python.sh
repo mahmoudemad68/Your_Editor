@@ -1,6 +1,7 @@
 #!/bin/sh
-# Fail when the locked AI worker dependencies have a critical vulnerability.
-# A moderate finding is reported and does not fail this gate.
+# Fail when locked AI worker dependencies have a critical vulnerability.
+# Development dependencies are included. A high finding is reported and does
+# not fail this gate by itself.
 set -eu
 
 ROOT="$(CDPATH= cd -- "$(dirname "$0")/../.." && pwd)"
@@ -8,10 +9,15 @@ tmp="$(mktemp)"
 report="$(mktemp)"
 trap 'rm -f "$tmp" "$report"' EXIT
 
+# Environment switches must not drop the locked dev group.
+unset UV_NO_DEV
+unset UV_NO_GROUP
+unset UV_NO_DEFAULT_GROUPS
+
 uv export \
   --project "$ROOT/workers/ai-worker" \
   --frozen \
-  --no-dev \
+  --all-groups \
   --no-emit-project \
   --no-hashes \
   --format requirements-txt \

@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Classify a pip-audit JSON report and fail only on critical severity.
+"""Classify a pip-audit JSON report.
 
 pip-audit 2.10 emits an object with a dependencies array. Older examples emit
 a top-level array. Vulnerability objects do not include severity, so this
-script reads CVSS from OSV instead of treating every finding as critical.
+script reads CVSS v3 and v4 vectors from OSV. Critical findings fail the gate.
+A finding with no severity, or a severity that cannot be scored, also fails.
+High findings are printed and do not fail by themselves.
 """
 
 import json
@@ -11,6 +13,8 @@ import math
 import os
 import sys
 import urllib.request
+
+from cvss4 import cvss_v4_score
 
 AV = {"N": 0.85, "A": 0.62, "L": 0.55, "P": 0.2}
 AC = {"L": 0.77, "H": 0.44}
@@ -93,6 +97,17 @@ def severity_from_vector(vector):
     if vector.startswith("CVSS:3."):
         score = cvss_v3_base(vector)
         return None if score is None else severity_from_score(score)
+    if vector.startswith("CVSS:4.0/"):
+        score = cvss_v4_score(vector)
+        return None if score is None else severity_from_score(score)
+    stripped = vector.strip()
+    if stripped and all(character in "0123456789." for character in stripped):
+        try:
+            score = float(stripped)
+        except ValueError:
+            return None
+        if 0 <= score <= 10:
+            return severity_from_score(score)
     return None
 
 
@@ -115,24 +130,46 @@ def osv_document(vuln_id):
         raise SystemExit(f"could not read OSV severity for {vuln_id}: {exc}") from exc
 
 
+_RANK = {"NONE": 0, "LOW": 1, "MEDIUM": 2, "HIGH": 3, "CRITICAL": 4}
+
+
 def severity_for(vulnerability, cache):
     identifiers = [vulnerability.get("id", "")]
     identifiers.extend(vulnerability.get("aliases") or [])
+    documents = []
     for vuln_id in identifiers:
         if not vuln_id:
             continue
         if vuln_id not in cache:
             cache[vuln_id] = osv_document(vuln_id)
         document = cache[vuln_id]
-        if not isinstance(document, dict):
-            continue
-        for item in document.get("severity") or []:
+        if isinstance(document, dict):
+            documents.append(document)
+    if not documents:
+        return "UNKNOWN"
+    saw_score = False
+    unparseable = False
+    best = None
+    for document in documents:
+        severities = document.get("severity") or []
+        if not isinstance(severities, list):
+            return "UNPARSEABLE"
+        for item in severities:
             if not isinstance(item, dict):
+                unparseable = True
                 continue
+            saw_score = True
             found = severity_from_vector(item.get("score"))
-            if found:
-                return found
-    return None
+            if found is None:
+                unparseable = True
+                continue
+            if best is None or _RANK[found] > _RANK[best]:
+                best = found
+    if unparseable:
+        return "UNPARSEABLE"
+    if not saw_score or best is None:
+        return "UNKNOWN"
+    return best
 
 
 def classify(report):
@@ -140,6 +177,7 @@ def classify(report):
     high = []
     other = []
     unknown = []
+    unparseable = []
     cache = {}
     for dependency in load_dependencies(report):
         name = dependency.get("name", "unknown")
@@ -151,11 +189,15 @@ def classify(report):
                 critical.append(label)
             elif severity == "HIGH":
                 high.append(label)
+            elif severity == "UNKNOWN":
+                unknown.append(label)
+            elif severity == "UNPARSEABLE":
+                unparseable.append(label)
             elif severity:
                 other.append(f"{label} {severity}")
             else:
                 unknown.append(label)
-    return critical, high, other, unknown
+    return critical, high, other, unknown, unparseable
 
 
 def main(path, raw_status):
@@ -166,7 +208,7 @@ def main(path, raw_status):
         raise SystemExit(
             f"Python dependency scan did not return JSON ({exc})."
         ) from exc
-    critical, high, other, unknown = classify(report)
+    critical, high, other, unknown, unparseable = classify(report)
     if critical:
         print("Critical Python vulnerabilities:")
         for item in critical:
@@ -175,7 +217,15 @@ def main(path, raw_status):
         print("High Python vulnerabilities:")
         for item in high:
             print(f"- {item}")
-    if critical:
+    if unparseable:
+        print("Unparseable Python vulnerability severities:")
+        for item in unparseable:
+            print(f"- {item}")
+    if unknown:
+        print("Python vulnerabilities with no severity:")
+        for item in unknown:
+            print(f"- {item}")
+    if critical or unparseable or unknown:
         raise SystemExit(1)
     if raw_status not in (0, 1):
         raise SystemExit(f"pip-audit failed with status {raw_status}.")
@@ -183,13 +233,7 @@ def main(path, raw_status):
         print(f"Python dependency scan found {len(other)} other findings.")
         for item in other:
             print(f"- {item}")
-    if unknown:
-        print(
-            f"Python dependency scan found {len(unknown)} findings with no CVSS vector."
-        )
-        for item in unknown:
-            print(f"- {item}")
-    if not critical and not high and not other and not unknown:
+    if not high and not other:
         print("Python dependency scan found no vulnerabilities.")
 
 
