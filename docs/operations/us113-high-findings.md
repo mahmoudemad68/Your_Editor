@@ -58,3 +58,5 @@ These remain in the Debian runtime images. Trivy reports no fixed version. They 
 | CVE-2026-9538  | `perl-base`                                                                                                                           |                           1 | Debian image base |
 
 The AI worker adds `libncursesw6` to CVE-2025-69720, which is the extra instance.
+
+Postgres and Redis high findings are not in the table above. They are undispositioned and are listed with the release blockers in [us113-release-blockers.md](us113-release-blockers.md). That page does not accept them.
