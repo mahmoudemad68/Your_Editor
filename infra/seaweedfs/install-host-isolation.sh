@@ -174,11 +174,19 @@ require_effective_backend() {
   if [ -n "${EDITAGENT_FIREWALL_BIN_DIR:-}" ]; then
     return 0
   fi
-  driver=$(docker info --format '{{.FirewallBackend.Driver}}' 2>/dev/null || true)
-  if [ "$driver" != "iptables" ]; then
-    echo "unsupported firewall: docker firewall backend is '${driver:-unknown}', expected iptables" >&2
-    exit 1
-  fi
+  driver=$(docker info --format '{{if .FirewallBackend}}{{.FirewallBackend.Driver}}{{end}}' 2>/dev/null || true)
+  case "$driver" in
+    "" | "<no value>")
+      # Older Docker builds do not report FirewallBackend. The iptables binary
+      # on PATH is the implementation that daemon executes.
+      driver=iptables-binary
+      ;;
+    iptables) ;;
+    *)
+      echo "unsupported firewall: docker firewall backend is '$driver', expected iptables" >&2
+      exit 1
+      ;;
+  esac
   resolved=$(readlink -f /usr/sbin/iptables 2>/dev/null || readlink -f /sbin/iptables || true)
   case "$resolved" in
     *nft*) name=iptables-nft ;;

@@ -698,40 +698,41 @@ test(
       .filter((name) => name.includes("minio"));
     const composeDev = (args) =>
       run("docker", ["compose", "-p", projectName, "-f", "compose.yaml", ...args], { env });
-    const up = run(
-      path.join(root, "infra/seaweedfs/secure-up.sh"),
-      [
-        "compose.yaml",
-        "-p",
-        projectName,
-        "--",
-        "master",
-        "volume",
-        "filer",
-        "s3",
-        "object-ingress",
-      ],
-      { env },
-    );
-    assert.equal(up.status, 0, up.stderr + up.stdout);
-    const lines = up.stdout.split("\n");
-    const verifiedAt = lines.findIndex((line) => line.includes("isolation-verified"));
-    const blockedAt = lines.findIndex((line) => line.includes("bootstrap-host-blocked"));
-    const publishedAt = lines.findIndex((line) => line.includes("published-services-started"));
-    assert.equal(
-      verifiedAt >= 0 && blockedAt > verifiedAt && publishedAt > blockedAt,
-      true,
-      up.stdout,
-    );
-    assert.match(up.stdout, /bootstrap-listener-open/);
-    const blocked = up.stdout.match(
-      /bootstrap-host-blocked status=000 curl_exit=28 drops_before=(\d+) drops_after=(\d+)/,
-    );
-    assert.ok(blocked, up.stdout);
-    assert.equal(Number(blocked[2]) > Number(blocked[1]), true, up.stdout);
-    const listenerAt = lines.findIndex((line) => line.includes("bootstrap-listener-open"));
-    assert.equal(listenerAt > verifiedAt && listenerAt < blockedAt, true, up.stdout);
+    let up;
     try {
+      up = run(
+        path.join(root, "infra/seaweedfs/secure-up.sh"),
+        [
+          "compose.yaml",
+          "-p",
+          projectName,
+          "--",
+          "master",
+          "volume",
+          "filer",
+          "s3",
+          "object-ingress",
+        ],
+        { env },
+      );
+      assert.equal(up.status, 0, up.stderr + up.stdout);
+      const lines = up.stdout.split("\n");
+      const verifiedAt = lines.findIndex((line) => line.includes("isolation-verified"));
+      const blockedAt = lines.findIndex((line) => line.includes("bootstrap-host-blocked"));
+      const publishedAt = lines.findIndex((line) => line.includes("published-services-started"));
+      assert.equal(
+        verifiedAt >= 0 && blockedAt > verifiedAt && publishedAt > blockedAt,
+        true,
+        up.stdout,
+      );
+      assert.match(up.stdout, /bootstrap-listener-open/);
+      const blocked = up.stdout.match(
+        /bootstrap-host-blocked status=000 curl_exit=28 drops_before=(\d+) drops_after=(\d+)/,
+      );
+      assert.ok(blocked, up.stdout);
+      assert.equal(Number(blocked[2]) > Number(blocked[1]), true, up.stdout);
+      const listenerAt = lines.findIndex((line) => line.includes("bootstrap-listener-open"));
+      assert.equal(listenerAt > verifiedAt && listenerAt < blockedAt, true, up.stdout);
       const storage = new S3ObjectStorage({
         endpoint: "http://127.0.0.1:19083",
         publicEndpoint: "http://127.0.0.1:19081",
