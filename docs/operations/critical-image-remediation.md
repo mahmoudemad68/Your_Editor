@@ -4,17 +4,18 @@ Baseline is supply-chain run [37217829799](https://github.com/mahmoudemad68/Your
 
 Counts are Trivy instances, not distinct CVE IDs. The after column is a local rebuild scanned with the same `supply-chain-scan-image.sh` flags.
 
-| Image         | Before critical | Before high | After critical | After high |
-| ------------- | --------------: | ----------: | -------------: | ---------: |
-| api           |               5 |          66 |              0 |         59 |
-| web           |               5 |          66 |              0 |         59 |
-| render-worker |               5 |          66 |              0 |         59 |
-| agent-worker  |               5 |          66 |              0 |         59 |
-| ai-worker     |               5 |          60 |              0 |         47 |
-| media-worker  |              11 |         254 |              0 |         59 |
-| minio         |               7 |          60 |              2 |         32 |
-| postgres      |               3 |          47 |              0 |          0 |
-| redis         |               0 |           4 |              0 |          0 |
+| Image         | Before critical | Before high | After critical |   After high |
+| ------------- | --------------: | ----------: | -------------: | -----------: |
+| api           |               5 |          66 |              0 |           59 |
+| web           |               5 |          66 |              0 |           59 |
+| render-worker |               5 |          66 |              0 |           59 |
+| agent-worker  |               5 |          66 |              0 |           59 |
+| ai-worker     |               5 |          60 |              0 |           47 |
+| media-worker  |              11 |         254 |              0 |           59 |
+| minio         |               7 |          60 |   not deployed | not deployed |
+| seaweedfs     |               — |           — |              0 |            0 |
+| postgres      |               3 |          47 |              0 |            0 |
+| redis         |               0 |           4 |              0 |            0 |
 
 ## Resolved
 
@@ -35,19 +36,14 @@ Postgres is now built from `infra/postgres/Dockerfile`. The base is `postgres:16
 
 Redis stays on 7.4.11. `infra/redis/Dockerfile` upgrades `libcrypto3` and `libssl3` through the signed Alpine index and rejects any revision older than `3.3.7-r2`, which is the fix for HIGH CVE-2026-75804 and CVE-2026-84782. A newer revision still builds. The local HIGH,CRITICAL scan reported zero findings. `redis-server --version` prints `v=7.4.11`.
 
-MinIO is still built from tag `RELEASE.2025-10-15T17-29-55Z`, commit `9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a`. The toolchain is Go 1.25.14, which removes CVE-2025-68121. The build also upgrades `google.golang.org/grpc` to v1.79.3 and `github.com/rabbitmq/amqp091-go` to v1.13.0, which removes CVE-2026-33186, CVE-2026-77405, CVE-2026-77408, and CVE-2026-77411. `minio --version` still reports that upstream release and commit, with runtime `go1.25.14`.
+MinIO is not started by Compose or CI. The active object store is SeaweedFS at `chrislusf/seaweedfs@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d`. That digest's HIGH,CRITICAL scan reported zero findings. `S3ObjectStorage` is unchanged. The historical `minio-data` volume stays declared and unmounted. Object copy is `infra/scripts/migrate-minio-objects.py`, which does not delete volumes.
 
-## Still open
+## Critical findings in the active images
 
-These critical findings have no fixed package version in this Trivy database. They are not ignored and they are not accepted.
+CVE-2026-33322 and CVE-2026-33419 belong to the MinIO binary. They are not ignored and they have no upstream fix. MinIO is not in Compose, CI, or the supply-chain matrix, so those findings are not in an image this workflow builds. The `minio-data` volume is kept.
 
-| CVE            | Where                                            | Why it remains                                                               | Options for the project owner                                                                                        |
-| -------------- | ------------------------------------------------ | ---------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| CVE-2026-33322 | MinIO binary, tag `RELEASE.2025-10-15T17-29-55Z` | GitHub lists no newer MinIO release. Trivy reports no fixed version.         | Replace the active object store with the digest-pinned SeaweedFS image. Do not ignore the CVE while MinIO is in use. |
-| CVE-2026-33419 | Same MinIO binary                                | Same release. LDAP login brute-force via user enumeration, no fixed version. | Same replacement as CVE-2026-33322.                                                                                  |
-
-HIGH findings remain on the Debian application images and on MinIO. They are reported and do not by themselves fail the critical gate. They are not accepted.
+HIGH findings remain on the Debian application images. They are reported and do not by themselves fail the critical gate. They are not accepted.
 
 The GitHub Actions `ci` job still starts a Postgres service from the upstream `postgres:16-alpine` digest because a service container cannot run `infra/postgres/Dockerfile` without a published image. That upstream image still contains the old `gosu` binary. The image Compose deploys is the rebuilt one, and that rebuilt image scanned clean. The `ci` Redis service remains `redis:7.4-alpine`, which still has the two HIGH OpenSSL findings. The image Compose deploys is `infra/redis/Dockerfile`, which scanned clean.
 
-`supply-chain-security` stays red while CVE-2026-33322 or CVE-2026-33419 remain in an image the workflow builds. This document does not claim a green security gate.
+The critical gate is expected to pass for the images this workflow builds. HIGH findings are still open, so the security definition of done is not complete.

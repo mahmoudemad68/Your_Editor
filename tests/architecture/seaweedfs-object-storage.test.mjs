@@ -4,6 +4,7 @@
  */
 
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
@@ -52,4 +53,22 @@ test("the active stack publishes only the SeaweedFS S3 gateway", () => {
   );
   assert.match(read(".github/dependabot.yml"), /\/infra\/seaweedfs/);
   assert.equal(read(".github/dependabot.yml").includes("/infra/minio"), false);
+});
+
+test("object migration refuses to delete historical volumes", () => {
+  const script = read("infra/scripts/migrate-minio-objects.py");
+  const backup = read("infra/seaweedfs/backup-volumes.sh");
+  const restore = read("infra/seaweedfs/restore-volumes.sh");
+  assert.equal(script.includes("volume rm"), false);
+  assert.equal(script.includes("compose down"), false);
+  assert.match(script, /does not delete source objects or volumes/);
+  assert.equal(backup.includes("minio-data"), false);
+  assert.equal(restore.includes("volume rm"), false);
+  const rejected = spawnSync(
+    "python3",
+    [path.join(root, "infra/scripts/migrate-minio-objects.py"), "--delete-volumes"],
+    { encoding: "utf8" },
+  );
+  assert.notEqual(rejected.status, 0);
+  assert.match(`${rejected.stdout}${rejected.stderr}`, /does not delete/);
 });
