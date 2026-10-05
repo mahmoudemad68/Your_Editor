@@ -9,6 +9,8 @@ export interface SignedPutRequest {
 export interface SignedPutResult {
   readonly ok: boolean;
   readonly status: number;
+  readonly etag?: string;
+  readonly expired?: boolean;
 }
 
 /**
@@ -35,7 +37,14 @@ export function putSignedObject(request: SignedPutRequest): Promise<SignedPutRes
     request.signal?.addEventListener("abort", onAbort);
     xhr.onload = () => {
       request.signal?.removeEventListener("abort", onAbort);
-      resolve({ ok: xhr.status >= 200 && xhr.status < 300, status: xhr.status });
+      resolve({
+        ok: xhr.status >= 200 && xhr.status < 300,
+        status: xhr.status,
+        etag: xhr.getResponseHeader("ETag") ?? undefined,
+        expired:
+          xhr.status === 403 &&
+          /RequestExpired|ExpiredToken|Request has expired/i.test(xhr.responseText.slice(0, 2000)),
+      });
     };
     xhr.onerror = () => {
       request.signal?.removeEventListener("abort", onAbort);

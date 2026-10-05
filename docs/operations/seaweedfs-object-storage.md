@@ -99,3 +99,58 @@ Master, volume, and filer each have their own volume. `infra/seaweedfs/backup-vo
 - `ca.key` on the host can mint another role certificate. The secret directory is mode `0700` and `ca.key` is not mounted.
 - SeaweedFS 4.48 JWT keys are HMAC. Verification and issuance are the same secret. The volume write key is mounted on the master, the volume, and the filer. It is not mounted on S3. S3 still has the volume read key because `filer.JwtForVolumeServer` runs inside the S3 process, and it has the filer signing key because that key is also the filer admin token. A compromised S3 gateway can read raw needles when it knows a file id and can call the filer API directly. It cannot mint a volume write token from its own mount.
 - IPv6 is disabled inside the storage containers. The host installer also drops IPv6 on the storage bridge and refuses to continue when `nft` can see `ip6 DOCKER-USER` but the jump is missing. `REBOOT_PERSISTENCE=UNVERIFIED` until a real reboot is observed. Installing the systemd unit is not that observation.
+
+## US-123 multipart uploads
+
+The browser still transfers bytes directly to the private bucket. Application
+servers handle only upload-session metadata, presigning and final verification.
+Multipart uses 16 MiB parts (at most 256 at 4 GiB), with three concurrent browser
+requests. Smaller files retain the US-122 conditional single PUT flow. Both paths
+use the same declaration checks, MediaAsset recording and inspect outbox.
+
+SeaweedFS supports CreateMultipartUpload, UploadPart, ListParts,
+CompleteMultipartUpload and AbortMultipartUpload. Completion uses `If-None-Match:
+*`: an existing content-addressed object cannot be overwritten. The tested
+provider returns a multipart ETag, not a whole-object SHA-256. The API therefore
+hashes streamed GetObject bytes incrementally, checks exact length and MIME, and
+compares the digest with the declared source hash before recording/publishing.
+The adapter never buffers a multi-gigabyte object. ETags identify parts only.
+
+Part URLs expire after the configured presign TTL (normally 15 minutes), capped
+by the session expiry. Refreshing a URL retains the same provider upload. The
+signature binds the expected Content-Length; Blob/XHR supplies that header
+itself. JavaScript must not set the forbidden Content-Length header or application
+cookies/CSRF headers on storage PUTs. The SDK's optional automatic CRC for an
+empty presign body is disabled (`WHEN_REQUIRED`); final bytes are independently
+verified with SHA-256.
+
+The existing CORS configuration supports OPTIONS/PUT and exposes ETag. No new
+CORS methods are needed; do not broaden bucket access. Presigned requests and
+CORS do not grant anonymous GET. Operational/integration tests retain anonymous
+403, verify exposed ETag and exercise expired part URLs and size-bound signatures.
+
+Sessions expire 24 hours after creation. To reclaim abandoned parts and provider
+uploads orphaned before a DB insertion, schedule the following operations command
+**hourly** using the API's existing database/storage environment:
+
+```sh
+pnpm --filter @editagent/api build
+node apps/api/dist/cleanup-upload-sessions.js
+```
+
+The command processes expired session rows in batches, aborts their provider
+uploads, and scans the application `projects/` prefix for orphan uploads older
+than 24 hours. It closes the pool and storage clients on success/failure and
+returns nonzero on failure; monitor it and retry failures. This adds no new
+background service. Provision the hourly schedule before production; without it,
+abandoned provider parts are not reclaimed automatically. A database restart or
+API restart does not lose session/part rows. PostgreSQL advisory session locks
+serialize mutations/completion across API processes without a long transaction.
+The completed-part count is a cache; individual UploadPart rows are authoritative.
+
+Multipart repository operations share a per-pool concurrency gate (at most four,
+and always fewer than the pool capacity). Advisory-lock holders/waiters cannot
+consume the entire pool while completion needs another repository connection.
+Configure at least two PostgreSQL pool connections; the default pool of ten
+reserves six for other repository operations. A two-connection regression
+exercises concurrent idempotent completion through separate repository instances.

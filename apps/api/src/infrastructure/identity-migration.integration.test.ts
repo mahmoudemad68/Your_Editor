@@ -64,7 +64,11 @@ test("0007 preserves historical memberships without creating accounts", async ()
     );
 
     const applied = await applyMigrations(pool);
-    assert.deepEqual(applied, ["0007_identity.sql", "0008_refresh_revocation_audit.sql"]);
+    assert.deepEqual(applied, [
+      "0007_identity.sql",
+      "0008_refresh_revocation_audit.sql",
+      "0009_upload_sessions.sql",
+    ]);
 
     const project = await pool.query<{ name: string }>("SELECT name FROM projects WHERE id = $1", [
       PROJECT,

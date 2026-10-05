@@ -44,3 +44,48 @@ Credential rate limiting is API-authoritative and process-local. Its rolling 30/
 The limiter periodically sweeps expired entries and evicts the least recently used bucket at its unchanged 10,000-key capacity, touching both accepted and denied attempts. New identities are admitted rather than globally denied at capacity. Eviction may forget an inactive process-local budget under key churn; persistent five-failure account lockout remains authoritative across peers/processes and is unaffected by eviction. The F1 Playwright regression exhausts an attacker's bucket through real BFF routes, then verifies a separate browser's valid login and unrelated registration while the attacker remains throttled. API tests cover normalization, endpoint scopes, malformed inputs, key churn, password burn/account lockout, and trusted/untrusted proxy handling.
 
 The US-118 limitations remain: issued access JWTs retain their approximately 15-minute natural expiry, and this story adds no distributed limiting or access-token revocation lists. F2 remains non-blocking: browsers without Web Locks coalesce refresh within each tab, but competing tabs can invalidate the refresh family. F3 remains pre-existing and non-blocking: oversized credential bodies currently return a sanitized 500. Neither finding is redesigned by the F1 repair. Independent QA on the repaired HEAD, Project Owner sign-off, merge, and staging validation are subsequent steps. Supply-chain HIGH findings remain unresolved.
+
+## US-123 resumable upload
+
+Files of at least 16 MiB use S3 multipart, with 16 MiB parts and at most three
+concurrent PUTs. Smaller files keep the direct conditional PUT flow. No video
+bytes are proxied through Next/Nest. All multipart control routes use the existing
+verified cookie session, creator/project authorization and browser-supplied CSRF
+header; storage PUTs use only the presigned request.
+
+IndexedDB stores upload-session metadata scoped to the authenticated user and
+project. It stores neither file bytes nor tokens, provider upload ids or presigned
+URLs. After reload/reopening, reselect the same local file. The complete SHA-256,
+size and MIME must match before resume; a matching filename is insufficient.
+The API reconciles provider parts into durable individual UploadPart rows, so
+non-contiguous completed parts are retained and only missing part numbers are
+scheduled. Uploaded bytes start from server-confirmed completed bytes.
+
+Each part gets at most four attempts for network errors, HTTP 408 and selected
+5xx responses, with exponential backoff/jitter. Expired URLs are renewed for the
+same pending part. Before retry, server reconciliation catches successful PUTs
+whose acknowledgment was lost. Permanent authorization/checksum/part errors are
+not blindly retried. Pause cancels all active requests/retry waits and preserves
+metadata. Discard aborts the provider upload and removes local state only after
+server confirmation. Navigating away aborts active requests and leaves durable
+resume state. Late callbacks are guarded by the existing generation/controller.
+
+Progress combines durable parts and current in-flight bytes without retry double
+counting. Speed uses a moving five-second window; startup/zero speed has no ETA.
+The UI stays below 100% until provider completion, streamed whole-file SHA-256
+verification and MediaAsset completion succeed. Completed objects share the
+US-122 publication path; multipart ETags are never file checksums.
+
+The Playwright suite now also uploads real 64 MiB bytes against SeaweedFS,
+interrupts at parts [1,2], recreates the page, rejects changed content with the
+same filename, restores 50% progress, silently refreshes expired access on a
+control request, PUTs only [3,4], and verifies the final SHA-256. Another scenario
+covers small-file upload, CSRF/forged session rejection and intentional discard.
+A deterministic boundary test covers both 1.5 GB (decimal, ~50.33%) and 1.5 GiB
+(exactly 50%) without allocating those files. This is not a real 1.5 GB transfer.
+
+The 24-hour expiry cleanup command/scheduling prerequisite is documented in
+`docs/operations/seaweedfs-object-storage.md`. File System Access handles are not
+required; file reselection is the portable reload path. Independent QA and Owner
+acceptance remain subsequent steps. Existing US-119 N1/N2/F2/F3 and supply-chain
+HIGH findings remain debt; US-123 does not remediate them.

@@ -1,3 +1,4 @@
+import { InMemoryUploadSessionRepository } from "./application/in-memory-upload-sessions.js";
 import { GetCurrentUser } from "./application/current-user.js";
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -39,6 +40,7 @@ async function main(): Promise<void> {
     media: new InMemoryMediaAssetRepository(),
     objects: new MemoryObjectStorage(),
     mediaIds: new NodeMediaAssetIdGenerator(),
+    uploadSessions: new InMemoryUploadSessionRepository(),
     presignTtlSeconds: 900,
     auth: {
       currentUser: new GetCurrentUser(users),

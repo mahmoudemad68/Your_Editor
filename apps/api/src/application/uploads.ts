@@ -5,6 +5,7 @@ import {
   type Instant,
   mediaByteSize,
   MediaAsset,
+  MediaAssetConflict,
   type MediaAssetRepository,
   mediaStorageKey,
   type ProjectId,
@@ -57,7 +58,7 @@ export interface UploadPublication {
  * Membership and object checks stay here. Controllers do not build storage keys.
  */
 
-function checkDeclaration(projectId: ProjectId, input: UploadDeclaration): CheckedUpload {
+export function checkDeclaration(projectId: ProjectId, input: UploadDeclaration): CheckedUpload {
   try {
     const filename = displayFilename(input.filename);
     const mimeType = videoMimeType(input.mimeType);
@@ -78,7 +79,7 @@ function checkDeclaration(projectId: ProjectId, input: UploadDeclaration): Check
   }
 }
 
-async function requireUploader(
+export async function requireUploader(
   projects: ProjectRepository,
   projectId: ProjectId,
   actorUserId: UserId,
@@ -97,7 +98,7 @@ async function requireUploader(
   }
 }
 
-async function withStorage<T>(action: () => Promise<T>): Promise<T> {
+export async function withStorage<T>(action: () => Promise<T>): Promise<T> {
   try {
     return await action();
   } catch (error) {
@@ -173,6 +174,20 @@ export class CompleteMediaUpload {
       stat.checksumSha256Hex === checked.sha256;
     if (!matches) {
       throw new UploadObjectMismatch();
+    }
+    const existing = (await this.media.listByProject(projectId)).find(
+      (asset) => asset.storageKey === checked.storageKey,
+    );
+    if (existing !== undefined) {
+      if (
+        existing.displayFilename !== checked.filename ||
+        existing.mimeType !== checked.mimeType ||
+        existing.byteSize !== checked.byteSize ||
+        existing.contentSha256 !== checked.sha256
+      )
+        throw new MediaAssetConflict();
+      // The production outbox reconciles/delivers an existing publication intent as before.
+      if (this.publication === undefined || correlationId === undefined) return existing;
     }
     // FFprobe runs in media-worker. This command does not inspect the object.
     const asset = MediaAsset.createUploaded({

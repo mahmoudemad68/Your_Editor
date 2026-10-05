@@ -1,5 +1,12 @@
+import { createHash } from "node:crypto";
 import {
   CreateBucketCommand,
+  CreateMultipartUploadCommand,
+  UploadPartCommand,
+  ListPartsCommand,
+  CompleteMultipartUploadCommand,
+  AbortMultipartUploadCommand,
+  ListMultipartUploadsCommand,
   DeleteObjectCommand,
   GetObjectCommand,
   HeadObjectCommand,
@@ -10,6 +17,7 @@ import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import {
   contentSha256,
   type IObjectStorage,
+  type StoragePart,
   type ObjectStat,
   type PresignedGet,
   type PresignedPut,
@@ -118,8 +126,9 @@ export class S3ObjectStorage implements IObjectStorage {
       return {
         byteSize: BigInt(response.ContentLength ?? 0),
         contentType: response.ContentType ?? null,
-        checksumSha256Hex:
-          response.ChecksumSHA256 === undefined ? null : base64ToSha256Hex(response.ChecksumSHA256),
+        // Multipart ETag/checksum metadata is not a whole-file SHA-256. Hash
+        // streamed bytes for both flows, with memory bounded by the SDK stream.
+        checksumSha256Hex: await this.hashObject(key, BigInt(response.ContentLength ?? 0)),
       };
     } catch (error) {
       if (isMissingObject(error)) {
@@ -129,6 +138,137 @@ export class S3ObjectStorage implements IObjectStorage {
     }
   }
 
+  private async hashObject(key: string, expectedBytes: bigint): Promise<string> {
+    const response = await this.internal.send(
+      new GetObjectCommand({ Bucket: this.bucket, Key: key }),
+    );
+    if (!response.Body) throw new Error("Object body is missing.");
+    const stream = response.Body as AsyncIterable<Uint8Array>;
+    const hash = createHash("sha256");
+    let size = 0n;
+    for await (const chunk of stream) {
+      size += BigInt(chunk.byteLength);
+      if (size > expectedBytes) throw new Error("Object size changed.");
+      hash.update(chunk);
+    }
+    if (size !== expectedBytes) throw new Error("Object size changed.");
+    return hash.digest("hex");
+  }
+  async createMultipart(key: string, contentType: string): Promise<string> {
+    const result = await this.internal.send(
+      new CreateMultipartUploadCommand({ Bucket: this.bucket, Key: key, ContentType: contentType }),
+    );
+    if (!result.UploadId) throw new Error("Multipart upload id is missing.");
+    return result.UploadId;
+  }
+  async presignPart(
+    key: string,
+    uploadId: string,
+    partNumber: number,
+    expiresInSeconds: number,
+    byteSize: number,
+  ): Promise<PresignedPut> {
+    const url = await getSignedUrl(
+      this.publicClient,
+      new UploadPartCommand({
+        Bucket: this.bucket,
+        Key: key,
+        UploadId: uploadId,
+        PartNumber: partNumber,
+        ContentLength: byteSize,
+      }),
+      { expiresIn: expiresInSeconds, signableHeaders: new Set(["content-length"]) },
+    );
+    return { url, requiredHeaders: {} };
+  }
+  async listParts(key: string, uploadId: string): Promise<readonly StoragePart[]> {
+    const parts: StoragePart[] = [];
+    let marker: string | undefined;
+    do {
+      const result = await this.internal.send(
+        new ListPartsCommand({
+          Bucket: this.bucket,
+          Key: key,
+          UploadId: uploadId,
+          PartNumberMarker: marker,
+        }),
+      );
+      for (const part of result.Parts ?? [])
+        parts.push({
+          partNumber: part.PartNumber ?? 0,
+          etag: part.ETag ?? "",
+          byteSize: part.Size ?? 0,
+          checksum: part.ChecksumSHA256 ?? null,
+        });
+      marker = result.IsTruncated ? result.NextPartNumberMarker : undefined;
+    } while (marker !== undefined);
+    return parts;
+  }
+  async completeMultipart(
+    key: string,
+    uploadId: string,
+    parts: readonly StoragePart[],
+  ): Promise<void> {
+    try {
+      await this.internal.send(
+        new CompleteMultipartUploadCommand({
+          Bucket: this.bucket,
+          Key: key,
+          UploadId: uploadId,
+          IfNoneMatch: "*",
+          MultipartUpload: {
+            Parts: [...parts]
+              .sort((a, b) => a.partNumber - b.partNumber)
+              .map((p) => ({ PartNumber: p.partNumber, ETag: p.etag })),
+          },
+        }),
+      );
+    } catch (error) {
+      if (statusCode(error) === 412) {
+        await this.abortMultipart(key, uploadId);
+        return;
+      }
+      if (named(error, "NoSuchUpload") && (await this.stat(key)) !== null) return;
+      throw error;
+    }
+  }
+  async abortMultipart(key: string, uploadId: string): Promise<void> {
+    try {
+      await this.internal.send(
+        new AbortMultipartUploadCommand({ Bucket: this.bucket, Key: key, UploadId: uploadId }),
+      );
+    } catch (error) {
+      if (!named(error, "NoSuchUpload")) throw error;
+    }
+  }
+  /** Operations cleanup also catches provider uploads orphaned before DB insertion. */
+  async abortStaleMultipart(before: Date): Promise<number> {
+    let count = 0;
+    let keyMarker: string | undefined;
+    let uploadMarker: string | undefined;
+    do {
+      const result = await this.internal.send(
+        new ListMultipartUploadsCommand({
+          Bucket: this.bucket,
+          Prefix: "projects/",
+          KeyMarker: keyMarker,
+          UploadIdMarker: uploadMarker,
+        }),
+      );
+      for (const upload of result.Uploads ?? [])
+        if (upload.Key && upload.UploadId && upload.Initiated && upload.Initiated < before) {
+          await this.abortMultipart(upload.Key, upload.UploadId);
+          count++;
+        }
+      keyMarker = result.IsTruncated ? result.NextKeyMarker : undefined;
+      uploadMarker = result.IsTruncated ? result.NextUploadIdMarker : undefined;
+    } while (keyMarker !== undefined);
+    return count;
+  }
+  close(): void {
+    this.internal.destroy();
+    this.publicClient.destroy();
+  }
   async delete(key: string): Promise<void> {
     await this.internal.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }));
   }
@@ -139,6 +279,7 @@ function clientFor(config: S3ObjectStorageConfig, endpoint: string): S3Client {
     region: config.region,
     endpoint,
     forcePathStyle: true,
+    requestChecksumCalculation: "WHEN_REQUIRED",
     credentials: {
       accessKeyId: config.accessKeyId,
       secretAccessKey: config.secretAccessKey,
@@ -148,10 +289,6 @@ function clientFor(config: S3ObjectStorageConfig, endpoint: string): S3Client {
 
 function sha256HexToBase64(hex: string): string {
   return Buffer.from(contentSha256(hex), "hex").toString("base64");
-}
-
-function base64ToSha256Hex(value: string): string {
-  return Buffer.from(value, "base64").toString("hex");
 }
 
 function isMissingObject(error: unknown): boolean {

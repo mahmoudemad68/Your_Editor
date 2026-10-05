@@ -1,3 +1,4 @@
+import { PostgresUploadSessionRepository } from "./infrastructure/postgres-upload-sessions.js";
 import { GetCurrentUser } from "./application/current-user.js";
 import "reflect-metadata";
 import { randomBytes } from "node:crypto";
@@ -85,6 +86,7 @@ export async function bootstrap(): Promise<void> {
     objects: new S3ObjectStorage(config.objectStorage),
     mediaIds: new NodeMediaAssetIdGenerator(),
     presignTtlSeconds: config.objectStorage.presignTtlSeconds,
+    uploadSessions: new PostgresUploadSessionRepository(pool),
     logger,
     readiness: {
       check: () => postgresAndRedisReady(pool, config.redisUrl),

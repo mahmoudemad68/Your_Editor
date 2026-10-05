@@ -182,3 +182,12 @@ export const boundedModules = [
   renderingModule,
   toolsModule,
 ] as const;
+export { PART_SIZE_BYTES, UPLOAD_SESSION_TTL_MS, uploadPartBytes } from "./modules/media/index.js";
+export type {
+  UploadSession,
+  UploadPart,
+  UploadSessionStatus,
+  UploadSessionRepository,
+  LockedUpload,
+  StoragePart,
+} from "./modules/media/index.js";

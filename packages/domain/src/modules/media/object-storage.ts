@@ -32,7 +32,26 @@ export interface IObjectStorage {
   get(key: string): Promise<Uint8Array>;
   presignPut(request: PresignPutRequest): Promise<PresignedPut>;
   presignGet(key: string, expiresInSeconds: number): Promise<PresignedGet>;
-  /** Null when the object is absent. Does not download the body. */
+  /** Null when absent. Adapters verify whole-object SHA-256, streaming when needed. */
   stat(key: string): Promise<ObjectStat | null>;
   delete(key: string): Promise<void>;
+  createMultipart(key: string, contentType: string): Promise<string>;
+  presignPart(
+    key: string,
+    uploadId: string,
+    partNumber: number,
+    expiresInSeconds: number,
+    byteSize: number,
+  ): Promise<PresignedPut>;
+  listParts(key: string, uploadId: string): Promise<readonly StoragePart[]>;
+  completeMultipart(key: string, uploadId: string, parts: readonly StoragePart[]): Promise<void>;
+  abortMultipart(key: string, uploadId: string): Promise<void>;
+}
+
+/** Provider-neutral multipart control plane. Raw provider ids stay on the server. */
+export interface StoragePart {
+  readonly partNumber: number;
+  readonly etag: string;
+  readonly byteSize: number;
+  readonly checksum: string | null;
 }

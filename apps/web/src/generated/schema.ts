@@ -123,6 +123,87 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/projects/{projectId}/uploads/multipart": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Start or recover a creator-owned resumable upload. */
+    post: operations["MultipartController_start"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/projects/{projectId}/uploads/multipart/{sessionId}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["MultipartController_get"];
+    put?: never;
+    post?: never;
+    delete: operations["MultipartController_abort"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/projects/{projectId}/uploads/multipart/{sessionId}/parts/{partNumber}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations["MultipartController_sign"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/projects/{projectId}/uploads/multipart/{sessionId}/parts/{partNumber}/complete": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations["MultipartController_record"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/projects/{projectId}/uploads/multipart/{sessionId}/complete": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations["MultipartController_complete"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/auth/me": {
     parameters: {
       query?: never;
@@ -307,6 +388,40 @@ export interface components {
       sampleRate: number | null;
       streams: components["schemas"]["MediaStreamDto"][] | null;
       inspectionError: string | null;
+    };
+    UploadPartResponseDto: {
+      partNumber: number;
+      etag: string;
+      byteSize: number;
+      checksum: string | null;
+    };
+    MultipartStateDto: {
+      /** @example lecture.mp4 */
+      filename: string;
+      /** @example video/mp4 */
+      mimeType: string;
+      /** @example 1234 */
+      byteSize: number;
+      /** @example abababababababababababababababababababababababababababababababab */
+      sha256: string;
+      /** Format: uuid */
+      uploadSessionId: string;
+      partSize: number;
+      /** @enum {string} */
+      status: "active" | "completing" | "completed" | "aborted" | "expired" | "failed";
+      expiresAt: string;
+      mediaAssetId: string | null;
+      parts: components["schemas"]["UploadPartResponseDto"][];
+    };
+    PartUrlDto: {
+      url: string;
+      requiredHeaders: {
+        [key: string]: string;
+      };
+      expiresAt: string;
+    };
+    PartCompleteBody: {
+      etag: string;
     };
     SessionUserBody: {
       /** Format: uuid */
@@ -715,6 +830,397 @@ export interface operations {
       };
       /** @description The MediaAsset is not visible to the caller. */
       404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  MultipartController_start: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        projectId: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["UploadDeclarationBody"];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["MultipartStateDto"];
+        };
+      };
+      /** @description Invalid declaration, route, or part number. */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Sign in is required. */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Only an Owner/Editor creator may upload; cookie mutations require explicit CSRF. */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description The project/session is not visible to the caller. */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description The session, part, or final object cannot be completed as declared. */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Object storage is unavailable. */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  MultipartController_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        projectId: string;
+        sessionId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["MultipartStateDto"];
+        };
+      };
+      /** @description Invalid declaration, route, or part number. */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Sign in is required. */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Only an Owner/Editor creator may upload; cookie mutations require explicit CSRF. */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description The project/session is not visible to the caller. */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description The session, part, or final object cannot be completed as declared. */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Object storage is unavailable. */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  MultipartController_abort: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        projectId: string;
+        sessionId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Invalid declaration, route, or part number. */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Sign in is required. */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Only an Owner/Editor creator may upload; cookie mutations require explicit CSRF. */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description The project/session is not visible to the caller. */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description The session, part, or final object cannot be completed as declared. */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Object storage is unavailable. */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  MultipartController_sign: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        projectId: string;
+        sessionId: string;
+        partNumber: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["PartUrlDto"];
+        };
+      };
+      /** @description Invalid declaration, route, or part number. */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Sign in is required. */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Only an Owner/Editor creator may upload; cookie mutations require explicit CSRF. */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description The project/session is not visible to the caller. */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description The session, part, or final object cannot be completed as declared. */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Object storage is unavailable. */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  MultipartController_record: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        projectId: string;
+        sessionId: string;
+        partNumber: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["PartCompleteBody"];
+      };
+    };
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["MultipartStateDto"];
+        };
+      };
+      /** @description Invalid declaration, route, or part number. */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Sign in is required. */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Only an Owner/Editor creator may upload; cookie mutations require explicit CSRF. */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description The project/session is not visible to the caller. */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description The session, part, or final object cannot be completed as declared. */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Object storage is unavailable. */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  MultipartController_complete: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        projectId: string;
+        sessionId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["MediaAssetResponseDto"];
+        };
+      };
+      /** @description Invalid declaration, route, or part number. */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Sign in is required. */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Only an Owner/Editor creator may upload; cookie mutations require explicit CSRF. */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description The project/session is not visible to the caller. */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description The session, part, or final object cannot be completed as declared. */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Object storage is unavailable. */
+      502: {
         headers: {
           [name: string]: unknown;
         };

@@ -429,10 +429,17 @@ describe("direct media upload against PostgreSQL and SeaweedFS", { concurrency: 
         }),
       UploadObjectMismatch,
     );
+    const replay = await complete.execute(OWNER, PROJECT, {
+      filename: "keep.mp4",
+      mimeType: "video/mp4",
+      byteSize: body.byteLength,
+      sha256: hash,
+    });
+    assert.equal(replay.id, asset.id);
     await assert.rejects(
       () =>
         complete.execute(OWNER, PROJECT, {
-          filename: "keep.mp4",
+          filename: "renamed.mp4",
           mimeType: "video/mp4",
           byteSize: body.byteLength,
           sha256: hash,

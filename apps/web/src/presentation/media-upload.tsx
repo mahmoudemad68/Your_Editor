@@ -10,17 +10,31 @@ import type {
 import { hashBlob, type HashOptions } from "./sha256-file";
 import { MediaDetailsPanel } from "./media-details";
 import { putSignedObject, type SignedPutRequest, type SignedPutResult } from "./signed-upload";
+import { browserMultipartApi, UploadRequestError } from "./multipart-api";
+import { IndexedUploadState, type UploadStateStore, type SavedUpload } from "./upload-state";
+import {
+  resumeMultipart,
+  MULTIPART_THRESHOLD_BYTES,
+  retryableStatus,
+  type TransferUpdate,
+} from "./resumable-upload";
+import { sessionClient } from "./session-client";
+import type { MultipartApi } from "../project-contract";
 import { Button } from "./ui/button";
 import { formatBytes, validateMediaFile } from "./upload-policy";
 
+const durableUploads = new IndexedUploadState();
+
 type Phase =
   | { status: "idle" }
+  | { status: "resumable"; name: string; size: number; transfer: TransferUpdate }
   | { status: "hashing"; name: string; size: number; loaded: number; total: number }
   | { status: "requesting-upload"; name: string; size: number }
   | { status: "uploading"; name: string; size: number; loaded: number; total: number }
   | { status: "completing"; name: string; size: number }
   | { status: "uploaded"; name: string; details: MediaDetails }
   | { status: "error"; message: string }
+  | { status: "discarding" }
   | { status: "cancelled" };
 
 export function MediaWorkspace({
@@ -28,11 +42,15 @@ export function MediaWorkspace({
   api,
   hashFile = hashBlob,
   putObject = putSignedObject,
+  multipartApi = browserMultipartApi,
+  uploadState = durableUploads,
 }: {
   project: ProjectRecord;
   api: ProjectApi;
   hashFile?: (file: Blob, options?: HashOptions) => Promise<string>;
   putObject?: (request: SignedPutRequest) => Promise<SignedPutResult>;
+  multipartApi?: MultipartApi;
+  uploadState?: UploadStateStore;
 }) {
   const [phase, setPhase] = useState<Phase>({ status: "idle" });
   const [refreshing, setRefreshing] = useState(false);
@@ -47,6 +65,65 @@ export function MediaWorkspace({
   const detailsAbortRef = useRef<AbortController | null>(null);
   // Orders media-detail responses. A slower older response must not replace a newer one.
   const detailsSeqRef = useRef(0);
+  const [savedUpload, setSavedUpload] = useState<SavedUpload | null>(null);
+  const selectedFile = useRef<File | null>(null);
+  const identity = sessionClient.getSnapshot();
+  const scope = `${identity.status === "authenticated" ? identity.user.id : "anonymous"}:${project.id}`;
+  useEffect(() => {
+    const controller = new AbortController();
+    async function recover() {
+      if (busyRef.current) return;
+      const generation = generationRef.current;
+      try {
+        const record = await uploadState.get(scope);
+        if (
+          controller.signal.aborted ||
+          generationRef.current !== generation ||
+          !record ||
+          record.projectId !== project.id
+        )
+          return;
+        setSavedUpload(record);
+        const state = await multipartApi.state(
+          project.id,
+          record.uploadSessionId,
+          controller.signal,
+        );
+        if (controller.signal.aborted || generationRef.current !== generation || busyRef.current)
+          return;
+        if (state.status === "completed" && state.mediaAssetId) {
+          await uploadState.remove(scope);
+          if (controller.signal.aborted || !isCurrent(generation) || busyRef.current) return;
+          setSavedUpload(null);
+          await loadDetails(state.mediaAssetId, record.filename, generation, controller.signal);
+        } else {
+          const loaded = state.parts.reduce((sum, p) => sum + p.byteSize, 0);
+          setPhase({
+            status: "resumable",
+            name: record.filename,
+            size: record.byteSize,
+            transfer: {
+              stage: "paused",
+              loaded,
+              durableLoaded: loaded,
+              total: record.byteSize,
+              percent: Math.min(99.9, (loaded / record.byteSize) * 100),
+              speed: 0,
+              eta: null,
+            },
+          });
+        }
+      } catch {
+        /* Saved metadata remains available for explicit recovery/discard. */
+      }
+    }
+    void recover();
+    window.addEventListener("online", recover);
+    return () => {
+      controller.abort();
+      window.removeEventListener("online", recover);
+    };
+  }, [scope, project.id, multipartApi, uploadState]);
   const canUpload = project.role === "owner" || project.role === "editor";
   const pendingAssetId =
     phase.status === "uploaded" && phase.details.inspectionStatus === "pending"
@@ -167,6 +244,7 @@ export function MediaWorkspace({
       applyPhase(generation, { status: "error", message: validation.error });
       return;
     }
+    selectedFile.current = file;
     const declarationBase = {
       filename: file.name,
       mimeType: validation.mimeType,
@@ -196,6 +274,33 @@ export function MediaWorkspace({
         return;
       }
       const declaration: UploadDeclaration = { ...declarationBase, sha256 };
+      if (file.size >= MULTIPART_THRESHOLD_BYTES || savedUpload !== null) {
+        const asset = await resumeMultipart({
+          file,
+          declaration,
+          projectId: project.id,
+          scope,
+          api: multipartApi,
+          store: uploadState,
+          signal: controller.signal,
+          put: putObject,
+          onUpdate: (transfer) => {
+            if (!controller.signal.aborted)
+              applyPhase(generation, {
+                status: "resumable",
+                name: file.name,
+                size: file.size,
+                transfer,
+              });
+          },
+          onRecord: (record) => {
+            if (isCurrent(generation) && !controller.signal.aborted) setSavedUpload(record);
+          },
+        });
+        if (isCurrent(generation) && !controller.signal.aborted)
+          await loadDetails(asset.id, file.name, generation, controller.signal);
+        return;
+      }
       applyPhase(generation, { status: "requesting-upload", name: file.name, size: file.size });
       const started = await api.beginUpload(project.id, declaration, { signal: controller.signal });
       if (!isCurrent(generation) || controller.signal.aborted) {
@@ -247,10 +352,20 @@ export function MediaWorkspace({
         applyPhase(generation, { status: "cancelled" });
         return;
       }
-      applyPhase(generation, {
-        status: "error",
-        message: error instanceof Error ? error.message : "The upload failed.",
-      });
+      if (error instanceof UploadRequestError && retryableStatus(error.status)) {
+        applyPhase(generation, (current) =>
+          current.status === "resumable"
+            ? {
+                ...current,
+                transfer: { ...current.transfer, stage: "paused", speed: 0, eta: null },
+              }
+            : { status: "error", message: error.message },
+        );
+      } else
+        applyPhase(generation, {
+          status: "error",
+          message: error instanceof Error ? error.message : "The upload failed.",
+        });
     } finally {
       release(generation);
     }
@@ -330,6 +445,28 @@ export function MediaWorkspace({
     }
   }
 
+  async function discard(): Promise<void> {
+    if (!savedUpload || busyRef.current) return;
+    cancel();
+    const generation = generationRef.current;
+    busyRef.current = true;
+    setPhase({ status: "discarding" });
+    try {
+      await multipartApi.abort(project.id, savedUpload.uploadSessionId);
+      await uploadState.remove(scope);
+      if (!isCurrent(generation)) return;
+      setSavedUpload(null);
+      selectedFile.current = null;
+      setPhase({ status: "cancelled" });
+    } catch (error) {
+      applyPhase(generation, {
+        status: "error",
+        message: error instanceof Error ? error.message : "The upload could not be discarded.",
+      });
+    } finally {
+      release(generation);
+    }
+  }
   function cancel(): void {
     generationRef.current += 1;
     abortRef.current?.abort();
@@ -337,13 +474,51 @@ export function MediaWorkspace({
     abortDetails();
     busyRef.current = false;
     if (mountedRef.current) {
-      setPhase({ status: "cancelled" });
+      setPhase((current) =>
+        current.status === "resumable"
+          ? {
+              ...current,
+              transfer: {
+                ...current.transfer,
+                loaded: current.transfer.durableLoaded,
+                percent: Math.min(
+                  99.9,
+                  (current.transfer.durableLoaded / current.transfer.total) * 100,
+                ),
+                stage: "paused",
+                speed: 0,
+                eta: null,
+              },
+            }
+          : { status: "cancelled" },
+      );
       setRefreshing(false);
     }
   }
 
   return (
     <div className="mt-6 min-w-0">
+      {savedUpload ? (
+        <div className="mb-4 rounded-lg border border-line p-4" aria-live="polite">
+          <p className="text-sm">
+            Resume {savedUpload.filename}. Reselect the same video to verify its SHA-256 and upload
+            only missing parts.
+          </p>
+          {!busyRef.current && selectedFile.current ? (
+            <Button
+              variant="secondary"
+              onClick={() => void acceptFile(selectedFile.current ?? undefined)}
+            >
+              Resume upload
+            </Button>
+          ) : null}
+          {!busyRef.current ? (
+            <Button variant="secondary" onClick={() => void discard()}>
+              Discard resumable upload
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
       {canUpload ? (
         <UploadDropZone
           busy={busyRef.current || isBusy(phase)}
@@ -367,7 +542,12 @@ export function MediaWorkspace({
           this visit. Earlier uploads are not listed here.
         </p>
       )}
-      <UploadStatus phase={phase} onCancel={cancel} onReset={() => setPhase({ status: "idle" })} />
+      <UploadStatus
+        phase={phase}
+        busy={busyRef.current}
+        onCancel={cancel}
+        onReset={() => setPhase({ status: "idle" })}
+      />
       {phase.status === "uploaded" ? (
         <MediaDetailsPanel
           details={phase.details}
@@ -382,10 +562,13 @@ export function MediaWorkspace({
 
 function isBusy(phase: Phase): boolean {
   return (
+    (phase.status === "resumable" &&
+      ["resuming", "uploading", "completing"].includes(phase.transfer.stage)) ||
     phase.status === "hashing" ||
     phase.status === "requesting-upload" ||
     phase.status === "uploading" ||
-    phase.status === "completing"
+    phase.status === "completing" ||
+    phase.status === "discarding"
   );
 }
 
@@ -443,10 +626,12 @@ function UploadDropZone({
 
 function UploadStatus({
   phase,
+  busy,
   onCancel,
   onReset,
 }: {
   phase: Phase;
+  busy: boolean;
   onCancel: () => void;
   onReset: () => void;
 }) {
@@ -465,9 +650,20 @@ function UploadStatus({
       {progress !== null ? (
         <progress className="mt-2 w-full" value={progress.loaded} max={progress.total} />
       ) : null}
-      {phase.status === "hashing" || phase.status === "uploading" ? (
+      {phase.status === "resumable" ? (
+        <p className="mt-2 text-sm text-muted">
+          {phase.transfer.percent.toFixed(1)}% · {formatBytes(phase.transfer.loaded)} /{" "}
+          {formatBytes(phase.transfer.total)} · {formatBytes(phase.transfer.speed)}/s ·{" "}
+          {phase.transfer.eta === null
+            ? "Remaining time unavailable"
+            : `${Math.ceil(phase.transfer.eta)}s remaining`}
+        </p>
+      ) : null}
+      {phase.status === "hashing" ||
+      phase.status === "uploading" ||
+      (phase.status === "resumable" && busy) ? (
         <Button className="mt-3" variant="secondary" onClick={onCancel}>
-          Cancel
+          {phase.status === "resumable" ? "Pause upload" : "Cancel"}
         </Button>
       ) : null}
       {phase.status === "error" ? (
@@ -490,6 +686,11 @@ function UploadStatus({
 }
 
 function progressOf(phase: Phase): { loaded: number; total: number } | null {
+  if (phase.status === "resumable")
+    return {
+      loaded: (phase.transfer.percent / 100) * phase.transfer.total,
+      total: phase.transfer.total,
+    };
   if (phase.status === "hashing" || phase.status === "uploading") {
     if (phase.total <= 0) {
       return null;
@@ -501,6 +702,14 @@ function progressOf(phase: Phase): { loaded: number; total: number } | null {
 
 function statusText(phase: Phase): string {
   switch (phase.status) {
+    case "resumable":
+      return {
+        resuming: "Resuming verified parts.",
+        uploading: "Uploading directly to object storage.",
+        paused: "Paused / interrupted. Completed parts are saved.",
+        completing: "Completing and verifying SHA-256.",
+        completed: "Upload complete.",
+      }[phase.transfer.stage];
     case "hashing":
       return "Calculating SHA-256.";
     case "requesting-upload":
@@ -511,8 +720,10 @@ function statusText(phase: Phase): string {
       return "Confirming the stored object.";
     case "uploaded":
       return "The upload is recorded.";
+    case "discarding":
+      return "Discarding the saved upload.";
     case "cancelled":
-      return "The upload was cancelled. It was not resumed.";
+      return "The upload was cancelled.";
     case "error":
       return "The file was not uploaded.";
     default:
@@ -528,7 +739,7 @@ function putFailure(status: number): string {
     return "The upload checksum was rejected.";
   }
   if (status === 0) {
-    return "The upload was interrupted. Start it again. Resume is not available yet.";
+    return "The small-file upload was interrupted. Choose the file to retry.";
   }
   return "The upload was not accepted by object storage.";
 }

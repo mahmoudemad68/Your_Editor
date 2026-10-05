@@ -202,6 +202,15 @@ test("CompleteMediaUpload persists a verified object and rejects mismatches", as
   assert.equal(asset.duration, null);
   assert.equal((await media.findById(ASSET))?.contentSha256, HASH);
 
+  assert.equal(
+    (
+      await complete.execute(OWNER, PROJECT, {
+        ...declaration,
+        filename: asset.displayFilename,
+      })
+    ).id,
+    asset.id,
+  );
   await assert.rejects(() => complete.execute(OWNER, PROJECT, declaration), MediaAssetConflict);
 
   await objects.put(key + "-other", new Uint8Array(4), "video/mp4", "cd".repeat(32));
