@@ -1,3 +1,4 @@
+import { GetCurrentUser } from "./application/current-user.js";
 import "reflect-metadata";
 import { randomBytes } from "node:crypto";
 import { createUuidV7 } from "@editagent/domain";
@@ -52,6 +53,7 @@ export async function bootstrap(): Promise<void> {
   const tokens = new JwtSessionTokens(config.authJwtSecret);
   const rateLimit = new LoginRateLimit(30, 60_000);
   const auth = {
+    currentUser: new GetCurrentUser(users),
     register: new RegisterUser(users, sessions, passwords, tokens, clock, rateLimit),
     login: new LoginUser(users, sessions, passwords, tokens, clock, rateLimit),
     refresh: new RefreshAccess(users, sessions, tokens, clock),

@@ -1,3 +1,4 @@
+import { GetCurrentUser } from "./application/current-user.js";
 /**
  * Regressions for the confirmed code-review findings that do not need two processes.
  */
@@ -67,6 +68,7 @@ async function start(
       mediaIds: new NodeMediaAssetIdGenerator(),
       presignTtlSeconds: 900,
       auth: {
+        currentUser: new GetCurrentUser(users),
         register: new RegisterUser(users, sessions, passwords, tokens, clock, rateLimit),
         login: new LoginUser(users, sessions, passwords, tokens, clock, rateLimit),
         refresh: new RefreshAccess(users, sessions, tokens, clock),
@@ -164,6 +166,7 @@ test("concurrent registration of one email is HTTP 409", async () => {
     mediaIds: new NodeMediaAssetIdGenerator(),
     presignTtlSeconds: 900,
     auth: {
+      currentUser: new GetCurrentUser(users),
       register: new RegisterUser(users, sessions, passwords, tokens, clock, rateLimit),
       login: new LoginUser(users, sessions, passwords, tokens, clock, rateLimit),
       refresh: new RefreshAccess(users, sessions, tokens, clock),

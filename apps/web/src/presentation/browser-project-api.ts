@@ -1,4 +1,4 @@
-import { CORRELATION_HEADER, createCorrelationId } from "@editagent/shared";
+import { sessionClient } from "./session-client";
 
 import type {
   ApiResult,
@@ -54,10 +54,10 @@ export const browserProjectApi: ProjectApi = {
 async function request<T>(url: string, init?: RequestInit): Promise<ApiResult<T>> {
   try {
     const headers = new Headers(init?.headers);
-    if (!headers.has(CORRELATION_HEADER)) {
-      headers.set(CORRELATION_HEADER, createCorrelationId());
+    if (!headers.has("x-request-id")) {
+      headers.set("x-request-id", `req_${crypto.randomUUID().replace(/-/g, "")}`);
     }
-    const response = await fetch(url, { ...init, headers, cache: "no-store" });
+    const response = await sessionClient.authenticatedFetch(url, { ...init, headers });
     const body: unknown = await response.json();
     if (isResult<T>(body)) {
       return body;

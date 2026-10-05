@@ -32,3 +32,7 @@ tools/benchmarks/rendering/out/
 tools/benchmarks/rendering/.remotion/
 .python-version
 !workers/ai-worker/.python-version
+
+# Playwright artifacts can contain browser state; never commit them.
+**/test-results/
+**/playwright-report/

@@ -1,3 +1,4 @@
+import { GetCurrentUser } from "./application/current-user.js";
 import "reflect-metadata";
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
@@ -81,6 +82,7 @@ async function startApi(limit: number): Promise<RunningApi> {
     mediaIds: new NodeMediaAssetIdGenerator(),
     presignTtlSeconds: 900,
     auth: {
+      currentUser: new GetCurrentUser(users),
       register: new RegisterUser(users, sessions, passwords, tokens, clock, rateLimit),
       login: new LoginUser(users, sessions, passwords, tokens, clock, rateLimit),
       refresh: new RefreshAccess(users, sessions, tokens, clock),
@@ -414,6 +416,34 @@ test("credential attempts from one client are rate limited", async () => {
     });
     assert.equal(limited.status, 429);
     assert.equal(await api.users.findByEmail("three@example.test"), null);
+  } finally {
+    await api.app.close();
+  }
+});
+
+test("current user requires a verified access token and returns only id/email without caching", async () => {
+  const api = await startApi(40);
+  try {
+    assert.equal((await fetch(`${api.base}/auth/me`)).status, 401);
+    assert.equal(
+      (
+        await fetch(`${api.base}/auth/me`, {
+          headers: { cookie: "editagent_access=forged", "x-user-id": "attacker" },
+        })
+      ).status,
+      401,
+    );
+    const jar = await register(api, "identity@example.test");
+    const response = await fetch(`${api.base}/auth/me`, { headers: { cookie: cookieHeader(jar) } });
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get("cache-control") ?? "", /no-store/);
+    const user = await api.users.findByEmail("identity@example.test");
+    assert.deepEqual(await response.json(), { id: user?.id, email: "identity@example.test" });
+    api.clock.advance(901_000n);
+    assert.equal(
+      (await fetch(`${api.base}/auth/me`, { headers: { cookie: cookieHeader(jar) } })).status,
+      401,
+    );
   } finally {
     await api.app.close();
   }

@@ -1,3 +1,4 @@
+import { GetCurrentUser } from "./application/current-user.js";
 /**
  * A real browser on another origin submits the sign-in form through a proxy
  * that adds client-supplied forwarded headers. The API must refuse the session.
@@ -91,6 +92,7 @@ test("a cross-site browser form cannot inject a sign-in session", async () => {
     mediaIds: new NodeMediaAssetIdGenerator(),
     presignTtlSeconds: 900,
     auth: {
+      currentUser: new GetCurrentUser(users),
       register: new RegisterUser(users, sessions, passwords, tokens, clock, rateLimit),
       login: new LoginUser(users, sessions, passwords, tokens, clock, rateLimit),
       refresh: new RefreshAccess(users, sessions, tokens, clock),

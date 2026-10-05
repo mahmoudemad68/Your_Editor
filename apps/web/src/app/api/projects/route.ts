@@ -1,14 +1,10 @@
-import {
-  correlationIdFromRequest,
-  createProject,
-  listProjects,
-} from "../../../composition/project-actions";
+import { createProject, listProjects } from "../../../composition/project-actions";
 import { projectApiResponse } from "../../../composition/project-response";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
-  return projectApiResponse(await listProjects(correlationIdFromRequest(request)));
+  return projectApiResponse(await listProjects(request));
 }
 
 export async function POST(request: Request) {
@@ -17,5 +13,5 @@ export async function POST(request: Request) {
     typeof body === "object" && body !== null && "name" in body && typeof body.name === "string"
       ? body.name
       : "";
-  return projectApiResponse(await createProject(name, correlationIdFromRequest(request)));
+  return projectApiResponse(await createProject(name, request));
 }

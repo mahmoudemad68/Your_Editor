@@ -11,9 +11,16 @@ import type {
   UploadDeclaration,
 } from "../project-contract";
 
-function api(correlationId?: string) {
+function api(request?: Request) {
+  const headers = new Headers();
+  for (const name of ["cookie", "x-editagent-csrf"]) {
+    const value = request?.headers.get(name);
+    if (value != null) headers.set(name, value);
+  }
+  const correlationId = request === undefined ? undefined : correlationIdFromRequest(request);
   return createHttpProjectApi({
     baseUrl: loadWebConfig().apiBaseUrl,
+    requestHeaders: headers,
     ...(correlationId === undefined ? {} : { correlationId }),
   });
 }
@@ -25,53 +32,53 @@ export function correlationIdFromRequest(request: Request): string {
 }
 
 export async function listProjects(
-  correlationId?: string,
+  request?: Request,
 ): Promise<ApiResult<readonly ProjectRecord[]>> {
-  return api(correlationId).listProjects();
+  return api(request).listProjects();
 }
 
 export async function createProject(
   name: string,
-  correlationId?: string,
+  request?: Request,
 ): Promise<ApiResult<ProjectRecord>> {
-  return api(correlationId).createProject(name);
+  return api(request).createProject(name);
 }
 
 export async function renameProject(
   projectId: string,
   name: string,
-  correlationId?: string,
+  request?: Request,
 ): Promise<ApiResult<ProjectRecord>> {
-  return api(correlationId).renameProject(projectId, name);
+  return api(request).renameProject(projectId, name);
 }
 
 export async function deleteProject(
   projectId: string,
-  correlationId?: string,
+  request?: Request,
 ): Promise<ApiResult<void>> {
-  return api(correlationId).deleteProject(projectId);
+  return api(request).deleteProject(projectId);
 }
 
 export async function beginUpload(
   projectId: string,
   body: UploadDeclaration,
-  correlationId?: string,
+  request?: Request,
 ): Promise<ApiResult<BeginUpload>> {
-  return api(correlationId).beginUpload(projectId, body);
+  return api(request).beginUpload(projectId, body);
 }
 
 export async function completeUpload(
   projectId: string,
   body: UploadDeclaration,
-  correlationId?: string,
+  request?: Request,
 ): Promise<ApiResult<MediaAssetRecord>> {
-  return api(correlationId).completeUpload(projectId, body);
+  return api(request).completeUpload(projectId, body);
 }
 
 export async function getMediaDetails(
   projectId: string,
   mediaAssetId: string,
-  correlationId?: string,
+  request?: Request,
 ): Promise<ApiResult<MediaDetails>> {
-  return api(correlationId).getMediaDetails(projectId, mediaAssetId);
+  return api(request).getMediaDetails(projectId, mediaAssetId);
 }

@@ -123,6 +123,23 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/auth/me": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Return the verified current user. */
+    get: operations["AuthController_me"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/auth/register": {
     parameters: {
       query?: never;
@@ -290,6 +307,12 @@ export interface components {
       sampleRate: number | null;
       streams: components["schemas"]["MediaStreamDto"][] | null;
       inspectionError: string | null;
+    };
+    SessionUserBody: {
+      /** Format: uuid */
+      id: string;
+      /** Format: email */
+      email: string;
     };
     CredentialsBody: {
       /**
@@ -699,6 +722,32 @@ export interface operations {
       };
     };
   };
+  AuthController_me: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SessionUserBody"];
+        };
+      };
+      /** @description Sign in is required. */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
   AuthController_register: {
     parameters: {
       query?: never;
@@ -717,7 +766,9 @@ export interface operations {
         headers: {
           [name: string]: unknown;
         };
-        content?: never;
+        content: {
+          "application/json": components["schemas"]["SessionUserBody"];
+        };
       };
       /** @description The email or password failed validation. */
       400: {
@@ -767,7 +818,9 @@ export interface operations {
         headers: {
           [name: string]: unknown;
         };
-        content?: never;
+        content: {
+          "application/json": components["schemas"]["SessionUserBody"];
+        };
       };
       /** @description The email or password failed validation. */
       400: {
@@ -806,7 +859,9 @@ export interface operations {
         headers: {
           [name: string]: unknown;
         };
-        content?: never;
+        content: {
+          "application/json": components["schemas"]["SessionUserBody"];
+        };
       };
       /** @description The refresh token is missing, expired, or already used. */
       401: {

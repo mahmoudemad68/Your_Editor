@@ -3,6 +3,8 @@ import {
   Body,
   ConflictException,
   Controller,
+  Get,
+  Header,
   HttpCode,
   HttpException,
   Inject,
@@ -37,6 +39,8 @@ import {
   RefreshAccess,
   RegisterUser,
 } from "../application/authentication.js";
+import { GetCurrentUser } from "../application/current-user.js";
+import { requireActor } from "./actor.js";
 import { clientAddress } from "./client-address.js";
 import { LoginOriginGuard } from "./login-origin.js";
 import {
@@ -48,6 +52,14 @@ import {
   REFRESH_COOKIE,
   sessionCookies,
 } from "./auth-cookies.js";
+
+class SessionUserBody {
+  @ApiProperty({ format: "uuid" })
+  id!: string;
+
+  @ApiProperty({ format: "email" })
+  email!: string;
+}
 
 class CredentialsBody {
   @ApiProperty({ format: "email", maxLength: 254, example: "owner@example.test" })
@@ -81,6 +93,7 @@ export const AUTH_TRUSTED_PROXIES = "AUTH_TRUSTED_PROXIES";
 @Controller("auth")
 export class AuthController {
   constructor(
+    private readonly currentUser: GetCurrentUser,
     private readonly registerUser: RegisterUser,
     private readonly loginUser: LoginUser,
     private readonly refreshAccess: RefreshAccess,
@@ -90,11 +103,27 @@ export class AuthController {
     @Inject(AUTH_TRUSTED_PROXIES) private readonly trustedProxies: readonly string[],
   ) {}
 
+  @Get("me")
+  @Header("Cache-Control", "private, no-store")
+  @ApiOperation({ summary: "Return the verified current user." })
+  @ApiOkResponse({ type: SessionUserBody })
+  @ApiUnauthorizedResponse({ description: "Sign in is required." })
+  async me(@Req() request: object): Promise<{ id: string; email: string }> {
+    const user = await this.currentUser.execute(requireActor(request));
+    if (user === null) {
+      throw new UnauthorizedException("Sign in is required.");
+    }
+    return user;
+  }
+
   @Post("register")
   @UseGuards(LoginOriginGuard)
   @HttpCode(201)
   @ApiOperation({ summary: "Register and start a session." })
-  @ApiCreatedResponse({ description: "The account exists and session cookies were set." })
+  @ApiCreatedResponse({
+    description: "The account exists and session cookies were set.",
+    type: SessionUserBody,
+  })
   @ApiBadRequestResponse({ description: "The email or password failed validation." })
   @ApiUnauthorizedResponse({ description: "The password was rejected." })
   @ApiConflictResponse({ description: "The email is already registered." })
@@ -121,7 +150,7 @@ export class AuthController {
   @UseGuards(LoginOriginGuard)
   @HttpCode(200)
   @ApiOperation({ summary: "Sign in and start a session." })
-  @ApiOkResponse({ description: "Session cookies were set." })
+  @ApiOkResponse({ description: "Session cookies were set.", type: SessionUserBody })
   @ApiBadRequestResponse({ description: "The email or password failed validation." })
   @ApiUnauthorizedResponse({ description: "Email or password is incorrect." })
   @ApiTooManyRequestsResponse({ description: "Too many attempts from this client." })
@@ -146,7 +175,7 @@ export class AuthController {
   @Post("refresh")
   @HttpCode(200)
   @ApiOperation({ summary: "Rotate the refresh token and issue a new access token." })
-  @ApiOkResponse({ description: "The session was rotated." })
+  @ApiOkResponse({ description: "The session was rotated.", type: SessionUserBody })
   @ApiUnauthorizedResponse({
     description: "The refresh token is missing, expired, or already used.",
   })
