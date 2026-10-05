@@ -154,3 +154,9 @@ consume the entire pool while completion needs another repository connection.
 Configure at least two PostgreSQL pool connections; the default pool of ten
 reserves six for other repository operations. A two-connection regression
 exercises concurrent idempotent completion through separate repository instances.
+
+## US-128 derived objects
+
+Derived objects use the private namespace `projects/<projectId>/derived/<mediaAssetId>/<kind>/<parameterSignature>/<variant>.<extension>`. Variants are proxy MP4, ASR/mix WAV and poster/sprite JPEG. The worker alone chooses keys; display filenames and job payload paths are never used. Writes carry Content-Type, exact Content-Length and `If-None-Match: *`. Object metadata contains a versioned parameter descriptor, source SHA-256 and incremental output SHA-256 for DB/object crash reconciliation. No ACL grants, credentials or presigned URLs are persisted. Existing bucket privacy and anonymous-GET denial stay required.
+
+Provision scratch disk for the staged source plus derived outputs and concurrency; float PCM can exceed the compressed source size. Outputs use bounded-memory streams. Normal error/cancel paths remove temporary files. After host loss/hard kill, retire the stopped worker's ephemeral scratch volume before reuse; do not delete scratch directories belonging to running jobs. US-128 uses an explicit operator opt-in while US-127 is absent; it is not unrestricted production approval or hostile-media validation. Runtime/generation-policy changes require a parameter version bump. Full output policies and deadlines are in `workers/media-worker/README.md`.

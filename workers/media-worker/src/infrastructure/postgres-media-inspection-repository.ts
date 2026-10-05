@@ -54,7 +54,7 @@ const SELECT_COLUMNS = `id::text AS id, project_id::text AS project_id, kind, st
 
 /** Worker-owned inspection store. It does not import the API repository. */
 export class PostgresMediaInspectionRepository implements MediaInspectionRepository {
-  constructor(private readonly pool: Pool) {}
+  constructor(private readonly pool: Pick<Pool, "query">) {}
 
   async findById(id: MediaAssetId): Promise<MediaAsset | null> {
     const result = await this.pool.query<MediaAssetRow>(

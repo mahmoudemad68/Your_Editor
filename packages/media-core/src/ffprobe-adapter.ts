@@ -64,7 +64,13 @@ export class FFprobeMediaProbe implements IMediaProbe {
   async inspect(input: ProbeInput): Promise<ProbeResult> {
     assertControlledLocalFile(input.filePath);
     const args = buildFfprobeArgs(input.filePath);
-    const stdout = await runFfprobe(this.executable, args, this.timeoutMs, this.maxOutputBytes);
+    const stdout = await runFfprobe(
+      this.executable,
+      args,
+      this.timeoutMs,
+      this.maxOutputBytes,
+      input.signal,
+    );
     let parsed: unknown;
     try {
       parsed = JSON.parse(stdout.toString("utf8"));
@@ -107,7 +113,9 @@ function runFfprobe(
   args: readonly string[],
   timeoutMs: number,
   maxOutputBytes: number,
+  signal?: AbortSignal,
 ): Promise<Buffer> {
+  signal?.throwIfAborted();
   return new Promise((resolve, reject) => {
     let child: ChildProcess;
     try {
@@ -137,6 +145,7 @@ function runFfprobe(
       }
       settled = true;
       clearTimeout(timer);
+      signal?.removeEventListener("abort", stop);
       stdoutStream.destroy();
       stderrStream.destroy();
       if (error !== undefined) {
@@ -148,6 +157,8 @@ function runFfprobe(
     const stop = (): void => {
       child.kill("SIGKILL");
     };
+    signal?.addEventListener("abort", stop, { once: true });
+    if (signal?.aborted) stop();
     const timer = setTimeout(() => {
       timedOut = true;
       stop();
@@ -174,6 +185,10 @@ function runFfprobe(
       finish(new MediaProbeError(error.code === "ENOENT" ? "not_found" : "exit"));
     });
     child.on("close", (code) => {
+      if (signal?.aborted) {
+        finish(new MediaProbeError("interrupted"));
+        return;
+      }
       if (timedOut) {
         finish(new MediaProbeError("timeout"));
         return;

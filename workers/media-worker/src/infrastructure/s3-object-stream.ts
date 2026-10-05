@@ -23,10 +23,11 @@ export class S3ObjectByteSource implements ObjectByteSource {
     private readonly bucket: string,
   ) {}
 
-  async open(storageKey: string): Promise<OpenedObject> {
+  async open(storageKey: string, signal?: AbortSignal): Promise<OpenedObject> {
     try {
       const response = await this.client.send(
         new GetObjectCommand({ Bucket: this.bucket, Key: storageKey }),
+        signal === undefined ? {} : { abortSignal: signal },
       );
       if (!(response.Body instanceof Readable)) {
         throw new MediaProbeError("interrupted");

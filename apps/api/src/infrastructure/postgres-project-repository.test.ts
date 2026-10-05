@@ -79,6 +79,7 @@ describe("Postgres ProjectRepository", { concurrency: 1 }, () => {
       "0007_identity.sql",
       "0008_refresh_revocation_audit.sql",
       "0009_upload_sessions.sql",
+      "0010_derived_assets.sql",
     ]);
     const again = await applyMigrations(pool);
     assert.deepEqual(again, []);

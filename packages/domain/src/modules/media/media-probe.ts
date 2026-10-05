@@ -54,6 +54,7 @@ export interface ProbeResult {
 
 export interface ProbeInput {
   readonly filePath: string;
+  readonly signal?: AbortSignal;
 }
 
 export interface IMediaProbe {

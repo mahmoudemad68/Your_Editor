@@ -7,5 +7,5 @@ export interface OpenedObject {
 
 /** Reads one object as a stream. Callers must not buffer the whole body. */
 export interface ObjectByteSource {
-  open(storageKey: string): Promise<OpenedObject>;
+  open(storageKey: string, signal?: AbortSignal): Promise<OpenedObject>;
 }

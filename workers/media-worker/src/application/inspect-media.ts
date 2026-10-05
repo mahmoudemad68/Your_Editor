@@ -21,12 +21,13 @@ export interface InspectionClock {
 
 export interface StagedMediaFile {
   readonly filePath: string;
+  readonly contentSha256?: string;
   release(): Promise<void>;
 }
 
 /** Streams an object to a controlled temporary file. It does not return the bytes. */
 export interface MediaObjectStaging {
-  stage(storageKey: string): Promise<StagedMediaFile>;
+  stage(storageKey: string, signal?: AbortSignal): Promise<StagedMediaFile>;
 }
 
 export interface MediaInspectionRepository {

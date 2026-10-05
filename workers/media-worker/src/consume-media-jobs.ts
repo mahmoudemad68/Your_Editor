@@ -29,8 +29,8 @@ export async function consumeMediaJobs(
   const jobs = new PostgresJobRepository(pool);
   const supervisor = new ChildProcessJobSupervisor();
   const handler = {
-    modulePath: path.join(__dirname, "handlers/acknowledge.js"),
-    exportName: "acknowledge",
+    modulePath: path.join(__dirname, "handlers/media-jobs.js"),
+    exportName: "handleMediaJob",
   };
   for (;;) {
     try {

@@ -163,3 +163,11 @@ The registry is a plugin. The render worker is the composition root that loads i
 2. The adapter is declared in an infrastructure folder or in `packages/media-core`.
 3. The composition root constructs the adapter and passes it to the use case.
 4. A pull request that imports an adapter from `packages/domain` or from an `application/` folder violates `domain-no-infrastructure` or `application-no-outer-layers` and must fail the architecture check.
+
+## US-128 derivation
+
+`DerivedAsset` retains the existing kinds and now optionally carries validated durable artifact information (legacy constructor snapshots remain restorable). The worker requires that information for persisted outputs. Migration `0010_derived_assets.sql` enforces project/source/key binding, immutable outputs and uniqueness by source/kind/parameter signature.
+
+Worker application ports `MediaDerivativeProcessor`, `DerivativeObjects`, `DerivationRepository` and `DerivationGate` keep FFmpeg, S3 and PostgreSQL out of application/domain code. Source staging reuses `FileObjectStager`; FFmpeg outputs are private local files uploaded as streams. PostgreSQL session advisory locks coordinate workers without nested pool acquisition. Final object metadata permits recovery after object storage succeeds but a DB insert fails. See `workers/media-worker/README.md` for exact formats, v1 parameters and cancellation/reuse semantics.
+
+Derivation is explicitly operator-triggered and disabled by default until US-127 provides its validation gate; completed inspection is not validation. There is no automatic upload-to-derive path, new browser/API endpoint, Media Library UI or progress event transport in US-128.
