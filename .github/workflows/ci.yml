@@ -61,6 +61,8 @@ jobs:
           ./infra/seaweedfs/start-storage.sh
           curl -fsS http://127.0.0.1:9000/status >/dev/null
           S3_HOST=127.0.0.1 S3_PORT=9000 python3 infra/scripts/ensure_bucket.py
+          ./infra/seaweedfs/verify-firewall-lifecycle.sh
+          ./infra/seaweedfs/verify-jwt-authority.sh
           ./infra/seaweedfs/verify-trust-boundary.sh
 
       - name: Install pnpm

@@ -19,5 +19,5 @@ for volume in seaweed-master seaweed-volume seaweed-filer; do
     -C /data -cf "/backup/${volume}.tar" .
   test -s "$destination/${volume}.tar"
 done
-docker compose start seaweed-master seaweed-volume seaweed-filer seaweed-s3
+./infra/seaweedfs/rearm-storage.sh
 echo "seaweedfs backup written to $destination"

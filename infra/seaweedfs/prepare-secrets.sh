@@ -138,10 +138,12 @@ else
   issue_role s3 editagent-s3 seaweed-s3 "$SEAWEED_S3_IP" ""
 fi
 
-if [ -f "$dir/security.toml" ]; then
-  read_file "$dir/security.toml" >"$stage/existing.toml"
-  chmod 600 "$stage/existing.toml"
-fi
+for candidate in security.toml security.master.toml security.volume.toml security.filer.toml security.s3.toml; do
+  if [ -f "$dir/$candidate" ]; then
+    read_file "$dir/$candidate" >"$stage/$candidate"
+    chmod 600 "$stage/$candidate"
+  fi
+done
 
 STAGE="$stage" DIR="$dir" S3_ACCESS_KEY_ID="$S3_ACCESS_KEY_ID" S3_SECRET_ACCESS_KEY="$S3_SECRET_ACCESS_KEY" python3 - <<'PY'
 import json
@@ -155,45 +157,74 @@ stage = Path(os.environ["STAGE"])
 def key():
     return secrets.token_urlsafe(32)
 
-managed = {
-    "grpc",
-    "grpc.master",
-    "grpc.volume",
-    "grpc.filer",
-    "grpc.s3",
-    "grpc.client",
-    "https.master",
-}
+def parse_keys(text):
+    current = None
+    found = {}
+    for line in text.splitlines():
+        if line.startswith("[") and line.endswith("]"):
+            current = line[1:-1].strip()
+        elif current and line.startswith('key = "'):
+            found[current] = line.split('"', 2)[1]
+    return found
 
-tls = "\n".join(
+parsed = []
+for name in (
+    "security.filer.toml",
+    "security.toml",
+    "security.master.toml",
+    "security.s3.toml",
+    "security.volume.toml",
+):
+    path = stage / name
+    if path.exists():
+        parsed.append(parse_keys(path.read_text()))
+
+def pick(section):
+    for found in parsed:
+        value = found.get(section)
+        if value:
+            return value
+    return key()
+
+signing = pick("jwt.signing")
+signing_read = pick("jwt.signing.read")
+filer_signing = pick("jwt.filer_signing")
+filer_read = pick("jwt.filer_signing.read")
+
+def jwt_block(section, value):
+    return f'[{section}]\nkey = "{value}"\nexpires_after_seconds = 60\n'
+
+access = "\n".join(
     [
-        "[grpc]",
-        'ca = "/etc/seaweedfs/ca.crt"',
+        "[access]",
+        "ui = false",
         "",
-        "[grpc.master]",
-        'cert = "/etc/seaweedfs/master.crt"',
-        'key = "/etc/seaweedfs/master.key"',
-        'allowed_commonNames = "editagent-volume,editagent-filer,editagent-s3"',
+        "[filer.expose_directory_metadata]",
+        "enabled = false",
         "",
-        "[grpc.volume]",
-        'cert = "/etc/seaweedfs/volume.crt"',
-        'key = "/etc/seaweedfs/volume.key"',
-        'allowed_commonNames = "editagent-master,editagent-filer"',
-        "",
-        "[grpc.filer]",
-        'cert = "/etc/seaweedfs/filer.crt"',
-        'key = "/etc/seaweedfs/filer.key"',
-        'allowed_commonNames = "editagent-s3,editagent-filer"',
-        "",
-        "[grpc.s3]",
-        'cert = "/etc/seaweedfs/s3.crt"',
-        'key = "/etc/seaweedfs/s3.key"',
-        'allowed_commonNames = "editagent-s3"',
-        "",
-        "[grpc.client]",
-        'cert = "/etc/seaweedfs/s3.crt"',
-        'key = "/etc/seaweedfs/s3.key"',
-        "",
+    ]
+)
+volume_jwt = jwt_block("jwt.signing", signing) + "\n" + jwt_block("jwt.signing.read", signing_read)
+filer_jwt = (
+    jwt_block("jwt.filer_signing", filer_signing)
+    + "\n"
+    + jwt_block("jwt.filer_signing.read", filer_read)
+)
+
+def grpc_role(role, names):
+    return "\n".join(
+        [
+            f"[grpc.{role}]",
+            f'cert = "/etc/seaweedfs/{role}.crt"',
+            f'key = "/etc/seaweedfs/{role}.key"',
+            f'allowed_commonNames = "{names}"',
+            "",
+        ]
+    )
+
+common_grpc = '[grpc]\nca = "/etc/seaweedfs/ca.crt"\n\n'
+https_master = "\n".join(
+    [
         "[https.master]",
         'cert = "/etc/seaweedfs/master.crt"',
         'key = "/etc/seaweedfs/master.key"',
@@ -201,46 +232,34 @@ tls = "\n".join(
         "",
     ]
 )
-
-existing = stage / "existing.toml"
-if existing.exists():
-    kept = []
-    skipping = False
-    for line in existing.read_text().splitlines():
-        if line.startswith("[") and line.endswith("]"):
-            skipping = line[1:-1].strip() in managed
-        if not skipping:
-            kept.append(line)
-    body = "\n".join(kept).rstrip() + "\n\n" + tls
-else:
-    body = "\n".join(
-        [
-            "[jwt.signing]",
-            f'key = "{key()}"',
-            "expires_after_seconds = 60",
-            "",
-            "[jwt.signing.read]",
-            f'key = "{key()}"',
-            "expires_after_seconds = 60",
-            "",
-            "[jwt.filer_signing]",
-            f'key = "{key()}"',
-            "expires_after_seconds = 60",
-            "",
-            "[jwt.filer_signing.read]",
-            f'key = "{key()}"',
-            "expires_after_seconds = 60",
-            "",
-            "[access]",
-            "ui = false",
-            "",
-            "[filer.expose_directory_metadata]",
-            "enabled = false",
-            "",
-            tls,
-        ]
-    )
-(stage / "security.toml").write_text(body)
+s3_client = "\n".join(
+    [
+        "[grpc.client]",
+        'cert = "/etc/seaweedfs/s3.crt"',
+        'key = "/etc/seaweedfs/s3.key"',
+        "",
+    ]
+)
+(stage / "security.master.toml").write_text(
+    volume_jwt + "\n" + access + common_grpc + grpc_role("master", "editagent-volume,editagent-filer,editagent-s3") + https_master
+)
+(stage / "security.volume.toml").write_text(
+    volume_jwt + "\n" + common_grpc + grpc_role("volume", "editagent-master,editagent-filer")
+)
+(stage / "security.filer.toml").write_text(
+    volume_jwt + "\n" + filer_jwt + "\n" + access + common_grpc + grpc_role("filer", "editagent-s3,editagent-filer")
+)
+# S3 issues filer tokens and volume read tokens. SeaweedFS 4.48 mints the
+# volume read JWT inside the S3 process. The volume write key stays off this file.
+(stage / "security.s3.toml").write_text(
+    filer_jwt
+    + "\n"
+    + jwt_block("jwt.signing.read", signing_read)
+    + "\n"
+    + common_grpc
+    + grpc_role("s3", "editagent-s3")
+    + s3_client
+)
 (stage / "s3.json").write_text(
     json.dumps(
         {
@@ -266,7 +285,10 @@ docker run --rm --user root --entrypoint sh \
   -v "$stage:/stage:ro" \
   "$image" \
   -c 'set -eu
-    cp /stage/security.toml /secrets/security.toml
+    for role in master volume filer s3; do
+      cp "/stage/security.${role}.toml" "/secrets/security.${role}.toml"
+    done
+    rm -f /secrets/security.toml
     cp /stage/s3.json /secrets/s3.json
     if [ -f /stage/ca.crt ]; then cp /stage/ca.crt /secrets/ca.crt; fi
     if [ -f /stage/ca.key ]; then cp /stage/ca.key /secrets/ca.key; fi
@@ -278,14 +300,18 @@ docker run --rm --user root --entrypoint sh \
     # The old shared identity could impersonate every role. Remove it.
     rm -f /secrets/seaweed.crt /secrets/seaweed.key
     chown seaweed:seaweed \
-      /secrets/security.toml /secrets/s3.json \
+      /secrets/security.master.toml /secrets/security.volume.toml \
+      /secrets/security.filer.toml /secrets/security.s3.toml \
+      /secrets/s3.json \
       /secrets/ca.crt /secrets/ca.key \
       /secrets/master.crt /secrets/master.key \
       /secrets/volume.crt /secrets/volume.key \
       /secrets/filer.crt /secrets/filer.key \
       /secrets/s3.crt /secrets/s3.key
     if [ -f /secrets/ca.srl ]; then chown seaweed:seaweed /secrets/ca.srl; chmod 600 /secrets/ca.srl; fi
-    chmod 600 /secrets/security.toml /secrets/s3.json \
+    chmod 600 /secrets/security.master.toml /secrets/security.volume.toml \
+      /secrets/security.filer.toml /secrets/security.s3.toml \
+      /secrets/s3.json \
       /secrets/ca.crt /secrets/ca.key \
       /secrets/master.crt /secrets/master.key \
       /secrets/volume.crt /secrets/volume.key \
@@ -294,7 +320,9 @@ docker run --rm --user root --entrypoint sh \
     chmod 700 /secrets'
 
 uid="$(docker run --rm --entrypoint id "$image" seaweed | sed -n 's/.*uid=\([0-9][0-9]*\).*/\1/p')"
-for file in "$dir/security.toml" "$dir/s3.json" "$dir/ca.crt" "$dir/ca.key" \
+for file in "$dir/security.master.toml" "$dir/security.volume.toml" \
+  "$dir/security.filer.toml" "$dir/security.s3.toml" "$dir/s3.json" \
+  "$dir/ca.crt" "$dir/ca.key" \
   "$dir/master.crt" "$dir/master.key" "$dir/volume.crt" "$dir/volume.key" \
   "$dir/filer.crt" "$dir/filer.key" "$dir/s3.crt" "$dir/s3.key"; do
   mode="$(stat -c '%a' "$file")"

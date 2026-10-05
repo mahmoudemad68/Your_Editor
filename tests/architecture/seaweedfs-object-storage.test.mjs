@@ -122,8 +122,9 @@ test("storage components keep fixed addresses and reject anonymous master HTTP",
   );
   assert.match(secrets, /\[https\.master\]/);
   assert.match(secrets, /\[grpc\.client\]/);
-  assert.match(secrets, /allowed_commonNames = "editagent-volume,editagent-filer,editagent-s3"/);
-  assert.match(secrets, /allowed_commonNames = "editagent-master,editagent-filer"/);
+  assert.match(secrets, /grpc_role\("master", "editagent-volume,editagent-filer,editagent-s3"\)/);
+  assert.match(secrets, /grpc_role\("volume", "editagent-master,editagent-filer"\)/);
+  assert.match(secrets, /volume write key stays off this file/);
   assert.equal(secrets.includes('allowed_commonNames = "editagent-seaweed"'), false);
   assert.match(isolation, /DOCKER-USER/);
   assert.match(isolation, /ExecStartPost/);
@@ -152,9 +153,14 @@ test("storage components keep fixed addresses and reject anonymous master HTTP",
     starter.indexOf("apply-container-firewall.sh") < starter.indexOf("docker compose up -d --wait"),
     true,
   );
-  assert.match(starter, /REBOOT_PERSISTENCE=open/);
+  assert.match(starter, /REBOOT_PERSISTENCE=UNVERIFIED/);
   assert.match(read("infra/seaweedfs/Dockerfile"), /editagent-entrypoint.sh/);
-  assert.match(read("infra/seaweedfs/docker-entrypoint.sh"), /firewall\.ready/);
+  assert.match(read("infra/seaweedfs/docker-entrypoint.sh"), /editagent-startup\/id/);
+  assert.match(read("infra/seaweedfs/docker-entrypoint.sh"), /refusing non-root/);
+  assert.match(read("infra/seaweedfs/backup-volumes.sh"), /rearm-storage\.sh/);
+  assert.match(read("infra/seaweedfs/restore-volumes.sh"), /rearm-storage\.sh/);
+  assert.match(compose, /security\.s3\.toml:\/etc\/seaweedfs\/security\.toml/);
+  assert.match(compose, /security\.volume\.toml:\/etc\/seaweedfs\/security\.toml/);
   assert.match(read("infra/seaweedfs/apply-container-firewall.sh"), /seaweed-volume 8080 18080/);
   assert.match(read("Makefile"), /start-storage\.sh/);
 });

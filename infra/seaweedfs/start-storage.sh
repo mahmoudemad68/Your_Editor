@@ -23,6 +23,10 @@ else
   root="$(CDPATH= cd -- "$script_dir/../.." && pwd)"
 fi
 cd "$root"
+lock_dir="${TMPDIR:-/tmp}"
+mkdir -p "$lock_dir"
+exec 9>"$lock_dir/editagent-storage.lock"
+flock -w 180 9
 
 ./infra/seaweedfs/prepare-secrets.sh
 ./infra/seaweedfs/ensure-storage-network.sh
@@ -55,11 +59,8 @@ set +e
 ./infra/seaweedfs/apply-host-isolation.sh --install
 install_status=$?
 set -e
-if [ "$install_status" -eq 3 ]; then
-  echo "REBOOT_PERSISTENCE=open"
-  exit 0
-fi
-if [ "$install_status" -ne 0 ]; then
+if [ "$install_status" -ne 0 ] && [ "$install_status" -ne 3 ]; then
   exit "$install_status"
 fi
-echo "REBOOT_PERSISTENCE=hook-installed"
+# A unit file is not a reboot. This host was not rebooted.
+echo "REBOOT_PERSISTENCE=UNVERIFIED"

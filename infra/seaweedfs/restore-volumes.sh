@@ -19,5 +19,5 @@ for volume in seaweed-master seaweed-volume seaweed-filer; do
     "$image" \
     -c 'set -eu; find /data -mindepth 1 -maxdepth 1 -exec rm -rf {} +; tar -C /data -xf /backup.tar'
 done
-docker compose start seaweed-master seaweed-volume seaweed-filer seaweed-s3
+./infra/seaweedfs/rearm-storage.sh
 echo "seaweedfs volumes restored from $source_dir"

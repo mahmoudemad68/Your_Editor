@@ -72,7 +72,42 @@ apply_one() {
   if ! nsenter -t "$pid" -n "$bin" -C INPUT -j SEAWEED-IN >/dev/null 2>&1; then
     nsenter -t "$pid" -n "$bin" -I INPUT 1 -j SEAWEED-IN
   fi
-  docker exec "$cid" touch /tmp/firewall.ready
+  nsenter -t "$pid" -n "$bin" -C INPUT -j SEAWEED-IN >/dev/null
+  for port in "$@"; do
+    nsenter -t "$pid" -n "$bin" -C SEAWEED-IN -p tcp --dport "$port" -j DROP >/dev/null
+  done
+  ipv6="$(nsenter -t "$pid" -n cat /proc/sys/net/ipv6/conf/all/disable_ipv6 2>/dev/null || echo 0)"
+  if [ "$ipv6" != "1" ]; then
+    echo "ipv6 is enabled in $service; refusing to acknowledge startup" >&2
+    return 1
+  fi
+  acknowledge "$cid" "$pid"
+}
+
+acknowledge() {
+  cid="$1"
+  pid="$2"
+  i=0
+  idline=""
+  while [ "$i" -lt 50 ]; do
+    if idline="$(docker exec "$cid" cat /tmp/editagent-startup/id 2>/dev/null)"; then
+      break
+    fi
+    i=$((i + 1))
+    sleep 0.2
+  done
+  if [ -z "$idline" ]; then
+    echo "container $cid did not publish a startup id" >&2
+    return 1
+  fi
+  nonce="${idline%% *}"
+  file_ns="${idline##* }"
+  live_ns="$(readlink "/proc/$pid/ns/net")"
+  if [ "$file_ns" != "$live_ns" ]; then
+    echo "startup id for $cid is not this network namespace" >&2
+    return 1
+  fi
+  docker exec "$cid" sh -c "printf '%s %s\n' '$nonce' '$file_ns' >/tmp/editagent-startup/ack"
 }
 
 apply_one seaweed-master 9333 19333

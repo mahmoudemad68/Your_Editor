@@ -81,7 +81,7 @@ services:
         ipv4_address: 172.30.210.10
     volumes:
       - seaweed-master:/data
-      - ${SEAWEED_SECRET_DIR:-.local/seaweedfs}/security.toml:/etc/seaweedfs/security.toml:ro
+      - ${SEAWEED_SECRET_DIR:-.local/seaweedfs}/security.master.toml:/etc/seaweedfs/security.toml:ro
       - ${SEAWEED_SECRET_DIR:-.local/seaweedfs}/ca.crt:/etc/seaweedfs/ca.crt:ro
       - ${SEAWEED_SECRET_DIR:-.local/seaweedfs}/master.crt:/etc/seaweedfs/master.crt:ro
       - ${SEAWEED_SECRET_DIR:-.local/seaweedfs}/master.key:/etc/seaweedfs/master.key:ro
@@ -128,7 +128,7 @@ services:
         ipv4_address: 172.30.210.11
     volumes:
       - seaweed-volume:/data
-      - ${SEAWEED_SECRET_DIR:-.local/seaweedfs}/security.toml:/etc/seaweedfs/security.toml:ro
+      - ${SEAWEED_SECRET_DIR:-.local/seaweedfs}/security.volume.toml:/etc/seaweedfs/security.toml:ro
       - ${SEAWEED_SECRET_DIR:-.local/seaweedfs}/ca.crt:/etc/seaweedfs/ca.crt:ro
       - ${SEAWEED_SECRET_DIR:-.local/seaweedfs}/volume.crt:/etc/seaweedfs/volume.crt:ro
       - ${SEAWEED_SECRET_DIR:-.local/seaweedfs}/volume.key:/etc/seaweedfs/volume.key:ro
@@ -164,7 +164,7 @@ services:
         ipv4_address: 172.30.210.12
     volumes:
       - seaweed-filer:/data
-      - ${SEAWEED_SECRET_DIR:-.local/seaweedfs}/security.toml:/etc/seaweedfs/security.toml:ro
+      - ${SEAWEED_SECRET_DIR:-.local/seaweedfs}/security.filer.toml:/etc/seaweedfs/security.toml:ro
       - ${SEAWEED_SECRET_DIR:-.local/seaweedfs}/ca.crt:/etc/seaweedfs/ca.crt:ro
       - ${SEAWEED_SECRET_DIR:-.local/seaweedfs}/filer.crt:/etc/seaweedfs/filer.crt:ro
       - ${SEAWEED_SECRET_DIR:-.local/seaweedfs}/filer.key:/etc/seaweedfs/filer.key:ro
@@ -204,7 +204,7 @@ services:
     ports:
       - "127.0.0.1:${S3_PORT:-${MINIO_PORT:-9000}}:8333"
     volumes:
-      - ${SEAWEED_SECRET_DIR:-.local/seaweedfs}/security.toml:/etc/seaweedfs/security.toml:ro
+      - ${SEAWEED_SECRET_DIR:-.local/seaweedfs}/security.s3.toml:/etc/seaweedfs/security.toml:ro
       - ${SEAWEED_SECRET_DIR:-.local/seaweedfs}/ca.crt:/etc/seaweedfs/ca.crt:ro
       - ${SEAWEED_SECRET_DIR:-.local/seaweedfs}/s3.crt:/etc/seaweedfs/s3.crt:ro
       - ${SEAWEED_SECRET_DIR:-.local/seaweedfs}/s3.key:/etc/seaweedfs/s3.key:ro

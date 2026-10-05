@@ -239,6 +239,14 @@ if [ -z "$bridge" ]; then
   echo "storage bridge is not created yet; IPv6 interface drops are pending" >&2
   exit 1
 fi
+if command -v nft >/dev/null 2>&1; then
+  if nft list chain ip6 filter DOCKER-USER >/dev/null 2>&1; then
+    if ! nft list chain ip6 filter DOCKER-USER | grep -q EDITAGENT-STORAGE6; then
+      echo "nft ip6 DOCKER-USER does not jump to the storage chain" >&2
+      exit 1
+    fi
+  fi
+fi
 echo "storage isolation installed"
 
 if [ "$install_boot" -ne 1 ]; then
@@ -246,7 +254,7 @@ if [ "$install_boot" -ne 1 ]; then
 fi
 
 if ! command -v systemctl >/dev/null 2>&1 || [ ! -d /run/systemd/system ]; then
-  echo "REBOOT_PERSISTENCE=open" >&2
+  echo "REBOOT_PERSISTENCE=UNVERIFIED" >&2
   echo "systemd is not running. Firewall rules are active for this boot only." >&2
   exit 3
 fi
