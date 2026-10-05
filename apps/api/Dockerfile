@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 # Production image for the API. Multi-stage, non-root, no secrets in the image.
 
-FROM node:22.23.3-trixie-slim@sha256:b26b04c123d9ff8ab646ceb18b9d75a1173acf64b9a401094b906d27b29338d4 AS base
+FROM node:26.10.0-trixie-slim@sha256:ec7758ee051e457b468b32bde57b0879010b325bb9862718e9615225ce4aaae1 AS base
 ENV PNPM_HOME="/pnpm" \
     PATH="/pnpm:$PATH" \
     CI=true \
@@ -39,7 +39,7 @@ RUN pnpm --filter @editagent/api... build \
     && pnpm --filter @editagent/api --prod deploy --legacy /out \
     && rm -f /out/node_modules/.pnpm/node_modules/@editagent/api
 
-FROM node:22.23.3-trixie-slim@sha256:b26b04c123d9ff8ab646ceb18b9d75a1173acf64b9a401094b906d27b29338d4 AS runtime
+FROM node:26.10.0-trixie-slim@sha256:ec7758ee051e457b468b32bde57b0879010b325bb9862718e9615225ce4aaae1 AS runtime
 RUN groupadd --system --gid 10001 editagent \
     && useradd --system --uid 10001 --gid 10001 --home-dir /home/editagent --create-home --shell /usr/sbin/nologin editagent
 WORKDIR /app
