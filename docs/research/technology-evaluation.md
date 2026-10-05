@@ -169,7 +169,7 @@ A render that exited non-zero, or that failed these probe checks, was not counte
 
 ### 10. Docker and Chromium findings
 
-The production image `workers/render-worker/Dockerfile` is a non-root Node 22 bookworm image. It does not install Chromium, FFmpeg, fonts, or a shared-memory setting. It only starts the current placeholder process. This spike does not change that image.
+The production image `workers/render-worker/Dockerfile` is a non-root Node 22 Debian trixie image. It does not install Chromium, FFmpeg, fonts, or a shared-memory setting. It only starts the current placeholder process. This spike does not change that image.
 
 Remotion 4.0.532's `openBrowser()` always appends `--no-sandbox` and `--disable-setuid-sandbox` before launch. Setting `enableMultiProcessOnLinux: true` avoids `--single-process`. It does not turn the sandbox back on. A non-root sandboxed Chromium runtime was therefore not demonstrated. That is a deployment blocker for any later render worker that must keep the Chromium sandbox enabled. It is not solved by adding `--no-sandbox` to a production Dockerfile.
 

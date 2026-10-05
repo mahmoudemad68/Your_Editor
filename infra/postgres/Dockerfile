@@ -1,0 +1,15 @@
+# syntax=docker/dockerfile:1
+# Deployed Postgres image. postgres:16.15 on Alpine 3.24 clears the OpenSSL
+# critical CVE-2026-31789 that postgres:16.10-alpine reported. Upstream still
+# ships gosu 1.19 built with Go 1.24.6 (CVE-2025-68121). This image replaces
+# that binary with the same gosu revision compiled by Go 1.25.14.
+
+FROM golang:1.25-alpine@sha256:1ae0735f00daffa3aaf1363a5184c0d2dc55c78e3db4ec70241cdac97bf84b59 AS gosu
+ENV CGO_ENABLED=0
+RUN go install github.com/tianon/gosu@v0.0.0-20260606051551-40506998e34a
+
+FROM postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
+USER root
+COPY --from=gosu /go/bin/gosu /usr/local/bin/gosu
+RUN gosu nobody true && gosu --version
+USER postgres

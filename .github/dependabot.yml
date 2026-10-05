@@ -1,0 +1,50 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      npm:
+        patterns:
+          - "*"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+
+  - package-ecosystem: docker
+    directories:
+      - /apps/api
+      - /apps/web
+      - /infra/seaweedfs
+      - /infra/postgres
+      - /infra/redis
+      - /workers/agent-worker
+      - /workers/ai-worker
+      - /workers/media-worker
+      - /workers/render-worker
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      docker:
+        patterns:
+          - "*"
+
+  - package-ecosystem: uv
+    directory: /workers/ai-worker
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      python:
+        patterns:
+          - "*"
