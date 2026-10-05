@@ -1,3 +1,6 @@
+import { MultipartUploads } from "./application/multipart-uploads.js";
+import { MultipartController } from "./presentation/multipart.controller.js";
+import type { UploadSessionRepository } from "@editagent/domain";
 import { GetCurrentUser } from "./application/current-user.js";
 import { type DynamicModule, Module } from "@nestjs/common";
 import {
@@ -56,6 +59,7 @@ export interface ApiComposition {
   readonly objects: IObjectStorage;
   readonly mediaIds: MediaAssetIdGenerator;
   readonly presignTtlSeconds: number;
+  readonly uploadSessions?: UploadSessionRepository;
   readonly logger?: JsonLogger;
   readonly publication?: UploadPublication;
   readonly readiness?: ReadinessProbe;
@@ -89,9 +93,27 @@ export class AppModule {
         ProjectsController,
         UploadsController,
         MediaController,
+        ...(composition.uploadSessions === undefined ? [] : [MultipartController]),
         ...(composition.auth === undefined ? [] : [AuthController]),
       ],
       providers: [
+        ...(composition.uploadSessions === undefined
+          ? []
+          : [
+              {
+                provide: MultipartUploads,
+                useValue: new MultipartUploads(
+                  composition.projects,
+                  composition.uploadSessions,
+                  composition.objects,
+                  composition.media,
+                  composition.mediaIds,
+                  composition.clock,
+                  composition.presignTtlSeconds,
+                  composition.publication,
+                ),
+              },
+            ]),
         ...(composition.auth === undefined
           ? []
           : [

@@ -39,3 +39,19 @@ export interface ProjectApi {
     options?: RequestOptions,
   ): Promise<ApiResult<MediaDetails>>;
 }
+export type MultipartState = components["schemas"]["MultipartStateDto"];
+export type PartUrl = components["schemas"]["PartUrlDto"];
+export interface MultipartApi {
+  start(projectId: string, body: UploadDeclaration, signal?: AbortSignal): Promise<MultipartState>;
+  state(projectId: string, id: string, signal?: AbortSignal): Promise<MultipartState>;
+  sign(projectId: string, id: string, partNumber: number, signal?: AbortSignal): Promise<PartUrl>;
+  record(
+    projectId: string,
+    id: string,
+    partNumber: number,
+    etag: string,
+    signal?: AbortSignal,
+  ): Promise<MultipartState>;
+  complete(projectId: string, id: string, signal?: AbortSignal): Promise<MediaAssetRecord>;
+  abort(projectId: string, id: string): Promise<void>;
+}

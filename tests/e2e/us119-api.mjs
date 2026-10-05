@@ -22,7 +22,10 @@ const { InMemoryProjectRepository } = require("./dist/application/in-memory-proj
 const {
   InMemoryMediaAssetRepository,
 } = require("./dist/application/in-memory-media-repository.js");
-const { MemoryObjectStorage } = require("./dist/application/memory-object-storage.js");
+const { S3ObjectStorage } = require("./dist/infrastructure/s3-object-storage.js");
+const {
+  InMemoryUploadSessionRepository,
+} = require("./dist/application/in-memory-upload-sessions.js");
 const { LoginRateLimit } = require("./dist/application/login-rate-limit.js");
 const { Argon2idHasher } = require("./dist/infrastructure/argon2id-hasher.js");
 const { JwtSessionTokens } = require("./dist/infrastructure/jwt-session-tokens.js");
@@ -33,6 +36,8 @@ const {
 const { createServiceLogger } = require("@editagent/shared");
 
 let app;
+let objects;
+let uploads;
 let offset = 0n;
 let rotations = 0;
 let users;
@@ -40,6 +45,22 @@ let sessions;
 let now;
 async function reset() {
   if (app) await app.close();
+  if (objects) {
+    for (const s of uploads.sessions.values()) {
+      await objects.abortMultipart(s.storageKey, s.multipartUploadId);
+      await objects.delete(s.storageKey);
+    }
+    objects.close();
+  }
+  uploads = new InMemoryUploadSessionRepository();
+  objects = new S3ObjectStorage({
+    endpoint: process.env.S3_ENDPOINT ?? "http://127.0.0.1:9000",
+    publicEndpoint: process.env.S3_PUBLIC_ENDPOINT ?? "http://127.0.0.1:9000",
+    bucket: process.env.S3_BUCKET ?? "editagent",
+    accessKeyId: process.env.S3_ACCESS_KEY_ID ?? "editagent",
+    secretAccessKey: process.env.S3_SECRET_ACCESS_KEY ?? "editagent-dev-secret",
+    region: process.env.S3_REGION ?? "us-east-1",
+  });
   offset = 0n;
   rotations = 0;
   now = () => instant(BigInt(Date.now()) + offset);
@@ -65,7 +86,8 @@ async function reset() {
       clock,
       ids: new NodeProjectIdGenerator(),
       media: new InMemoryMediaAssetRepository(),
-      objects: new MemoryObjectStorage(),
+      objects,
+      uploadSessions: uploads,
       mediaIds: new NodeMediaAssetIdGenerator(),
       presignTtlSeconds: 900,
       auth: {
@@ -110,7 +132,22 @@ const control = createServer((request, response) => {
       }
     }
     response.setHeader("content-type", "application/json");
-    response.end(JSON.stringify({ rotations }));
+    const uploadState = [];
+    if (url.pathname === "/uploads")
+      for (const s of uploads.sessions.values())
+        uploadState.push({
+          id: s.id,
+          projectId: s.projectId,
+          status: s.status,
+          sha256: s.sha256,
+          parts: uploads.parts.get(s.id) ?? [],
+          final: s.status === "completed" ? await objects.stat(s.storageKey) : null,
+        });
+    response.end(
+      JSON.stringify({ rotations, uploads: uploadState }, (_key, value) =>
+        typeof value === "bigint" ? value.toString() : value,
+      ),
+    );
   })().catch(() => {
     response.statusCode = 500;
     response.end("Fixture control failed");
@@ -123,6 +160,14 @@ async function close() {
   closing = true;
   await new Promise((resolve) => control.close(resolve));
   await app.close();
+  try {
+    for (const s of uploads.sessions.values()) {
+      await objects.abortMultipart(s.storageKey, s.multipartUploadId);
+      await objects.delete(s.storageKey);
+    }
+  } finally {
+    objects.close();
+  }
 }
 process.on("SIGTERM", () => {
   void close();

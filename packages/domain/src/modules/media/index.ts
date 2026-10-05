@@ -46,9 +46,18 @@ export {
 } from "./media-upload.js";
 export type { VideoMimeType } from "./media-upload.js";
 export type {
+  StoragePart,
   IObjectStorage,
   ObjectStat,
   PresignedGet,
   PresignedPut,
   PresignPutRequest,
 } from "./object-storage.js";
+export { PART_SIZE_BYTES, UPLOAD_SESSION_TTL_MS, uploadPartBytes } from "./upload-session.js";
+export type {
+  UploadSession,
+  UploadPart,
+  UploadSessionStatus,
+  UploadSessionRepository,
+  LockedUpload,
+} from "./upload-session.js";
