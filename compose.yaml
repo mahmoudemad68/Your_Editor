@@ -9,10 +9,10 @@ name: editagent
 x-database-url: &database-url postgresql://${POSTGRES_USER:-editagent}:${POSTGRES_PASSWORD:-editagent-dev-password}@postgres:5432/${POSTGRES_DB:-editagent}
 
 x-object-storage: &object-storage
-  S3_ENDPOINT: http://minio:9000
+  S3_ENDPOINT: http://seaweed-s3:8333
   S3_BUCKET: ${S3_BUCKET:-editagent}
-  S3_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-editagent}
-  S3_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-editagent-dev-secret}
+  S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-${MINIO_ROOT_USER:-editagent}}
+  S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-${MINIO_ROOT_PASSWORD:-editagent-dev-secret}}
   S3_REGION: ${S3_REGION:-us-east-1}
 
 x-ai-environment: &ai-environment
@@ -23,7 +23,10 @@ x-ai-environment: &ai-environment
 
 services:
   postgres:
-    image: postgres:16.10-alpine
+    build:
+      context: .
+      dockerfile: infra/postgres/Dockerfile
+    image: editagent-postgres:local
     container_name: editagent-postgres
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-editagent}
@@ -42,7 +45,10 @@ services:
     restart: unless-stopped
 
   redis:
-    image: redis:7.4-alpine
+    build:
+      context: .
+      dockerfile: infra/redis/Dockerfile
+    image: editagent-redis:local
     container_name: editagent-redis
     command: ["redis-server", "--appendonly", "yes"]
     ports:
@@ -57,28 +63,165 @@ services:
       start_period: 5s
     restart: unless-stopped
 
-  minio:
+  seaweed-master:
     build:
       context: .
-      dockerfile: infra/minio/Dockerfile
-    image: editagent-minio:local
-    container_name: editagent-minio
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-editagent}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-editagent-dev-secret}
-    command: ["server", "/data", "--console-address", ":9001"]
-    ports:
-      - "${MINIO_PORT:-9000}:9000"
-      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+      dockerfile: infra/seaweedfs/Dockerfile
+    image: editagent-seaweedfs:local
+    container_name: editagent-seaweed-master
+    command:
+      - master
+      - -ip=seaweed-master
+      - -ip.bind=0.0.0.0
+      - -port=9333
+      - -telemetry=false
+      - -disableHttp
+    networks:
+      storage_internal:
+        ipv4_address: 172.30.210.10
     volumes:
-      - minio-data:/data
+      - seaweed-master:/data
+      - ${SEAWEED_SECRET_DIR:-.local/seaweedfs}/security.master.toml:/etc/seaweedfs/security.toml:ro
+      - ${SEAWEED_SECRET_DIR:-.local/seaweedfs}/ca.crt:/etc/seaweedfs/ca.crt:ro
+      - ${SEAWEED_SECRET_DIR:-.local/seaweedfs}/master.crt:/etc/seaweedfs/master.crt:ro
+      - ${SEAWEED_SECRET_DIR:-.local/seaweedfs}/master.key:/etc/seaweedfs/master.key:ro
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9000/minio/health/live"]
-      interval: 5s
-      timeout: 5s
-      retries: 20
-      start_period: 10s
-    restart: unless-stopped
+      test:
+        [
+          "CMD",
+          "curl",
+          "--fail",
+          "--silent",
+          "--show-error",
+          "--cacert",
+          "/etc/seaweedfs/ca.crt",
+          "--cert",
+          "/etc/seaweedfs/master.crt",
+          "--key",
+          "/etc/seaweedfs/master.key",
+          "https://127.0.0.1:9333/healthz",
+        ]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+      start_period: 5s
+    sysctls:
+      net.ipv6.conf.all.disable_ipv6: "1"
+      net.ipv6.conf.default.disable_ipv6: "1"
+    restart: "no"
+
+  seaweed-volume:
+    build:
+      context: .
+      dockerfile: infra/seaweedfs/Dockerfile
+    image: editagent-seaweedfs:local
+    container_name: editagent-seaweed-volume
+    command:
+      - volume
+      - -mserver=seaweed-master:9333
+      - -ip=seaweed-volume
+      - -ip.bind=0.0.0.0
+      - -port=8080
+      - -whiteList=172.30.210.10,172.30.210.11,172.30.210.12,172.30.210.13
+    networks:
+      storage_internal:
+        ipv4_address: 172.30.210.11
+    volumes:
+      - seaweed-volume:/data
+      - ${SEAWEED_SECRET_DIR:-.local/seaweedfs}/security.volume.toml:/etc/seaweedfs/security.toml:ro
+      - ${SEAWEED_SECRET_DIR:-.local/seaweedfs}/ca.crt:/etc/seaweedfs/ca.crt:ro
+      - ${SEAWEED_SECRET_DIR:-.local/seaweedfs}/volume.crt:/etc/seaweedfs/volume.crt:ro
+      - ${SEAWEED_SECRET_DIR:-.local/seaweedfs}/volume.key:/etc/seaweedfs/volume.key:ro
+    depends_on:
+      seaweed-master:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -S -O /dev/null http://127.0.0.1:8080/ 2>&1 | grep -q HTTP/"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+      start_period: 8s
+    sysctls:
+      net.ipv6.conf.all.disable_ipv6: "1"
+      net.ipv6.conf.default.disable_ipv6: "1"
+    restart: "no"
+
+  seaweed-filer:
+    build:
+      context: .
+      dockerfile: infra/seaweedfs/Dockerfile
+    image: editagent-seaweedfs:local
+    container_name: editagent-seaweed-filer
+    command:
+      - filer
+      - -master=seaweed-master:9333
+      - -ip=seaweed-filer
+      - -ip.bind=0.0.0.0
+      - -port=8888
+      - -disableDirListing
+    networks:
+      storage_internal:
+        ipv4_address: 172.30.210.12
+    volumes:
+      - seaweed-filer:/data
+      - ${SEAWEED_SECRET_DIR:-.local/seaweedfs}/security.filer.toml:/etc/seaweedfs/security.toml:ro
+      - ${SEAWEED_SECRET_DIR:-.local/seaweedfs}/ca.crt:/etc/seaweedfs/ca.crt:ro
+      - ${SEAWEED_SECRET_DIR:-.local/seaweedfs}/filer.crt:/etc/seaweedfs/filer.crt:ro
+      - ${SEAWEED_SECRET_DIR:-.local/seaweedfs}/filer.key:/etc/seaweedfs/filer.key:ro
+    depends_on:
+      seaweed-volume:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -S -O /dev/null http://127.0.0.1:8888/ 2>&1 | grep -q HTTP/"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+      start_period: 8s
+    sysctls:
+      net.ipv6.conf.all.disable_ipv6: "1"
+      net.ipv6.conf.default.disable_ipv6: "1"
+    restart: "no"
+
+  seaweed-s3:
+    build:
+      context: .
+      dockerfile: infra/seaweedfs/Dockerfile
+    image: editagent-seaweedfs:local
+    container_name: editagent-seaweed-s3
+    command:
+      - s3
+      - -filer=seaweed-filer:8888
+      - -ip.bind=0.0.0.0
+      - -port=8333
+      - -port.iceberg=0
+      - -port.lance=0
+      - -iam=false
+      - -config=/etc/seaweedfs/s3.json
+    networks:
+      storage_internal:
+        ipv4_address: 172.30.210.13
+      default: {}
+    ports:
+      - "127.0.0.1:${S3_PORT:-${MINIO_PORT:-9000}}:8333"
+    volumes:
+      - ${SEAWEED_SECRET_DIR:-.local/seaweedfs}/security.s3.toml:/etc/seaweedfs/security.toml:ro
+      - ${SEAWEED_SECRET_DIR:-.local/seaweedfs}/ca.crt:/etc/seaweedfs/ca.crt:ro
+      - ${SEAWEED_SECRET_DIR:-.local/seaweedfs}/s3.crt:/etc/seaweedfs/s3.crt:ro
+      - ${SEAWEED_SECRET_DIR:-.local/seaweedfs}/s3.key:/etc/seaweedfs/s3.key:ro
+      - ${SEAWEED_SECRET_DIR:-.local/seaweedfs}/s3.json:/etc/seaweedfs/s3.json:ro
+    depends_on:
+      seaweed-filer:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8333/status"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+      start_period: 8s
+    sysctls:
+      net.ipv6.conf.all.disable_ipv6: "1"
+      net.ipv6.conf.default.disable_ipv6: "1"
+    restart: "no"
 
   api:
     build:
@@ -92,7 +235,7 @@ services:
       PORT: "3001"
       HOST: "0.0.0.0"
       <<: *object-storage
-      S3_PUBLIC_ENDPOINT: http://localhost:${MINIO_PORT:-9000}
+      S3_PUBLIC_ENDPOINT: http://localhost:${S3_PORT:-${MINIO_PORT:-9000}}
     ports:
       - "${API_PORT:-3001}:3001"
     depends_on:
@@ -100,7 +243,7 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      minio:
+      seaweed-s3:
         condition: service_healthy
     healthcheck:
       test:
@@ -184,7 +327,7 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      minio:
+      seaweed-s3:
         condition: service_healthy
     # Compose health is process startup (the ready file), not HTTP /ready.
     # HTTP /health is liveness. HTTP /ready means the process can accept work.
@@ -211,7 +354,7 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      minio:
+      seaweed-s3:
         condition: service_healthy
     # Compose health is process startup (the ready file), not HTTP /ready.
     # HTTP /health is liveness. HTTP /ready means the process can accept work.
@@ -235,7 +378,7 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      minio:
+      seaweed-s3:
         condition: service_healthy
     healthcheck:
       test:
@@ -276,7 +419,7 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      minio:
+      seaweed-s3:
         condition: service_healthy
     healthcheck:
       test:
@@ -292,7 +435,23 @@ services:
       start_period: 10s
     restart: "no"
 
+networks:
+  storage_internal:
+    internal: true
+    driver: bridge
+    enable_ipv6: false
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.30.210.0/24
+          gateway: 172.30.210.1
+
 volumes:
   postgres-data:
   redis-data:
+  # Historical MinIO bytes. No service mounts this volume. Do not remove it
+  # with `docker compose down -v` until a separate decision drops that history.
   minio-data:
+  seaweed-master:
+  seaweed-volume:
+  seaweed-filer:

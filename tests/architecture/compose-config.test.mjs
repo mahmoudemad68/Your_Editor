@@ -11,10 +11,13 @@ const defaultServices = [
   "ai-worker",
   "api",
   "media-worker",
-  "minio",
   "postgres",
   "redis",
   "render-worker",
+  "seaweed-filer",
+  "seaweed-master",
+  "seaweed-s3",
+  "seaweed-volume",
   "web",
 ];
 

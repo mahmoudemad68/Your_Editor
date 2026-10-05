@@ -30,7 +30,7 @@ jobs:
       S3_REGION: us-east-1
     services:
       postgres:
-        image: postgres:16.10-alpine
+        image: postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
         env:
           POSTGRES_USER: editagent
           POSTGRES_PASSWORD: editagent-dev-password
@@ -55,22 +55,15 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v7
 
-      - name: Start MinIO
+      - name: Start SeaweedFS
         run: |
           set -eu
-          docker build -t editagent-minio:ci -f infra/minio/Dockerfile .
-          docker run -d --name editagent-minio-ci -p 9000:9000 \
-            -e MINIO_ROOT_USER=editagent \
-            -e MINIO_ROOT_PASSWORD=editagent-dev-secret \
-            editagent-minio:ci
-          for _ in $(seq 1 40); do
-            if curl -fsS http://127.0.0.1:9000/minio/health/live >/dev/null; then
-              exit 0
-            fi
-            sleep 1
-          done
-          docker logs editagent-minio-ci
-          exit 1
+          ./infra/seaweedfs/start-storage.sh
+          curl -fsS http://127.0.0.1:9000/status >/dev/null
+          S3_HOST=127.0.0.1 S3_PORT=9000 python3 infra/scripts/ensure_bucket.py
+          ./infra/seaweedfs/verify-firewall-lifecycle.sh
+          ./infra/seaweedfs/verify-jwt-authority.sh
+          ./infra/seaweedfs/verify-trust-boundary.sh
 
       - name: Install pnpm
         uses: pnpm/action-setup@v6
@@ -146,6 +139,9 @@ jobs:
 
       - name: Install workspace dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Check SeaweedFS S3 contract
+        run: node tests/architecture/seaweedfs-s3-contract.mjs
 
       - name: Build
         run: pnpm build
