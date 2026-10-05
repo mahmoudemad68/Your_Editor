@@ -135,10 +135,33 @@ export class User {
 
 export function normalizeEmail(value: string): string {
   const email = value.trim().toLowerCase();
-  if (email.length > 254 || !EMAIL.test(email)) {
+  const domain = email.slice(email.indexOf("@") + 1);
+  if (email.length === 0 || email.length > 254 || !EMAIL.test(email) || !domainIsSane(domain)) {
     throw new DomainError("Email is not valid.");
   }
   return email;
+}
+
+/** Rejects empty labels and consecutive dots. The shape check stays in EMAIL. */
+function domainIsSane(domain: string): boolean {
+  if (domain.length === 0 || domain.includes("..")) {
+    return false;
+  }
+  const labels = domain.split(".");
+  return labels.every((label) => {
+    if (label.length === 0 || label.startsWith("-") || label.endsWith("-")) {
+      return false;
+    }
+    for (const character of label) {
+      const code = character.charCodeAt(0);
+      const digit = code >= 48 && code <= 57;
+      const letter = code >= 97 && code <= 122;
+      if (!digit && !letter && character !== "-") {
+        return false;
+      }
+    }
+    return true;
+  });
 }
 
 export function requireArgon2idHash(value: string): string {

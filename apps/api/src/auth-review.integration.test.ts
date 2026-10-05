@@ -284,3 +284,150 @@ test("login ignores a planted session, prefers bearer, and does not log secrets"
     await api.close();
   }
 });
+
+const CREDENTIAL_PATHS = [
+  "/auth/login",
+  "/auth/login/",
+  "/AUTH/LOGIN",
+  "/auth/login?x=1",
+  "/auth/register",
+  "/auth/register/",
+  "/AUTH/REGISTER",
+  "/auth/register?x=1",
+];
+
+test("every routed login and registration spelling refuses a cross-site origin", async () => {
+  const api = await start(["http://app.example"]);
+  try {
+    for (const path of CREDENTIAL_PATHS) {
+      const response = await fetch(`${api.base}${path}`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          origin: "https://evil.example",
+          "sec-fetch-site": "cross-site",
+          "x-forwarded-host": "app.example",
+          "x-forwarded-proto": "https",
+          "x-forwarded-for": "203.0.113.8",
+        },
+        body: JSON.stringify({ email: `path-${path.length}@example.test`, password: PASSWORD }),
+      });
+      assert.equal(response.status, 403, path);
+      const setCookie = response.headers.getSetCookie?.().join("\n") ?? "";
+      assert.equal(setCookie.includes("editagent_access"), false, path);
+      assert.equal(setCookie.includes("editagent_refresh"), false, path);
+      assert.equal(setCookie.includes("editagent_csrf"), false, path);
+    }
+    const registered = await fetch(`${api.base}/AUTH/REGISTER`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        origin: "http://app.example",
+        "sec-fetch-site": "same-origin",
+      },
+      body: JSON.stringify({ email: "Case@Example.test", password: PASSWORD }),
+    });
+    assert.equal(registered.status, 201, await registered.clone().text());
+    const body = (await registered.json()) as { email: string };
+    assert.equal(body.email, "case@example.test");
+    const signedIn = await fetch(`${api.base}/auth/login?x=1`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        origin: "http://app.example",
+        "sec-fetch-site": "same-site",
+      },
+      body: JSON.stringify({ email: "case@example.test", password: PASSWORD }),
+    });
+    assert.equal(signedIn.status, 200, await signedIn.clone().text());
+    const setCookie = signedIn.headers.getSetCookie?.().join("\n") ?? "";
+    assert.match(setCookie, /editagent_access=/);
+  } finally {
+    await api.close();
+  }
+});
+
+test("registration rejects a malformed domain and login stays generic", async () => {
+  const api = await start(["http://app.example"]);
+  try {
+    const rejected = [
+      "a@b..com",
+      "not-an-email",
+      "a@b",
+      "a@b.c",
+      "foo@bar",
+      "",
+      "a b@example.com",
+      `${"a".repeat(250)}@example.com`,
+    ];
+    for (const email of rejected) {
+      const response = await fetch(`${api.base}/auth/register`, {
+        method: "POST",
+        headers: { "content-type": "application/json", origin: "http://app.example" },
+        body: JSON.stringify({ email, password: PASSWORD }),
+      });
+      assert.equal(response.status, 400, email);
+    }
+    const unknown = await fetch(`${api.base}/auth/login`, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin: "http://app.example" },
+      body: JSON.stringify({ email: "missing@example.test", password: PASSWORD }),
+    });
+    const malformed = await fetch(`${api.base}/auth/login`, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin: "http://app.example" },
+      body: JSON.stringify({ email: "a@b..com", password: PASSWORD }),
+    });
+    assert.equal(unknown.status, 401);
+    assert.equal(malformed.status, 401);
+    assert.deepEqual(await malformed.json(), await unknown.json());
+    const accepted = await fetch(`${api.base}/auth/register`, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin: "http://app.example" },
+      body: JSON.stringify({ email: " Owner@Example.test ", password: PASSWORD }),
+    });
+    assert.equal(accepted.status, 201, await accepted.clone().text());
+    const account = (await accepted.json()) as { email: string };
+    assert.equal(account.email, "owner@example.test");
+  } finally {
+    await api.close();
+  }
+});
+
+test("refresh and logout spellings outside the exact exemption still require CSRF", async () => {
+  const api = await start(["http://app.example"]);
+  try {
+    const registered = await fetch(`${api.base}/auth/register`, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin: "http://app.example" },
+      body: JSON.stringify({ email: "csrf-variant@example.test", password: PASSWORD }),
+    });
+    assert.equal(registered.status, 201, await registered.clone().text());
+    const access = cookieValue(registered, "editagent_access");
+    const refresh = cookieValue(registered, "editagent_refresh");
+    const csrf = cookieValue(registered, "editagent_csrf");
+    const cookie = `editagent_access=${access}; editagent_refresh=${refresh}; editagent_csrf=${csrf}`;
+    for (const path of ["/auth/refresh/", "/AUTH/REFRESH", "/auth/logout/", "/AUTH/LOGOUT"]) {
+      const response = await fetch(`${api.base}${path}`, {
+        method: "POST",
+        headers: { cookie },
+      });
+      assert.equal(response.status, 403, path);
+      const setCookie = response.headers.getSetCookie?.().join("\n") ?? "";
+      assert.equal(setCookie.includes("editagent_access="), false, path);
+    }
+    const project = await fetch(`${api.base}/projects/`, {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: `editagent_access=${access}` },
+      body: JSON.stringify({ name: "Blocked" }),
+    });
+    assert.equal(project.status, 403);
+    const loggedOut = await fetch(`${api.base}/auth/logout`, {
+      method: "POST",
+      headers: { cookie, "x-editagent-csrf": csrf },
+    });
+    assert.equal(loggedOut.status, 204);
+  } finally {
+    await api.close();
+  }
+});

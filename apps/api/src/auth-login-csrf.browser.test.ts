@@ -132,10 +132,13 @@ test("a cross-site browser form cannot inject a sign-in session", async () => {
     request.pipe(forwarded);
   });
   const proxyPort = await listen(proxy);
-  const attacker = http.createServer((_request, response) => {
+  const attacker = http.createServer((request, response) => {
+    const url = new URL(request.url ?? "/", "http://127.0.0.1");
+    const target = url.searchParams.get("target") ?? "/auth/login";
+    const email = url.searchParams.get("email") ?? "attacker@example.test";
     response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-    response.end(`<!doctype html><form id="login" method="POST" action="http://127.0.0.1:${proxyPort}/auth/login">
-      <input name="email" value="attacker@example.test">
+    response.end(`<!doctype html><form id="login" method="POST" action="http://127.0.0.1:${proxyPort}${target}">
+      <input name="email" value="${email}">
       <input name="password" value="${PASSWORD}">
     </form><script>document.getElementById("login").submit()</script>`);
   });
@@ -208,14 +211,58 @@ test("a cross-site browser form cannot inject a sign-in session", async () => {
     }
     await call("Network.enable", {}, sessionId);
     await call("Page.enable", {}, sessionId);
-    await call("Page.navigate", { url: `http://127.0.0.1:${attackerPort}/` }, sessionId);
-    const posted = await waitForLoginStatus(events, proxyPort);
-    assert.equal(posted, 403);
-    const cookies = await call("Network.getCookies", {}, sessionId);
-    assert.equal(
-      (cookies.result?.cookies ?? []).some((cookie) => cookie.name === "editagent_access"),
-      false,
-    );
+    const hostile = [
+      { target: "/auth/login", email: "attacker@example.test" },
+      { target: "/auth/login/", email: "attacker@example.test" },
+      { target: "/AUTH/LOGIN", email: "attacker@example.test" },
+      { target: "/auth/login?x=1", email: "attacker@example.test" },
+      { target: "/auth/register", email: "cross-register@example.test" },
+      { target: "/auth/register/", email: "cross-register-slash@example.test" },
+      { target: "/AUTH/REGISTER", email: "cross-register-case@example.test" },
+      { target: "/auth/register?x=1", email: "cross-register-query@example.test" },
+    ];
+    for (const attempt of hostile) {
+      const marker = events.length;
+      await call("Network.clearBrowserCookies", {}, sessionId);
+      const page =
+        `http://127.0.0.1:${attackerPort}/?target=${encodeURIComponent(attempt.target)}` +
+        `&email=${encodeURIComponent(attempt.email)}`;
+      await call("Page.navigate", { url: page }, sessionId);
+      const posted = await waitForLoginStatus(events, marker, proxyPort, attempt.target);
+      assert.equal(posted, 403, attempt.target);
+      const cookies = await call("Network.getCookies", {}, sessionId);
+      const names = (cookies.result?.cookies ?? []).map((cookie) => cookie.name);
+      assert.equal(names.includes("editagent_access"), false, attempt.target);
+      assert.equal(names.includes("editagent_refresh"), false, attempt.target);
+      assert.equal(names.includes("editagent_csrf"), false, attempt.target);
+    }
+    for (const email of [
+      "cross-register@example.test",
+      "cross-register-slash@example.test",
+      "cross-register-case@example.test",
+      "cross-register-query@example.test",
+    ]) {
+      const created = await fetch(`http://127.0.0.1:${apiAddress.port}/auth/register`, {
+        method: "POST",
+        headers: { "content-type": "application/json", origin: "http://app.example" },
+        body: JSON.stringify({ email, password: PASSWORD }),
+      });
+      assert.equal(created.status, 201, await created.clone().text());
+    }
+    const signedIn = await fetch(`http://127.0.0.1:${apiAddress.port}/auth/login/`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        origin: "http://app.example",
+        "sec-fetch-site": "same-origin",
+      },
+      body: JSON.stringify({ email: "attacker@example.test", password: PASSWORD }),
+    });
+    assert.equal(signedIn.status, 200, await signedIn.clone().text());
+    const session = signedIn.headers.getSetCookie?.().join("\n") ?? "";
+    assert.match(session, /editagent_access=/);
+    assert.match(session, /editagent_refresh=/);
+    assert.match(session, /editagent_csrf=/);
     socket.close();
   } finally {
     chrome.kill("SIGTERM");
@@ -254,19 +301,31 @@ async function waitForDebugger(
   throw new Error(`chrome debugger did not start\n${log()}`);
 }
 
-async function waitForLoginStatus(events: CdpMessage[], proxyPort: number): Promise<number> {
+async function waitForLoginStatus(
+  events: CdpMessage[],
+  marker: number,
+  proxyPort: number,
+  target: string,
+): Promise<number> {
   const started = Date.now();
   while (Date.now() - started < 15_000) {
-    const found = events.find(
-      (event) =>
-        event.method === "Network.responseReceived" &&
-        event.params?.response?.url?.includes(`127.0.0.1:${proxyPort}/auth/login`),
-    );
+    const found = events.slice(marker).find((event) => {
+      const url = event.params?.response?.url;
+      if (event.method !== "Network.responseReceived" || url === undefined) {
+        return false;
+      }
+      const parsed = new URL(url);
+      return (
+        parsed.hostname === "127.0.0.1" &&
+        parsed.port === String(proxyPort) &&
+        `${parsed.pathname}${parsed.search}` === target
+      );
+    });
     const status = found?.params?.response?.status;
     if (status !== undefined) {
       return status;
     }
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  throw new Error("the browser did not submit the sign-in form");
+  throw new Error(`the browser did not submit ${target}`);
 }

@@ -8,7 +8,6 @@ import { AppModule, type ApiComposition } from "./app.module.js";
 import { authenticateRequest } from "./presentation/authenticate-request.js";
 import { bindRequestCorrelation } from "./presentation/correlation.js";
 import { requireCookieCsrf } from "./presentation/csrf.js";
-import { requireTrustedLoginOrigin } from "./presentation/login-origin.js";
 import { createOpenApiConfig } from "./presentation/openapi.js";
 import { ProjectExceptionFilter } from "./presentation/project-exception.filter.js";
 import { securityHeaders } from "./presentation/security-headers.js";
@@ -29,7 +28,6 @@ export async function createApiApplication(
     adapter.use(handler);
   });
   if (composition.auth !== undefined) {
-    adapter.use(requireTrustedLoginOrigin(composition.auth.trustedOrigins));
     adapter.use(authenticateRequest(composition.auth.tokens, composition.auth.now));
     adapter.use(requireCookieCsrf());
   }

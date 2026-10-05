@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { DomainError } from "../../kernel/error.js";
 import { userId } from "../../kernel/id.js";
-import { User } from "./user.js";
+import { normalizeEmail, User } from "./user.js";
 
 const ID = userId("018f6b6e-7c3a-7b2a-8d3e-9c0b1a2d3e4f");
 
@@ -46,6 +46,22 @@ test("User restore keeps the operator role and distinct audit timestamps", () =>
     /createdAt must be less than/,
   );
   assert.throws(() => new User(ID, "owner@example.test", "plaintext", null, 10n, 10n), /argon2id/);
+});
+
+test("email normalization rejects a broken domain and keeps a valid address", () => {
+  assert.equal(normalizeEmail("  Owner@Example.test  "), "owner@example.test");
+  for (const email of [
+    "a@b..com",
+    "not-an-email",
+    "a@b",
+    "a@b.c",
+    "foo@bar",
+    "",
+    "a b@example.com",
+  ]) {
+    assert.throws(() => normalizeEmail(email), DomainError, email);
+  }
+  assert.throws(() => normalizeEmail(`${"a".repeat(250)}@example.com`), DomainError);
 });
 
 test("failed logins lock the account and a success clears the lock", () => {

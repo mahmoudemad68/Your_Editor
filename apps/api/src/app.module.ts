@@ -38,6 +38,7 @@ import {
   AUTH_TRUSTED_PROXIES,
   AuthController,
 } from "./presentation/auth.controller.js";
+import { AUTH_TRUSTED_ORIGINS, LoginOriginGuard } from "./presentation/login-origin.js";
 import {
   LoginUser,
   LogoutUser,
@@ -99,6 +100,8 @@ export class AppModule {
               { provide: AUTH_NOW, useValue: composition.auth.now },
               { provide: AUTH_COOKIE_SECURE, useValue: composition.auth.cookieSecure },
               { provide: AUTH_TRUSTED_PROXIES, useValue: composition.auth.trustedProxies },
+              { provide: AUTH_TRUSTED_ORIGINS, useValue: composition.auth.trustedOrigins },
+              LoginOriginGuard,
             ]),
         {
           provide: CreateProject,

@@ -10,6 +10,7 @@ import {
   Req,
   Res,
   UnauthorizedException,
+  UseGuards,
 } from "@nestjs/common";
 import {
   ApiBadRequestResponse,
@@ -37,6 +38,7 @@ import {
   RegisterUser,
 } from "../application/authentication.js";
 import { clientAddress } from "./client-address.js";
+import { LoginOriginGuard } from "./login-origin.js";
 import {
   clearSessionCookies,
   CSRF_COOKIE,
@@ -89,6 +91,7 @@ export class AuthController {
   ) {}
 
   @Post("register")
+  @UseGuards(LoginOriginGuard)
   @HttpCode(201)
   @ApiOperation({ summary: "Register and start a session." })
   @ApiCreatedResponse({ description: "The account exists and session cookies were set." })
@@ -115,6 +118,7 @@ export class AuthController {
   }
 
   @Post("login")
+  @UseGuards(LoginOriginGuard)
   @HttpCode(200)
   @ApiOperation({ summary: "Sign in and start a session." })
   @ApiOkResponse({ description: "Session cookies were set." })

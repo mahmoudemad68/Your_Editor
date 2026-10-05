@@ -17,7 +17,9 @@ interface MutableResponse {
 /**
  * Cookie-authenticated mutations must echo the CSRF cookie.
  * Bearer tokens are not sent by browsers automatically, so they skip this check.
- * Register and login establish the cookie and are not covered.
+ * The login and registration exemption is an exact path. Other spellings stay
+ * on this check, which refuses a cookie-authenticated mutation that lacks the
+ * token. Login origin protection is the handler guard, not this exemption.
  */
 export function requireCookieCsrf(): (
   request: MutableRequest,
