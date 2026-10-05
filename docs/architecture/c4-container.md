@@ -76,14 +76,14 @@ Rel(media, assets, "Quarantined downloads", "HTTPS")
 
 The diagram is the target container view. The Compose file does not implement every credential boundary drawn above.
 
-| Process       | Database credentials | Redis access | Object-storage credentials             |
-| ------------- | -------------------- | ------------ | -------------------------------------- |
-| Web           | no                   | no           | no                                     |
-| API           | yes                  | no           | no                                     |
-| Agent worker  | yes                  | yes          | no                                     |
-| Media worker  | yes                  | yes          | shared development MinIO root key      |
-| Render worker | yes                  | yes          | same shared development MinIO root key |
-| AI worker     | yes                  | yes          | same shared development MinIO root key |
+| Process       | Database credentials | Redis access | Object-storage credentials                 |
+| ------------- | -------------------- | ------------ | ------------------------------------------ |
+| Web           | no                   | no           | no                                         |
+| API           | yes                  | yes          | shared development object-storage key      |
+| Agent worker  | yes                  | yes          | no                                         |
+| Media worker  | yes                  | yes          | shared development object-storage key      |
+| Render worker | yes                  | yes          | same shared development object-storage key |
+| AI worker     | yes                  | yes          | same shared development object-storage key |
 
 Media, render, and AI workers use one shared development object-storage key. That is a known risk, recorded as TM-039. This baseline does not claim per-worker prefix-scoped credentials.
 

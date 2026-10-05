@@ -17,7 +17,7 @@ import { MemoryObjectStorage } from "./memory-object-storage.js";
 import { ProjectForbiddenError, ProjectNotFoundError } from "./project-access.js";
 import { UploadObjectMismatch, UploadObjectMissing, UploadPolicyError } from "./upload-errors.js";
 import { BeginMediaUpload, CompleteMediaUpload } from "./uploads.js";
-import { CreateProject } from "./projects.js";
+import { CreateProject, DeleteProject } from "./projects.js";
 import { type ProjectIdGenerator } from "./clock.js";
 
 const OWNER = userId("018f6b6e-7c3a-7111-8d3e-9c0b1a2d3e4f");
@@ -71,7 +71,7 @@ function setup() {
 }
 
 test("BeginMediaUpload allows Owner and Editor and hides everyone else", async () => {
-  const { createProject, begin, projects, clock } = setup();
+  const { createProject, begin, projects, objects, clock } = setup();
   await createProject.execute(OWNER, "Launch");
   clock.set(instant(20n));
   const created = await projects.findById(PROJECT);
@@ -100,6 +100,11 @@ test("BeginMediaUpload allows Owner and Editor and hides everyone else", async (
   await assert.rejects(() => begin.execute(VIEWER, PROJECT, declaration), ProjectForbiddenError);
   await assert.rejects(() => begin.execute(STRANGER, PROJECT, declaration), ProjectNotFoundError);
   await assert.rejects(() => begin.execute(OWNER, OTHER, declaration), ProjectNotFoundError);
+
+  clock.set(instant(30n));
+  await new DeleteProject(projects, clock).execute(OWNER, PROJECT);
+  await assert.rejects(() => begin.execute(OWNER, PROJECT, declaration), ProjectNotFoundError);
+  assert.equal(objects.objects.size, 0);
 });
 
 test("BeginMediaUpload rejects MIME, size, hash, and hostile filenames before a URL exists", async () => {

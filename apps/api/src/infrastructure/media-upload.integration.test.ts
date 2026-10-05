@@ -84,7 +84,7 @@ async function putObject(
   return fetch(url, { method: "PUT", headers, body });
 }
 
-describe("direct media upload against PostgreSQL and MinIO", { concurrency: 1 }, () => {
+describe("direct media upload against PostgreSQL and SeaweedFS", { concurrency: 1 }, () => {
   let pool: Pool;
   let projects: PostgresProjectRepository;
   let media: PostgresMediaAssetRepository;
