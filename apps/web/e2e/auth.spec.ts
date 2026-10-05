@@ -86,10 +86,11 @@ test("AC2: expired refresh session requires login and returns to the original in
   await signup(page);
   const target = await project(page);
   await control(request, "advance", { ms: 15 * 24 * 60 * 60 * 1000 });
-  await page.goto(`${target}?tab=media`);
-  await expect(page).toHaveURL(`/sign-in?returnTo=${encodeURIComponent(`${target}?tab=media`)}`);
+  const destination = `${target}?tab=media&label=My%20edit`;
+  await page.goto(destination);
+  await expect(page).toHaveURL(`/sign-in?returnTo=${encodeURIComponent(destination)}`);
   await credentials(page, "Sign in");
-  await expect(page).toHaveURL(`${target}?tab=media`);
+  await expect(page).toHaveURL(destination);
   await expect(page.getByRole("heading", { name: "My private edit", exact: true })).toBeVisible();
 });
 

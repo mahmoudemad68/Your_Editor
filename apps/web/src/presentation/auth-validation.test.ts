@@ -24,6 +24,8 @@ test("credentials match backend email/password limits", () => {
 test("return targets are restricted to internal application routes", () => {
   const project = "/projects/018f6b6e-7c3a-7b2c-8d3e-9c0b1a2d3e4f?tab=media#details";
   assert.equal(safeReturnTo(project), project);
+  const query = project.replace("#details", "&label=My%20edit#details");
+  assert.equal(safeReturnTo(query), query);
   for (const value of [
     null,
     "https://evil.example",

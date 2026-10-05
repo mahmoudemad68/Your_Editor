@@ -27,7 +27,8 @@ export function safeReturnTo(value: string | null | undefined): string {
   try {
     const decoded = decodeURIComponent(value);
     if (
-      /[\s\\]/.test(decoded) ||
+      /[\s\\]/.test(value) ||
+      decoded.includes("\\") ||
       [...decoded].some((char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127)
     )
       return "/";
