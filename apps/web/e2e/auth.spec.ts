@@ -192,10 +192,51 @@ test("invalid credentials, malformed signup, conflict and rate limiting have usa
       });
   });
   await page.goto("/sign-in");
-  await credentials(page, "Sign in");
+  await credentials(page, "Sign in", "unknown@example.test");
   await expect(page.locator("form").getByRole("alert")).toHaveText(
     "Too many attempts. Please wait a minute before trying again.",
   );
+});
+
+test("F1: credential rate-limit isolation through the real BFF", async ({ page, browser }) => {
+  await signup(page);
+  await page.getByRole("button", { name: "Sign out", exact: true }).click();
+  await expect(page).toHaveURL(/\/sign-in(?:\?|$)/);
+  const attempt = async (client: Page, email: string, action = "login", password = PASSWORD) =>
+    client.evaluate(
+      async ({ email, action, password }) => {
+        const response = await fetch(`/auth/${action}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ email, password }),
+        });
+        return { status: response.status, body: await response.json() };
+      },
+      { email, action, password },
+    );
+  let attackerStatus = 401;
+  for (let i = 0; i < 31 && attackerStatus !== 429; i++) {
+    attackerStatus = (await attempt(page, "attacker@example.test")).status;
+    expect([401, 429]).toContain(attackerStatus);
+  }
+  expect(attackerStatus).toBe(429);
+  const victim = await browser.newContext();
+  try {
+    const other = await victim.newPage();
+    await other.goto("http://127.0.0.1:3030/sign-in");
+    const login = await attempt(other, EMAIL);
+    expect(login.status).toBe(200);
+    expect(login.body.email).toBe(EMAIL);
+    const registration = await attempt(other, "new-user@example.test", "register");
+    expect(registration.status).toBe(201);
+    expect(registration.body.email).toBe("new-user@example.test");
+    expect((await attempt(page, " ATTACKER@Example.test ")).status).toBe(429);
+    console.info(
+      "F1: attacker 429; separate client login 200; unrelated registration 201; normalized attacker still 429",
+    );
+  } finally {
+    await victim.close();
+  }
 });
 
 test("ambient cookies cannot authorize project mutations, refresh or logout without explicit CSRF", async ({
