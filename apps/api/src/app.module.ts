@@ -1,3 +1,4 @@
+import { GetCurrentUser } from "./application/current-user.js";
 import { type DynamicModule, Module } from "@nestjs/common";
 import {
   type IObjectStorage,
@@ -59,6 +60,7 @@ export interface ApiComposition {
   readonly publication?: UploadPublication;
   readonly readiness?: ReadinessProbe;
   readonly auth?: {
+    readonly currentUser: GetCurrentUser;
     readonly register: RegisterUser;
     readonly login: LoginUser;
     readonly refresh: RefreshAccess;
@@ -93,6 +95,7 @@ export class AppModule {
         ...(composition.auth === undefined
           ? []
           : [
+              { provide: GetCurrentUser, useValue: composition.auth.currentUser },
               { provide: RegisterUser, useValue: composition.auth.register },
               { provide: LoginUser, useValue: composition.auth.login },
               { provide: RefreshAccess, useValue: composition.auth.refresh },

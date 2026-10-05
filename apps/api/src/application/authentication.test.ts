@@ -33,6 +33,7 @@ class MutableClock implements Clock {
 }
 
 class FakeHasher implements PasswordHasher {
+  burns = 0;
   async hash(password: string): Promise<string> {
     return `$argon2id$test$${createHash("sha256").update(password).digest("hex")}`;
   }
@@ -42,6 +43,7 @@ class FakeHasher implements PasswordHasher {
   }
 
   async burn(password: string): Promise<void> {
+    this.burns += 1;
     await this.verify(await this.hash("not-a-user"), password);
   }
 }
@@ -57,17 +59,19 @@ class FakeTokens implements SessionTokens {
   }
 }
 
-function harness(limit = 20) {
+function harness(limit = 20, maxKeys = 10_000) {
   const users = new InMemoryUserRepository();
   const sessions = new InMemoryRefreshSessionRepository();
   const clock = new MutableClock(instant(1_700_000_000_000n));
   const passwords = new FakeHasher();
   const tokens = new FakeTokens();
-  const rateLimit = new LoginRateLimit(limit, 60_000);
+  const rateLimit = new LoginRateLimit(limit, 60_000, maxKeys);
   return {
     users,
     sessions,
     clock,
+    passwords,
+    rateLimit,
     register: new RegisterUser(users, sessions, passwords, tokens, clock, rateLimit, () =>
       createUuidV7(1_700_000_000_000, randomBytes(10)),
     ),
@@ -179,11 +183,118 @@ test("a refresh id that is not a uuid never reaches the session store", async ()
   assert.equal(queried, false);
 });
 
-test("credential endpoints stop after the client limit", async () => {
+test("registration scopes normalized identities and isolates unrelated users", async () => {
   const { register } = harness(1);
   await register.execute("owner@example.test", PASSWORD, "client");
   await assert.rejects(
-    () => register.execute("other@example.test", PASSWORD, "client"),
+    () => register.execute(" Owner@Example.test ", PASSWORD, "client"),
     AuthRateLimitedError,
   );
+  assert.equal(
+    (await register.execute("other@example.test", PASSWORD, "client")).email,
+    "other@example.test",
+  );
+});
+
+test("login normalization, endpoint and network scopes preserve credential protection", async () => {
+  const { register, login, passwords } = harness(2);
+  await register.execute("victim@example.test", PASSWORD, "bff");
+  for (const email of ["Attacker@Example.test", " attacker@example.test "]) {
+    await assert.rejects(() => login.execute(email, PASSWORD, "bff"), InvalidCredentialsError);
+  }
+  assert.equal(passwords.burns, 2);
+  await assert.rejects(
+    () => login.execute("attacker@example.test", PASSWORD, "bff"),
+    AuthRateLimitedError,
+  );
+  assert.equal(passwords.burns, 2); // Throttled requests do not reach the hasher.
+  assert.equal(
+    (await login.execute("victim@example.test", PASSWORD, "bff")).email,
+    "victim@example.test",
+  );
+  assert.equal(
+    (await register.execute("new@example.test", PASSWORD, "bff")).email,
+    "new@example.test",
+  );
+  // Same identity has an independent registration budget; account existence never defines the key.
+  await register.execute("attacker@example.test", PASSWORD, "bff");
+  await assert.rejects(
+    () => login.execute("attacker@example.test", PASSWORD, "bff"),
+    AuthRateLimitedError,
+  );
+  assert.equal(
+    (await login.execute("attacker@example.test", PASSWORD, "direct-client")).email,
+    "attacker@example.test",
+  );
+});
+
+test("keys hash normalized email and malformed spellings share one bounded bucket", async () => {
+  const { register, login, rateLimit } = harness(1);
+  const keys: string[] = [];
+  const allow = rateLimit.allow.bind(rateLimit);
+  rateLimit.allow = (key, now) => {
+    keys.push(key);
+    return allow(key, now);
+  };
+  await assert.rejects(
+    () => login.execute(" Unknown@Example.test ", PASSWORD, "bff"),
+    InvalidCredentialsError,
+  );
+  await assert.rejects(
+    () => login.execute("unknown@example.test", PASSWORD, "bff"),
+    AuthRateLimitedError,
+  );
+  const digest = createHash("sha256").update("unknown@example.test").digest("hex");
+  assert.deepEqual(keys, [`login:bff:sha256:${digest}`, `login:bff:sha256:${digest}`]);
+  await assert.rejects(
+    () => login.execute("not-an-email", PASSWORD, "bff"),
+    InvalidCredentialsError,
+  );
+  await assert.rejects(
+    () => login.execute("different-invalid-input", PASSWORD, "bff"),
+    AuthRateLimitedError,
+  );
+  await assert.rejects(
+    () => register.execute("invalid", PASSWORD, "bff"),
+    InvalidRegistrationError,
+  );
+  await assert.rejects(
+    () => register.execute("other-invalid", PASSWORD, "bff"),
+    AuthRateLimitedError,
+  );
+  assert.deepEqual(keys.slice(2), [
+    "login:bff:malformed-email",
+    "login:bff:malformed-email",
+    "register:bff:malformed-email",
+    "register:bff:malformed-email",
+  ]);
+});
+
+test("key-space exhaustion admits unrelated users without evicting persistent account lockout", async () => {
+  const { register, login, users, clock, rateLimit } = harness(30, 2);
+  await register.execute("victim@example.test", PASSWORD, "bff");
+  for (let i = 0; i < 5; i++) {
+    await assert.rejects(
+      () => login.execute("victim@example.test", "wrong-password", `peer-${i}`),
+      InvalidCredentialsError,
+    );
+  }
+  for (let i = 0; i < 100; i++) {
+    await assert.rejects(
+      () => login.execute(`noise-${i}@example.test`, PASSWORD, "bff"),
+      InvalidCredentialsError,
+    );
+    assert.ok(rateLimit.size() <= 2);
+  }
+  assert.equal((await users.findByEmail("victim@example.test"))?.isLocked(clock.now()), true);
+  await assert.rejects(
+    () => login.execute("victim@example.test", PASSWORD, "bff"),
+    InvalidCredentialsError,
+  );
+  await register.execute("unrelated@example.test", PASSWORD, "bff");
+  assert.equal(
+    (await login.execute("unrelated@example.test", PASSWORD, "bff")).email,
+    "unrelated@example.test",
+  );
+  assert.equal(rateLimit.size(), 2);
 });

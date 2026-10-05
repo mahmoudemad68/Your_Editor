@@ -1,3 +1,4 @@
+import { GetCurrentUser } from "./application/current-user.js";
 /**
  * Minimal production auth process for cross-process race tests.
  * It uses the same Postgres repositories and use cases as main.ts.
@@ -63,6 +64,7 @@ async function main(): Promise<void> {
     mediaIds: new NodeMediaAssetIdGenerator(),
     presignTtlSeconds: 900,
     auth: {
+      currentUser: new GetCurrentUser(users),
       register: new RegisterUser(users, sessions, passwords, tokens, clock, rateLimit),
       login: new LoginUser(users, sessions, passwords, tokens, clock, rateLimit),
       refresh: new RefreshAccess(users, sessions, tokens, clock),

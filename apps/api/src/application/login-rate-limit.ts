@@ -1,7 +1,10 @@
 /**
  * Process-local limit for credential endpoints. It does not coordinate across
  * API processes. Account lockout is the cross-process control and lives in the
- * user repository as one conditional SQL update.
+ * user repository as one conditional SQL update. Entries are kept in least
+ * recently used order, including denied attempts. Capacity evicts an old bucket
+ * rather than denying every new credential identity. Eviction can forget a
+ * process-local budget; persistent account lockout is never evicted here.
  */
 export class LoginRateLimit {
   private readonly hits = new Map<string, number[]>();
@@ -18,8 +21,10 @@ export class LoginRateLimit {
     const known = this.hits.get(key);
     const recent = (known ?? []).filter((at) => now - at < this.windowMs);
     if (known === undefined && this.hits.size >= this.maxKeys) {
-      return false;
+      const oldest = this.hits.keys().next().value;
+      if (oldest !== undefined) this.hits.delete(oldest);
     }
+    this.hits.delete(key);
     if (recent.length >= this.limit) {
       this.hits.set(key, recent);
       return false;
@@ -34,7 +39,7 @@ export class LoginRateLimit {
   }
 
   private sweep(now: number): void {
-    if (now - this.lastSweep < this.windowMs && this.hits.size < this.maxKeys) {
+    if (now - this.lastSweep < this.windowMs) {
       return;
     }
     this.lastSweep = now;

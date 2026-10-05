@@ -85,7 +85,7 @@ export function Dashboard({ api }: { api: ProjectApi }) {
         {state.status === "unauthorized" ? (
           <StatusPanel
             title="Sign-in is required"
-            body="This dashboard does not sign you in. Production authentication arrives in a later release. Until then, the Project service answers 401."
+            body="Your session has ended. Sign in to continue."
             actionLabel="Try again"
             onAction={() => void load()}
           />

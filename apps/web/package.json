@@ -9,7 +9,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "generate:api": "node scripts/generate-api-client.mjs",
     "check:api-client": "node scripts/check-api-client.mjs",
-    "test": "tsc -p tsconfig.test.json && node ../../tools/test/run-node-tests.mjs dist-test/presentation/product-label.test.js dist-test/presentation/dashboard.test.js dist-test/presentation/sha256-file.test.js dist-test/presentation/media-upload.test.js dist-test/infrastructure/config.test.js dist-test/infrastructure/project-api.test.js dist-test/composition/project-response.test.js"
+    "test": "tsc -p tsconfig.test.json && node ../../tools/test/run-node-tests.mjs dist-test/presentation/product-label.test.js dist-test/presentation/dashboard.test.js dist-test/presentation/sha256-file.test.js dist-test/presentation/media-upload.test.js dist-test/infrastructure/config.test.js dist-test/infrastructure/project-api.test.js dist-test/composition/project-response.test.js dist-test/presentation/auth-validation.test.js dist-test/presentation/session-client.test.js dist-test/presentation/auth-screen.test.js dist-test/composition/auth-proxy.test.js dist-test/composition/project-actions.test.js",
+    "test:e2e": "playwright test --config tests/playwright.config.ts"
   },
   "dependencies": {
     "@editagent/shared": "workspace:*",
@@ -26,6 +27,7 @@
     "tailwind-merge": "^3.7.0"
   },
   "devDependencies": {
+    "@playwright/test": "1.61.1",
     "@tailwindcss/postcss": "^4.3.3",
     "@testing-library/dom": "^10.4.2",
     "@testing-library/react": "^16.3.3",

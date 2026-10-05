@@ -77,7 +77,7 @@ export class RegisterUser {
   ) {}
 
   async execute(email: string, password: string, clientKey: string): Promise<AuthenticatedSession> {
-    this.guardRate(clientKey);
+    this.guardRate(credentialRateKey("register", clientKey, email));
     if (password.length < MIN_PASSWORD || password.length > MAX_PASSWORD) {
       throw new InvalidCredentialsError();
     }
@@ -118,6 +118,23 @@ export class RegisterUser {
   }
 }
 
+/** Scope before looking up users, so known and unknown accounts have identical limits. */
+function credentialRateKey(
+  operation: "login" | "register",
+  networkKey: string,
+  email: string,
+): string {
+  let credential: string;
+  try {
+    credential = `sha256:${createHash("sha256").update(normalizeEmail(email)).digest("hex")}`;
+  } catch (error) {
+    if (!(error instanceof DomainError)) throw error;
+    // Invalid spellings share one bounded bucket; no raw input or account lookup is needed.
+    credential = "malformed-email";
+  }
+  return `${operation}:${networkKey}:${credential}`;
+}
+
 export class LoginUser {
   constructor(
     private readonly users: UserRepository,
@@ -129,7 +146,9 @@ export class LoginUser {
   ) {}
 
   async execute(email: string, password: string, clientKey: string): Promise<AuthenticatedSession> {
-    if (!this.rateLimit.allow(clientKey, Number(this.clock.now()))) {
+    if (
+      !this.rateLimit.allow(credentialRateKey("login", clientKey, email), Number(this.clock.now()))
+    ) {
       throw new AuthRateLimitedError();
     }
     let normalized: string;

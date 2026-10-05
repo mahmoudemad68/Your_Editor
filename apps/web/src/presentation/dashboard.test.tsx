@@ -5,6 +5,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import type { ApiResult, ProjectApi, ProjectRecord } from "../project-contract";
 import { Dashboard } from "./dashboard";
 import { ProjectScreen } from "./project-screen";
+import { sessionClient } from "./session-client";
 import { AppShell } from "./shell";
 
 const LONG_NAME = `项目${"字".repeat(420)}`;
@@ -185,7 +186,11 @@ test("a refused delete stays on the dashboard and shows the API message", async 
   cleanup();
 });
 
-test("mobile navigation can be opened from the header", () => {
+test("mobile navigation can be opened from the header", async (t) => {
+  t.mock.method(globalThis, "fetch", async () =>
+    Response.json({ id: "verified", email: "owner@example.test" }),
+  );
+  await sessionClient.authenticate("login", "owner@example.test", "correct-horse-battery");
   render(
     <AppShell>
       <p>Workspace</p>
@@ -202,7 +207,11 @@ test("mobile navigation can be opened from the header", () => {
   cleanup();
 });
 
-test("the projects link is current only on the dashboard route", () => {
+test("the projects link is current only on the dashboard route", async (t) => {
+  t.mock.method(globalThis, "fetch", async () =>
+    Response.json({ id: "verified", email: "owner@example.test" }),
+  );
+  await sessionClient.authenticate("login", "owner@example.test", "correct-horse-battery");
   render(
     <AppShell currentPath="/projects/018f6b6e-7c3a-7b2a-8d3e-9c0b1a2d3e4f">
       <p>Workspace</p>

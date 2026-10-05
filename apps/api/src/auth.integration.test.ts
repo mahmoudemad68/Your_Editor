@@ -1,6 +1,8 @@
+import { GetCurrentUser } from "./application/current-user.js";
 import "reflect-metadata";
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
+import { request as httpRequest } from "node:http";
 import { test } from "node:test";
 import { type INestApplication } from "@nestjs/common";
 import {
@@ -63,7 +65,10 @@ interface RunningApi {
   readonly passwords: Argon2idHasher;
 }
 
-async function startApi(limit: number): Promise<RunningApi> {
+async function startApi(
+  limit: number,
+  trustedProxies: readonly string[] = [],
+): Promise<RunningApi> {
   const users = new InMemoryUserRepository();
   const sessions = new InMemoryRefreshSessionRepository();
   const projects = new InMemoryProjectRepository();
@@ -81,6 +86,7 @@ async function startApi(limit: number): Promise<RunningApi> {
     mediaIds: new NodeMediaAssetIdGenerator(),
     presignTtlSeconds: 900,
     auth: {
+      currentUser: new GetCurrentUser(users),
       register: new RegisterUser(users, sessions, passwords, tokens, clock, rateLimit),
       login: new LoginUser(users, sessions, passwords, tokens, clock, rateLimit),
       refresh: new RefreshAccess(users, sessions, tokens, clock),
@@ -89,7 +95,7 @@ async function startApi(limit: number): Promise<RunningApi> {
       now: () => clock.now(),
       cookieSecure: false,
       trustedOrigins: [],
-      trustedProxies: [],
+      trustedProxies,
     },
   });
   await app.listen(0, "127.0.0.1");
@@ -402,18 +408,125 @@ test("production authentication does not accept x-test-actor", async () => {
   }
 });
 
-test("credential attempts from one client are rate limited", async () => {
+test("credential attempts share normalized buckets but not unrelated registration identities", async () => {
   const api = await startApi(2);
   try {
     assert.equal((await register(api, "one@example.test")).has("editagent_access"), true);
-    assert.equal((await register(api, "two@example.test")).has("editagent_access"), true);
+    const duplicate = await fetch(`${api.base}/auth/register`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: " One@Example.test ", password: PASSWORD }),
+    });
+    assert.equal(duplicate.status, 409);
     const limited = await fetch(`${api.base}/auth/register`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ email: "three@example.test", password: PASSWORD }),
+      body: JSON.stringify({ email: "one@example.test", password: PASSWORD }),
     });
     assert.equal(limited.status, 429);
-    assert.equal(await api.users.findByEmail("three@example.test"), null);
+    assert.equal((await register(api, "three@example.test")).has("editagent_access"), true);
+  } finally {
+    await api.app.close();
+  }
+});
+
+test("direct API ignores spoofed address headers from an untrusted peer", async () => {
+  const api = await startApi(2);
+  try {
+    await register(api, "victim@example.test");
+    const attempt = (email: string, address: string) =>
+      fetch(`${api.base}/auth/login`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-forwarded-for": address,
+          "x-real-ip": address,
+          forwarded: `for=${address}`,
+        },
+        body: JSON.stringify({ email, password: PASSWORD }),
+      });
+    assert.equal((await attempt("unknown@example.test", "203.0.113.1")).status, 401);
+    assert.equal((await attempt(" UNKNOWN@Example.test ", "203.0.113.2")).status, 401);
+    assert.equal((await attempt("unknown@example.test", "203.0.113.3")).status, 429);
+    assert.equal((await attempt("victim@example.test", "203.0.113.3")).status, 200);
+    await register(api, "unrelated@example.test");
+    assert.equal((await attempt("unknown@example.test", "203.0.113.4")).status, 429);
+  } finally {
+    await api.app.close();
+  }
+});
+
+test("explicitly trusted API proxy keeps different network clients isolated", async () => {
+  const api = await startApi(1, ["127.0.0.1", "10.0.0.8"]);
+  try {
+    const attempt = (chain: string) =>
+      fetch(`${api.base}/auth/login`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-forwarded-for": chain },
+        body: JSON.stringify({ email: "unknown@example.test", password: PASSWORD }),
+      });
+    assert.equal((await attempt("203.0.113.1, 10.0.0.8")).status, 401);
+    assert.equal((await attempt("198.51.100.9, 203.0.113.1, 10.0.0.8")).status, 429);
+    assert.equal((await attempt("203.0.113.2, 10.0.0.8")).status, 401);
+    assert.equal((await attempt("203.0.113.2, 10.0.0.8")).status, 429);
+  } finally {
+    await api.app.close();
+  }
+});
+
+test("direct API peers retain separate network budgets for the same credential identity", async () => {
+  const api = await startApi(1);
+  try {
+    const attempt = (localAddress: string): Promise<number> =>
+      new Promise((resolve, reject) => {
+        const request = httpRequest(
+          `${api.base}/auth/login`,
+          {
+            method: "POST",
+            localAddress,
+            headers: { "content-type": "application/json", "x-forwarded-for": "203.0.113.9" },
+          },
+          (response) => {
+            response.resume();
+            response.on("end", () => resolve(response.statusCode ?? 0));
+            response.on("error", reject);
+          },
+        );
+        request.on("error", reject);
+        request.end(JSON.stringify({ email: "unknown@example.test", password: PASSWORD }));
+      });
+    assert.equal(await attempt("127.0.0.1"), 401);
+    assert.equal(await attempt("127.0.0.1"), 429);
+    assert.equal(await attempt("127.0.0.2"), 401);
+    assert.equal(await attempt("127.0.0.2"), 429);
+  } finally {
+    await api.app.close();
+  }
+});
+
+test("current user requires a verified access token and returns only id/email without caching", async () => {
+  const api = await startApi(40);
+  try {
+    assert.equal((await fetch(`${api.base}/auth/me`)).status, 401);
+    assert.equal(
+      (
+        await fetch(`${api.base}/auth/me`, {
+          headers: { cookie: "editagent_access=forged", "x-user-id": "attacker" },
+        })
+      ).status,
+      401,
+    );
+    const jar = await register(api, "identity@example.test");
+    const response = await fetch(`${api.base}/auth/me`, { headers: { cookie: cookieHeader(jar) } });
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get("cache-control") ?? "", /no-store/);
+    const user = await api.users.findByEmail("identity@example.test");
+    assert.deepEqual(await response.json(), { id: user?.id, email: "identity@example.test" });
+    api.clock.advance(901_000n);
+    assert.equal(
+      (await fetch(`${api.base}/auth/me`, { headers: { cookie: cookieHeader(jar) } })).status,
+      401,
+    );
   } finally {
     await api.app.close();
   }

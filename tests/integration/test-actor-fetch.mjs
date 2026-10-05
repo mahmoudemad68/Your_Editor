@@ -7,8 +7,9 @@ export function fetchWithTestActor(actorUserId, baseFetch = fetch) {
   return (input, init) => {
     if (input instanceof Request) {
       const headers = new Headers(input.headers);
+      new Headers(init?.headers).forEach((value, key) => headers.set(key, value));
       headers.set("x-test-actor", actorUserId);
-      return baseFetch(new Request(input, { headers }), init);
+      return baseFetch(new Request(input, { ...init, headers }));
     }
     const headers = new Headers(init?.headers);
     headers.set("x-test-actor", actorUserId);

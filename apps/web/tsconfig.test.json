@@ -14,7 +14,10 @@
     "src/generated/**/*.ts",
     "src/project-contract.ts",
     "src/composition/project-response.ts",
-    "src/composition/project-response.test.ts"
+    "src/composition/project-response.test.ts",
+    "src/composition/auth-proxy.ts",
+    "src/composition/auth-proxy.test.ts",
+    "src/composition/project-actions.test.ts"
   ],
   "exclude": [
     "node_modules",

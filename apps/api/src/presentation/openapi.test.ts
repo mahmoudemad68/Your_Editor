@@ -66,6 +66,13 @@ test("the build writes an OpenAPI document for the Project routes", () => {
     assert.equal(projectSchema.properties["revision"], undefined);
     assert.equal(projectSchema.properties["passwordHash"], undefined);
   }
+  const me = document.paths["/auth/me"]?.get;
+  assert.ok(me?.responses?.["200"]);
+  assert.ok(me?.responses?.["401"]);
+  const sessionUser = document.components?.schemas?.["SessionUserBody"];
+  assert.ok(sessionUser && "properties" in sessionUser);
+  if (sessionUser && "properties" in sessionUser)
+    assert.deepEqual(Object.keys(sessionUser.properties ?? {}).sort(), ["email", "id"]);
   const register = document.paths["/auth/register"]?.post;
   const login = document.paths["/auth/login"]?.post;
   const refresh = document.paths["/auth/refresh"]?.post;

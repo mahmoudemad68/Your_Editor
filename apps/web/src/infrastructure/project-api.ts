@@ -7,28 +7,23 @@ export interface ProjectApiOptions {
   readonly baseUrl: string;
   readonly fetchImpl?: typeof fetch;
   readonly correlationId?: string;
+  readonly requestHeaders?: Headers;
 }
 
 /**
  * HTTP adapter for the generated OpenAPI client.
  * It does not add an actor header, a user id, or a development token.
- * US-118 will attach a verified credential to this same transport.
+ * The composition root forwards the incoming cookie and explicit CSRF header.
  */
 export function createHttpProjectApi(options: ProjectApiOptions): ProjectApi {
   const baseFetch = options.fetchImpl ?? fetch;
-  const fetchImpl: typeof fetch =
-    options.correlationId === undefined
-      ? baseFetch
-      : (input, init) => {
-          const headers = new Headers(input instanceof Request ? input.headers : undefined);
-          new Headers(init?.headers).forEach((value, key) => {
-            headers.set(key, value);
-          });
-          if (!headers.has(CORRELATION_HEADER)) {
-            headers.set(CORRELATION_HEADER, options.correlationId ?? "");
-          }
-          return baseFetch(input, { ...init, headers });
-        };
+  const fetchImpl: typeof fetch = (input, init) => {
+    const headers = new Headers(input instanceof Request ? input.headers : undefined);
+    new Headers(init?.headers).forEach((value, key) => headers.set(key, value));
+    options.requestHeaders?.forEach((value, key) => headers.set(key, value));
+    if (options.correlationId !== undefined) headers.set(CORRELATION_HEADER, options.correlationId);
+    return baseFetch(input, { ...init, headers, cache: "no-store", redirect: "error" });
+  };
   const client = createGeneratedClient(options.baseUrl, fetchImpl);
   return {
     async listProjects() {

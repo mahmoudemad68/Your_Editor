@@ -11,12 +11,19 @@ test("the credential limit counts hits inside the window and forgets older ones"
   assert.equal(limit.allow("client", 2_001), true);
 });
 
-test("expired client keys are dropped and new keys stop at the cap", () => {
+test("capacity evicts least recently used keys instead of globally denying new identities", () => {
   const limit = new LoginRateLimit(1, 1_000, 2);
   assert.equal(limit.allow("a", 1_000), true);
   assert.equal(limit.allow("b", 1_000), true);
-  assert.equal(limit.allow("c", 1_000), false);
+  assert.equal(limit.allow("a", 1_000), false); // Denials also update recency.
+  assert.equal(limit.allow("c", 1_000), true);
   assert.equal(limit.size(), 2);
+  assert.equal(limit.allow("a", 1_000), false);
+  for (let i = 0; i < 100; i++) {
+    assert.equal(limit.allow(`new-${i}`, 1_000), true);
+    assert.equal(limit.size(), 2);
+    assert.equal(limit.allow("a", 1_000), false);
+  }
   assert.equal(limit.allow("a", 2_100), true);
   assert.equal(limit.size(), 1);
   assert.equal(limit.allow("c", 2_100), true);
