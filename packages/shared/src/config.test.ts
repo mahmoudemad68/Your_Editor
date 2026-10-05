@@ -31,6 +31,7 @@ const apiStorageEnv = {
   S3_ACCESS_KEY_ID: "editagent",
   S3_SECRET_ACCESS_KEY: "editagent-dev-secret",
   S3_REGION: "us-east-1",
+  AUTH_JWT_SECRET: "local-development-jwt-secret-32chars",
 };
 
 function assertConfigError(run: () => unknown, field: string): void {
@@ -73,12 +74,85 @@ test("API config parses a database URL and applies port and host defaults", () =
   assert.equal(config.objectStorage.endpoint, "http://minio:9000");
   assert.equal(config.objectStorage.publicEndpoint, "http://localhost:9000");
   assert.equal(config.objectStorage.presignTtlSeconds, 900);
+  assert.equal(config.authJwtSecret, "local-development-jwt-secret-32chars");
+  assert.equal(config.authCookieSecure, true);
 });
 
 test("API config accepts an explicit port and host", () => {
   const config = parseApiConfig({ ...apiStorageEnv, PORT: "3001", HOST: "127.0.0.1" });
   assert.equal(config.port, 3001);
   assert.equal(config.host, "127.0.0.1");
+});
+
+test("API config requires a long signing secret and treats only true as a secure cookie", () => {
+  assertConfigError(
+    () => parseApiConfig({ ...apiStorageEnv, AUTH_JWT_SECRET: "short" }),
+    "AUTH_JWT_SECRET",
+  );
+  const { AUTH_JWT_SECRET: _ignoredSecret, ...withoutSecret } = apiStorageEnv;
+  assertConfigError(() => parseApiConfig(withoutSecret), "AUTH_JWT_SECRET");
+  assert.equal(
+    parseApiConfig({ ...apiStorageEnv, AUTH_COOKIE_SECURE: "true" }).authCookieSecure,
+    true,
+  );
+  assert.equal(
+    parseApiConfig({ ...apiStorageEnv, AUTH_COOKIE_SECURE: "false" }).authCookieSecure,
+    false,
+  );
+  assert.equal(
+    parseApiConfig({
+      ...apiStorageEnv,
+      EDITAGENT_RUNTIME: "staging",
+      AUTH_COOKIE_SECURE: "true",
+      AUTH_TRUSTED_ORIGINS: "https://staging.editagent.test",
+    }).authCookieSecure,
+    true,
+  );
+  assertConfigError(
+    () =>
+      parseApiConfig({
+        ...apiStorageEnv,
+        EDITAGENT_RUNTIME: "staging",
+        AUTH_COOKIE_SECURE: "false",
+      }),
+    "AUTH_COOKIE_SECURE",
+  );
+  assert.equal(
+    parseApiConfig({
+      ...apiStorageEnv,
+      EDITAGENT_RUNTIME: "production",
+      AUTH_TRUSTED_ORIGINS: "https://editagent.test",
+    }).authCookieSecure,
+    true,
+  );
+  assertConfigError(
+    () =>
+      parseApiConfig({
+        ...apiStorageEnv,
+        EDITAGENT_RUNTIME: "production",
+        AUTH_COOKIE_SECURE: "false",
+      }),
+    "AUTH_COOKIE_SECURE",
+  );
+  assertConfigError(
+    () => parseApiConfig({ ...apiStorageEnv, EDITAGENT_RUNTIME: "lab" }),
+    "EDITAGENT_RUNTIME",
+  );
+  assertConfigError(
+    () =>
+      parseApiConfig({
+        ...apiStorageEnv,
+        EDITAGENT_RUNTIME: "staging",
+        AUTH_COOKIE_SECURE: "true",
+        AUTH_TRUSTED_ORIGINS: "https://staging.editagent.test",
+        AUTH_CLOCK_SKEW_MS: "-1000",
+      }),
+    "AUTH_CLOCK_SKEW_MS",
+  );
+  assert.equal(
+    parseApiConfig({ ...apiStorageEnv, AUTH_CLOCK_SKEW_MS: "-50" }).authClockSkewMs,
+    -50,
+  );
 });
 
 test("API config rejects a missing public object-storage endpoint and a bad presign TTL", () => {

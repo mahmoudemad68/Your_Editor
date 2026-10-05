@@ -31,7 +31,7 @@ Does not own project records, media bytes, or job execution.
 - `authorize(principal, action, resource)`
 - Types: `UserId`, `Role`, `Session`
 
-**Code home:** `packages/domain/src/modules/identity/`. HTTP adapters land in the API under a later Identity story (US-118).
+**Code home:** `packages/domain/src/modules/identity/`. HTTP registration, login, refresh, and logout live in `apps/api`. Project authorization stays in the application use cases.
 
 ### Projects
 

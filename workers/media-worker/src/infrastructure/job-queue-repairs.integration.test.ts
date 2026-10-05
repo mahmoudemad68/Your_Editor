@@ -168,7 +168,7 @@ async function markerExists(file: string): Promise<boolean> {
   }
 }
 
-test("QA repairs hold on Redis and Postgres", { timeout: 60_000 }, async () => {
+test("QA repairs hold on Redis and Postgres", { timeout: 60_000 }, async (t) => {
   const admin = new Pool({ connectionString: adminUrl() });
   await admin.query(`DROP DATABASE IF EXISTS ${TEST_DATABASE} WITH (FORCE)`);
   await admin.query(`CREATE DATABASE ${TEST_DATABASE}`);
@@ -264,6 +264,7 @@ test("QA repairs hold on Redis and Postgres", { timeout: 60_000 }, async () => {
     const spanMarker = path.join(directory, "span");
     const spanId = newId();
     const rival = new BullMqJobQueue(redisUrl, { lockDurationMs: 600, stalledIntervalMs: 200 });
+    t.after(() => rival.close());
     await enqueueJob(deps, {
       id: spanId,
       queueName,
@@ -275,10 +276,14 @@ test("QA repairs hold on Redis and Postgres", { timeout: 60_000 }, async () => {
       maxAttempts: 1,
       backoffBaseMs: 20,
     });
-    const spanRun = runNextJob(deps, queueName, spec("recordSpan"));
-    while ((await jobs.findById(jobId(spanId)))?.status !== "Running") {
-      await delay(10);
-    }
+    const { run: spanRun } = await runUntilHandlerStarts(
+      deps,
+      queueName,
+      spec("recordSpan"),
+      spanMarker,
+      spanId,
+      jobs,
+    );
     const stolen: string[] = [];
     const rivalWatch = (async () => {
       const started = Date.now();
@@ -303,6 +308,7 @@ test("QA repairs hold on Redis and Postgres", { timeout: 60_000 }, async () => {
     const lossMarker = path.join(directory, "loss");
     const lossId = newId();
     const lossQueue = new BullMqJobQueue(redisUrl, { lockDurationMs: 400, stalledIntervalMs: 150 });
+    t.after(() => lossQueue.close());
     const lossDeps = { jobs, queue: lossQueue, supervisor, now, newAttemptId: newId };
     await enqueueJob(lossDeps, {
       id: lossId,
@@ -315,10 +321,16 @@ test("QA repairs hold on Redis and Postgres", { timeout: 60_000 }, async () => {
       maxAttempts: 2,
       backoffBaseMs: 20,
     });
-    const lossRun = runNextJob(lossDeps, queueName, spec("recordSpan"));
-    while ((await jobs.findById(jobId(lossId)))?.status !== "Running") {
-      await delay(10);
-    }
+    // Running is persisted before the child starts. Wait for its start marker
+    // before removing the lock so this exercises cancellation of a live handler.
+    const { run: lossRun } = await runUntilHandlerStarts(
+      lossDeps,
+      queueName,
+      spec("recordSpan"),
+      lossMarker,
+      lossId,
+      jobs,
+    );
     const lockRedis = new Redis(redisUrl);
     await lockRedis.del(`bull:${queueName}:${lossId}:lock`);
     await lockRedis.quit();
@@ -448,6 +460,7 @@ test("QA repairs hold on Redis and Postgres", { timeout: 60_000 }, async () => {
       connection: { url: redisUrl, maxRetriesPerRequest: null },
       prefix: "bull",
     });
+    t.after(() => stateQueue.close());
     const bullJob = await stateQueue.getJob(badId);
     assert.equal(bullJob ? await bullJob.getState() : "missing", "failed");
     await stateQueue.close();

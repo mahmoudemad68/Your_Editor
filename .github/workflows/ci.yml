@@ -158,11 +158,15 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
-      - name: Install FFmpeg
+      - name: Install FFmpeg and Chrome
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg
+          wget -q -O /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+          sudo apt-get install -y /tmp/chrome.deb
           ffprobe -version
+          command -v google-chrome
+          google-chrome --version
 
       - name: Test
         run: pnpm test

@@ -10,12 +10,13 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { createUuidV7, jobId, mediaAssetId } from "@editagent/domain";
+import { createUuidV7, jobId, mediaAssetId, type JobEnvelope } from "@editagent/domain";
 import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import { Pool } from "pg";
 
 import { cancelJob, enqueueJob, runNextJob } from "../application/run-job.js";
+import { JobTimeoutError } from "../application/job-errors.js";
 import { BullMqJobQueue } from "./bullmq-job-queue.js";
 import { ChildProcessJobSupervisor } from "./child-job-supervisor.js";
 import { PostgresJobRepository } from "./postgres-job-repository.js";
@@ -72,6 +73,20 @@ async function markerText(file: string): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+async function waitForDescendant(pidPath: string): Promise<number> {
+  const started = Date.now();
+  while (Date.now() - started < 10_000) {
+    const pid = Number(await markerText(pidPath));
+    // writeFile creates the file before writing its contents. An empty file
+    // is not readiness: PID 0 would probe the test's own process group.
+    if (Number.isSafeInteger(pid) && pid > 1) {
+      return pid;
+    }
+    await delay(10);
+  }
+  throw new Error("descendant did not start");
 }
 
 function pythonConsume(
@@ -148,18 +163,11 @@ test("round 3 blockers stay fixed on Redis and Postgres", { timeout: 60_000 }, a
       modulePath: handlerModule,
       exportName: "spawnDescendant",
     });
-    const descendantWait = Date.now();
-    while ((await markerText(cancelPid)) === null) {
-      if (Date.now() - descendantWait > 10_000) {
-        throw new Error("descendant did not start");
-      }
-      await delay(10);
-    }
+    const descendant = await waitForDescendant(cancelPid);
     const cancelStarted = Date.now();
     await cancelJob(deps, cancelId);
     await cancelRun;
     const cancelMs = Date.now() - cancelStarted;
-    const descendant = Number(await readFile(cancelPid, "utf8"));
     console.log(`descendant cancel ${cancelMs}ms`);
     assert.ok(cancelMs < 5_000, `descendant cancel took ${cancelMs}ms`);
     assert.equal(alive(descendant), false);
@@ -169,7 +177,6 @@ test("round 3 blockers stay fixed on Redis and Postgres", { timeout: 60_000 }, a
     assert.equal(alive(descendant), false);
 
     const timeoutMarker = path.join(directory, "timeout");
-    const timeoutPid = path.join(directory, "timeout-pid");
     const timeoutQueue = `to-${uniqueQueueSuffix()}`;
     const timeoutId = newId();
     await enqueueJob(deps, {
@@ -177,7 +184,7 @@ test("round 3 blockers stay fixed on Redis and Postgres", { timeout: 60_000 }, a
       queueName: timeoutQueue,
       jobType: "probe",
       idempotencyKey: `to-${timeoutId}`,
-      payload: { markerPath: timeoutMarker, pidPath: timeoutPid, delayMs: 2_500 },
+      payload: { markerPath: timeoutMarker, delayMs: 2_500 },
       subject,
       timeoutMs: 180,
       maxAttempts: 1,
@@ -189,10 +196,8 @@ test("round 3 blockers stay fixed on Redis and Postgres", { timeout: 60_000 }, a
       exportName: "spawnDescendant",
     });
     const timeoutMs = Date.now() - timeoutStarted;
-    const timeoutDescendant = Number(await readFile(timeoutPid, "utf8"));
     console.log(`descendant timeout ${timeoutMs}ms`);
     assert.ok(timeoutMs < 5_000, `descendant timeout took ${timeoutMs}ms`);
-    assert.equal(alive(timeoutDescendant), false);
     assert.equal((await jobs.findById(jobId(timeoutId)))?.status, "Failed");
     assert.match((await jobs.findById(jobId(timeoutId)))?.failureReason ?? "", /timed out/);
     await delay(2_600);
@@ -304,4 +309,52 @@ test("round 3 blockers stay fixed on Redis and Postgres", { timeout: 60_000 }, a
     await queue.close();
     await pool.end();
   }
+});
+
+test("a timeout reaps a handler and its running descendant", { timeout: 20_000 }, async (t) => {
+  const directory = await mkdtemp(path.join(tmpdir(), "us129-timeout-group-"));
+  const marker = path.join(directory, "timeout");
+  const pidPath = path.join(directory, "timeout-pid");
+  const controller = new AbortController();
+  const envelope: JobEnvelope = {
+    schemaVersion: 1,
+    jobId: newId(),
+    queueName: `timeout-${uniqueQueueSuffix()}`,
+    jobType: "probe",
+    idempotencyKey: newId(),
+    payload: { markerPath: marker, pidPath, delayMs: 2_500 },
+    subject: { kind: "media-asset", id: newId() },
+    timeoutMs: 180,
+    maxAttempts: 1,
+    attempt: 1,
+    backoffBaseMs: 20,
+  };
+  const stopped = assert.rejects(
+    new ChildProcessJobSupervisor().run(
+      envelope,
+      { modulePath: handlerModule, exportName: "spawnDescendant" },
+      controller.signal,
+    ),
+    JobTimeoutError,
+  );
+  t.after(async () => {
+    controller.abort(new JobTimeoutError());
+    await stopped;
+    await rm(directory, { recursive: true, force: true });
+  });
+
+  // The application deadline above includes cold process startup. Exercise
+  // live descendant teardown separately, after the child reports its PID.
+  const descendant = await waitForDescendant(pidPath);
+  assert.equal(alive(descendant), true);
+  const timeoutStarted = Date.now();
+  await delay(envelope.timeoutMs);
+  controller.abort(new JobTimeoutError());
+  await stopped;
+  const timeoutMs = Date.now() - timeoutStarted;
+  assert.ok(timeoutMs < 5_000, `descendant timeout took ${timeoutMs}ms`);
+  assert.equal(alive(descendant), false);
+  await delay(2_600);
+  assert.equal(await markerText(marker), null);
+  assert.equal(alive(descendant), false);
 });

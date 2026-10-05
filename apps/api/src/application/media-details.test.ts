@@ -62,6 +62,38 @@ test("owner, editor, and viewer can read media details", async () => {
   }
 });
 
+test("a soft-deleted project does not reveal its media", async () => {
+  const projects = new InMemoryProjectRepository();
+  const media = new InMemoryMediaAssetRepository();
+  const project = Project.create(PROJECT, "Launch", OWNER, NOW).grantMembership(
+    OWNER,
+    VIEWER,
+    "viewer",
+    instant(1_700_000_000_020n),
+  );
+  await projects.save(project, null);
+  await media.save(
+    MediaAsset.createUploaded({
+      id: ASSET,
+      projectId: PROJECT,
+      createdAt: NOW,
+      displayFilename: "lecture.mp4",
+      mimeType: "video/mp4",
+      byteSize: 32,
+      contentSha256: "ab".repeat(32),
+    }),
+  );
+  const loaded = await projects.findById(PROJECT);
+  assert.ok(loaded);
+  await projects.save(
+    loaded.project.deleteProject(OWNER, instant(1_700_000_000_030n)),
+    loaded.revision,
+  );
+  const details = new GetMediaDetails(projects, media);
+  await assert.rejects(() => details.execute(OWNER, PROJECT, ASSET), ProjectNotFoundError);
+  await assert.rejects(() => details.execute(VIEWER, PROJECT, ASSET), ProjectNotFoundError);
+});
+
 test("non-members, unknown projects, and foreign assets are not found", async () => {
   const { details } = await fixture();
   await assert.rejects(() => details.execute(STRANGER, PROJECT, ASSET), ProjectNotFoundError);

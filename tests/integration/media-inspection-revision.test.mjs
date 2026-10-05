@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { after, before, describe, test } from "node:test";
+import { seedUsers } from "./seed-users.mjs";
 
 const root = path.resolve(".");
 const require = createRequire(path.join(root, "apps/api/package.json"));
@@ -81,6 +82,7 @@ describe("inspection revision compare-and-swap", { concurrency: 1 }, () => {
     await admin.end();
     pool = new Pool({ connectionString: databaseUrl });
     await applyMigrations(pool);
+    await seedUsers(pool, [OWNER]);
     projects = new PostgresProjectRepository(pool);
     media = new PostgresMediaAssetRepository(pool);
     await projects.save(domain.Project.create(PROJECT, "Launch", OWNER, domain.instant(T)), null);

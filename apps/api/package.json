@@ -5,7 +5,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json && node dist/write-openapi.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node ../../tools/test/run-node-tests.mjs dist/application/health.test.js dist/application/projects.test.js dist/application/uploads.test.js dist/application/media-details.test.js dist/application/in-memory-media-repository.test.js dist/infrastructure/config.test.js dist/infrastructure/node-project-id-generator.test.js dist/infrastructure/postgres-project-repository.test.js dist/infrastructure/media-upload.integration.test.js dist/presentation/openapi.test.js dist/presentation/projects.controller.test.js dist/presentation/media.controller.test.js dist/presentation/problem-response.test.js dist/presentation/correlation.integration.test.js dist/queue-correlation.integration.test.js",
+    "test": "node ../../tools/test/run-node-tests.mjs dist/application/health.test.js dist/application/projects.test.js dist/application/uploads.test.js dist/application/media-details.test.js dist/application/in-memory-media-repository.test.js dist/application/authentication.test.js dist/application/login-rate-limit.test.js dist/infrastructure/config.test.js dist/infrastructure/jwt-session-tokens.test.js dist/infrastructure/node-project-id-generator.test.js dist/infrastructure/postgres-project-repository.test.js dist/infrastructure/postgres-identity.integration.test.js dist/infrastructure/identity-migration.integration.test.js dist/infrastructure/media-upload.integration.test.js dist/presentation/openapi.test.js dist/presentation/auth-cookies.test.js dist/presentation/client-address.test.js dist/presentation/login-origin.test.js dist/presentation/projects.controller.test.js dist/presentation/media.controller.test.js dist/presentation/problem-response.test.js dist/presentation/correlation.integration.test.js dist/auth.integration.test.js dist/auth-review.integration.test.js dist/auth-login-csrf.browser.test.js dist/auth-timing.integration.test.js dist/auth-concurrency.integration.test.js dist/auth-production-smoke.integration.test.js dist/queue-correlation.integration.test.js",
     "start": "node dist/main.js"
   },
   "dependencies": {
@@ -18,9 +18,11 @@
     "@nestjs/core": "12.1.1",
     "@nestjs/platform-express": "12.1.1",
     "@nestjs/swagger": "12.0.2",
+    "argon2": "0.44.0",
     "class-transformer": "0.5.1",
     "class-validator": "0.15.1",
     "ioredis": "5.8.2",
+    "jose": "6.1.0",
     "pg": "8.23.1",
     "reflect-metadata": "0.2.2",
     "rxjs": "7.8.2"

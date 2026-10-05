@@ -5,10 +5,11 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { after, test } from "node:test";
+import { seedUsers } from "./seed-users.mjs";
 
 /**
  * Real upload and inspection through the production API controllers.
- * The test actor is not production authentication. US-118 still has to sign the browser in.
+ * The page test binds a caller in the harness. Production requests use the session cookie.
  * FFprobe is started manually here because automatic inspection waits for US-129.
  */
 const root = path.resolve(".");
@@ -76,6 +77,7 @@ test("the media page shows FFprobe details after a direct upload and a manual in
   databaseUrl.pathname = `/${DATABASE}`;
   const pool = new Pool({ connectionString: databaseUrl.toString() });
   await applyMigrations(pool);
+  await seedUsers(pool, [OWNER]);
   const projects = new PostgresProjectRepository(pool);
   const media = new PostgresMediaAssetRepository(pool);
   const objects = new S3ObjectStorage(storage);

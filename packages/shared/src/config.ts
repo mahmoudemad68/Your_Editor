@@ -29,6 +29,12 @@ export interface ApiConfig {
   readonly redisUrl: string;
   readonly port: number;
   readonly host: string;
+  readonly authJwtSecret: string;
+  readonly authCookieSecure: boolean;
+  readonly authClockSkewMs: number;
+  readonly authPostCommitDelayMs: number;
+  readonly authTrustedOrigins: readonly string[];
+  readonly authTrustedProxies: readonly string[];
   readonly objectStorage: ApiObjectStorageConfig;
 }
 
@@ -208,12 +214,105 @@ const apiSchema = z
       "Set it to the object-storage region, for example us-east-1.",
     ),
     S3_PRESIGN_TTL_SECONDS: presignTtlSeconds(),
+    AUTH_JWT_SECRET: requiredString(
+      "AUTH_JWT_SECRET",
+      "Set it to a random signing secret of at least 32 characters. Do not reuse a password.",
+    ).refine((value) => value.length >= 32, {
+      error: "AUTH_JWT_SECRET must be at least 32 characters.",
+    }),
+    AUTH_COOKIE_SECURE: z.string().optional(),
+    EDITAGENT_RUNTIME: z.string().optional(),
+    AUTH_TRUSTED_ORIGINS: z.string().optional(),
+    AUTH_TRUSTED_PROXIES: z.string().optional(),
+    AUTH_POST_COMMIT_DELAY_MS: z
+      .string()
+      .optional()
+      .refine((value) => value === undefined || /^[0-9]+$/.test(value), {
+        error: "AUTH_POST_COMMIT_DELAY_MS must be a non-negative whole number of milliseconds.",
+      }),
+    AUTH_CLOCK_SKEW_MS: z
+      .string()
+      .optional()
+      .refine(
+        (value) => {
+          if (value === undefined) {
+            return true;
+          }
+          return /^-?[0-9]+$/.test(value);
+        },
+        { error: "AUTH_CLOCK_SKEW_MS must be a whole number of milliseconds." },
+      )
+      .refine(
+        (value) => {
+          if (value === undefined) {
+            return true;
+          }
+          const parsed = Number(value);
+          return parsed >= -86_400_000 && parsed <= 86_400_000;
+        },
+        {
+          error: "AUTH_CLOCK_SKEW_MS must be from -86400000 through 86400000.",
+        },
+      ),
+  })
+  .superRefine((env, context) => {
+    const runtime = env.EDITAGENT_RUNTIME ?? "development";
+    if (runtime !== "development" && runtime !== "staging" && runtime !== "production") {
+      context.addIssue({
+        code: "custom",
+        path: ["EDITAGENT_RUNTIME"],
+        message: "EDITAGENT_RUNTIME must be development, staging, or production.",
+      });
+    }
+    const secure = env.AUTH_COOKIE_SECURE === undefined ? true : env.AUTH_COOKIE_SECURE === "true";
+    const skew = env.AUTH_CLOCK_SKEW_MS === undefined ? 0 : Number(env.AUTH_CLOCK_SKEW_MS);
+    const delay =
+      env.AUTH_POST_COMMIT_DELAY_MS === undefined ? 0 : Number(env.AUTH_POST_COMMIT_DELAY_MS);
+    const origins = splitList(env.AUTH_TRUSTED_ORIGINS);
+    if ((runtime === "staging" || runtime === "production") && origins.length === 0) {
+      context.addIssue({
+        code: "custom",
+        path: ["AUTH_TRUSTED_ORIGINS"],
+        message:
+          "AUTH_TRUSTED_ORIGINS must list the HTTPS site origins allowed to submit sign-in when EDITAGENT_RUNTIME is staging or production.",
+      });
+    }
+    if ((runtime === "staging" || runtime === "production") && delay !== 0) {
+      context.addIssue({
+        code: "custom",
+        path: ["AUTH_POST_COMMIT_DELAY_MS"],
+        message: "AUTH_POST_COMMIT_DELAY_MS must be 0 outside development.",
+      });
+    }
+    if ((runtime === "staging" || runtime === "production") && skew !== 0) {
+      context.addIssue({
+        code: "custom",
+        path: ["AUTH_CLOCK_SKEW_MS"],
+        message: "AUTH_CLOCK_SKEW_MS must be 0 when EDITAGENT_RUNTIME is staging or production.",
+      });
+    }
+    if ((runtime === "staging" || runtime === "production") && !secure) {
+      context.addIssue({
+        code: "custom",
+        path: ["AUTH_COOKIE_SECURE"],
+        message:
+          "AUTH_COOKIE_SECURE must be true when EDITAGENT_RUNTIME is staging or production. Staging cannot send authentication cookies without the Secure attribute.",
+      });
+    }
   })
   .transform((env): ApiConfig => ({
     databaseUrl: env.DATABASE_URL,
     redisUrl: env.REDIS_URL,
     port: env.PORT,
     host: env.HOST,
+    authJwtSecret: env.AUTH_JWT_SECRET,
+    authCookieSecure:
+      env.AUTH_COOKIE_SECURE === undefined ? true : env.AUTH_COOKIE_SECURE === "true",
+    authClockSkewMs: env.AUTH_CLOCK_SKEW_MS === undefined ? 0 : Number(env.AUTH_CLOCK_SKEW_MS),
+    authPostCommitDelayMs:
+      env.AUTH_POST_COMMIT_DELAY_MS === undefined ? 0 : Number(env.AUTH_POST_COMMIT_DELAY_MS),
+    authTrustedOrigins: splitList(env.AUTH_TRUSTED_ORIGINS),
+    authTrustedProxies: splitList(env.AUTH_TRUSTED_PROXIES),
     objectStorage: {
       endpoint: env.S3_ENDPOINT,
       publicEndpoint: env.S3_PUBLIC_ENDPOINT,
@@ -302,6 +401,16 @@ const storageWorkerSchema = z
       region: env.S3_REGION,
     },
   }));
+
+function splitList(value: string | undefined): readonly string[] {
+  if (value === undefined || value.trim().length === 0) {
+    return [];
+  }
+  return value
+    .split(",")
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+}
 
 function parseProcessEnv<T>(processName: string, schema: z.ZodType<T>, env: EnvSource): T {
   const result = schema.safeParse(env);

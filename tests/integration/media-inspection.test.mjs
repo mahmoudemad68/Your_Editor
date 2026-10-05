@@ -6,6 +6,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, before, describe, test } from "node:test";
+import { seedUsers } from "./seed-users.mjs";
 import assert from "node:assert/strict";
 
 const root = path.resolve(".");
@@ -68,7 +69,8 @@ function withDatabase(url, database) {
 function storageConfig() {
   return {
     endpoint: process.env.S3_ENDPOINT ?? "http://127.0.0.1:9000",
-    publicEndpoint: process.env.S3_PUBLIC_ENDPOINT ?? "http://127.0.0.1:9000",
+    publicEndpoint:
+      process.env.S3_PUBLIC_ENDPOINT ?? process.env.S3_ENDPOINT ?? "http://127.0.0.1:9000",
     bucket: process.env.S3_BUCKET ?? "editagent",
     accessKeyId: process.env.S3_ACCESS_KEY_ID ?? "editagent",
     secretAccessKey: process.env.S3_SECRET_ACCESS_KEY ?? "editagent-dev-secret",
@@ -96,6 +98,7 @@ describe("FFprobe inspection against PostgreSQL and MinIO", { concurrency: 1 }, 
     await admin.end();
     pool = new Pool({ connectionString: databaseUrl });
     await applyMigrations(pool);
+    await seedUsers(pool, [OWNER, EDITOR, VIEWER, STRANGER]);
     projects = new PostgresProjectRepository(pool);
     media = new PostgresMediaAssetRepository(pool);
     objects = new S3ObjectStorage(config);

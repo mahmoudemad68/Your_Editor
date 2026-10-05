@@ -62,7 +62,8 @@ function withDatabase(url: string, database: string): string {
 function storageConfig() {
   return {
     endpoint: process.env["S3_ENDPOINT"] ?? "http://127.0.0.1:9000",
-    publicEndpoint: process.env["S3_PUBLIC_ENDPOINT"] ?? "http://127.0.0.1:9000",
+    publicEndpoint:
+      process.env["S3_PUBLIC_ENDPOINT"] ?? process.env["S3_ENDPOINT"] ?? "http://127.0.0.1:9000",
     bucket: process.env["S3_BUCKET"] ?? "editagent",
     accessKeyId: process.env["S3_ACCESS_KEY_ID"] ?? "editagent",
     secretAccessKey: process.env["S3_SECRET_ACCESS_KEY"] ?? "editagent-dev-secret",
@@ -219,6 +220,12 @@ test(
     );
     try {
       await applyMigrations(pool);
+      await pool.query(
+        `INSERT INTO users (id, email, password_hash, failed_login_count, created_at, updated_at)
+         VALUES ($1, $2, $3, 0, 10, 10)
+         ON CONFLICT (id) DO NOTHING`,
+        [OWNER, `${OWNER}@example.test`, "$argon2id$v=19$m=19456,t=2,p=1$c2FsdA$aGFzaA"],
+      );
       await objects.ensureBucket();
       observePostgresPool(pool, () => undefined);
       await app.listen(0, "127.0.0.1");
