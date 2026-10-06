@@ -5,6 +5,7 @@ import { PermanentJobError } from "./job-errors.js";
 export const DERIVATION_VERSION = "us128-v1";
 export const PROXY_FPS = 30;
 export const PROXY_GOP = 30;
+export const SPRITE_SAMPLING_FPS = 30;
 export const DERIVE_TIMEOUT_MS = 1_800_000;
 export type DerivativeVariant = "proxy" | "asr" | "mix" | "poster" | "sprite";
 export interface DerivativePlan {
@@ -75,6 +76,8 @@ export function derivativePlans(source: MediaAsset): readonly DerivativePlan[] {
         aspect: "display-sar-square-pixels-even",
         fps: PROXY_FPS,
         fpsRounding: "near",
+        // Legacy signature field names the -frames:v CAP, not an exact count.
+        // Keep its value/signature: F-2 corrects the claim, not proxy encoding.
         frameCount: "ceil-duration-times-fps",
         codec: "libx264",
         pixelFormat: "yuv420p",
@@ -147,7 +150,9 @@ export function derivativePlans(source: MediaAsset): readonly DerivativePlan[] {
         columns: Math.min(5, samples),
         rows: Math.ceil(samples / Math.min(5, samples)),
         timestampsUs,
-        sampling: "even-midpoints-maximum-20-five-seconds",
+        sampling: "even-midpoints-cfr-nearest-index-v2",
+        samplingFps: SPRITE_SAMPLING_FPS,
+        frameSelection: "round-midpoint-us-times-fps",
         codec: "mjpeg",
         quality: 3,
       },

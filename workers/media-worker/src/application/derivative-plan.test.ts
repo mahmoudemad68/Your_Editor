@@ -129,6 +129,28 @@ test("sprite midpoint coverage and short-source plan are deterministic and recov
   );
 });
 
+test("F-1 invalidates only the buggy sprite signature; other policies retain exact old-HEAD signatures", () => {
+  // Golden values captured from ac701f21's actual plan for this same fixture.
+  const historical = {
+    proxy: "3b0b1a01680d8dfdce0958692722b1e93996e04099e97428980c4c502a2ba930",
+    asr: "0bfbca272c9d39038b492fbf7ff8cb853aee053fe6253c2a461c6b9124270a23",
+    mix: "43d0c5ed26331a35f23f1bd5aa821cbfd1f07646d4e8c34caf596bd7afacad6b",
+    poster: "a4b15acf7677558df4b7e9531ea407bf2ce4c1a4a6059faf6c097af9de0d67ca",
+    sprite: "38c96402d28097a9a2c08e5aaec3e8ff5115d726f9cee3d377857baf87036e64",
+  };
+  for (const plan of derivativePlans(source())) {
+    if (plan.variant === "sprite") {
+      assert.notEqual(plan.signature, historical.sprite);
+      const legacy = { ...plan.parameters };
+      delete legacy["samplingFps"];
+      delete legacy["frameSelection"];
+      legacy["sampling"] = "even-midpoints-maximum-20-five-seconds";
+      assert.equal(parameterSignature(legacy), historical.sprite);
+      assert.equal(plan.parameters["samplingFps"], 30);
+    } else assert.equal(plan.signature, historical[plan.variant]);
+  }
+});
+
 test("durable DerivedAsset restores artifact, freezes parameters and rejects keys/MIME/project conflicts", () => {
   const plan = derivativePlans(source())[0]!;
   const artifact = {

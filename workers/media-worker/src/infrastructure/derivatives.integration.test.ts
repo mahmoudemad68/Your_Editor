@@ -364,6 +364,121 @@ test(
         },
       );
       await t.test(
+        "F-1 fixed sprite coexists with immutable buggy output and preserves all unrelated artifacts",
+        async () => {
+          const file = path.join(directory, "legacy-policy-source.mp4");
+          ffmpeg([
+            "-i",
+            sourceFile,
+            "-c",
+            "copy",
+            "-metadata",
+            "comment=legacy-policy-fixture",
+            file,
+          ]);
+          const asset = await persist(file);
+          const plans = derivativePlans(asset);
+          const sprite = plans.find((p) => p.variant === "sprite")!;
+          const legacyParameters = { ...sprite.parameters };
+          delete legacyParameters["samplingFps"];
+          delete legacyParameters["frameSelection"];
+          legacyParameters["sampling"] = "even-midpoints-maximum-20-five-seconds";
+          const legacySignature = parameterSignature(legacyParameters);
+          const legacy = {
+            ...sprite,
+            signature: legacySignature,
+            parameters: legacyParameters,
+            storageKey: sprite.storageKey.replace(sprite.signature, legacySignature),
+          };
+          keys.add(legacy.storageKey);
+          assert.notEqual(legacy.signature, sprite.signature);
+          const prepared = await realProcessor.prepare(asset, file, signal());
+          const oldRows: DerivedAsset[] = [];
+          try {
+            for (const plan of plans) {
+              const oldPlan = plan.variant === "sprite" ? legacy : plan;
+              let output;
+              if (plan.variant === "sprite") {
+                const legacyFile = path.join(directory, "old-buggy-sprite.jpg");
+                const args = [...buildDerivativeArgs(file, legacyFile, legacy)];
+                const count = (legacyParameters["timestampsUs"] as number[]).length;
+                const seconds = Number(asset.duration) / 1_000_000;
+                args[args.indexOf("-vf") + 1] =
+                  `tpad=stop_mode=clone:stop_duration=5,fps=${count}/${seconds}:start_time=${seconds / (2 * count)}:round=near,scale=w='max(2,trunc(iw*sar/2)*2)':h=ih,setsar=1,scale=160:90:force_original_aspect_ratio=decrease,pad=160:90:(ow-iw)/2:(oh-ih)/2,tile=${legacyParameters["columns"]}x${legacyParameters["rows"]}:nb_frames=${count}`;
+                await runControlledProcess(config.ffmpegPath, args, signal(), 30000);
+                output = {
+                  filePath: legacyFile,
+                  metadata: { variant: "sprite", parameters: legacyParameters },
+                };
+              } else output = await prepared.generate(plan, signal());
+              const artifact = await objects.put(asset, oldPlan, output, signal());
+              oldRows.push(
+                await mediaRepo.save(
+                  new DerivedAsset(newId(), asset.id, oldPlan.kind, now(), undefined, artifact),
+                ),
+              );
+            }
+          } finally {
+            await prepared.release();
+          }
+          const oldSprite = oldRows.find(
+            (row) => row.artifact!.parameterSignature === legacySignature,
+          )!;
+          const oldSnapshot = oldSprite.toSnapshot();
+          const before = generationCount;
+          const fixed = await deriveMediaAsset(asset.id, project, signal(), deps);
+          assert.equal(generationCount - before, 1, "only the fixed sprite needs generation");
+          for (const old of oldRows.filter((row) => row !== oldSprite))
+            assert.deepEqual(
+              fixed.find((row) => row.id === old.id)!.toSnapshot(),
+              old.toSnapshot(),
+            );
+          const fixedSprite = fixed.find((row) => row.artifact!.metadata["variant"] === "sprite")!;
+          assert.notEqual(fixedSprite.id, oldSprite.id);
+          assert.notEqual(fixedSprite.artifact!.sha256, oldSprite.artifact!.sha256);
+          assert.deepEqual(
+            (await mediaRepo.findBySignature(asset.id, "thumbnail", legacySignature))!.toSnapshot(),
+            oldSnapshot,
+          );
+          assert.deepEqual(await objects.find(asset, legacy, signal()), oldSprite.artifact);
+          const second = await deriveMediaAsset(asset.id, project, signal(), deps);
+          assert.deepEqual(
+            second.map((row) => row.toSnapshot()),
+            fixed.map((row) => row.toSnapshot()),
+          );
+          assert.equal(generationCount - before, 1, "zero additional FFmpeg runs on fixed rerun");
+          assert.equal(
+            (await mediaRepo.listByMediaAsset(asset.id, project)).length,
+            6,
+            "five fixed results plus one historical immutable sprite",
+          );
+          const count = (
+            await s3.send(
+              new ListObjectsV2Command({
+                Bucket: bucket,
+                Prefix: `projects/${project}/derived/${asset.id}/`,
+              }),
+            )
+          ).Contents!.length;
+          assert.equal(count, 6);
+          console.log(
+            "SPRITE_POLICY_MIGRATION",
+            JSON.stringify({
+              oldSignature: legacySignature,
+              fixedSignature: sprite.signature,
+              oldStorageKey: legacy.storageKey,
+              fixedStorageKey: sprite.storageKey,
+              firstFixedGenerations: 1,
+              secondFixedGenerations: 0,
+              preservedOtherIds: oldRows.filter((row) => row !== oldSprite).map((row) => row.id),
+              historicalSpriteUnchanged: true,
+              totalObjects: count,
+              totalRows: 6,
+            }),
+          );
+        },
+      );
+      await t.test(
         "recovery rejects object-size descriptor conflicts and changed staged source identity",
         async () => {
           const plan = derivativePlans(source)[0]!;

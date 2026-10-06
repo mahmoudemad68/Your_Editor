@@ -12,6 +12,7 @@ import {
   DERIVE_TIMEOUT_MS,
   PROXY_FPS,
   PROXY_GOP,
+  SPRITE_SAMPLING_FPS,
   type DerivativePlan,
 } from "../application/derivative-plan.js";
 import { PermanentJobError, JobTimeoutError } from "../application/job-errors.js";
@@ -133,12 +134,18 @@ export function buildDerivativeArgs(
     case "sprite": {
       const timestamps = p["timestampsUs"] as readonly number[];
       const count = timestamps.length;
+      // Normalize the source timeline, then explicitly retain each midpoint's
+      // nearest CFR frame index. A low-rate fps filter instead emits the end of
+      // an interval: start_time does not make it select midpoint pixel content.
+      const selected = timestamps
+        .map((at) => `eq(n,${Math.round((at * SPRITE_SAMPLING_FPS) / 1_000_000)})`)
+        .join("+");
       args.push(
         "-map",
         "0:v:0",
         "-an",
         "-vf",
-        `tpad=stop_mode=clone:stop_duration=5,fps=${count}/${duration}:start_time=${duration / (2 * count)}:round=near,${THUMB(160, 90)},tile=${p["columns"]}x${p["rows"]}:nb_frames=${count}`,
+        `setpts=PTS-STARTPTS,tpad=stop_mode=clone:stop_duration=1,fps=${SPRITE_SAMPLING_FPS}:start_time=0:round=near,select='${selected}',${THUMB(160, 90)},tile=${p["columns"]}x${p["rows"]}:nb_frames=${count}`,
         "-frames:v",
         "1",
         "-c:v",
