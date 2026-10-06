@@ -6,10 +6,10 @@ The US-129 consumer reserves jobs from `MEDIA_INSPECT_QUEUE` (default `media`), 
 
 ```bash
 node dist/inspect.js <mediaAssetId>
-ALLOW_UNVALIDATED_DERIVATION=true node dist/enqueue-derive.js <projectId> <mediaAssetId>
+node dist/enqueue-derive.js <projectId> <mediaAssetId>
 ```
 
-The derivation command is an explicit **operator-only** trigger. The worker must also have `ALLOW_UNVALIDATED_DERIVATION=true` to execute it. The default is **false**. There is no API/browser trigger and no automatic upload/inspect-to-derive transition. Inspection completion is technical metadata, **not hostile-media validation**. US-127 is not implemented or claimed. Before enabling automatic production scheduling, US-127 must replace the temporary operator gate with a durable validation check and publish only validated sources. The application `DerivationGate` runs even when every result is reusable. This seam preserves `upload → inspect → validate → derive` without inventing validation status here.
+The derivation command remains **operator-only**. US-127 now requires a durable, current-policy `validated` source; inspection completion is technical metadata and never a security verdict. There is no automatic upload/inspect-to-derive transition. The application gate runs even for reusable results. The obsolete `ALLOW_UNVALIDATED_DERIVATION=true` bypass is refused. See [VALIDATION.md](VALIDATION.md) for byte/codec policy, limits, actual Linux sandbox requirements and rollout instructions.
 
 The job subject is the source MediaAsset. Payload fields are exactly `mediaAssetId`, `projectId`, `correlationId`, `version: us128-v1`; other fields are rejected. Paths, keys, URLs, commands, credentials and filenames cannot be supplied by jobs. Source/project binding is checked against PostgreSQL, and keys come from trusted persisted source identity.
 
@@ -58,11 +58,11 @@ Session-level advisory locks serialize per-source work across workers. Each lock
 
 Required environment: `DATABASE_URL`, `REDIS_URL`, `S3_ENDPOINT`, `S3_BUCKET`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_REGION`.
 
-Optional: `FFPROBE_PATH` (ffprobe), `FFPROBE_TIMEOUT_MS` (30,000), `FFMPEG_PATH` (ffmpeg), `PROBE_TMPDIR` (absolute directory), `ALLOW_UNVALIDATED_DERIVATION` (false), `MEDIA_INSPECT_QUEUE` (media).
+Optional: `FFPROBE_PATH` (ffprobe), `FFPROBE_TIMEOUT_MS` (30,000), `FFMPEG_PATH` (ffmpeg), `PROBE_TMPDIR` (absolute directory), `MEDIA_INSPECT_QUEUE` (media).
 
 The pinned custom FFmpeg 7.1.5 build has no network protocols or MPEG-DASH/libxml2. US-128 adds only the PCM float encoder, JPEG encoder/image2 muxer and required fps/pad/tile/rotation filters; this repair adds only the `select` filter, no demuxer or protocol. The worker image contains the actual codecs. Argument arrays, no shell, local staged inputs, `file` protocol whitelist, bounded diagnostics, two encode threads, one filter thread and 30-minute per-job deadline are used. Probe subprocesses have their own 30-second deadline. Cancellation propagates through S3, staging, FFmpeg and probing; FFmpeg receives SIGTERM then SIGKILL after 150 ms if needed. The existing isolated-job supervisor additionally reaps the whole process group on cancel/timeout/lock loss.
 
-Source streams once into a private unpredictable directory and is incrementally SHA-256 checked against the persisted upload identity before FFmpeg; all derivatives use that file. Scratch-space checks reserve source-rate PCM, bounded proxy/ASR/image output and headroom; output files are capped at 64 GiB. Successful/cancelled/failed/upload-failed paths release processor and staging directories in `finally`. SIGKILL/host loss cannot run finally: use ephemeral worker scratch volumes, clear stale private scratch directories only when their worker is confirmed stopped, and provision disk for concurrent jobs. Full US-127 sandbox/hostile-media policy remains future work.
+Source streams once into a private unpredictable directory and is incrementally SHA-256 checked against the persisted upload identity before FFmpeg; all derivatives use that file. Scratch-space checks reserve source-rate PCM, bounded proxy/ASR/image output and headroom; output files are capped at 64 GiB. Successful/cancelled/failed/upload-failed paths release processor and staging directories in `finally`. SIGKILL/host loss cannot run finally: use ephemeral worker scratch volumes, clear stale private scratch directories only when their worker is confirmed stopped, and provision disk for concurrent jobs. US-127 validation now runs before processing; see VALIDATION.md.
 
 Storage/local-runtime errors are retryable (three attempts, one-second exponential queue backoff); deterministic FFmpeg rejection, duration/format mismatch, invalid payload and ownership conflicts are permanent. Existing queue cancellation/deadline semantics remain authoritative. Low-frequency stage callbacks (`staging`, variant, `uploading`, `finalizing`) publish through the existing queue progress port. Publication is best-effort and does not expose secrets; no US-130 SSE/progress UI is added.
 
@@ -92,8 +92,8 @@ Independent QA on `ac701f21d7cda3f321916cebe56e587c596f5bba` failed: **F-1** spr
 The following findings remain unresolved tracked debt, not fixes in this repair:
 
 - **F-3 (Medium, non-blocking):** no supported operator re-enqueue after a terminal media.derive failure for the same source/version. US-129/job idempotency is unchanged.
-- **F-4:** no forced input demuxer. QA's shipped pinned runtime blocked local-file escape; US-127 must provide full hostile-input validation before automatic derivation.
-- **F-5:** outside the shipped image, default FFmpeg/FFprobe can resolve from PATH. Production/US-127 hardening should validate absolute pinned executable paths.
+- **F-4:** no forced input demuxer. QA's shipped pinned runtime blocked local-file escape; US-127 now forces byte-selected validation demuxers and a durable gate; derivation commands themselves remain unchanged.
+- **F-5:** outside the shipped image, default FFmpeg/FFprobe can resolve from PATH. The shipped image sets absolute pinned executable paths. Host development paths remain an explicit testing distinction.
 - **F-6:** canonical JSON sorts with localeCompare; QA found 138/138 signatures consistent, with no demonstrated current defect.
 - **F-7:** fake multi-process FFmpeg can expose pre-existing zombie/init behavior. Container init/subreaper hardening remains operational work.
 - **F-8:** object-only recovery trusts stored SHA metadata rather than independently re-reading/re-hashing object bytes.

@@ -192,3 +192,5 @@ export type {
   LockedUpload,
   StoragePart,
 } from "./modules/media/index.js";
+
+export * from "./modules/media/media-validation.js";

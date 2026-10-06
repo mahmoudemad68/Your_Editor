@@ -2,13 +2,19 @@
  * Media aggregate. Video, Audio, and Image are subtypes of MediaAsset.
  * Every constructor validates duration and timestamps.
  * Upload metadata is US-122. Technical inspection is US-126.
- * Hostile-file validation state belongs to US-127 and is not stored here.
+ * Hostile-file validation is US-127; inspection and validation are distinct.
  */
 
 import { type Instant, instant, requireAuditOrder } from "../../kernel/clock.js";
 import { DomainError } from "../../kernel/error.js";
 import { mediaAssetId, type MediaAssetId, projectId, type ProjectId } from "../../kernel/id.js";
 import { microseconds, type Microseconds } from "../../kernel/time.js";
+import {
+  mediaValidation,
+  type MediaValidationState,
+  type MediaValidationSnapshot,
+  type MediaRejectionCode,
+} from "./media-validation.js";
 import {
   completedInspection,
   failedInspection,
@@ -46,6 +52,7 @@ export interface MediaUploadMetadata {
 }
 
 export interface MediaAssetSnapshot {
+  readonly validation?: MediaValidationSnapshot | null;
   readonly id: string;
   readonly projectId: string;
   readonly kind: string;
@@ -78,6 +85,7 @@ export interface MediaAssetSnapshot {
 }
 
 export class MediaAsset {
+  readonly validation: MediaValidationState;
   readonly id: MediaAssetId;
   readonly projectId: ProjectId;
   readonly kind: MediaKind;
@@ -117,7 +125,9 @@ export class MediaAsset {
     updatedAt?: Instant | string | bigint,
     upload?: MediaUploadMetadata | null,
     inspection?: InspectionState | null,
+    validation?: MediaValidationSnapshot | null,
   ) {
+    this.validation = mediaValidation(validation);
     const created = instant(createdAt);
     const updated = updatedAt == null ? created : instant(updatedAt);
     this.id = mediaAssetId(String(id));
@@ -152,6 +162,16 @@ export class MediaAsset {
     this.sampleRate = inspected.sampleRate;
     this.streams = inspected.streams;
     this.inspectionError = inspected.error;
+    if (
+      this.validation.status === "validated" &&
+      (this.inspectionStatus !== "completed" || this.validation.sourceSha256 !== this.contentSha256)
+    )
+      throw new DomainError("Validated media must match its inspected uploaded source.");
+    if (
+      this.validation.checkedAt !== null &&
+      (this.validation.checkedAt < created || this.validation.checkedAt > updated)
+    )
+      throw new DomainError("Invalid validation audit time.");
     if (new.target === MediaAsset) {
       Object.freeze(this);
     }
@@ -222,6 +242,7 @@ export class MediaAsset {
         snapshot.updatedAt,
         upload,
         inspection,
+        snapshot.validation,
       );
     }
     if (kind === "audio") {
@@ -233,6 +254,7 @@ export class MediaAsset {
         snapshot.updatedAt,
         upload,
         inspection,
+        snapshot.validation,
       );
     }
     return new Image(
@@ -243,6 +265,7 @@ export class MediaAsset {
       snapshot.updatedAt,
       upload,
       inspection,
+      snapshot.validation,
     );
   }
 
@@ -271,8 +294,33 @@ export class MediaAsset {
     );
   }
 
+  recordValidation(
+    policySignature: string,
+    rejectionCode: MediaRejectionCode | null,
+    at: Instant,
+  ): Video | Audio | Image {
+    if (
+      this.contentSha256 === null ||
+      (rejectionCode === null && this.inspectionStatus !== "completed")
+    )
+      throw new DomainError("Validation requires uploaded and inspected media.");
+    const updatedAt = this.inspectionInstant(at);
+    return MediaAsset.restore({
+      ...this.toSnapshot(),
+      updatedAt,
+      validation: {
+        status: rejectionCode === null ? "validated" : "rejected",
+        policySignature,
+        sourceSha256: this.contentSha256,
+        checkedAt: updatedAt,
+        rejectionCode,
+      },
+    });
+  }
+
   toSnapshot(): MediaAssetSnapshot {
     return {
+      validation: this.validation,
       id: this.id,
       projectId: this.projectId,
       kind: this.kind,
@@ -320,6 +368,7 @@ export class MediaAsset {
   ): MediaAssetSnapshot {
     return {
       ...this.toSnapshot(),
+      validation: null,
       duration,
       updatedAt,
       inspectionStatus: inspection.status,
@@ -361,8 +410,19 @@ export class Video extends MediaAsset {
     updatedAt?: Instant | string | bigint,
     upload?: MediaUploadMetadata | null,
     inspection?: InspectionState | null,
+    validation?: MediaValidationSnapshot | null,
   ) {
-    super(id, projectIdValue, "video", createdAt, duration, updatedAt, upload, inspection);
+    super(
+      id,
+      projectIdValue,
+      "video",
+      createdAt,
+      duration,
+      updatedAt,
+      upload,
+      inspection,
+      validation,
+    );
     Object.freeze(this);
   }
 }
@@ -378,8 +438,19 @@ export class Audio extends MediaAsset {
     updatedAt?: Instant | string | bigint,
     upload?: MediaUploadMetadata | null,
     inspection?: InspectionState | null,
+    validation?: MediaValidationSnapshot | null,
   ) {
-    super(id, projectIdValue, "audio", createdAt, duration, updatedAt, upload, inspection);
+    super(
+      id,
+      projectIdValue,
+      "audio",
+      createdAt,
+      duration,
+      updatedAt,
+      upload,
+      inspection,
+      validation,
+    );
     Object.freeze(this);
   }
 }
@@ -395,8 +466,19 @@ export class Image extends MediaAsset {
     updatedAt?: Instant | string | bigint,
     upload?: MediaUploadMetadata | null,
     inspection?: InspectionState | null,
+    validation?: MediaValidationSnapshot | null,
   ) {
-    super(id, projectIdValue, "image", createdAt, duration, updatedAt, upload, inspection);
+    super(
+      id,
+      projectIdValue,
+      "image",
+      createdAt,
+      duration,
+      updatedAt,
+      upload,
+      inspection,
+      validation,
+    );
     Object.freeze(this);
   }
 }

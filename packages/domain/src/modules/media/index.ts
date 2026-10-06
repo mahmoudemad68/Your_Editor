@@ -61,3 +61,5 @@ export type {
   UploadSessionRepository,
   LockedUpload,
 } from "./upload-session.js";
+
+export * from "./media-validation.js";

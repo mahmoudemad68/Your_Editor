@@ -11,6 +11,8 @@ chmod 0777 "$work"
 trap 'rm -rf "$work"' EXIT
 
 docker run --rm --entrypoint id "$image" | grep -q 'uid=10001'
+# US-127: production kernel capability must fail closed, including file and network isolation.
+docker run --rm --entrypoint /app/dist/native/media-sandbox "$image" --check
 docker run --rm --user root --entrypoint sh "$image" -c 'if dpkg -s libxml2 >/dev/null 2>&1; then exit 1; fi'
 docker run --rm --entrypoint sh "$image" -c 'if ldd /usr/local/bin/ffprobe /usr/local/bin/ffmpeg | grep -i xml; then exit 1; fi'
 docker run --rm --entrypoint sh "$image" -c 'if ffmpeg -hide_banner -demuxers | grep -w dash; then exit 1; fi'

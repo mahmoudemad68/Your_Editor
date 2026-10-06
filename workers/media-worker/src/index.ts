@@ -1,3 +1,4 @@
+import { assertValidationSandbox } from "./infrastructure/media-validator.js";
 import { Pool } from "pg";
 import { BullMqJobQueue, observePostgresPool, postgresAndRedisReady } from "@editagent/job-queue";
 import {
@@ -13,6 +14,7 @@ import { mediaAdapterPackage } from "./infrastructure/marker.js";
 
 export function main(): void {
   const config = loadMediaWorkerConfig();
+  assertValidationSandbox();
   startNoopTracing("media-worker");
   const logger = createServiceLogger("media-worker");
   const pool = new Pool({ connectionString: config.databaseUrl });

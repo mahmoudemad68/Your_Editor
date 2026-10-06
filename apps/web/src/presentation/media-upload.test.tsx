@@ -30,6 +30,9 @@ function details(
   extra: Partial<MediaDetails> = {},
 ): MediaDetails {
   return {
+    validationStatus: "pending",
+    rejectionCode: null,
+    rejectionMessage: null,
     id: MEDIA,
     projectId: PROJECT,
     kind: "video",
@@ -189,6 +192,9 @@ test("a successful upload sends the signed headers and shows pending details", a
         complete: async () => ({
           ok: true,
           data: {
+            validationStatus: "pending",
+            rejectionCode: null,
+            rejectionMessage: null,
             id: MEDIA,
             projectId: PROJECT,
             kind: "video",
