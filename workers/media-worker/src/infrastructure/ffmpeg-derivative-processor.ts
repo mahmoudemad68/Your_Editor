@@ -134,7 +134,9 @@ export function buildDerivativeArgs(
     case "sprite": {
       const timestamps = p["timestampsUs"] as readonly number[];
       const count = timestamps.length;
-      // Normalize the source timeline, then explicitly retain each midpoint's
+      // Pad before setpts: the pinned runtime cannot reliably infer tpad's
+      // frame duration after PTS reset. Cover even an audio-led source timeline,
+      // then explicitly retain each midpoint's
       // nearest CFR frame index. A low-rate fps filter instead emits the end of
       // an interval: start_time does not make it select midpoint pixel content.
       const selected = timestamps
@@ -145,7 +147,7 @@ export function buildDerivativeArgs(
         "0:v:0",
         "-an",
         "-vf",
-        `setpts=PTS-STARTPTS,tpad=stop_mode=clone:stop_duration=1,fps=${SPRITE_SAMPLING_FPS}:start_time=0:round=near,select='${selected}',${THUMB(160, 90)},tile=${p["columns"]}x${p["rows"]}:nb_frames=${count}`,
+        `tpad=stop_mode=clone:stop_duration=${duration},setpts=PTS-STARTPTS,fps=${SPRITE_SAMPLING_FPS}:start_time=0:round=near,select='${selected}',${THUMB(160, 90)},tile=${p["columns"]}x${p["rows"]}:nb_frames=${count}`,
         "-frames:v",
         "1",
         "-c:v",

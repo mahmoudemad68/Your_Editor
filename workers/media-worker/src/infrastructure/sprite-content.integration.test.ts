@@ -127,7 +127,12 @@ async function source(file: string): Promise<MediaAsset> {
     mimeType: "video/mp4",
     byteSize: (await stat(file)).size,
     contentSha256: createHash("sha256").update(bytes).digest("hex"),
-  }).recordInspection(await new FFprobeMediaProbe().inspect({ filePath: file }), instant(2n));
+  }).recordInspection(
+    await new FFprobeMediaProbe({ executable: process.env["FFPROBE_PATH"] ?? "ffprobe" }).inspect({
+      filePath: file,
+    }),
+    instant(2n),
+  );
 }
 
 /** Decode the cells from the pixels of each actual JPEG crop, not its metadata.

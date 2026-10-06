@@ -129,7 +129,7 @@ test("sprite midpoint coverage and short-source plan are deterministic and recov
   );
 });
 
-test("F-1 invalidates only the buggy sprite signature; other policies retain exact old-HEAD signatures", () => {
+test("F-1/F-11 distinguish v1/v2/v3 sprites; other policies retain exact old-HEAD signatures", () => {
   // Golden values captured from ac701f21's actual plan for this same fixture.
   const historical = {
     proxy: "3b0b1a01680d8dfdce0958692722b1e93996e04099e97428980c4c502a2ba930",
@@ -142,11 +142,20 @@ test("F-1 invalidates only the buggy sprite signature; other policies retain exa
     if (plan.variant === "sprite") {
       assert.notEqual(plan.signature, historical.sprite);
       const legacy = { ...plan.parameters };
+      delete legacy["finalFramePadding"];
+      legacy["sampling"] = "even-midpoints-cfr-nearest-index-v2";
+      const v2Signature = parameterSignature(legacy);
+      // Golden v2 captured from 427d32c4 for this same fixture.
+      assert.equal(v2Signature, "1e5dad6e2926495d1e803f8611d10552c49f50cd67b31403512d8c18e36f2fd1");
+      assert.notEqual(v2Signature, plan.signature);
+      assert.notEqual(v2Signature, historical.sprite);
       delete legacy["samplingFps"];
       delete legacy["frameSelection"];
       legacy["sampling"] = "even-midpoints-maximum-20-five-seconds";
       assert.equal(parameterSignature(legacy), historical.sprite);
       assert.equal(plan.parameters["samplingFps"], 30);
+      assert.equal(plan.parameters["sampling"], "even-midpoints-cfr-nearest-index-v3");
+      assert.equal(plan.parameters["finalFramePadding"], "source-duration-before-pts-reset");
     } else assert.equal(plan.signature, historical[plan.variant]);
   }
 });

@@ -64,7 +64,7 @@ function ffmpeg(args: string[]): void {
 }
 function probe(file: string): Record<string, unknown> {
   const result = spawnSync(
-    "ffprobe",
+    "ffprobe", // independent measurement also supports JPEG image probing
     [
       "-v",
       "error",
@@ -95,6 +95,19 @@ test(
     db.pathname = `/${database}`;
     const pool = new Pool({ connectionString: db.toString(), max: 1 });
     const config = loadMediaWorkerConfig(env);
+    console.log(
+      "DERIVATION_TEST_RUNTIME",
+      JSON.stringify({
+        ffmpegPath: config.ffmpegPath,
+        ffprobePath: config.ffprobePath,
+        ffmpegVersion: spawnSync(config.ffmpegPath, ["-version"], {
+          encoding: "utf8",
+        }).stdout.split("\n")[0],
+        fixtureEncoder: "host ffmpeg (lavfi)",
+        pixelDecoder: "host ffmpeg (rawvideo)",
+        independentOutputProbe: "host ffprobe (including JPEG)",
+      }),
+    );
     const s3 = createMediaS3Client(config.objectStorage);
     const bucket = config.objectStorage.bucket;
     const directory = await mkdtemp(path.join(tmpdir(), "us128-test-"));
@@ -157,7 +170,7 @@ test(
       const raw = await mediaRepo.loadSource(id, project);
       assert.ok(raw);
       const inspected = raw.recordInspection(
-        await new FFprobeMediaProbe().inspect({ filePath: file }),
+        await new FFprobeMediaProbe({ executable: config.ffprobePath }).inspect({ filePath: file }),
         now(),
       );
       // Use the existing worker inspection repository, through its public adapter.
@@ -166,6 +179,63 @@ test(
       await new PostgresMediaInspectionRepository(pool).saveInspection(inspected, 0n);
       for (const p of derivativePlans(inspected)) keys.add(p.storageKey);
       return inspected;
+    }
+    async function completeJob(asset: MediaAsset) {
+      const runtimeEnv = {
+        ...env,
+        DATABASE_URL: db.toString(),
+        FFMPEG_PATH: config.ffmpegPath,
+        FFPROBE_PATH: config.ffprobePath,
+        PROBE_TMPDIR: directory,
+        ALLOW_UNVALIDATED_DERIVATION: "true",
+      };
+      const savedEnv = Object.fromEntries(
+        Object.keys(runtimeEnv).map((key) => [key, process.env[key]]),
+      );
+      Object.assign(process.env, runtimeEnv);
+      const queue = new BullMqJobQueue(isolatedRedisUrl(8, env.REDIS_URL));
+      const jobs = new PostgresJobRepository(pool);
+      const queueName = `f11${uniqueQueueSuffix()}`;
+      const jobDeps = {
+        jobs,
+        queue,
+        supervisor: new ChildProcessJobSupervisor(),
+        now,
+        newAttemptId: newId,
+      };
+      try {
+        const published = await publishMediaDeriveJob(jobDeps, {
+          jobId: newId(),
+          mediaAssetId: asset.id,
+          projectId: project,
+          correlationId: "us128-f11",
+          queueName,
+        });
+        const output = await runNextJob(jobDeps, queueName, {
+          modulePath: path.join(__dirname, "../handlers/media-jobs.js"),
+          exportName: "handleMediaJob",
+        });
+        const row = await pool.query("SELECT status FROM jobs WHERE id=$1", [published.jobId]);
+        const rows = await mediaRepo.listByMediaAsset(asset.id, project);
+        console.log(
+          "F11_JOB_STATE",
+          JSON.stringify({
+            sourceDurationUs: asset.duration?.toString(),
+            output,
+            status: row.rows[0]?.status,
+            rows: rows.length,
+          }),
+        );
+        assert.equal(output, "done", "partial derivation must not be treated as job success");
+        assert.equal(row.rows[0]?.status, "Completed");
+        return rows;
+      } finally {
+        await queue.close();
+        for (const [key, value] of Object.entries(savedEnv)) {
+          if (value === undefined) delete process.env[key];
+          else process.env[key] = value;
+        }
+      }
     }
     try {
       for (const name of (await readdir(path.join(root, "apps/api/migrations")))
@@ -364,7 +434,155 @@ test(
         },
       );
       await t.test(
-        "F-1 fixed sprite coexists with immutable buggy output and preserves all unrelated artifacts",
+        "F-11 short and audio-led timelines complete real jobs without partial terminal outputs",
+        async (f11) => {
+          for (const [name, durationUs, videoUs, audio] of [
+            ["33333us", 33_333, 33_333, true],
+            ["33334us", 33_334, 33_334, true],
+            ["40000us", 40_000, 40_000, true],
+            ["video-0.5-audio-1.4", 1_400_000, 500_000, true],
+            ["short-no-audio", 40_000, 40_000, false],
+          ] as const)
+            await f11.test(name, async () => {
+              const file = path.join(directory, `f11-${name}.mov`);
+              const oneFrame = videoUs < 100_000;
+              const rate = oneFrame ? `1000000/${videoUs}` : "30";
+              const video = oneFrame
+                ? `color=blue:size=160x90:rate=${rate}:duration=${videoUs / 1e6}`
+                : `color=red:size=160x90:rate=30:duration=0.5,drawbox=color=blue:t=fill:enable='eq(n,14)'`;
+              // PCM avoids AAC packet-duration quantization at the one-frame boundary.
+              const samples = Math.floor((durationUs * 48_000) / 1e6);
+              ffmpeg([
+                "-f",
+                "lavfi",
+                "-i",
+                video,
+                ...(audio
+                  ? ["-f", "lavfi", "-i", `sine=sample_rate=48000,atrim=end_sample=${samples}`]
+                  : []),
+                "-c:v",
+                "libx264",
+                "-preset",
+                "ultrafast",
+                "-pix_fmt",
+                "yuv420p",
+                ...(audio ? ["-c:a", "pcm_s16le"] : []),
+                "-video_track_timescale",
+                "1000000",
+                file,
+              ]);
+              const asset = await persist(file);
+              assert.equal(asset.duration, BigInt(durationUs), "real inspected container duration");
+              const expected = audio ? 5 : 3;
+              const first = await completeJob(asset);
+              assert.equal(first.length, expected);
+              assert.equal(
+                first.some((a) => a.kind === "extracted-audio"),
+                audio,
+              );
+              const plans = derivativePlans(asset);
+              const sprite = first.find((a) => a.artifact!.metadata["variant"] === "sprite")!;
+              assert.ok(sprite, "no missing sprite after completed job");
+              const spritePlan = plans.find((p) => p.variant === "sprite")!;
+              for (const a of first) {
+                const artifact = a.artifact!;
+                const head = await s3.send(
+                  new HeadObjectCommand({ Bucket: bucket, Key: artifact.storageKey }),
+                );
+                assert.equal(String(head.ContentLength), artifact.byteSize);
+                if (["proxy", "asr", "mix"].includes(String(artifact.metadata["variant"]))) {
+                  assert.ok(
+                    Math.abs(Number(artifact.metadata["durationUs"]) - durationUs) <= 1e6 / 30,
+                  );
+                }
+              }
+              const fetched = await s3.send(
+                new GetObjectCommand({ Bucket: bucket, Key: sprite.artifact!.storageKey }),
+              );
+              const spriteFile = path.join(directory, `f11-${name}.jpg`);
+              const spriteBytes = await fetched.Body!.transformToByteArray();
+              await import("node:fs/promises").then((fs) => fs.writeFile(spriteFile, spriteBytes));
+              const decoded = spawnSync(
+                "ffmpeg",
+                [
+                  "-v",
+                  "error",
+                  "-threads",
+                  "1",
+                  "-i",
+                  spriteFile,
+                  "-frames:v",
+                  "1",
+                  "-threads",
+                  "1",
+                  "-pix_fmt",
+                  "rgb24",
+                  "-f",
+                  "rawvideo",
+                  "pipe:1",
+                ],
+                { timeout: 30000, maxBuffer: 2_000_000 },
+              );
+              assert.equal(decoded.status, 0, decoded.stderr.toString());
+              const columns = Number(spritePlan.parameters["columns"]);
+              const timestamps = spritePlan.parameters["timestampsUs"] as number[];
+              assert.equal(
+                decoded.stdout.length,
+                columns * Number(spritePlan.parameters["rows"]) * 160 * 90 * 3,
+              );
+              for (const [tile, midpoint] of timestamps.entries()) {
+                assert.ok(
+                  oneFrame || midpoint > videoUs,
+                  "test midpoint must require the final frame",
+                );
+                const offset =
+                  ((Math.floor(tile / columns) * 90 + 45) * columns * 160 +
+                    (tile % columns) * 160 +
+                    80) *
+                  3;
+                assert.ok(
+                  decoded.stdout[offset + 2]! > 200 && decoded.stdout[offset]! < 40,
+                  "sprite contains actual blue final frame pixels",
+                );
+              }
+              const before = generationCount;
+              const second = await deriveMediaAsset(asset.id, project, signal(), deps);
+              const snapshots = (rows: readonly DerivedAsset[]) =>
+                rows.map((a) => a.toSnapshot()).sort((a, b) => a.id.localeCompare(b.id));
+              assert.deepEqual(snapshots(second), snapshots(first));
+              assert.equal(generationCount - before, 0);
+              const count = (
+                await s3.send(
+                  new ListObjectsV2Command({
+                    Bucket: bucket,
+                    Prefix: `projects/${project}/derived/${asset.id}/`,
+                  }),
+                )
+              ).Contents!.length;
+              assert.equal(count, expected);
+              assert.equal((await mediaRepo.listByMediaAsset(asset.id, project)).length, expected);
+              console.log(
+                "F11_REAL_JOB_REUSE",
+                JSON.stringify({
+                  name,
+                  durationUs,
+                  videoUs,
+                  rows: first.length,
+                  objects: count,
+                  status: "Completed",
+                  midpoints: timestamps,
+                  finalFramePixel: "blue",
+                  firstIds: first.map((a) => a.id),
+                  secondIds: second.map((a) => a.id),
+                  keys: second.map((a) => a.artifact!.storageKey),
+                  secondGenerations: generationCount - before,
+                }),
+              );
+            });
+        },
+      );
+      await t.test(
+        "F-11 v3 sprite coexists with immutable v1/v2 outputs and preserves unrelated artifacts",
         async () => {
           const file = path.join(directory, "legacy-policy-source.mp4");
           ffmpeg([
@@ -380,6 +598,7 @@ test(
           const plans = derivativePlans(asset);
           const sprite = plans.find((p) => p.variant === "sprite")!;
           const legacyParameters = { ...sprite.parameters };
+          delete legacyParameters["finalFramePadding"];
           delete legacyParameters["samplingFps"];
           delete legacyParameters["frameSelection"];
           legacyParameters["sampling"] = "even-midpoints-maximum-20-five-seconds";
@@ -392,6 +611,18 @@ test(
           };
           keys.add(legacy.storageKey);
           assert.notEqual(legacy.signature, sprite.signature);
+          const v2Parameters = { ...sprite.parameters };
+          delete v2Parameters["finalFramePadding"];
+          v2Parameters["sampling"] = "even-midpoints-cfr-nearest-index-v2";
+          const v2Signature = parameterSignature(v2Parameters);
+          const v2 = {
+            ...sprite,
+            signature: v2Signature,
+            parameters: v2Parameters,
+            storageKey: sprite.storageKey.replace(sprite.signature, v2Signature),
+          };
+          keys.add(v2.storageKey);
+          assert.equal(new Set([legacySignature, v2Signature, sprite.signature]).size, 3);
           const prepared = await realProcessor.prepare(asset, file, signal());
           const oldRows: DerivedAsset[] = [];
           try {
@@ -418,6 +649,24 @@ test(
                 ),
               );
             }
+            const v2File = path.join(directory, "v2-sprite.jpg");
+            const v2Args = [...buildDerivativeArgs(file, v2File, v2)];
+            v2Args[v2Args.indexOf("-vf") + 1] = String(v2Args[v2Args.indexOf("-vf") + 1]).replace(
+              `tpad=stop_mode=clone:stop_duration=${Number(asset.duration) / 1e6},setpts=PTS-STARTPTS,`,
+              "setpts=PTS-STARTPTS,tpad=stop_mode=clone:stop_duration=1,",
+            );
+            await runControlledProcess(config.ffmpegPath, v2Args, signal(), 30000);
+            const v2Artifact = await objects.put(
+              asset,
+              v2,
+              { filePath: v2File, metadata: { variant: "sprite", parameters: v2Parameters } },
+              signal(),
+            );
+            oldRows.push(
+              await mediaRepo.save(
+                new DerivedAsset(newId(), asset.id, v2.kind, now(), undefined, v2Artifact),
+              ),
+            );
           } finally {
             await prepared.release();
           }
@@ -425,10 +674,14 @@ test(
             (row) => row.artifact!.parameterSignature === legacySignature,
           )!;
           const oldSnapshot = oldSprite.toSnapshot();
+          const oldV2Sprite = oldRows.find(
+            (row) => row.artifact!.parameterSignature === v2Signature,
+          )!;
+          const oldV2Snapshot = oldV2Sprite.toSnapshot();
           const before = generationCount;
           const fixed = await deriveMediaAsset(asset.id, project, signal(), deps);
           assert.equal(generationCount - before, 1, "only the fixed sprite needs generation");
-          for (const old of oldRows.filter((row) => row !== oldSprite))
+          for (const old of oldRows.filter((row) => row !== oldSprite && row !== oldV2Sprite))
             assert.deepEqual(
               fixed.find((row) => row.id === old.id)!.toSnapshot(),
               old.toSnapshot(),
@@ -441,6 +694,11 @@ test(
             oldSnapshot,
           );
           assert.deepEqual(await objects.find(asset, legacy, signal()), oldSprite.artifact);
+          assert.deepEqual(
+            (await mediaRepo.findBySignature(asset.id, "thumbnail", v2Signature))!.toSnapshot(),
+            oldV2Snapshot,
+          );
+          assert.deepEqual(await objects.find(asset, v2, signal()), oldV2Sprite.artifact);
           const second = await deriveMediaAsset(asset.id, project, signal(), deps);
           assert.deepEqual(
             second.map((row) => row.toSnapshot()),
@@ -449,8 +707,8 @@ test(
           assert.equal(generationCount - before, 1, "zero additional FFmpeg runs on fixed rerun");
           assert.equal(
             (await mediaRepo.listByMediaAsset(asset.id, project)).length,
-            6,
-            "five fixed results plus one historical immutable sprite",
+            7,
+            "five fixed results plus two historical immutable sprites",
           );
           const count = (
             await s3.send(
@@ -460,20 +718,27 @@ test(
               }),
             )
           ).Contents!.length;
-          assert.equal(count, 6);
+          assert.equal(count, 7);
           console.log(
             "SPRITE_POLICY_MIGRATION",
             JSON.stringify({
               oldSignature: legacySignature,
+              v1Signature: legacySignature,
+              v2Signature,
+              v3Signature: sprite.signature,
               fixedSignature: sprite.signature,
               oldStorageKey: legacy.storageKey,
+              v2StorageKey: v2.storageKey,
               fixedStorageKey: sprite.storageKey,
               firstFixedGenerations: 1,
               secondFixedGenerations: 0,
-              preservedOtherIds: oldRows.filter((row) => row !== oldSprite).map((row) => row.id),
+              preservedOtherIds: oldRows
+                .filter((row) => row !== oldSprite && row !== oldV2Sprite)
+                .map((row) => row.id),
               historicalSpriteUnchanged: true,
+              historicalV2SpriteUnchanged: true,
               totalObjects: count,
-              totalRows: 6,
+              totalRows: 7,
             }),
           );
         },
