@@ -43,12 +43,12 @@ cd "ffmpeg-${version}"
   --enable-avfilter \
   --enable-protocol=file,pipe \
   --enable-demuxer=mov,matroska,wav,pcm_s16le,image_png_pipe \
-  --enable-muxer=mp4,mov,matroska,webm,wav,ipod \
-  --enable-decoder=h264,hevc,vp9,av1,aac,opus,pcm_s16le,pcm_s16be,pcm_s24le,pcm_s32le,pcm_f32le,pcm_u8,png \
-  --enable-encoder=libx264,aac,libvpx_vp9,libopus,pcm_s16le \
+  --enable-muxer=mp4,mov,matroska,webm,wav,ipod,image2 \
+  --enable-decoder=mjpeg,h264,hevc,vp9,av1,aac,opus,pcm_s16le,pcm_s16be,pcm_s24le,pcm_s32le,pcm_f32le,pcm_u8,png \
+  --enable-encoder=libx264,aac,libvpx_vp9,libopus,pcm_s16le,pcm_f32le,mjpeg \
   --enable-parser=h264,hevc,vp9,av1,aac,opus,png \
   --enable-bsf=aac_adtstoasc,extract_extradata,h264_mp4toannexb,hevc_mp4toannexb,vp9_superframe \
-  --enable-filter=aresample,scale,format,aformat,null,anull,trim,atrim,concat,setpts,asetpts
+  --enable-filter=aresample,scale,format,aformat,null,anull,trim,atrim,concat,setpts,asetpts,fps,tpad,apad,pad,tile,setsar,transpose,hflip,vflip,select
 
 make -j"$(nproc)"
 make install

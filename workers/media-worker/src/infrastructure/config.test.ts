@@ -55,6 +55,8 @@ test("media-worker configuration accepts a complete development environment", ()
   assert.equal(config.databaseUrl, databaseUrl);
   assert.equal(config.objectStorage.bucket, "editagent");
   assert.equal(config.ffprobePath, "ffprobe");
+  assert.equal(config.ffmpegPath, "ffmpeg");
+  assert.equal(config.allowUnvalidatedDerivation, false);
   assert.equal(config.ffprobeTimeoutMs, 30_000);
   assert.equal(config.probeTmpDir, null);
   assert.equal(config.mediaInspectQueue, "media");

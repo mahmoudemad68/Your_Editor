@@ -103,6 +103,7 @@ export {
   videoMimeType,
 } from "./modules/media/index.js";
 export type {
+  DerivedArtifact,
   DerivedAssetKind,
   DerivedAssetRepository,
   DerivedAssetSnapshot,

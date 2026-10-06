@@ -125,3 +125,20 @@ test("ffprobe failures stay controlled", async () => {
     (error: unknown) => code(error) === "invalid_result",
   );
 });
+
+test("probe cancellation reaps the subprocess instead of waiting for its deadline", async () => {
+  const controller = new AbortController();
+  const probe = new FFprobeMediaProbe({
+    executable: path.join(bin, "sleep.js"),
+    timeoutMs: 30_000,
+  });
+  const started = Date.now();
+  const inspection = probe.inspect({ filePath: normal, signal: controller.signal });
+  const timer = setTimeout(() => controller.abort(), 30);
+  try {
+    await assert.rejects(inspection, (error) => code(error) === "interrupted");
+    assert.ok(Date.now() - started < 5_000);
+  } finally {
+    clearTimeout(timer);
+  }
+});

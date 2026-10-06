@@ -11,6 +11,8 @@ export { ConfigurationError } from "@editagent/shared";
 
 export interface MediaWorkerConfig extends StorageWorkerConfig {
   readonly ffprobePath: string;
+  readonly ffmpegPath: string;
+  readonly allowUnvalidatedDerivation: boolean;
   readonly ffprobeTimeoutMs: number;
   readonly probeTmpDir: string | null;
   readonly mediaInspectQueue: string;
@@ -20,7 +22,22 @@ export interface MediaWorkerConfig extends StorageWorkerConfig {
 /** Process boundary for media-worker configuration. Reads the environment once. */
 export function loadMediaWorkerConfig(env: EnvSource = process.env): MediaWorkerConfig {
   const base = parseMediaWorkerConfig(env);
-  return { ...base, ...parseProbeRuntime(env), ...parseWorkerRuntime(env) };
+  const ffmpegPath = env["FFMPEG_PATH"] || "ffmpeg";
+  if (ffmpegPath.includes("\0"))
+    throw new ConfigurationError("Media worker", "FFMPEG_PATH is not valid.");
+  const optIn = env["ALLOW_UNVALIDATED_DERIVATION"] ?? "false";
+  if (optIn !== "true" && optIn !== "false")
+    throw new ConfigurationError(
+      "Media worker",
+      "ALLOW_UNVALIDATED_DERIVATION must be true or false.",
+    );
+  return {
+    ...base,
+    ...parseProbeRuntime(env),
+    ...parseWorkerRuntime(env),
+    ffmpegPath,
+    allowUnvalidatedDerivation: optIn === "true",
+  };
 }
 
 function parseProbeRuntime(env: EnvSource): {

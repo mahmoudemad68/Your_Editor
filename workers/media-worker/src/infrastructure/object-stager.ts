@@ -1,3 +1,4 @@
+import { createHash, type Hash } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import { mkdtemp, rm, statfs } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -32,8 +33,8 @@ export class FileObjectStager implements MediaObjectStaging {
     }
   }
 
-  async stage(storageKey: string): Promise<StagedMediaFile> {
-    const opened = await this.source.open(storageKey);
+  async stage(storageKey: string, signal?: AbortSignal): Promise<StagedMediaFile> {
+    const opened = await this.source.open(storageKey, signal);
     let directory: string | undefined;
     try {
       if (opened.contentLength !== null && opened.contentLength > this.maxBytes) {
@@ -52,11 +53,18 @@ export class FileObjectStager implements MediaObjectStaging {
       if (free < needed) {
         throw new MediaProbeError("insufficient_storage");
       }
-      await pipeline(opened.stream, capBytes(this.maxBytes), createWriteStream(filePath));
+      const digest = createHash("sha256");
+      await pipeline(
+        opened.stream,
+        capBytes(this.maxBytes, digest),
+        createWriteStream(filePath),
+        signal === undefined ? {} : { signal },
+      );
       const created = directory;
       directory = undefined;
       return {
         filePath,
+        contentSha256: digest.digest("hex"),
         release: async () => {
           await rm(created, { recursive: true, force: true });
         },
@@ -69,12 +77,13 @@ export class FileObjectStager implements MediaObjectStaging {
       if (error instanceof MediaProbeError) {
         throw error;
       }
+      signal?.throwIfAborted();
       throw asProbeError(error);
     }
   }
 }
 
-function capBytes(max: bigint): Transform {
+function capBytes(max: bigint, digest: Hash): Transform {
   let seen = 0n;
   return new Transform({
     transform(chunk: Buffer, _encoding, callback): void {
@@ -83,6 +92,7 @@ function capBytes(max: bigint): Transform {
         callback(new MediaProbeError("invalid_result"));
         return;
       }
+      digest.update(chunk);
       callback(null, chunk);
     },
   });
