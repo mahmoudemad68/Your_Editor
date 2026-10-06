@@ -41,3 +41,15 @@ export class AppError extends Error {
     this.code = code;
   }
 }
+
+export {
+  VIDEO_CODECS,
+  AUDIO_CODECS,
+  parseValidationPolicy,
+  validationPolicySignature,
+  assertInspectionTimeoutBudget,
+  MEDIA_INSPECT_TIMEOUT_MS,
+  MEDIA_INSPECT_OPERATIONAL_HEADROOM_MS,
+  MAX_VALIDATION_SUBPROCESS_TIMEOUT_MS,
+  type ValidationPolicy,
+} from "./media-validation-policy.js";

@@ -102,3 +102,64 @@ inspection for historical assets before derivation. Provision private scratch sp
 for staged source plus bounded decode output. Retain existing upload cleanup and
 scratch cleanup after confirmed worker death. No staging/production deployment is
 part of this story. Existing US-119 and supply-chain debt remains unchanged.
+
+## Inspection budget and production revalidation (F-J1 / F-K1 repair)
+
+The production publisher uses a **300,000 ms (5 minute)** outer inspection deadline,
+with two bounded attempts and the existing 400 ms exponential backoff. Its budget
+is constructed from maximum supported probe/decode deadlines (60 seconds each),
+150 seconds operational headroom and a further 30 seconds supervision/queue reserve.
+The operational planning allowances are 90 seconds source acquisition, 30 seconds
+hashing, 15 seconds advisory-lock waiting, 5 seconds sandbox/process startup,
+5 seconds persistence and 5 seconds cleanup. These are planning allowances under
+one cooperative outer wall deadline, not six additional independent timers. Default
+probe/decode deadlines remain 15 seconds each; their actual remaining outer headroom
+is 270 seconds. Even at both 60-second maxima the outer deadline exceeds the two
+inner deadlines plus 150 seconds. Invalid inner configuration fails startup;
+there is no environment switch to remove or shrink the required margin. CPU,
+address-space, output, protocol and network controls are unchanged. Very slow
+infrastructure can still exhaust this finite budget; it is not a hostile verdict.
+
+`@editagent/shared` owns the canonical bounded validation policy, signature and
+budget. The worker application re-exports that policy for existing consumers;
+relocation preserves the exact `us127-v1` signature representation. Initial API
+upload publication still has its durable asset-scoped outbox identity: replay of
+one upload is not an implicit request for new work. It uses the same shared outer
+budget. Existing stored jobs retain their original immutable deadlines/history.
+
+For stale policy or exhausted transient work, invoke the production application
+operation `requestMediaRevalidation` (`@editagent/job-queue`) or its operator entry:
+
+```sh
+node dist/enqueue-inspect.js <mediaAssetId> <terminalInspectJobId>
+```
+
+This enqueues BullMQ work backed by the PostgreSQL Job ledger; it does **not** call
+`validateMediaAsset` or the direct inspection CLI. Use the same bounded policy
+configuration as the consuming worker. The predecessor must be a terminal
+`media.inspect` job for that asset in that queue. Its semantic key is:
+
+```text
+media.inspect.<assetId>.<currentPolicySha256>.after.<terminalPredecessorJobId>
+```
+
+A policy change or an explicit successor of a failed job gets a fresh execution.
+Concurrent requests with the same predecessor/current policy reuse exactly one
+logical job through the existing PostgreSQL uniqueness rule and US-129 enqueue
+reconciliation. Correlation IDs do not change semantic identity: duplicate delivery
+retains the original winner's correlation/envelope. Subsequent explicit recovery
+must name the newly terminal successor; repeating the same request never starts
+an infinite retry loop. Terminal rows and attempt history are never reset/deleted.
+Producer policy intent is checked against the worker's canonical current signature;
+configuration disagreement fails operationally without persisting media rejection.
+No new HTTP/UI surface or schema migration is required: this operator/application
+service reuses the existing durable Job identity/uniqueness model.
+
+The production integration regression uses a real 40-second object-storage GET
+pause, production publication, pinned FFmpeg/FFprobe, PostgreSQL, Redis/BullMQ and
+the supervised worker. It also executes a historical queued 30-second intent to
+exhaust two real outer deadlines, then recovers via the queue operation at the new
+production budget, preserving Failed history. It tests real object-storage failure,
+S1 → S2 revalidation with advanced checked-at, current-policy derivation, concurrent
+duplicate requests and different correlations. Timeout invariants cover defaults,
+maximum configured inner budgets and invalid combinations.

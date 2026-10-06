@@ -54,6 +54,14 @@ export async function handleMediaJob(envelope: JobEnvelope, signal: AbortSignal)
     : validateDerivationEnvelope(envelope);
   const config = loadMediaWorkerConfig();
   assertValidationSandbox();
+  // A producer configured for another policy must not silently validate under
+  // different intent. This is an operational failure, never a content rejection.
+  if (
+    inspecting &&
+    envelope.payload["policySignature"] !== undefined &&
+    envelope.payload["policySignature"] !== validationPolicySignature(config.validationPolicy)
+  )
+    throw new Error("Inspection policy differs between producer and worker.");
   const pool = new Pool({ connectionString: config.databaseUrl, max: 1 });
   const s3 = createMediaS3Client(config.objectStorage);
   const progress = new BullMqJobQueue(config.redisUrl);
@@ -133,7 +141,12 @@ export function validateInspectionEnvelope(envelope: JobEnvelope): {
     typeof p["mediaAssetId"] !== "string" ||
     typeof p["correlationId"] !== "string" ||
     p["correlationId"].length === 0 ||
-    Object.keys(p).sort().join(",") !== "correlationId,mediaAssetId"
+    !(
+      Object.keys(p).sort().join(",") === "correlationId,mediaAssetId" ||
+      (Object.keys(p).sort().join(",") === "correlationId,mediaAssetId,policySignature" &&
+        typeof p["policySignature"] === "string" &&
+        /^[a-f0-9]{64}$/.test(p["policySignature"]))
+    )
   )
     throw new PermanentJobError("Invalid inspection subject.");
   try {

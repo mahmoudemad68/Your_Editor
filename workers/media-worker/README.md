@@ -1,11 +1,12 @@
 # Media worker
 
-The US-129 consumer reserves jobs from `MEDIA_INSPECT_QUEUE` (default `media`), records the durable job lifecycle/correlation ID, and uses the existing child-process supervisor. `media.inspect` retains its existing acknowledgement integration; manual inspection uses the real US-126 adapters below. US-128 adds `media.derive` to the same dispatcher, not a second processing system.
+The US-129 consumer reserves jobs from `MEDIA_INSPECT_QUEUE` (default `media`), records the durable job lifecycle/correlation ID, and uses the existing child-process supervisor. `media.inspect` runs the durable US-127 sandboxed validation workflow; US-126 technical metadata remains separate from the trust verdict. US-128 adds `media.derive` to the same dispatcher, not a second processing system.
 
 ## Inspection and derivation triggers
 
 ```bash
-node dist/inspect.js <mediaAssetId>
+node dist/inspect.js <mediaAssetId> # direct operational/debug validation
+node dist/enqueue-inspect.js <mediaAssetId> <terminalInspectJobId> # production queue retry/revalidation
 node dist/enqueue-derive.js <projectId> <mediaAssetId>
 ```
 
