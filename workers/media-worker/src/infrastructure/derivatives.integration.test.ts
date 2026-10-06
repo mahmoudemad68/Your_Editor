@@ -434,13 +434,15 @@ test(
         },
       );
       await t.test(
-        "F-11 short and audio-led timelines complete real jobs without partial terminal outputs",
+        "F-11 and audio-led visual timelines complete real jobs without partial terminal outputs",
         async (f11) => {
           for (const [name, durationUs, videoUs, audio] of [
             ["33333us", 33_333, 33_333, true],
             ["33334us", 33_334, 33_334, true],
             ["40000us", 40_000, 40_000, true],
             ["video-0.5-audio-1.4", 1_400_000, 500_000, true],
+            ["video-0.5-audio-6.4", 6_400_000, 500_000, true],
+            ["video-0.5-audio-18.4", 18_400_000, 500_000, true],
             ["short-no-audio", 40_000, 40_000, false],
           ] as const)
             await f11.test(name, async () => {
@@ -484,16 +486,92 @@ test(
               const sprite = first.find((a) => a.artifact!.metadata["variant"] === "sprite")!;
               assert.ok(sprite, "no missing sprite after completed job");
               const spritePlan = plans.find((p) => p.variant === "sprite")!;
+              const measuredDurations: Record<string, number> = {};
+              let proxyFinalFrameCloned = false;
+              let posterFinalFrameCloned = false;
               for (const a of first) {
                 const artifact = a.artifact!;
+                const variant = String(artifact.metadata["variant"]);
                 const head = await s3.send(
                   new HeadObjectCommand({ Bucket: bucket, Key: artifact.storageKey }),
                 );
                 assert.equal(String(head.ContentLength), artifact.byteSize);
-                if (["proxy", "asr", "mix"].includes(String(artifact.metadata["variant"]))) {
+                if (["proxy", "asr", "mix"].includes(variant)) {
                   assert.ok(
                     Math.abs(Number(artifact.metadata["durationUs"]) - durationUs) <= 1e6 / 30,
                   );
+                }
+                // Small synthetic outputs only: independently measure stored bytes,
+                // rather than accepting duration metadata as AC1 evidence.
+                const object = await s3.send(
+                  new GetObjectCommand({ Bucket: bucket, Key: artifact.storageKey }),
+                );
+                const bytes = await object.Body!.transformToByteArray();
+                const outputFile = path.join(directory, `${name}-${variant}-measured`);
+                await import("node:fs/promises").then((fs) => fs.writeFile(outputFile, bytes));
+                const measured = probe(outputFile);
+                const stream = (measured["streams"] as Record<string, unknown>[])[0]!;
+                if (["proxy", "asr", "mix"].includes(variant)) {
+                  const actualUs = Math.round(
+                    Number((measured["format"] as Record<string, unknown>)["duration"]) * 1e6,
+                  );
+                  measuredDurations[variant] = actualUs;
+                  assert.ok(
+                    Math.abs(actualUs - durationUs) <= 1e6 / 30,
+                    `${name} ${variant} independently measured AC1`,
+                  );
+                }
+                if (variant === "proxy") {
+                  assert.equal(stream["codec_name"], "h264");
+                  assert.equal(stream["avg_frame_rate"], "30/1");
+                  assert.equal(stream["pix_fmt"], "yuv420p");
+                }
+                if (variant === "poster") {
+                  assert.equal(stream["width"], 320);
+                  assert.equal(stream["height"], 180);
+                }
+                if ((variant === "proxy" && !oneFrame) || variant === "poster") {
+                  const width = Number(stream["width"]);
+                  const height = Number(stream["height"]);
+                  const pixels = spawnSync(
+                    "ffmpeg",
+                    [
+                      "-v",
+                      "error",
+                      "-threads",
+                      "1",
+                      "-i",
+                      outputFile,
+                      ...(variant === "proxy" ? ["-ss", String(durationUs / 1e6 - 0.2)] : []),
+                      "-frames:v",
+                      variant === "proxy" ? "6" : "1",
+                      "-threads",
+                      "1",
+                      "-pix_fmt",
+                      "rgb24",
+                      "-f",
+                      "rawvideo",
+                      "pipe:1",
+                    ],
+                    { timeout: 30000, maxBuffer: 2_000_000 },
+                  );
+                  assert.equal(pixels.status, 0, pixels.stderr.toString());
+                  const frameBytes = width * height * 3;
+                  assert.ok(
+                    pixels.stdout.length >= frameBytes && pixels.stdout.length % frameBytes === 0,
+                    "actual nonempty visual frames",
+                  );
+                  for (let frame = 0; frame < pixels.stdout.length / frameBytes; frame++) {
+                    const offset =
+                      frame * frameBytes +
+                      (Math.floor(height / 2) * width + Math.floor(width / 2)) * 3;
+                    assert.ok(
+                      pixels.stdout[offset + 2]! > 200 && pixels.stdout[offset]! < 40,
+                      `${name} ${variant} frame ${frame} contains final blue frame, not black/missing content`,
+                    );
+                  }
+                  if (variant === "proxy") proxyFinalFrameCloned = true;
+                  else posterFinalFrameCloned = true;
                 }
               }
               const fetched = await s3.send(
@@ -576,6 +654,18 @@ test(
                   secondIds: second.map((a) => a.id),
                   keys: second.map((a) => a.artifact!.storageKey),
                   secondGenerations: generationCount - before,
+                  measuredDurations,
+                  durationDeltasUs: Object.fromEntries(
+                    Object.entries(measuredDurations).map(([kind, actual]) => [
+                      kind,
+                      Math.abs(actual - durationUs),
+                    ]),
+                  ),
+                  proxyFinalFrameCloned,
+                  posterFinalFrameCloned,
+                  posterTimestampUs: plans.find((p) => p.variant === "poster")!.parameters[
+                    "timestampUs"
+                  ],
                 }),
               );
             });
@@ -739,6 +829,146 @@ test(
               historicalV2SpriteUnchanged: true,
               totalObjects: count,
               totalRows: 7,
+            }),
+          );
+        },
+      );
+      await t.test(
+        "audio-led padding policy creates only new proxy/poster artifacts and preserves immutable old outputs",
+        async () => {
+          const file = path.join(directory, "visual-policy-source.mp4");
+          ffmpeg([
+            "-i",
+            sourceFile,
+            "-c",
+            "copy",
+            "-metadata",
+            "comment=visual-policy-coexistence",
+            file,
+          ]);
+          const asset = await persist(file);
+          const plans = derivativePlans(asset);
+          const prepared = await realProcessor.prepare(asset, file, signal());
+          const oldRows: DerivedAsset[] = [];
+          const oldPlans = plans.map((plan) => {
+            if (plan.variant !== "proxy" && plan.variant !== "poster") return plan;
+            const parameters = { ...plan.parameters };
+            if (plan.variant === "proxy") parameters["endPadding"] = "clone-then-trim";
+            else delete parameters["endPadding"];
+            const signature = parameterSignature(parameters);
+            assert.notEqual(signature, plan.signature);
+            const legacy = {
+              ...plan,
+              signature,
+              parameters,
+              storageKey: plan.storageKey.replace(plan.signature, signature),
+            };
+            keys.add(legacy.storageKey);
+            return legacy;
+          });
+          try {
+            for (const oldPlan of oldPlans) {
+              let output;
+              if (oldPlan.variant === "proxy" || oldPlan.variant === "poster") {
+                const filePath = path.join(
+                  directory,
+                  `old-${oldPlan.variant}.${oldPlan.variant === "proxy" ? "mp4" : "jpg"}`,
+                );
+                const args = [...buildDerivativeArgs(file, filePath, oldPlan)];
+                const index = args.indexOf("-vf") + 1;
+                const currentFilter = args[index]!;
+                args[index] = currentFilter.replace(
+                  `tpad=stop_mode=clone:stop_duration=${Number(asset.duration) / 1e6},`,
+                  "tpad=stop_mode=clone:stop_duration=1,",
+                );
+                assert.notEqual(
+                  args[index],
+                  currentFilter,
+                  "seed actual historical fixed-one-second filter",
+                );
+                await runControlledProcess(config.ffmpegPath, args, signal(), 30000);
+                const current = await prepared.generate(
+                  plans.find((p) => p.variant === oldPlan.variant)!,
+                  signal(),
+                );
+                output = {
+                  filePath,
+                  metadata: { ...current.metadata, parameters: oldPlan.parameters },
+                };
+              } else output = await prepared.generate(oldPlan, signal());
+              const artifact = await objects.put(asset, oldPlan, output, signal());
+              oldRows.push(
+                await mediaRepo.save(
+                  new DerivedAsset(newId(), asset.id, oldPlan.kind, now(), undefined, artifact),
+                ),
+              );
+            }
+          } finally {
+            await prepared.release();
+          }
+          const before = generationCount;
+          const current = await deriveMediaAsset(asset.id, project, signal(), deps);
+          assert.equal(
+            generationCount - before,
+            2,
+            "only repaired proxy and poster need generation",
+          );
+          for (const [index, oldPlan] of oldPlans.entries()) {
+            const oldRow = oldRows[index]!;
+            if (oldPlan.variant === "proxy" || oldPlan.variant === "poster") {
+              const fixed = current.find(
+                (row) => row.artifact!.metadata["variant"] === oldPlan.variant,
+              )!;
+              assert.notEqual(fixed.id, oldRow.id);
+              assert.notEqual(fixed.artifact!.storageKey, oldRow.artifact!.storageKey);
+              assert.deepEqual(
+                (await mediaRepo.findBySignature(
+                  asset.id,
+                  oldPlan.kind,
+                  oldPlan.signature,
+                ))!.toSnapshot(),
+                oldRow.toSnapshot(),
+              );
+              assert.deepEqual(await objects.find(asset, oldPlan, signal()), oldRow.artifact);
+            } else
+              assert.deepEqual(
+                current.find((row) => row.id === oldRow.id)!.toSnapshot(),
+                oldRow.toSnapshot(),
+              );
+          }
+          const second = await deriveMediaAsset(asset.id, project, signal(), deps);
+          assert.deepEqual(
+            second.map((row) => row.toSnapshot()),
+            current.map((row) => row.toSnapshot()),
+          );
+          assert.equal(generationCount - before, 2);
+          assert.equal((await mediaRepo.listByMediaAsset(asset.id, project)).length, 7);
+          const objectCount = (
+            await s3.send(
+              new ListObjectsV2Command({
+                Bucket: bucket,
+                Prefix: `projects/${project}/derived/${asset.id}/`,
+              }),
+            )
+          ).Contents!.length;
+          assert.equal(objectCount, 7);
+          console.log(
+            "VISUAL_POLICY_MIGRATION",
+            JSON.stringify({
+              oldProxySignature: oldPlans.find((p) => p.variant === "proxy")!.signature,
+              newProxySignature: plans.find((p) => p.variant === "proxy")!.signature,
+              oldPosterSignature: oldPlans.find((p) => p.variant === "poster")!.signature,
+              newPosterSignature: plans.find((p) => p.variant === "poster")!.signature,
+              preservedVariants: ["asr", "mix", "sprite"],
+              historicalRowsObjectsUnchanged: true,
+              firstFixedGenerations: 2,
+              secondFixedGenerations: 0,
+              firstIds: current.map((row) => row.id),
+              secondIds: second.map((row) => row.id),
+              firstKeys: current.map((row) => row.artifact!.storageKey),
+              secondKeys: second.map((row) => row.artifact!.storageKey),
+              totalRows: 7,
+              totalObjects: objectCount,
             }),
           );
         },

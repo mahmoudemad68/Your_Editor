@@ -77,7 +77,7 @@ export function derivativePlans(source: MediaAsset): readonly DerivativePlan[] {
         fps: PROXY_FPS,
         fpsRounding: "near",
         // Legacy signature field names the -frames:v CAP, not an exact count.
-        // Keep its value/signature: F-2 corrects the claim, not proxy encoding.
+        // F-2 corrects the claim; this field continues to describe the cap.
         frameCount: "ceil-duration-times-fps",
         codec: "libx264",
         pixelFormat: "yuv420p",
@@ -90,7 +90,7 @@ export function derivativePlans(source: MediaAsset): readonly DerivativePlan[] {
         threads: 2,
         audio: false,
         faststart: true,
-        endPadding: "clone-then-trim",
+        endPadding: "clone-to-source-duration-before-trim-v2",
       },
     },
     ...(source.audioCodec === null
@@ -135,6 +135,7 @@ export function derivativePlans(source: MediaAsset): readonly DerivativePlan[] {
         maxHeight: 180,
         fit: "display-sar-aspect-pad-black",
         timestampUs: Math.min(3_000_000, Math.floor(Number(source.duration) / 3)),
+        endPadding: "clone-to-source-duration-before-trim-v2",
         codec: "mjpeg",
         quality: 3,
       },

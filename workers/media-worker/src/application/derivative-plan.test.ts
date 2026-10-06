@@ -129,7 +129,7 @@ test("sprite midpoint coverage and short-source plan are deterministic and recov
   );
 });
 
-test("F-1/F-11 distinguish v1/v2/v3 sprites; other policies retain exact old-HEAD signatures", () => {
+test("visual padding versions proxy/poster only; ASR/mix and F-1/F-11 sprite v3 signatures are unchanged", () => {
   // Golden values captured from ac701f21's actual plan for this same fixture.
   const historical = {
     proxy: "3b0b1a01680d8dfdce0958692722b1e93996e04099e97428980c4c502a2ba930",
@@ -140,6 +140,11 @@ test("F-1/F-11 distinguish v1/v2/v3 sprites; other policies retain exact old-HEA
   };
   for (const plan of derivativePlans(source())) {
     if (plan.variant === "sprite") {
+      // Exact v3 signature captured from cfad2fa7's policy for this same fixture.
+      assert.equal(
+        plan.signature,
+        "2a1bef0293dbce4440df78f91aac368d29937bfa7ddbcb465dce855c2389eef4",
+      );
       assert.notEqual(plan.signature, historical.sprite);
       const legacy = { ...plan.parameters };
       delete legacy["finalFramePadding"];
@@ -156,6 +161,13 @@ test("F-1/F-11 distinguish v1/v2/v3 sprites; other policies retain exact old-HEA
       assert.equal(plan.parameters["samplingFps"], 30);
       assert.equal(plan.parameters["sampling"], "even-midpoints-cfr-nearest-index-v3");
       assert.equal(plan.parameters["finalFramePadding"], "source-duration-before-pts-reset");
+    } else if (plan.variant === "proxy" || plan.variant === "poster") {
+      const legacy = { ...plan.parameters };
+      if (plan.variant === "proxy") legacy["endPadding"] = "clone-then-trim";
+      else delete legacy["endPadding"];
+      assert.equal(parameterSignature(legacy), historical[plan.variant]);
+      assert.notEqual(plan.signature, historical[plan.variant]);
+      assert.equal(plan.parameters["endPadding"], "clone-to-source-duration-before-trim-v2");
     } else assert.equal(plan.signature, historical[plan.variant]);
   }
 });
