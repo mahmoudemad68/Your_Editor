@@ -39,9 +39,11 @@ async function setup(writable = false) {
   await projects.save(Project.create(project, "test", actor, instant(1n)), null);
   let receive: (event: JobEvent) => void = () => undefined;
   let count = 0;
+  let reset = () => {};
   const events = new ProjectJobEvents(projects, {
-    async subscribe(_id, callback) {
+    async subscribe(_id, callback, onReset) {
       receive = callback;
+      reset = onReset ?? (() => {});
       count++;
       return {
         async close() {
@@ -57,7 +59,13 @@ async function setup(writable = false) {
   const response = new Reply();
   response.writable = writable;
   await controller.stream(project, request, response);
-  return { events, response, send: (event: JobEvent) => receive(event), count: () => count };
+  return {
+    events,
+    response,
+    send: (event: JobEvent) => receive(event),
+    count: () => count,
+    reset: () => reset(),
+  };
 }
 function base(sequence: number) {
   return {
@@ -72,6 +80,30 @@ function base(sequence: number) {
   };
 }
 const tick = () => new Promise((resolve) => setImmediate(resolve));
+
+test("Redis continuity reset closes SSE without manufacturing events and releases resources once", async () => {
+  const { events, response, reset, count, send } = await setup(true);
+  reset();
+  reset();
+  await tick();
+  assert.equal(response.ended, true);
+  assert.equal(response.destroyed, false);
+  assert.equal(count(), 0);
+  assert.equal(response.listenerCount("close"), 0);
+  assert.equal(response.listenerCount("drain"), 0);
+  send({ ...base(1), kind: "state", status: "Completed" });
+  assert.equal(response.chunks.length, 1, "no protected events after reset cleanup");
+  await events.onModuleDestroy();
+});
+test("Redis reset cannot leave a blocked socket behind after clearing its watchdog", async () => {
+  const { events, response, reset, count } = await setup(false);
+  reset();
+  await tick();
+  assert.equal(response.destroyCalls, 1);
+  assert.equal(response.ended, false);
+  assert.equal(count(), 0);
+  await events.onModuleDestroy();
+});
 
 test("slow SSE preserves latest progress and terminal on drain, with bounded listeners", async () => {
   const { events, response, send, count } = await setup();

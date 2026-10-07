@@ -1,3 +1,4 @@
+import { InspectionRetryConflict } from "../application/inspection-job.js";
 import { type ArgumentsHost, Catch, type ExceptionFilter, HttpException } from "@nestjs/common";
 import { DomainError, MediaAssetConflict, ProjectConflict } from "@editagent/domain";
 import { createCorrelationId, currentCorrelationId } from "@editagent/shared";
@@ -33,7 +34,11 @@ export class ProjectExceptionFilter implements ExceptionFilter {
       response.status(403).json({ statusCode: 403, message: exception.message });
       return;
     }
-    if (exception instanceof ProjectConflict || exception instanceof MediaAssetConflict) {
+    if (
+      exception instanceof InspectionRetryConflict ||
+      exception instanceof ProjectConflict ||
+      exception instanceof MediaAssetConflict
+    ) {
       response.status(409).json({ statusCode: 409, message: exception.message });
       return;
     }

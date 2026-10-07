@@ -201,7 +201,8 @@ export class SessionClient {
 
 async function unauthorized(response: Response): Promise<boolean> {
   if (response.status === 401) return true;
-  if (!response.ok) return false;
+  if (!response.ok || response.headers.get("content-type")?.startsWith("text/event-stream"))
+    return false;
   const body: unknown = await response
     .clone()
     .json()

@@ -47,6 +47,11 @@ async function main(config: FixtureConfig): Promise<void> {
         supervisor: {
           async run(envelope) {
             await report(envelope.jobId, envelope.attempt, 0, "staging");
+            // F-1 permits immediate intermediate stages to coalesce while the
+            // API authorizes a frame. Hold this fixture stage so the ordered
+            // retry test can observe its attempt reset without changing the
+            // production delivery guarantee or weakening its assertions.
+            if (mode === "retry") await new Promise((resolve) => setTimeout(resolve, 250));
             if (mode === "burst") {
               for (let i = 0; i <= 100; i++)
                 await report(envelope.jobId, envelope.attempt, i, "proxy");

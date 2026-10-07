@@ -685,7 +685,7 @@ test("a refresh body for the same asset updates the displayed metadata", async (
   cleanup();
 });
 
-test("a scheduled poll that returns another asset does not replace the pending asset", async () => {
+test("a manual refresh that returns another asset does not replace the pending asset", async () => {
   cleanup();
   let reads = 0;
   render(
@@ -728,6 +728,7 @@ test("a scheduled poll that returns another asset does not replace the pending a
     target: { files: [video("beta.mp4", "video/mp4")] },
   });
   await screen.findByText("pending");
+  fireEvent.click(screen.getByRole("button", { name: "Refresh details" }));
   await waitFor(
     () => {
       assert.ok(screen.getByText("Details could not be refreshed."));

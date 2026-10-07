@@ -1,0 +1,9 @@
+{
+  "predecessorId": "01a11625-2c31-708c-9941-0d2f03ac1e89",
+  "successorId": "01a11625-2c47-7726-8e48-88aab1315ede",
+  "concurrentRequests": 2,
+  "winnerCount": 1,
+  "historyImmutable": true,
+  "actualBullMqReservation": true,
+  "queuedEvent": true
+}

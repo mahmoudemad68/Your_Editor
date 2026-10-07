@@ -256,16 +256,23 @@ export class RedisJobEventPublisher implements JobEventPublisher {
 export class RedisJobEventSubscriber implements JobEventSubscriber {
   readonly connectionName = `job-events-${randomUUID()}`;
   private readonly redis: Redis;
-  private readonly receivers = new Map<string, Set<(event: JobEvent) => void>>();
+  private readonly receivers = new Map<
+    string,
+    Set<{ receive: (event: JobEvent) => void; reset?: () => void; resetNotified: boolean }>
+  >();
   private readonly validate = new Ajv2020({ strict: false }).compile(jobEventSchema);
   private closed = false;
   private operations: Promise<unknown> = Promise.resolve();
+  private wasReady = false;
+  private generation = 0;
+  private readonly deferredUnsubscribes = new Set<string>();
   constructor(
     redisUrl: string,
     private readonly logger: JsonLogger = createServiceLogger("api"),
   ) {
     this.redis = new Redis(redisUrl, {
       connectionName: this.connectionName,
+      enableOfflineQueue: false,
       maxRetriesPerRequest: 1,
       commandTimeout: 500,
       connectTimeout: 500,
@@ -273,6 +280,37 @@ export class RedisJobEventSubscriber implements JobEventSubscriber {
     this.redis.on("error", () =>
       this.logger.warn({ eventKind: "subscription" }, "job.events.transport.failed"),
     );
+    this.redis.on("ready", () => {
+      this.wasReady = true;
+      // ioredis restores its previous channel set. Remove channels whose last
+      // consumer closed during the gap; never unsubscribe a new active consumer.
+      void this.serial(async () => {
+        for (const channel of this.deferredUnsubscribes) {
+          if (!this.receivers.has(channel)) await this.redis.unsubscribe(channel);
+          this.deferredUnsubscribes.delete(channel);
+        }
+      }).catch(() =>
+        this.logger.warn({ eventKind: "subscription" }, "job.events.transport.failed"),
+      );
+    });
+    this.redis.on("close", () => {
+      if (this.closed || !this.wasReady) return;
+      this.wasReady = false;
+      this.generation++;
+      // One shared connection serves every Project. Notify each live subscription
+      // once, even if Redis retries repeatedly before becoming ready again.
+      for (const set of [...this.receivers.values()]) {
+        for (const receiver of [...set]) {
+          if (receiver.resetNotified) continue;
+          receiver.resetNotified = true;
+          try {
+            receiver.reset?.();
+          } catch {
+            /* One consumer cannot prevent other streams from resetting. */
+          }
+        }
+      }
+    });
     this.redis.on("message", (channel, raw) => {
       if (raw.length > 4096) return;
       try {
@@ -284,9 +322,9 @@ export class RedisJobEventSubscriber implements JobEventSubscriber {
           valid.eventId !== `${valid.jobId}:${valid.sequence}`
         )
           return;
-        for (const receive of this.receivers.get(channel) ?? []) {
+        for (const receiver of this.receivers.get(channel) ?? []) {
           try {
-            receive(valid);
+            receiver.receive(valid);
           } catch {
             /* One client cannot break delivery to others. */
           }
@@ -301,32 +339,64 @@ export class RedisJobEventSubscriber implements JobEventSubscriber {
     this.operations = next.catch(() => undefined);
     return next;
   }
-  subscribe(projectId: string, receive: (event: JobEvent) => void): Promise<JobEventSubscription> {
+  subscribe(
+    projectId: string,
+    receive: (event: JobEvent) => void,
+    onTransportReset?: () => void,
+  ): Promise<JobEventSubscription> {
     return this.serial(async () => {
       if (this.closed) throw new Error("Job event subscriber closed.");
+      if (this.redis.status !== "ready") {
+        await new Promise<void>((resolve, reject) => {
+          const ready = () => {
+            clearTimeout(timer);
+            resolve();
+          };
+          const timer = setTimeout(() => {
+            this.redis.removeListener("ready", ready);
+            reject(new Error("Job events unavailable."));
+          }, 500);
+          this.redis.once("ready", ready);
+        });
+      }
+      if (this.closed || this.redis.status !== "ready") throw new Error("Job events unavailable.");
       const channel = projectJobChannel(projectId);
       let set = this.receivers.get(channel);
       if (!set) {
         set = new Set();
         this.receivers.set(channel, set);
         try {
+          const generation = this.generation;
           await this.redis.subscribe(channel);
+          if (generation !== this.generation || this.redis.status !== "ready")
+            throw new Error("Subscription continuity lost.");
         } catch {
           this.receivers.delete(channel);
           throw new Error("Job events unavailable.");
         }
       }
-      set.add(receive);
+      const receiver = {
+        receive,
+        ...(onTransportReset ? { reset: onTransportReset } : {}),
+        resetNotified: false,
+      };
+      set.add(receiver);
       let active = true;
       return {
         close: () =>
           this.serial(async () => {
             if (!active) return;
             active = false;
-            set.delete(receive);
+            set.delete(receiver);
             if (set.size === 0) {
               this.receivers.delete(channel);
-              if (!this.closed) await this.redis.unsubscribe(channel);
+              if (!this.closed) {
+                this.deferredUnsubscribes.add(channel);
+                if (this.redis.status === "ready") {
+                  await this.redis.unsubscribe(channel);
+                  this.deferredUnsubscribes.delete(channel);
+                }
+              }
             }
           }),
       };
@@ -338,7 +408,10 @@ export class RedisJobEventSubscriber implements JobEventSubscriber {
   async close(): Promise<void> {
     this.closed = true;
     this.receivers.clear();
+    this.deferredUnsubscribes.clear();
     this.redis.removeAllListeners("message");
+    this.redis.removeAllListeners("ready");
+    this.redis.removeAllListeners("close");
     this.redis.disconnect();
   }
 }

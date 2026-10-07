@@ -120,6 +120,9 @@ importers:
 
   apps/web:
     dependencies:
+      '@editagent/schemas':
+        specifier: workspace:*
+        version: link:../../packages/schemas
       '@editagent/shared':
         specifier: workspace:*
         version: link:../../packages/shared

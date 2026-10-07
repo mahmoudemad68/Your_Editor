@@ -153,30 +153,38 @@ export class JobEventsController {
     response.on("drain", drain);
     untrack = this.events.track(close);
     try {
-      subscription = await this.events.subscriber.subscribe(id, (event) => {
-        if (closed || event.projectId !== id) return;
-        if (event.kind === "progress") {
-          const index = pending.findIndex(
-            (item) => item.kind === "progress" && item.jobId === event.jobId,
-          );
-          if (index >= 0) pending.splice(index, 1);
-        }
-        if (pending.length >= SSE_MAX_PENDING_EVENTS) {
-          const progressIndex = pending.findIndex((item) => item.kind === "progress");
-          if (progressIndex >= 0) pending.splice(progressIndex, 1);
-          else {
-            abortSlowClient();
-            return;
+      subscription = await this.events.subscriber.subscribe(
+        id,
+        (event) => {
+          if (closed || event.projectId !== id) return;
+          if (event.kind === "progress") {
+            const index = pending.findIndex(
+              (item) => item.kind === "progress" && item.jobId === event.jobId,
+            );
+            if (index >= 0) pending.splice(index, 1);
           }
-        }
-        pending.push(event);
-        void pump();
-      });
+          if (pending.length >= SSE_MAX_PENDING_EVENTS) {
+            const progressIndex = pending.findIndex((item) => item.kind === "progress");
+            if (progressIndex >= 0) pending.splice(progressIndex, 1);
+            else {
+              abortSlowClient();
+              return;
+            }
+          }
+          pending.push(event);
+          void pump();
+        },
+        () => {
+          if (blocked) abortSlowClient();
+          else close();
+        },
+      );
       if (closed) {
         await subscription.close();
         return;
       }
     } catch {
+      if (closed) return;
       response.removeListener("close", close);
       response.removeListener("drain", drain);
       untrack();
