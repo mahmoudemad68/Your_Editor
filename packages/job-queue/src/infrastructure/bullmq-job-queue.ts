@@ -7,6 +7,8 @@ import {
   type EnqueueJobCommand,
   type EnqueueJobResult,
   type JobEnvelope,
+  type JobEventPublisher,
+  assertJobProgress,
   type JobFailure,
   type JobProgressEvent,
   type JobQueue,
@@ -23,6 +25,7 @@ import { InvalidJobEnvelopeError } from "../application/job-errors.js";
 const PREFIX = "bull";
 
 export interface BullMqJobQueueOptions {
+  readonly events?: JobEventPublisher;
   readonly lockDurationMs?: number;
   readonly stalledIntervalMs?: number;
 }
@@ -40,9 +43,11 @@ export class BullMqJobQueue implements JobQueue {
   private readonly lockDurationMs: number;
   private readonly stalledIntervalMs: number;
   private closed = false;
+  private readonly events: JobEventPublisher | undefined;
 
   constructor(redisUrl: string, options: BullMqJobQueueOptions = {}) {
     this.redisUrl = redisUrl;
+    this.events = options.events;
     this.lockDurationMs = options.lockDurationMs ?? 30_000;
     this.stalledIntervalMs = options.stalledIntervalMs ?? 200;
     this.connection = new Redis(redisUrl, { maxRetriesPerRequest: null });
@@ -54,6 +59,7 @@ export class BullMqJobQueue implements JobQueue {
   async enqueue(command: EnqueueJobCommand): Promise<EnqueueJobResult> {
     const envelope = envelopeFrom(command, 1);
     assertEnvelope(this.validateEnvelope, envelope);
+    await this.publishState(command.id);
     const queue = this.queueFor(command.queueName);
     const prior = await queue.getJob(command.id);
     if (prior) {
@@ -190,7 +196,28 @@ export class BullMqJobQueue implements JobQueue {
   }
 
   async publishProgress(jobId: string, event: JobProgressEvent): Promise<void> {
-    await this.connection.publish(`editagent:job-progress:${jobId}`, event.message);
+    assertJobProgress(event);
+    if (!this.events) throw new Error("Job events publisher is not configured.");
+    try {
+      await this.events.progress(jobId, event);
+    } catch {
+      /* Transport logs failure; work remains authoritative. */
+    }
+  }
+
+  async flushProgress(jobId: string): Promise<void> {
+    try {
+      await this.events?.flush(jobId);
+    } catch {
+      /* Observational failure is already logged. */
+    }
+  }
+  async publishState(jobId: string): Promise<void> {
+    try {
+      await this.events?.state(jobId);
+    } catch {
+      /* Observational failure cannot change work outcome. */
+    }
   }
 
   async close(immediate = false): Promise<void> {
@@ -198,6 +225,8 @@ export class BullMqJobQueue implements JobQueue {
       return;
     }
     this.closed = true;
+    await this.events?.close();
+    for (const token of [...this.lockListeners.keys()]) this.markLockLost(token);
     for (const timer of this.renewalTimers.values()) {
       clearInterval(timer);
     }

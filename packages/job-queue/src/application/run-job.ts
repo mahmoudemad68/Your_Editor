@@ -114,6 +114,7 @@ export async function cancelJob(deps: RunJobDeps, id: string): Promise<void> {
   }
   const cancelled = job.cancel(deps.now());
   await deps.jobs.save(cancelled);
+  await publishState(deps, id);
   if (job.queueName) {
     await deps.queue.discardQueued(id, job.queueName);
   }
@@ -171,9 +172,9 @@ export async function runNextJob(
   if (cancelRequested) {
     if (current.status !== "Cancelled") {
       await deps.jobs.save(current.cancel(deps.now()));
+      await emitLifecycle(deps, "job.cancelled", reserved.envelope);
     }
     await deps.queue.complete(reserved.receipt);
-    emitLifecycle(deps, "job.cancelled", reserved.envelope);
     return "done";
   }
   if (current.status === "Completed" || current.status === "Failed") {
@@ -218,9 +219,13 @@ export async function runNextJob(
         // and the rejection must not escape the interval callback.
       });
   }, CANCEL_POLL_MS);
-  emitLifecycle(deps, "job.started", reserved.envelope);
+  await emitLifecycle(deps, "job.started", reserved.envelope);
   try {
-    await deps.supervisor.run(reserved.envelope, handler, controller.signal);
+    await deps.supervisor.run(
+      { ...reserved.envelope, attempt: started.attemptCount },
+      handler,
+      controller.signal,
+    );
     if (controller.signal.aborted) {
       throw controller.signal.reason;
     }
@@ -236,9 +241,10 @@ export async function runNextJob(
   // lock loss before this commit can run the handler again; external side
   // effects are not exactly-once. A commit followed by a lost acknowledgement
   // is reconciled by the next reservation.
+  await flushProgress(deps, started.id);
   const committed = await commitCompletion(deps, started, attempt, reserved.receipt, controller);
   if (committed === "committed") {
-    emitLifecycle(deps, "job.finished", reserved.envelope);
+    await emitLifecycle(deps, "job.finished", reserved.envelope);
   }
   if (committed === "exhausted") {
     try {
@@ -372,6 +378,7 @@ async function persistInvalidEnvelope(deps: RunJobDeps, id: string): Promise<voi
   const failedAt = running === current ? at : deps.now();
   const failed = running.fail(failedAt, reason);
   await deps.jobs.save(failed);
+  await publishState(deps, failed.id);
   await deps.jobs.appendAttempt(
     JobAttempt.start(deps.newAttemptId(), failed.id, failed.attemptCount, failedAt).finish(
       "Failed",
@@ -414,13 +421,13 @@ async function recoverAbandonedRun(
       envelopeJson: JSON.stringify(envelope),
       createdAt: at,
     });
+    await emitLifecycle(deps, "job.failed", envelope);
     await deps.queue.fail(receipt, { reason: WORKER_FAILED, transient: false });
-    emitLifecycle(deps, "job.failed", envelope);
     return null;
   }
-  emitLifecycle(deps, "job.retrying", envelope);
   const retrying = current.retry(at, WORKER_FAILED);
   await deps.jobs.save(retrying);
+  await emitLifecycle(deps, "job.retrying", envelope);
   if (open) {
     await deps.jobs.appendAttempt(open.finish("Retrying", at, WORKER_FAILED));
   }
@@ -438,12 +445,13 @@ async function settleFailure(
   if (error instanceof LockLostError || error instanceof JobExecutionUnconfirmedError) {
     return;
   }
+  await flushProgress(deps, started.id);
   const at = deps.now();
   if (isCancelled(error)) {
     await deps.jobs.save(started.cancel(at));
     await deps.jobs.appendAttempt(attempt.finish("Cancelled", at, "cancelled"));
+    await emitLifecycle(deps, "job.cancelled", envelope);
     await deps.queue.complete(receipt);
-    emitLifecycle(deps, "job.cancelled", envelope);
     return;
   }
   const reason = error instanceof Error ? error.message : "job failed";
@@ -452,8 +460,8 @@ async function settleFailure(
   if (!permanent && attemptsLeft) {
     await deps.jobs.save(started.retry(at, reason));
     await deps.jobs.appendAttempt(attempt.finish("Retrying", at, reason));
+    await emitLifecycle(deps, "job.retrying", envelope);
     await deps.queue.fail(receipt, { reason, transient: true });
-    emitLifecycle(deps, "job.retrying", envelope);
     return;
   }
   const failed = started.fail(at, reason);
@@ -465,8 +473,8 @@ async function settleFailure(
     envelopeJson: JSON.stringify(envelope),
     createdAt: at,
   });
+  await emitLifecycle(deps, "job.failed", envelope);
   await deps.queue.fail(receipt, { reason, transient: false });
-  emitLifecycle(deps, "job.failed", envelope);
 }
 
 function isCancelled(error: unknown): boolean {
@@ -556,20 +564,41 @@ function isUniqueViolation(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === "23505";
 }
 
-function emitLifecycle(
+async function flushProgress(deps: RunJobDeps, id: string): Promise<void> {
+  try {
+    await deps.queue.flushProgress?.(id);
+  } catch {
+    /* Observational. */
+  }
+}
+
+async function publishState(deps: RunJobDeps, id: string): Promise<void> {
+  try {
+    await deps.queue.publishState?.(id);
+  } catch {
+    /* Observational transport is not execution state. */
+  }
+}
+
+async function emitLifecycle(
   deps: RunJobDeps,
   message: JobLifecycleEvent["message"],
   envelope: Pick<JobEnvelope, "jobId" | "jobType" | "payload" | "subject">,
-): void {
+): Promise<void> {
+  await publishState(deps, envelope.jobId);
   if (deps.onLifecycle === undefined) {
     return;
   }
   const raw = envelope.payload["correlationId"];
-  deps.onLifecycle({
-    message,
-    correlationId: typeof raw === "string" ? acceptCorrelationId(raw) : null,
-    jobId: envelope.jobId,
-    jobType: envelope.jobType,
-    subjectId: envelope.subject.id,
-  });
+  try {
+    deps.onLifecycle({
+      message,
+      correlationId: typeof raw === "string" ? acceptCorrelationId(raw) : null,
+      jobId: envelope.jobId,
+      jobType: envelope.jobType,
+      subjectId: envelope.subject.id,
+    });
+  } catch {
+    /* A logging observer cannot alter job execution. */
+  }
 }

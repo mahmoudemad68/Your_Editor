@@ -5,8 +5,9 @@ import {
   mediaAssetId,
   projectId,
   type JobEnvelope,
+  type JobProgressStage,
 } from "@editagent/domain";
-import { BullMqJobQueue } from "@editagent/job-queue";
+import { BullMqJobQueue, RedisJobEventPublisher } from "@editagent/job-queue";
 import { Pool } from "pg";
 import { deriveMediaAsset } from "../application/derive-media.js";
 import { DERIVATION_VERSION } from "../application/derivative-plan.js";
@@ -64,7 +65,16 @@ export async function handleMediaJob(envelope: JobEnvelope, signal: AbortSignal)
     throw new Error("Inspection policy differs between producer and worker.");
   const pool = new Pool({ connectionString: config.databaseUrl, max: 1 });
   const s3 = createMediaS3Client(config.objectStorage);
-  const progress = new BullMqJobQueue(config.redisUrl);
+  const progress = new BullMqJobQueue(config.redisUrl, {
+    events: new RedisJobEventPublisher(pool, config.redisUrl),
+  });
+  const onStage = async (stage: JobProgressStage, percentage: number) => {
+    await progress.publishProgress(envelope.jobId, {
+      stage,
+      percentage,
+      attempt: envelope.attempt,
+    });
+  };
   try {
     if (inspecting) {
       const repository = new PostgresDerivedAssets(pool);
@@ -78,6 +88,7 @@ export async function handleMediaJob(envelope: JobEnvelope, signal: AbortSignal)
             throw new Error("Validation store unavailable.");
           return validateMediaAsset(input.mediaAssetId, signal, {
             media: store.inspectionRepository(),
+            onStage,
             staging: new FileObjectStager({
               source: new S3ObjectByteSource(s3, config.objectStorage.bucket),
               ...(config.probeTmpDir === null ? {} : { rootDir: config.probeTmpDir }),
@@ -110,13 +121,7 @@ export async function handleMediaJob(envelope: JobEnvelope, signal: AbortSignal)
         assertAllowed: async (source, abort) =>
           assertValidatedMedia(source, validationPolicySignature(config.validationPolicy), abort),
       },
-      onStage: async (stage) => {
-        try {
-          await progress.publishProgress(envelope.jobId, { message: stage });
-        } catch {
-          process.stderr.write("media.derive stage publication unavailable\n");
-        }
-      },
+      onStage,
       now: () => instant(BigInt(Date.now())),
       newId: () => createUuidV7(Date.now(), randomBytes(10)),
     });

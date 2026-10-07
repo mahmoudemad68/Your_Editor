@@ -16,3 +16,5 @@ export type {
   ReservedJob,
 } from "./job-queue.js";
 export type { JobDeadLetter, JobRepository } from "./job-repository.js";
+
+export * from "./job-events.js";

@@ -1,3 +1,4 @@
+import { RedisJobEventPublisher, RedisJobEventSubscriber } from "@editagent/job-queue";
 import { PostgresUploadSessionRepository } from "./infrastructure/postgres-upload-sessions.js";
 import { GetCurrentUser } from "./application/current-user.js";
 import "reflect-metadata";
@@ -66,7 +67,9 @@ export async function bootstrap(): Promise<void> {
     trustedProxies: config.authTrustedProxies,
   };
   const jobs = new PostgresJobRepository(pool);
-  const queue = new BullMqJobQueue(config.redisUrl);
+  const queue = new BullMqJobQueue(config.redisUrl, {
+    events: new RedisJobEventPublisher(pool, config.redisUrl),
+  });
   const publication = new PostgresUploadPublication({
     pool,
     jobs,
@@ -77,8 +80,9 @@ export async function bootstrap(): Promise<void> {
     queueName: config.mediaInspectQueue,
     workerId: `api-${randomBytes(8).toString("hex")}`,
   });
-  startPublicationRecovery(publication);
+  const recovery = startPublicationRecovery(publication);
   const app = await createApiApplication({
+    jobEvents: new RedisJobEventSubscriber(config.redisUrl, logger),
     projects: new PostgresProjectRepository(pool),
     clock,
     ids: new NodeProjectIdGenerator(),
@@ -93,6 +97,18 @@ export async function bootstrap(): Promise<void> {
     },
     publication,
     auth,
+  });
+  const cleanup = async () => {
+    recovery.stop();
+    await app.close();
+    await queue.close(true);
+    await pool.end();
+  };
+  process.once("SIGTERM", () => {
+    void cleanup();
+  });
+  process.once("SIGINT", () => {
+    void cleanup();
   });
   await app.listen(config.port, config.host);
 }

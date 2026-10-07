@@ -1,3 +1,4 @@
+import { RedisJobEventPublisher } from "@editagent/job-queue";
 import { randomBytes } from "node:crypto";
 import { createUuidV7, instant } from "@editagent/domain";
 import { BullMqJobQueue, PostgresJobRepository } from "@editagent/job-queue";
@@ -9,7 +10,9 @@ import { loadMediaWorkerConfig } from "./infrastructure/config.js";
 export async function enqueueDerivation(projectId: string, mediaAssetId: string): Promise<void> {
   const config = loadMediaWorkerConfig();
   const pool = new Pool({ connectionString: config.databaseUrl });
-  const queue = new BullMqJobQueue(config.redisUrl);
+  const queue = new BullMqJobQueue(config.redisUrl, {
+    events: new RedisJobEventPublisher(pool, config.redisUrl),
+  });
   try {
     const result = await publishMediaDeriveJob(
       {
