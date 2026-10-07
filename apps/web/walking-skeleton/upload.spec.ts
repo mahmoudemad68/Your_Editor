@@ -42,7 +42,8 @@ test("US-117 real upload → production metadata Job → exact metadata DOM", as
       await page.getByRole("button", { name: "Sign up", exact: true }).click();
       await expect(page.getByRole("button", { name: "Sign out", exact: true })).toBeVisible();
       await page.getByRole("button", { name: "Sign out", exact: true }).click();
-      await page.goto("/sign-in");
+      await expect(page).toHaveURL(/\/sign-in$/);
+      await page.waitForLoadState("domcontentloaded");
       await page.getByLabel("Email", { exact: true }).fill(email);
       await page.getByLabel("Password", { exact: true }).fill(password);
       await page.getByRole("button", { name: "Sign in", exact: true }).click();

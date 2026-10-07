@@ -119,7 +119,10 @@ exact h264, 320×180, 25/1 fps, 2000000 µs expectations. Metadata must arrive t
 actual media-worker/FFprobe. No derivative completion is required. The optional
 negative proof stops media-worker, requires the same metadata assertion to fail
 within eight seconds, preserves failure evidence, restores the worker and reruns
-healthy. A zero exit or a different failure stage invalidates the proof.
+healthy. A zero exit or a different failure stage invalidates the proof. The checker parses
+execution errors only; source text and attachments cannot satisfy the expected
+metadata assertion. Its regression also rejects a captured real authentication
+error and accepts a captured real metadata timeout.
 
 Docker and storage-firewall root/sudo privileges are prerequisites. Existing
 storage subnet conflicts fail clearly: stop the other stack or remove its empty

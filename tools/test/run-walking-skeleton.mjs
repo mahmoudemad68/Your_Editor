@@ -1,5 +1,6 @@
 /** Disposable real production composition. No fixture API or direct DB inserts. */
 import { command, buildProductImages } from "./compose-build.mjs";
+import { assertBrokenMetadataProof } from "./walking-skeleton-proof.mjs";
 import { spawnSync, execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -140,8 +141,7 @@ try {
     await compose(["stop", "media-worker"]);
     const code = browser("negative");
     const report = readFileSync(path.join(artifacts, "negative/results.json"), "utf8");
-    if (code === 0 || !report.includes("metadata Job must complete"))
-      throw new Error("Broken metadata flow did not fail at the metadata assertion");
+    assertBrokenMetadataProof(JSON.parse(report), code);
     writeFileSync(
       path.join(artifacts, "negative-proof.json"),
       JSON.stringify(
