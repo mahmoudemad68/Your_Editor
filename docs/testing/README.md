@@ -157,7 +157,16 @@ Always preserve the failing exit code while collecting evidence and cleaning up.
 
 The test-only MinIO image uses the final archived upstream release and checked-in
 `tests/integration/support/minio.go.mod` / `minio.go.sum` with patched dependencies.
-Builds use `-mod=readonly`; changing either lockfile requires a new image cache tag
+Builds use `-mod=readonly`; lockfile content automatically changes the image cache tag
 and the mandatory `image test-minio` SBOM/Trivy scan. The initial upstream binary
 had 4 Critical and 35 HIGH findings; the patched binary has zero of both. These
 are test-only dependency fixes, separate from accepted production image debt.
+
+PostgreSQL and Redis helpers build the accepted `infra/postgres/Dockerfile` and
+`infra/redis/Dockerfile`, including their existing gosu/OpenSSL patches; directly
+running the upstream base images would reintroduce 1 Critical/21 HIGH PostgreSQL
+rows and 4 HIGH Redis rows. Their test image tags hash the Dockerfile/support
+inputs. These same runtime builds are already required in supply-chain CI. No
+security ignores or production runtime changes are used to repair those findings.
+The shared Vitest config also participates in Turbo's global cache key, so a
+coverage/configuration edit cannot reuse an older domain gate result.

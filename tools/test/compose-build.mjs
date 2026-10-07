@@ -15,7 +15,7 @@ export function command(bin, args, options = {}) {
     );
   });
 }
-export async function buildProductImages(root, services) {
+export async function buildProductImages(root, services, imageTags = {}) {
   const dockerfiles = {
     api: "apps/api/Dockerfile",
     web: "apps/web/Dockerfile",
@@ -24,7 +24,7 @@ export async function buildProductImages(root, services) {
     redis: "infra/redis/Dockerfile",
   };
   for (const service of services) {
-    const args = ["build", "-t", `editagent-${service}:local`];
+    const args = ["build", "-t", imageTags[service] ?? `editagent-${service}:local`];
     let file = dockerfiles[service];
     if (process.env.CODEX_PROXY_CERT) {
       const dir = path.join(root, ".local/walking-skeleton-build");

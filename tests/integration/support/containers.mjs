@@ -1,20 +1,38 @@
 import { GenericContainer, Wait } from "testcontainers";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { buildProductImages } from "../../../tools/test/compose-build.mjs";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { lookup } from "node:dns/promises";
 
+const root = path.resolve(import.meta.dirname, "../../..");
+function imageTag(service, files) {
+  const hash = createHash("sha256");
+  for (const file of files) hash.update(readFileSync(path.join(root, file)));
+  return `editagent-test-${service}:${hash.digest("hex").slice(0, 24)}`;
+}
 export const TEST_IMAGES = Object.freeze({
-  postgres:
-    "postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea",
-  redis: "redis:7.4-alpine@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499",
-  minio: "editagent-test-minio:9e49d5e-security-2",
+  // Reuse the accepted pinned builds: upstream gosu/OpenSSL are vulnerable.
+  postgres: imageTag("postgres", ["infra/postgres/Dockerfile"]),
+  redis: imageTag("redis", ["infra/redis/Dockerfile", "infra/redis/require-openssl.sh"]),
+  minio: imageTag("minio", [
+    "tests/integration/support/Minio.Dockerfile",
+    "tests/integration/support/minio.go.mod",
+    "tests/integration/support/minio.go.sum",
+  ]),
 });
+async function buildInfrastructureImage(service) {
+  try {
+    execFileSync("docker", ["image", "inspect", TEST_IMAGES[service]], { stdio: "ignore" });
+  } catch {
+    await buildProductImages(root, [service], TEST_IMAGES);
+  }
+}
 export async function buildMinioImage() {
   try {
     execFileSync("docker", ["image", "inspect", TEST_IMAGES.minio], { stdio: "ignore" });
   } catch {
-    const root = path.resolve(import.meta.dirname, "../../..");
     const args = [
       "build",
       "-f",
@@ -41,6 +59,7 @@ export async function buildMinioImage() {
   }
 }
 export async function startPostgres() {
+  await buildInfrastructureImage("postgres");
   const user = "test_user",
     password = randomUUID(),
     database = "test_db";
@@ -56,6 +75,7 @@ export async function startPostgres() {
   };
 }
 export async function startRedis() {
+  await buildInfrastructureImage("redis");
   const container = await new GenericContainer(TEST_IMAGES.redis)
     .withExposedPorts(6379)
     .withWaitStrategy(Wait.forLogMessage(/Ready to accept connections/))
@@ -67,6 +87,7 @@ export async function startRedis() {
   };
 }
 export async function startMinio() {
+  await buildMinioImage();
   const credentials = { accessKeyId: "test-" + randomUUID(), secretAccessKey: randomUUID() };
   const container = await new GenericContainer(TEST_IMAGES.minio)
     .withEnvironment({
@@ -86,7 +107,11 @@ export async function startMinio() {
 }
 /** Concurrent startup and cleanup of partial failures, with no implicit Docker skip. */
 export async function startIntegrationServices() {
-  await buildMinioImage();
+  await Promise.all([
+    buildInfrastructureImage("postgres"),
+    buildInfrastructureImage("redis"),
+    buildMinioImage(),
+  ]);
   const result = await Promise.allSettled([startPostgres(), startRedis(), startMinio()]);
   const started = result.filter((r) => r.status === "fulfilled").map((r) => r.value);
   if (result.some((r) => r.status === "rejected")) {
