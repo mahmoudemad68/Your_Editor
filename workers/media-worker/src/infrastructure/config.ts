@@ -1,3 +1,5 @@
+import { stat, realpath } from "node:fs/promises";
+import path from "node:path";
 import {
   ConfigurationError,
   parseMediaWorkerConfig,
@@ -9,10 +11,12 @@ import {
 export type { StorageWorkerConfig };
 export { ConfigurationError } from "@editagent/shared";
 
+import { parseValidationPolicy, type ValidationPolicy } from "../application/validation-policy.js";
+
 export interface MediaWorkerConfig extends StorageWorkerConfig {
   readonly ffprobePath: string;
   readonly ffmpegPath: string;
-  readonly allowUnvalidatedDerivation: boolean;
+  readonly validationPolicy: ValidationPolicy;
   readonly ffprobeTimeoutMs: number;
   readonly probeTmpDir: string | null;
   readonly mediaInspectQueue: string;
@@ -25,18 +29,14 @@ export function loadMediaWorkerConfig(env: EnvSource = process.env): MediaWorker
   const ffmpegPath = env["FFMPEG_PATH"] || "ffmpeg";
   if (ffmpegPath.includes("\0"))
     throw new ConfigurationError("Media worker", "FFMPEG_PATH is not valid.");
-  const optIn = env["ALLOW_UNVALIDATED_DERIVATION"] ?? "false";
-  if (optIn !== "true" && optIn !== "false")
-    throw new ConfigurationError(
-      "Media worker",
-      "ALLOW_UNVALIDATED_DERIVATION must be true or false.",
-    );
+  if (env["ALLOW_UNVALIDATED_DERIVATION"] === "true")
+    throw new ConfigurationError("Media worker", "Unvalidated derivation is no longer permitted.");
   return {
     ...base,
     ...parseProbeRuntime(env),
     ...parseWorkerRuntime(env),
     ffmpegPath,
-    allowUnvalidatedDerivation: optIn === "true",
+    validationPolicy: parseValidationPolicy(env),
   };
 }
 
@@ -92,4 +92,20 @@ function parseWorkerRuntime(env: EnvSource): { mediaInspectQueue: string; health
     throw new ConfigurationError("Media worker", "WORKER_HEALTH_PORT must be a port.");
   }
   return { mediaInspectQueue, healthPort: Number(rawPort) };
+}
+
+export async function executablePath(value: string): Promise<string> {
+  if (value.includes("\0") || value.includes("\n")) throw new Error("Invalid media executable.");
+  const candidates = path.isAbsolute(value)
+    ? [value]
+    : (process.env["PATH"] ?? "").split(path.delimiter).map((dir) => path.resolve(dir, value));
+  for (const p of candidates) {
+    try {
+      const s = await stat(p);
+      if (s.isFile() && (s.mode & 0o111) !== 0) return await realpath(p);
+    } catch {
+      /* Continue trusted executable search. */
+    }
+  }
+  throw new Error("Required media executable is unavailable.");
 }

@@ -15,6 +15,7 @@ export {
   MEDIA_INSPECT_TIMEOUT_MS,
   mediaInspectQueueName,
   publishMediaInspectJob,
+  requestMediaRevalidation,
 } from "./application/publish-media-inspect.js";
 export {
   cancelJob,

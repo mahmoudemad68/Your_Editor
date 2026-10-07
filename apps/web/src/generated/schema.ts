@@ -358,6 +358,27 @@ export interface components {
       channels: number | null;
     };
     MediaDetailsResponseDto: {
+      /** @enum {string} */
+      validationStatus: "pending" | "validated" | "rejected";
+      /** @enum {string|null} */
+      rejectionCode:
+        | "empty_media"
+        | "invalid_signature"
+        | "unsupported_container"
+        | "unsupported_codec"
+        | "duration_limit_exceeded"
+        | "resolution_limit_exceeded"
+        | "stream_count_limit_exceeded"
+        | "file_size_limit_exceeded"
+        | "bitrate_limit_exceeded"
+        | "invalid_metadata"
+        | "corrupt_media"
+        | "decode_validation_failed"
+        | "resource_limit_exceeded"
+        | "unsafe_external_reference"
+        | "source_identity_mismatch"
+        | null;
+      rejectionMessage: string | null;
       /** Format: uuid */
       id: string;
       /** Format: uuid */

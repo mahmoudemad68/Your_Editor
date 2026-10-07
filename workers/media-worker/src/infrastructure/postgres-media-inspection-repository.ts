@@ -41,6 +41,11 @@ interface MediaAssetRow {
   streams: unknown;
   inspection_error: string | null;
   inspection_revision: string;
+  validation_status: string;
+  validation_policy_signature: string | null;
+  validation_source_sha256: string | null;
+  validation_checked_at: string | null;
+  validation_rejection_code: string | null;
 }
 
 const SELECT_COLUMNS = `id::text AS id, project_id::text AS project_id, kind, storage_key,
@@ -50,7 +55,7 @@ const SELECT_COLUMNS = `id::text AS id, project_id::text AS project_id, kind, st
   display_height, rotation, frame_rate_numerator::text AS frame_rate_numerator,
   frame_rate_denominator::text AS frame_rate_denominator, frame_rate_mode, color_space,
   audio_channels, sample_rate, streams, inspection_error,
-  inspection_revision::text AS inspection_revision`;
+  inspection_revision::text AS inspection_revision, validation_status, validation_policy_signature, validation_source_sha256, validation_checked_at::text AS validation_checked_at, validation_rejection_code`;
 
 /** Worker-owned inspection store. It does not import the API repository. */
 export class PostgresMediaInspectionRepository implements MediaInspectionRepository {
@@ -107,6 +112,11 @@ export class PostgresMediaInspectionRepository implements MediaInspectionReposit
       snapshot.streams == null ? null : JSON.stringify(snapshot.streams),
       snapshot.inspectionError ?? null,
       expectedRevision.toString(),
+      asset.validation.status,
+      asset.validation.policySignature,
+      asset.validation.sourceSha256,
+      asset.validation.checkedAt?.toString() ?? null,
+      asset.validation.rejectionCode,
     ];
     const result = await this.pool.query(
       `UPDATE media_assets SET
@@ -129,7 +139,8 @@ export class PostgresMediaInspectionRepository implements MediaInspectionReposit
          audio_channels = $17,
          sample_rate = $18,
          streams = $19::jsonb,
-         inspection_error = $20
+         inspection_error = $20,
+         validation_status = $22, validation_policy_signature = $23, validation_source_sha256 = $24, validation_checked_at = $25, validation_rejection_code = $26
        WHERE id = $1 AND inspection_revision = $21`,
       parameters,
     );
@@ -170,6 +181,13 @@ function toSnapshot(row: MediaAssetRow): MediaAssetSnapshot {
     sampleRate: row.sample_rate,
     streams: streamsFromRow(row.streams),
     inspectionError: row.inspection_error,
+    validation: {
+      status: row.validation_status,
+      policySignature: row.validation_policy_signature,
+      sourceSha256: row.validation_source_sha256,
+      checkedAt: row.validation_checked_at,
+      rejectionCode: row.validation_rejection_code,
+    },
   };
 }
 

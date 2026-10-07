@@ -8,10 +8,6 @@ import { loadMediaWorkerConfig } from "./infrastructure/config.js";
 
 export async function enqueueDerivation(projectId: string, mediaAssetId: string): Promise<void> {
   const config = loadMediaWorkerConfig();
-  if (!config.allowUnvalidatedDerivation)
-    throw new Error(
-      "Explicit operator opt-in is required until US-127 validation gates derivation.",
-    );
   const pool = new Pool({ connectionString: config.databaseUrl });
   const queue = new BullMqJobQueue(config.redisUrl);
   try {

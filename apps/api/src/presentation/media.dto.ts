@@ -1,5 +1,9 @@
 import { ApiProperty } from "@nestjs/swagger";
-import { type MediaAsset, type MediaStreamMetadata } from "@editagent/domain";
+import {
+  MEDIA_REJECTION_MESSAGES,
+  type MediaAsset,
+  type MediaStreamMetadata,
+} from "@editagent/domain";
 
 export class MediaStreamDto {
   @ApiProperty({ enum: ["video", "audio"] })
@@ -22,6 +26,15 @@ export class MediaStreamDto {
 }
 
 export class MediaDetailsResponseDto {
+  @ApiProperty({ enum: ["pending", "validated", "rejected"] })
+  validationStatus!: "pending" | "validated" | "rejected";
+
+  @ApiProperty({ nullable: true, enum: Object.keys(MEDIA_REJECTION_MESSAGES) })
+  rejectionCode!: string | null;
+
+  @ApiProperty({ nullable: true, type: String })
+  rejectionMessage!: string | null;
+
   @ApiProperty({ format: "uuid" })
   id!: string;
 
@@ -104,6 +117,12 @@ export class MediaDetailsResponseDto {
 export function toMediaDetailsResponse(asset: MediaAsset): MediaDetailsResponseDto {
   const completed = asset.inspectionStatus === "completed";
   return {
+    validationStatus: asset.validation.status,
+    rejectionCode: asset.validation.rejectionCode,
+    rejectionMessage:
+      asset.validation.rejectionCode === null
+        ? null
+        : MEDIA_REJECTION_MESSAGES[asset.validation.rejectionCode],
     id: asset.id,
     projectId: asset.projectId,
     kind: asset.kind,

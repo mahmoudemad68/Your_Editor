@@ -6,6 +6,7 @@
 import "reflect-metadata";
 import assert from "node:assert/strict";
 import { type ChildProcess, spawn } from "node:child_process";
+import { readFile } from "node:fs/promises";
 import { createHash, randomBytes } from "node:crypto";
 import { Writable } from "node:stream";
 import { test } from "node:test";
@@ -251,7 +252,9 @@ test(
       const createdText = await created.text();
       assert.equal(created.status, 201, createdText);
       const project = JSON.parse(createdText) as { id: string };
-      const body = Buffer.from(`editagent-fixture-video-${queueName}`);
+      const body = await readFile(
+        path.resolve(__dirname, "../../../packages/media-core/fixtures/media/normal.mp4"),
+      );
       const hash = createHash("sha256").update(body).digest("hex");
       const started = await fetch(`${base}/projects/${project.id}/uploads`, {
         method: "POST",

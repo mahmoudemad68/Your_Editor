@@ -117,7 +117,7 @@ erDiagram
     string inspectionStatus "pending completed or failed"
     string inspectionError "safe code or null"
     bigint inspectionRevision "persistence token, not audit time"
-    string validationState "planned US-127"
+    string validationStatus "pending | validated | rejected"
     string rejection "planned structured reason"
     bigint createdAt
     bigint updatedAt
@@ -268,3 +268,7 @@ erDiagram
 | `JobRepository`          | `packages/domain/src/modules/jobs/`     | US-129        |
 
 `IJobQueue` remains the queue port from the ports catalogue. It is not the Job repository. US-129 implements it as `BullMqJobQueue` in the media worker and as the BullMQ Python client in the AI worker. `IObjectStorage` remains the byte port.
+
+## US-127 durable validation
+
+Migration `0011_media_validation.sql` adds validation status, policy SHA-256, source SHA-256, checked-at time and a stable rejection code to MediaAsset. Shape and audit constraints bind a validated verdict to completed technical inspection and the uploaded source. Missing historical verdicts default to pending. Safe rejection messages are fixed domain mappings, never probe/decode output. Inspection revision CAS and the worker source advisory lock protect revalidation; technical reinspection invalidates trust until the validated workflow succeeds again.

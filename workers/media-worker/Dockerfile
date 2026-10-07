@@ -26,6 +26,8 @@ COPY workers/ai-worker/package.json workers/ai-worker/package.json
 RUN pnpm install --frozen-lockfile --ignore-scripts
 
 FROM deps AS build
+RUN apt-get update && apt-get install -y --no-install-recommends gcc libc6-dev && rm -rf /var/lib/apt/lists/*
+COPY tools/media tools/media
 COPY tsconfig.base.json ./
 COPY workers/media-worker workers/media-worker
 COPY packages/domain packages/domain
@@ -71,7 +73,9 @@ RUN ffprobe -version \
 WORKDIR /app
 COPY --from=build --chown=10001:10001 /out/ ./
 USER 10001:10001
-ENV NODE_ENV=production
+ENV NODE_ENV=production \
+    FFMPEG_PATH=/usr/local/bin/ffmpeg \
+    FFPROBE_PATH=/usr/local/bin/ffprobe
 HEALTHCHECK --interval=5s --timeout=3s --start-period=10s --retries=20 \
   CMD ["node", "-e", "require('node:fs').accessSync('/tmp/editagent.ready')"]
 CMD ["node", "dist/index.js"]

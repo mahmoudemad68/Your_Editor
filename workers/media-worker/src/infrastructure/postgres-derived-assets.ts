@@ -28,6 +28,9 @@ export class PostgresDerivedAssets implements DerivationRepository {
     private readonly pool: Pool,
     private readonly connection: QueryConnection = pool,
   ) {}
+  inspectionRepository(): PostgresMediaInspectionRepository {
+    return new PostgresMediaInspectionRepository(this.connection);
+  }
   async loadSource(id: MediaAssetId, projectId: string) {
     const source = await new PostgresMediaInspectionRepository(this.connection).findById(id);
     return source?.projectId === projectId ? source : null;

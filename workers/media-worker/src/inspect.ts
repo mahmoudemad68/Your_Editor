@@ -5,35 +5,49 @@
  */
 
 import { instant, type MediaAssetId, mediaAssetId } from "@editagent/domain";
-import { FFprobeMediaProbe } from "@editagent/media-core";
+import {
+  SandboxedMediaValidator,
+  assertValidationSandbox,
+} from "./infrastructure/media-validator.js";
 import { Pool } from "pg";
-import { inspectMediaAsset } from "./application/inspect-media.js";
+import { validateMediaAsset } from "./application/validate-media.js";
 import { loadMediaWorkerConfig } from "./infrastructure/config.js";
 import { FileObjectStager } from "./infrastructure/object-stager.js";
-import { PostgresMediaInspectionRepository } from "./infrastructure/postgres-media-inspection-repository.js";
+import { PostgresDerivedAssets } from "./infrastructure/postgres-derived-assets.js";
 import { createMediaS3Client, S3ObjectByteSource } from "./infrastructure/s3-object-stream.js";
 
 export async function inspectStoredMedia(rawId: string): Promise<number> {
   const config = loadMediaWorkerConfig();
+  assertValidationSandbox();
   const mediaAssetId = parseMediaAssetId(rawId);
   const pool = new Pool({ connectionString: config.databaseUrl });
   const client = createMediaS3Client(config.objectStorage);
   try {
-    const asset = await inspectMediaAsset(mediaAssetId, {
-      media: new PostgresMediaInspectionRepository(pool),
-      staging: new FileObjectStager({
-        source: new S3ObjectByteSource(client, config.objectStorage.bucket),
-        ...(config.probeTmpDir === null ? {} : { rootDir: config.probeTmpDir }),
-      }),
-      probe: new FFprobeMediaProbe({
-        executable: config.ffprobePath,
-        timeoutMs: config.ffprobeTimeoutMs,
-      }),
-      clock: { now: () => instant(BigInt(Date.now())) },
-    });
+    const signal = new AbortController().signal;
+    const asset = await new PostgresDerivedAssets(pool).withSourceLock(
+      mediaAssetId,
+      signal,
+      async (store) => {
+        if (!(store instanceof PostgresDerivedAssets))
+          throw new Error("Validation store unavailable.");
+        return validateMediaAsset(mediaAssetId, signal, {
+          media: store.inspectionRepository(),
+          staging: new FileObjectStager({
+            source: new S3ObjectByteSource(client, config.objectStorage.bucket),
+            ...(config.probeTmpDir === null ? {} : { rootDir: config.probeTmpDir }),
+          }),
+          validator: new SandboxedMediaValidator(
+            config.validationPolicy,
+            config.ffmpegPath,
+            config.ffprobePath,
+          ),
+          now: () => instant(BigInt(Date.now())),
+        });
+      },
+    );
     const error = asset.inspectionError ?? "-";
     process.stdout.write(`inspection ${asset.id} ${asset.inspectionStatus} ${error}\n`);
-    return asset.inspectionStatus === "completed" ? 0 : 1;
+    return asset.validation.status === "validated" ? 0 : 1;
   } finally {
     client.destroy();
     await pool.end();

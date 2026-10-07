@@ -7,7 +7,9 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { createUuidV7, instant, mediaAssetId, MediaAsset, DerivedAsset } from "@editagent/domain";
-import { FFprobeMediaProbe } from "@editagent/media-core";
+import { SandboxedMediaValidator } from "./media-validator.js";
+import { assertValidatedMedia } from "../application/validate-media.js";
+import { validationPolicySignature } from "../application/validation-policy.js";
 import { Pool } from "pg";
 import {
   DeleteObjectCommand,
@@ -143,7 +145,10 @@ test(
           };
         },
       },
-      gate: { assertAllowed: async (_source, a) => a.throwIfAborted() },
+      gate: {
+        assertAllowed: async (source, a) =>
+          assertValidatedMedia(source, validationPolicySignature(config.validationPolicy), a),
+      },
       now,
       newId,
     };
@@ -169,10 +174,16 @@ test(
       );
       const raw = await mediaRepo.loadSource(id, project);
       assert.ok(raw);
-      const inspected = raw.recordInspection(
-        await new FFprobeMediaProbe({ executable: config.ffprobePath }).inspect({ filePath: file }),
-        now(),
-      );
+      const inspected = raw
+        .recordInspection(
+          await new SandboxedMediaValidator(
+            config.validationPolicy,
+            config.ffmpegPath,
+            config.ffprobePath,
+          ).validate(file, signal()),
+          now(),
+        )
+        .recordValidation(validationPolicySignature(config.validationPolicy), null, now());
       // Use the existing worker inspection repository, through its public adapter.
       const { PostgresMediaInspectionRepository } =
         await import("./postgres-media-inspection-repository.js");
@@ -187,7 +198,6 @@ test(
         FFMPEG_PATH: config.ffmpegPath,
         FFPROBE_PATH: config.ffprobePath,
         PROBE_TMPDIR: directory,
-        ALLOW_UNVALIDATED_DERIVATION: "true",
       };
       const savedEnv = Object.fromEntries(
         Object.keys(runtimeEnv).map((key) => [key, process.env[key]]),
@@ -1338,7 +1348,6 @@ test(
             S3_ACCESS_KEY_ID: env.S3_ACCESS_KEY_ID,
             S3_SECRET_ACCESS_KEY: env.S3_SECRET_ACCESS_KEY,
             S3_REGION: env.S3_REGION,
-            ALLOW_UNVALIDATED_DERIVATION: "true",
           };
           const savedEnv = Object.fromEntries(
             Object.keys(runtimeEnv).map((key) => [key, process.env[key]]),

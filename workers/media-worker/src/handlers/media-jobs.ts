@@ -17,7 +17,12 @@ import { FileObjectStager } from "../infrastructure/object-stager.js";
 import { PostgresDerivedAssets } from "../infrastructure/postgres-derived-assets.js";
 import { S3DerivedObjects } from "../infrastructure/s3-derived-objects.js";
 import { createMediaS3Client, S3ObjectByteSource } from "../infrastructure/s3-object-stream.js";
-import { acknowledge } from "./acknowledge.js";
+import { validateMediaAsset, assertValidatedMedia } from "../application/validate-media.js";
+import { validationPolicySignature } from "../application/validation-policy.js";
+import {
+  SandboxedMediaValidator,
+  assertValidationSandbox,
+} from "../infrastructure/media-validator.js";
 
 export function validateDerivationEnvelope(envelope: JobEnvelope): {
   mediaAssetId: ReturnType<typeof mediaAssetId>;
@@ -43,18 +48,57 @@ export function validateDerivationEnvelope(envelope: JobEnvelope): {
   }
 }
 export async function handleMediaJob(envelope: JobEnvelope, signal: AbortSignal): Promise<void> {
-  if (envelope.jobType === "media.inspect") return acknowledge(envelope);
-  const input = validateDerivationEnvelope(envelope);
+  const inspecting = envelope.jobType === "media.inspect";
+  const input = inspecting
+    ? validateInspectionEnvelope(envelope)
+    : validateDerivationEnvelope(envelope);
   const config = loadMediaWorkerConfig();
-  if (!config.allowUnvalidatedDerivation)
-    throw new PermanentJobError(
-      "US-127 validation is unavailable; explicit operator opt-in is required.",
-    );
+  assertValidationSandbox();
+  // A producer configured for another policy must not silently validate under
+  // different intent. This is an operational failure, never a content rejection.
+  if (
+    inspecting &&
+    envelope.payload["policySignature"] !== undefined &&
+    envelope.payload["policySignature"] !== validationPolicySignature(config.validationPolicy)
+  )
+    throw new Error("Inspection policy differs between producer and worker.");
   const pool = new Pool({ connectionString: config.databaseUrl, max: 1 });
   const s3 = createMediaS3Client(config.objectStorage);
   const progress = new BullMqJobQueue(config.redisUrl);
   try {
-    await deriveMediaAsset(input.mediaAssetId, input.projectId, signal, {
+    if (inspecting) {
+      const repository = new PostgresDerivedAssets(pool);
+      const validated = await repository.withSourceLock(
+        input.mediaAssetId,
+        signal,
+        async (store) => {
+          // The lock-bound store shares this one connection; never acquire a
+          // second pool connection while holding the source lock (pool max=1).
+          if (!(store instanceof PostgresDerivedAssets))
+            throw new Error("Validation store unavailable.");
+          return validateMediaAsset(input.mediaAssetId, signal, {
+            media: store.inspectionRepository(),
+            staging: new FileObjectStager({
+              source: new S3ObjectByteSource(s3, config.objectStorage.bucket),
+              ...(config.probeTmpDir === null ? {} : { rootDir: config.probeTmpDir }),
+            }),
+            validator: new SandboxedMediaValidator(
+              config.validationPolicy,
+              config.ffmpegPath,
+              config.ffprobePath,
+            ),
+            now: () => instant(BigInt(Date.now())),
+          });
+        },
+      );
+      if (validated.validation.status !== "validated")
+        throw new PermanentJobError(
+          `Media rejected: ${validated.validation.rejectionCode ?? "invalid_metadata"}.`,
+        );
+      return;
+    }
+    const derivation = validateDerivationEnvelope(envelope);
+    await deriveMediaAsset(derivation.mediaAssetId, derivation.projectId, signal, {
       repository: new PostgresDerivedAssets(pool),
       objects: new S3DerivedObjects(s3, config.objectStorage.bucket),
       staging: new FileObjectStager({
@@ -63,9 +107,8 @@ export async function handleMediaJob(envelope: JobEnvelope, signal: AbortSignal)
       }),
       processor: new FFmpegDerivativeProcessor(config.ffmpegPath, config.ffprobePath),
       gate: {
-        assertAllowed: async () => {
-          signal.throwIfAborted();
-        },
+        assertAllowed: async (source, abort) =>
+          assertValidatedMedia(source, validationPolicySignature(config.validationPolicy), abort),
       },
       onStage: async (stage) => {
         try {
@@ -84,5 +127,31 @@ export async function handleMediaJob(envelope: JobEnvelope, signal: AbortSignal)
     } finally {
       await pool.end();
     }
+  }
+}
+
+export function validateInspectionEnvelope(envelope: JobEnvelope): {
+  mediaAssetId: ReturnType<typeof mediaAssetId>;
+} {
+  const p = envelope.payload;
+  if (
+    envelope.jobType !== "media.inspect" ||
+    envelope.subject.kind !== "media-asset" ||
+    p["mediaAssetId"] !== envelope.subject.id ||
+    typeof p["mediaAssetId"] !== "string" ||
+    typeof p["correlationId"] !== "string" ||
+    p["correlationId"].length === 0 ||
+    !(
+      Object.keys(p).sort().join(",") === "correlationId,mediaAssetId" ||
+      (Object.keys(p).sort().join(",") === "correlationId,mediaAssetId,policySignature" &&
+        typeof p["policySignature"] === "string" &&
+        /^[a-f0-9]{64}$/.test(p["policySignature"]))
+    )
+  )
+    throw new PermanentJobError("Invalid inspection subject.");
+  try {
+    return { mediaAssetId: mediaAssetId(p["mediaAssetId"]) };
+  } catch {
+    throw new PermanentJobError("Invalid inspection subject.");
   }
 }

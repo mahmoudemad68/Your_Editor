@@ -56,7 +56,7 @@ test("media-worker configuration accepts a complete development environment", ()
   assert.equal(config.objectStorage.bucket, "editagent");
   assert.equal(config.ffprobePath, "ffprobe");
   assert.equal(config.ffmpegPath, "ffmpeg");
-  assert.equal(config.allowUnvalidatedDerivation, false);
+  assert.equal(config.validationPolicy.maxDurationSeconds, 1800);
   assert.equal(config.ffprobeTimeoutMs, 30_000);
   assert.equal(config.probeTmpDir, null);
   assert.equal(config.mediaInspectQueue, "media");
@@ -103,5 +103,22 @@ test("media-worker configuration accepts a complete development environment", ()
         PROBE_TMPDIR: "relative",
       }),
     /absolute path/,
+  );
+});
+
+test("US-127 removes the production unvalidated-derivation bypass", () => {
+  assert.throws(
+    () =>
+      loadMediaWorkerConfig({
+        DATABASE_URL: databaseUrl,
+        REDIS_URL: redisUrl,
+        S3_ENDPOINT: "http://storage:9000",
+        S3_BUCKET: "editagent",
+        S3_ACCESS_KEY_ID: "editagent",
+        S3_SECRET_ACCESS_KEY: "development",
+        S3_REGION: "us-east-1",
+        ALLOW_UNVALIDATED_DERIVATION: "true",
+      }),
+    /no longer permitted/,
   );
 });

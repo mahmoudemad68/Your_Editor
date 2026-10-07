@@ -121,7 +121,7 @@ Owned by Media (inspection and derivatives) and Tools (editing commands). Implem
 | `IMediaCommandBuilder` | Tools | Build an FFmpeg argument vector. No string-built shell commands. |
 | `IMediaProcessor`      | Tools | Execute a built command with a timeout and captured streams      |
 
-`IMediaProbe` is declared in `packages/domain/src/modules/media`. The roadmap task that names `packages/media-core` as the port location is reconciled here: application code cannot import `media-core` (`application-no-outer-layers`), so the contract stays in the Media module and the FFprobe adapter stays in `packages/media-core`. Only that package spawns FFprobe. The adapter uses an argument array with `shell: false`, a finite timeout, and `-protocol_whitelist file`. That restriction is not the hostile-media validation required by US-127.
+`IMediaProbe` is declared in `packages/domain/src/modules/media`. The roadmap task that names `packages/media-core` as the port location is reconciled here: application code cannot import `media-core` (`application-no-outer-layers`), so the contract stays in the Media module and the FFprobe adapter stays in `packages/media-core`. The generic US-126 adapter spawns FFprobe here; the US-127 worker adapter additionally executes it through its Linux sandbox. The adapter uses an argument array with `shell: false`, a finite timeout, and `-protocol_whitelist file`. That restriction is not the hostile-media validation required by US-127.
 
 US-126 inspection is not automatic. `CompleteMediaUpload` publishes a durable `media.inspect` job after the asset row is stored. It does not run FFprobe. `GET /projects/:projectId/media/:mediaAssetId` does not inspect either. The media worker reserves that job through `JobQueue` and completes it. `inspectMediaAsset` and `node dist/inspect.js <mediaAssetId>` remain the FFprobe entry points.
 
@@ -170,4 +170,8 @@ The registry is a plugin. The render worker is the composition root that loads i
 
 Worker application ports `MediaDerivativeProcessor`, `DerivativeObjects`, `DerivationRepository` and `DerivationGate` keep FFmpeg, S3 and PostgreSQL out of application/domain code. Source staging reuses `FileObjectStager`; FFmpeg outputs are private local files uploaded as streams. PostgreSQL session advisory locks coordinate workers without nested pool acquisition. Final object metadata permits recovery after object storage succeeds but a DB insert fails. See `workers/media-worker/README.md` for exact formats, v1 parameters and cancellation/reuse semantics.
 
-Derivation is explicitly operator-triggered and disabled by default until US-127 provides its validation gate; completed inspection is not validation. There is no automatic upload-to-derive path, new browser/API endpoint, Media Library UI or progress event transport in US-128.
+Derivation remains operator-triggered. US-127 now requires durable current-policy validation; completed inspection is not validation. There is no automatic upload-to-derive path, new browser/API endpoint, Media Library UI or progress event transport in US-128.
+
+## US-127 validation
+
+The worker application `MediaValidator` port separates deterministic policy/verdict orchestration from native process execution. `SandboxedMediaValidator` implements byte-selected probe/decode behind an actual Linux seccomp file broker and resource limits. `media.inspect` invokes `validateMediaAsset` with the existing staging/repository ports and source advisory lock; permanent media rejection persists before terminal job failure, while infrastructure/cancellation propagate through US-129. The derivation gate checks source/policy-bound validation before reuse or processing. See `workers/media-worker/VALIDATION.md`.
