@@ -34,6 +34,14 @@ async function main(): Promise<void> {
   const sessions = new InMemoryRefreshSessionRepository();
   const rateLimit = new LoginRateLimit(30, 60_000);
   const document = await createOpenApiDocument({
+    inspectionJobs: {
+      async latest() {
+        return null;
+      },
+      async retry() {
+        throw new Error("Document generation only.");
+      },
+    },
     jobEvents: {
       async subscribe() {
         throw new Error("Document generation only.");

@@ -123,6 +123,40 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/projects/{projectId}/media/{mediaAssetId}/inspection-job": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Read the latest persisted inspection Job, without internal payload or failure details. */
+    get: operations["InspectionJobController_show"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/projects/{projectId}/media/{mediaAssetId}/inspection/retry": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Queue a successor of the latest failed/cancelled inspection. History remains immutable. */
+    post: operations["InspectionJobController_retry"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/projects/{projectId}/jobs/events": {
     parameters: {
       query?: never;
@@ -426,6 +460,26 @@ export interface components {
       sampleRate: number | null;
       streams: components["schemas"]["MediaStreamDto"][] | null;
       inspectionError: string | null;
+    };
+    InspectionJobDto: {
+      /** Format: uuid */
+      jobId: string;
+      /** @enum {string} */
+      jobType: "media.inspect";
+      /** @enum {string} */
+      status: "Queued" | "Running" | "Retrying" | "Completed" | "Failed" | "Cancelled";
+      attempt: number;
+      /** @enum {string|null} */
+      reason: "processing_failed" | "cancelled" | null;
+      /** @description Persisted creation time in epoch milliseconds, decimal string. */
+      createdAt: string;
+      /** @description Persisted update time in epoch milliseconds, decimal string. */
+      updatedAt: string;
+      /** @description Last allocated live event sequence; no replay is implied. */
+      sequence: number;
+    };
+    InspectionJobResponseDto: {
+      job: components["schemas"]["InspectionJobDto"] | null;
     };
     UploadPartResponseDto: {
       partNumber: number;
@@ -868,6 +922,106 @@ export interface operations {
       };
       /** @description The MediaAsset is not visible to the caller. */
       404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  InspectionJobController_show: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        projectId: string;
+        mediaAssetId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["InspectionJobResponseDto"];
+        };
+      };
+      /** @description Identifiers must be UUIDv7. */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Sign in is required. */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description The media is not visible to the caller. */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  InspectionJobController_retry: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        projectId: string;
+        mediaAssetId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["InspectionJobDto"];
+        };
+      };
+      /** @description Identifiers must be UUIDv7. */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Sign in is required. */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Viewer cannot retry. */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description The media is not visible to the caller. */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description No failed/cancelled inspection is eligible. */
+      409: {
         headers: {
           [name: string]: unknown;
         };

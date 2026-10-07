@@ -8,6 +8,9 @@ import type {
   UploadDeclaration,
 } from "../project-contract";
 import { hashBlob, type HashOptions } from "./sha256-file";
+import { projectJobEvents } from "./job-event-stream";
+import { MediaJobProgress } from "./job-progress";
+import type { JobStatusApi, JobEventStream } from "../job-contract";
 import { MediaDetailsPanel } from "./media-details";
 import { putSignedObject, type SignedPutRequest, type SignedPutResult } from "./signed-upload";
 import { browserMultipartApi, UploadRequestError } from "./multipart-api";
@@ -44,14 +47,23 @@ export function MediaWorkspace({
   putObject = putSignedObject,
   multipartApi = browserMultipartApi,
   uploadState = durableUploads,
+  jobApi,
+  jobStream,
 }: {
   project: ProjectRecord;
+  jobApi?: JobStatusApi;
+  jobStream?: JobEventStream;
   api: ProjectApi;
   hashFile?: (file: Blob, options?: HashOptions) => Promise<string>;
   putObject?: (request: SignedPutRequest) => Promise<SignedPutResult>;
   multipartApi?: MultipartApi;
   uploadState?: UploadStateStore;
 }) {
+  // Hold one project connection across visible media/card identity changes.
+  useEffect(
+    () => (jobStream ?? projectJobEvents).subscribe(project.id, { event() {}, reconcile() {} }),
+    [project.id, jobStream],
+  );
   const [phase, setPhase] = useState<Phase>({ status: "idle" });
   const [refreshing, setRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState<string | null>(null);
@@ -125,11 +137,6 @@ export function MediaWorkspace({
     };
   }, [scope, project.id, multipartApi, uploadState]);
   const canUpload = project.role === "owner" || project.role === "editor";
-  const pendingAssetId =
-    phase.status === "uploaded" && phase.details.inspectionStatus === "pending"
-      ? phase.details.id
-      : null;
-
   function isCurrent(generation: number): boolean {
     return mountedRef.current && generationRef.current === generation;
   }
@@ -175,26 +182,6 @@ export function MediaWorkspace({
       detailsAbortRef.current = null;
     };
   }, []);
-
-  useEffect(() => {
-    if (pendingAssetId === null) {
-      return;
-    }
-    const generation = generationRef.current;
-    let stopped = false;
-    void (async () => {
-      for (let attempt = 1; attempt <= 8 && !stopped; attempt += 1) {
-        await wait(2000);
-        if (stopped || !isCurrent(generation)) {
-          return;
-        }
-        await refresh(pendingAssetId, generation);
-      }
-    })();
-    return () => {
-      stopped = true;
-    };
-  }, [pendingAssetId]);
 
   async function refresh(mediaAssetId: string, generation: number): Promise<void> {
     abortDetails();
@@ -549,12 +536,22 @@ export function MediaWorkspace({
         onReset={() => setPhase({ status: "idle" })}
       />
       {phase.status === "uploaded" ? (
-        <MediaDetailsPanel
-          details={phase.details}
-          refreshing={refreshing}
-          refreshError={refreshError}
-          onRefresh={() => void refresh(phase.details.id, generationRef.current)}
-        />
+        <>
+          <MediaJobProgress
+            projectId={project.id}
+            mediaId={phase.details.id}
+            canRetry={canUpload}
+            onTerminal={() => void refresh(phase.details.id, generationRef.current)}
+            api={jobApi}
+            stream={jobStream}
+          />
+          <MediaDetailsPanel
+            details={phase.details}
+            refreshing={refreshing}
+            refreshError={refreshError}
+            onRefresh={() => void refresh(phase.details.id, generationRef.current)}
+          />
+        </>
       ) : null}
     </div>
   );
@@ -570,12 +567,6 @@ function isBusy(phase: Phase): boolean {
     phase.status === "completing" ||
     phase.status === "discarding"
   );
-}
-
-function wait(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
 }
 
 function UploadDropZone({

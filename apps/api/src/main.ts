@@ -1,3 +1,4 @@
+import { PostgresInspectionJobs } from "./infrastructure/postgres-inspection-jobs.js";
 import { RedisJobEventPublisher, RedisJobEventSubscriber } from "@editagent/job-queue";
 import { PostgresUploadSessionRepository } from "./infrastructure/postgres-upload-sessions.js";
 import { GetCurrentUser } from "./application/current-user.js";
@@ -83,6 +84,25 @@ export async function bootstrap(): Promise<void> {
   const recovery = startPublicationRecovery(publication);
   const app = await createApiApplication({
     jobEvents: new RedisJobEventSubscriber(config.redisUrl, logger),
+    inspectionJobs: new PostgresInspectionJobs(
+      pool,
+      {
+        jobs,
+        queue,
+        now: () => clock.now(),
+        newAttemptId: () => createUuidV7(Date.now(), randomBytes(10)),
+        supervisor: {
+          async run() {
+            throw new Error("API does not execute Jobs.");
+          },
+        },
+      },
+      {
+        queueName: config.mediaInspectQueue,
+        policy: config.validationPolicy,
+        newJobId: () => createUuidV7(Date.now(), randomBytes(10)),
+      },
+    ),
     projects: new PostgresProjectRepository(pool),
     clock,
     ids: new NodeProjectIdGenerator(),

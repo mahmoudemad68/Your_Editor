@@ -40,15 +40,28 @@ export function MediaDetailsPanel({
       <p className="mt-2 text-sm">
         Inspection <span className="text-paper">{details.inspectionStatus}</span>
       </p>
+      <p className="mt-2 text-sm">
+        {
+          {
+            pending: "Awaiting validation",
+            validated: "Validation passed",
+            rejected: "Validation rejected",
+          }[details.validationStatus]
+        }
+      </p>
       {pending ? (
         <p className="mt-2 max-w-xl text-sm text-muted">
-          Inspection is pending. Automatic inspection arrives with background jobs. Refresh after an
-          inspection has been recorded.
+          Inspection is pending. Live job status appears above as processing starts.
         </p>
       ) : null}
       {failed ? (
         <p className="overflow-anywhere mt-2 text-sm text-danger" role="alert">
           {failureText(details.inspectionError)}
+        </p>
+      ) : null}
+      {details.rejectionMessage ? (
+        <p className="mt-2 text-sm text-danger" role="alert">
+          {details.rejectionMessage}
         </p>
       ) : null}
       <dl className="mt-4 grid min-w-0 gap-2 text-sm sm:grid-cols-2">

@@ -1,6 +1,8 @@
 import {
   ConfigurationError,
   parseApiConfig,
+  parseValidationPolicy,
+  type ValidationPolicy,
   type ApiConfig,
   type EnvSource,
 } from "@editagent/shared";
@@ -10,11 +12,16 @@ export { ConfigurationError };
 
 export interface ApiRuntimeConfig extends ApiConfig {
   readonly mediaInspectQueue: string;
+  readonly validationPolicy: ValidationPolicy;
 }
 
 /** Process boundary for API configuration. Reads the environment once. */
 export function loadApiConfig(env: EnvSource = process.env): ApiRuntimeConfig {
-  return { ...parseApiConfig(env), mediaInspectQueue: parseMediaInspectQueue(env) };
+  return {
+    ...parseApiConfig(env),
+    mediaInspectQueue: parseMediaInspectQueue(env),
+    validationPolicy: parseValidationPolicy(env),
+  };
 }
 
 function parseMediaInspectQueue(env: EnvSource): string {

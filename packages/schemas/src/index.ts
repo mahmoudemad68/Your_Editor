@@ -7,3 +7,5 @@ export { jobEnvelopeSchema, mediaTimeSchema, workerHealthSchema };
 export { default as jobEventSchema } from "./job-event.schema.json";
 
 export type { JobEvent, JobProgressStage } from "./job-event.generated.js";
+
+export { default as validateJobEvent } from "./job-event-validator.generated.js";

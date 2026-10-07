@@ -1,3 +1,4 @@
+import { createJobFixture } from "./us131-job-fixture.mjs";
 /** Test-only Nest composition. Controls are on a separate loopback listener,
  * never exposed through the Next BFF or shipped in either production image.
  * Uses US-118's real JWT, Argon2, rotation, origin guard and CSRF implementation.
@@ -35,6 +36,7 @@ const {
 } = require("./dist/infrastructure/node-media-asset-id-generator.js");
 const { createServiceLogger } = require("@editagent/shared");
 
+let jobFixture;
 let app;
 let objects;
 let uploads;
@@ -43,7 +45,7 @@ let rotations = 0;
 let users;
 let sessions;
 let now;
-async function reset() {
+async function reset(withJobs = false) {
   if (app) await app.close();
   if (objects) {
     for (const s of uploads.sessions.values()) {
@@ -52,6 +54,11 @@ async function reset() {
     }
     objects.close();
   }
+  if (jobFixture) {
+    await jobFixture.close();
+    jobFixture = undefined;
+  }
+  if (withJobs) jobFixture = await createJobFixture();
   uploads = new InMemoryUploadSessionRepository();
   objects = new S3ObjectStorage({
     endpoint: process.env.S3_ENDPOINT ?? "http://127.0.0.1:9000",
@@ -65,8 +72,8 @@ async function reset() {
   rotations = 0;
   now = () => instant(BigInt(Date.now()) + offset);
   const clock = { now };
-  users = new InMemoryUserRepository();
-  sessions = new InMemoryRefreshSessionRepository();
+  users = jobFixture?.users ?? new InMemoryUserRepository();
+  sessions = jobFixture?.sessions ?? new InMemoryRefreshSessionRepository();
   const passwords = new Argon2idHasher();
   const tokens = new JwtSessionTokens("us119-browser-fixture-signing-key-at-least-32chars");
   const rateLimit = new LoginRateLimit(30, 60_000);
@@ -90,6 +97,7 @@ async function reset() {
       uploadSessions: uploads,
       mediaIds: new NodeMediaAssetIdGenerator(),
       presignTtlSeconds: 900,
+      ...(jobFixture?.composition ?? {}),
       auth: {
         currentUser: new GetCurrentUser(users),
         register: new RegisterUser(users, sessions, passwords, tokens, clock, rateLimit),
@@ -124,7 +132,9 @@ const control = createServer((request, response) => {
       let text = "";
       for await (const chunk of request) text += chunk;
       const body = JSON.parse(text || "{}");
-      if (url.pathname === "/reset") await reset();
+      if (url.pathname === "/reset") await reset(body.jobs === true);
+      else if (url.pathname === "/job-observe") await jobFixture.observe(body.projectId);
+      else if (url.pathname === "/job-run") await jobFixture.run(body.mode);
       else if (url.pathname === "/advance") offset += BigInt(body.ms);
       else if (url.pathname === "/revoke") {
         const user = await users.findByEmail(body.email);
@@ -132,6 +142,10 @@ const control = createServer((request, response) => {
       }
     }
     response.setHeader("content-type", "application/json");
+    if (url.pathname === "/job-evidence") {
+      response.end(JSON.stringify(await jobFixture.evidence()));
+      return;
+    }
     const uploadState = [];
     if (url.pathname === "/uploads")
       for (const s of uploads.sessions.values())
@@ -167,6 +181,7 @@ async function close() {
     }
   } finally {
     objects.close();
+    if (jobFixture) await jobFixture.close();
   }
 }
 process.on("SIGTERM", () => {

@@ -1,3 +1,5 @@
+import { MediaInspectionJobs, type InspectionJobs } from "./application/inspection-job.js";
+import { InspectionJobController } from "./presentation/inspection-job.controller.js";
 import { ProjectJobEvents } from "./application/job-events.js";
 import { JobEventsController } from "./presentation/job-events.controller.js";
 import { type JobEventSubscriber } from "@editagent/domain";
@@ -56,6 +58,7 @@ import { type SessionTokens } from "./application/session-tokens.js";
 
 export interface ApiComposition {
   readonly jobEvents?: JobEventSubscriber;
+  readonly inspectionJobs?: InspectionJobs;
   readonly projects: ProjectRepository;
   readonly clock: Clock;
   readonly ids: ProjectIdGenerator;
@@ -97,11 +100,24 @@ export class AppModule {
         ProjectsController,
         UploadsController,
         MediaController,
+        ...(composition.inspectionJobs === undefined ? [] : [InspectionJobController]),
         ...(composition.jobEvents === undefined ? [] : [JobEventsController]),
         ...(composition.uploadSessions === undefined ? [] : [MultipartController]),
         ...(composition.auth === undefined ? [] : [AuthController]),
       ],
       providers: [
+        ...(composition.inspectionJobs === undefined
+          ? []
+          : [
+              {
+                provide: MediaInspectionJobs,
+                useValue: new MediaInspectionJobs(
+                  new GetMediaDetails(composition.projects, composition.media),
+                  composition.projects,
+                  composition.inspectionJobs,
+                ),
+              },
+            ]),
         ...(composition.jobEvents === undefined
           ? []
           : [

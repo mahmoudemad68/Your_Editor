@@ -30,6 +30,9 @@ FROM deps AS build
 COPY tsconfig.base.json ./
 COPY apps/web apps/web
 COPY packages/shared packages/shared
+COPY packages/schemas packages/schemas
+COPY packages/domain packages/domain
+COPY tools/schema tools/schema
 RUN pnpm --filter @editagent/web... build
 
 FROM node:22.23.3-trixie-slim@sha256:b26b04c123d9ff8ab646ceb18b9d75a1173acf64b9a401094b906d27b29338d4 AS runtime
