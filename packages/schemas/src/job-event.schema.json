@@ -1,0 +1,160 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://editagent.dev/schemas/job-event.v1.json",
+  "title": "JobEventV1",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "eventId": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}:[1-9][0-9]*$"
+    },
+    "jobId": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "projectId": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "jobType": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9.-]{0,63}$"
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "attempt": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "occurredAt": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$"
+    },
+    "correlationId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "kind": {
+      "enum": ["state", "progress"]
+    },
+    "percentage": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "stage": {
+      "enum": [
+        "staging",
+        "validating",
+        "probing",
+        "decoding",
+        "proxy",
+        "asr",
+        "mix",
+        "poster",
+        "sprite",
+        "uploading",
+        "finalizing"
+      ]
+    },
+    "status": {
+      "enum": ["Queued", "Running", "Retrying", "Completed", "Failed", "Cancelled"]
+    },
+    "reason": {
+      "enum": ["processing_failed", "cancelled"]
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "eventId",
+    "jobId",
+    "projectId",
+    "jobType",
+    "sequence",
+    "attempt",
+    "occurredAt",
+    "kind"
+  ],
+  "oneOf": [
+    {
+      "properties": {
+        "kind": {
+          "const": "progress"
+        },
+        "attempt": {
+          "minimum": 1
+        }
+      },
+      "required": ["percentage", "stage"],
+      "not": {
+        "anyOf": [
+          {
+            "required": ["status"]
+          },
+          {
+            "required": ["reason"]
+          }
+        ]
+      }
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "state"
+        }
+      },
+      "required": ["status"],
+      "not": {
+        "anyOf": [
+          {
+            "required": ["percentage"]
+          },
+          {
+            "required": ["stage"]
+          }
+        ]
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "enum": ["Running", "Retrying", "Completed", "Failed"]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "attempt": {
+                "minimum": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "Queued"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "attempt": {
+                "const": 0
+              }
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

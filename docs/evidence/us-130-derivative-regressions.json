@@ -1,0 +1,46 @@
+{
+  "video-0.5-audio-6.4": {
+    "status": "Completed",
+    "durationUs": 6400000,
+    "videoUs": 500000,
+    "rows": 5,
+    "objects": 5,
+    "secondGenerations": 0,
+    "measuredDurations": {
+      "mix": 6400000,
+      "asr": 6400000,
+      "proxy": 6400000
+    },
+    "durationDeltasUs": {
+      "mix": 0,
+      "asr": 0,
+      "proxy": 0
+    },
+    "proxyFinalFrameCloned": true,
+    "posterFinalFrameCloned": true,
+    "midpoints": [1600000, 4800000],
+    "posterTimestampUs": 2133333
+  },
+  "video-0.5-audio-18.4": {
+    "status": "Completed",
+    "durationUs": 18400000,
+    "videoUs": 500000,
+    "rows": 5,
+    "objects": 5,
+    "secondGenerations": 0,
+    "measuredDurations": {
+      "mix": 18400000,
+      "asr": 18400000,
+      "proxy": 18400000
+    },
+    "durationDeltasUs": {
+      "mix": 0,
+      "asr": 0,
+      "proxy": 0
+    },
+    "proxyFinalFrameCloned": true,
+    "posterFinalFrameCloned": true,
+    "midpoints": [2300000, 6900000, 11500000, 16100000],
+    "posterTimestampUs": 3000000
+  }
+}

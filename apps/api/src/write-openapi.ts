@@ -34,6 +34,12 @@ async function main(): Promise<void> {
   const sessions = new InMemoryRefreshSessionRepository();
   const rateLimit = new LoginRateLimit(30, 60_000);
   const document = await createOpenApiDocument({
+    jobEvents: {
+      async subscribe() {
+        throw new Error("Document generation only.");
+      },
+      async close() {},
+    },
     projects: new InMemoryProjectRepository(),
     clock,
     ids: new NodeProjectIdGenerator(),

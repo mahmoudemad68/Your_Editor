@@ -25,6 +25,7 @@ export async function consumeMediaJobs(
   queue: JobQueue,
   logger: JsonLogger,
   queueName: string,
+  signal?: AbortSignal,
 ): Promise<void> {
   const jobs = new PostgresJobRepository(pool);
   const supervisor = new ChildProcessJobSupervisor();
@@ -32,7 +33,7 @@ export async function consumeMediaJobs(
     modulePath: path.join(__dirname, "handlers/media-jobs.js"),
     exportName: "handleMediaJob",
   };
-  for (;;) {
+  while (!signal?.aborted) {
     try {
       const outcome = await runNextJob(
         {

@@ -3,7 +3,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { open, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { MediaProbeError, type ProbeResult } from "@editagent/domain";
+import { MediaProbeError, type ProbeResult, type JobProgressStage } from "@editagent/domain";
 import { mapFfprobeDocument, FFPROBE_SHOW_ENTRIES } from "@editagent/media-core";
 import { MediaRejected, type MediaValidator } from "../application/validate-media.js";
 import {
@@ -37,7 +37,11 @@ export class SandboxedMediaValidator implements MediaValidator {
     this.policySignature = validationPolicySignature(policy);
     this.maxBytes = policy.maxBytes;
   }
-  async validate(filePath: string, signal: AbortSignal): Promise<ProbeResult> {
+  async validate(
+    filePath: string,
+    signal: AbortSignal,
+    onStage?: (stage: JobProgressStage, percentage: number) => Promise<void>,
+  ): Promise<ProbeResult> {
     signal.throwIfAborted();
     const size = (await stat(filePath)).size;
     if (size === 0) throw new MediaRejected("empty_media");
@@ -77,6 +81,7 @@ export class SandboxedMediaValidator implements MediaValidator {
       "-i",
       filePath,
     ];
+    await onStage?.("probing", 25);
     const raw = await this.run(
       await executablePath(this.ffprobe),
       filePath,
@@ -100,6 +105,7 @@ export class SandboxedMediaValidator implements MediaValidator {
       if (error instanceof MediaProbeError) throw new MediaRejected("invalid_metadata");
       throw error;
     }
+    await onStage?.("decoding", 55);
     const directory = await mkdtemp(path.join(tmpdir(), "editagent-validation-"));
     const output = path.join(directory, "decode.mp4");
     try {

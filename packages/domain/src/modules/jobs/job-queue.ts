@@ -4,6 +4,7 @@
  */
 
 import { type JobId } from "../../kernel/id.js";
+import { type JobProgressEvent } from "./job-events.js";
 import { type JobSubject } from "./job.js";
 
 export interface JobEnvelope {
@@ -57,9 +58,7 @@ export interface JobFailure {
   readonly transient: boolean;
 }
 
-export interface JobProgressEvent {
-  readonly message: string;
-}
+export type { JobProgressEvent } from "./job-events.js";
 
 export interface JobQueue {
   enqueue(command: EnqueueJobCommand): Promise<EnqueueJobResult>;
@@ -78,6 +77,9 @@ export interface JobQueue {
    */
   ownsReservation(receipt: JobReceipt): Promise<boolean>;
   discardQueued(jobId: string, queueName: string): Promise<void>;
+  /** Observational state notification after persistence. Optional for non-event adapters. */
+  publishState?(jobId: string): Promise<void>;
+  flushProgress?(jobId: string): Promise<void>;
   publishProgress(jobId: string, event: JobProgressEvent): Promise<void>;
   close(): Promise<void>;
 }

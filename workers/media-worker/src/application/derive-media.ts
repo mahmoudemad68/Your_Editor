@@ -4,6 +4,7 @@ import {
   type MediaAsset,
   type MediaAssetId,
   type Instant,
+  type JobProgressStage,
 } from "@editagent/domain";
 import { derivativePlans, canonicalJson, type DerivativePlan } from "./derivative-plan.js";
 import { type MediaObjectStaging } from "./inspect-media.js";
@@ -62,7 +63,7 @@ export interface DerivationDependencies {
   readonly gate: DerivationGate;
   readonly now: () => Instant;
   readonly newId: () => string;
-  readonly onStage?: (stage: string) => void | Promise<void>;
+  readonly onStage?: (stage: JobProgressStage, percentage: number) => void | Promise<void>;
 }
 
 export async function deriveMediaAsset(
@@ -83,6 +84,7 @@ export async function deriveMediaAsset(
     try {
       for (const plan of plans) {
         signal.throwIfAborted();
+        const percentage = 10 + (results.length / plans.length) * 85;
         const existing = await store.findBySignature(id, plan.kind, plan.signature);
         let object = await deps.objects.find(source, plan, signal);
         if (existing !== null && object !== null) {
@@ -92,7 +94,7 @@ export async function deriveMediaAsset(
         }
         if (object === null) {
           if (processor === undefined) {
-            await deps.onStage?.("staging");
+            await deps.onStage?.("staging", 0);
             signal.throwIfAborted();
             staged = await deps.staging.stage(source.storageKey!, signal);
             signal.throwIfAborted();
@@ -100,14 +102,14 @@ export async function deriveMediaAsset(
               throw new PermanentJobError("Staged source content identity changed.");
             processor = await deps.processor.prepare(source, staged.filePath, signal);
           }
-          await deps.onStage?.(plan.variant);
+          await deps.onStage?.(plan.variant, percentage);
           const output = await processor.generate(plan, signal);
           signal.throwIfAborted();
-          await deps.onStage?.("uploading");
+          await deps.onStage?.("uploading", percentage + 5);
           object = await deps.objects.put(source, plan, output, signal);
         }
         signal.throwIfAborted();
-        await deps.onStage?.("finalizing");
+        await deps.onStage?.("finalizing", percentage + 10);
         if (existing !== null) {
           assertSameArtifact(existing.artifact, object);
           results.push(existing);
@@ -119,6 +121,7 @@ export async function deriveMediaAsset(
           );
         }
       }
+      await deps.onStage?.("finalizing", 100);
       return results;
     } finally {
       try {

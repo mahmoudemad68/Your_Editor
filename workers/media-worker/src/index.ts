@@ -1,12 +1,8 @@
+import { RedisJobEventPublisher } from "@editagent/job-queue";
 import { assertValidationSandbox } from "./infrastructure/media-validator.js";
 import { Pool } from "pg";
 import { BullMqJobQueue, observePostgresPool, postgresAndRedisReady } from "@editagent/job-queue";
-import {
-  createServiceLogger,
-  keepProcessAlive,
-  startHealthServer,
-  startNoopTracing,
-} from "@editagent/shared";
+import { createServiceLogger, startHealthServer, startNoopTracing } from "@editagent/shared";
 import { describeWorker } from "./application/describe.js";
 import { consumeMediaJobs } from "./consume-media-jobs.js";
 import { loadMediaWorkerConfig } from "./infrastructure/config.js";
@@ -21,16 +17,37 @@ export function main(): void {
   observePostgresPool(pool, (error) => {
     logger.error({ err: error.message }, "postgres.pool.disconnected");
   });
-  const queue = new BullMqJobQueue(config.redisUrl);
-  startHealthServer(config.healthPort, {
+  const queue = new BullMqJobQueue(config.redisUrl, {
+    events: new RedisJobEventPublisher(pool, config.redisUrl),
+  });
+  const health = startHealthServer(config.healthPort, {
     ready: () => postgresAndRedisReady(pool, config.redisUrl),
   });
   process.stdout.write(`${describeWorker()} (${mediaAdapterPackage})\n`);
-  void consumeMediaJobs(pool, queue, logger, config.mediaInspectQueue).catch((error: unknown) => {
+  const shutdown = new AbortController();
+  const consuming = consumeMediaJobs(
+    pool,
+    queue,
+    logger,
+    config.mediaInspectQueue,
+    shutdown.signal,
+  ).catch((error: unknown) => {
     const message = error instanceof Error ? error.message : String(error);
     process.stderr.write(`media-worker stopped: ${message}\n`);
   });
-  keepProcessAlive();
+  const stop = async () => {
+    shutdown.abort();
+    health.close();
+    await queue.close(true);
+    await consuming;
+    await pool.end();
+  };
+  process.once("SIGTERM", () => {
+    void stop();
+  });
+  process.once("SIGINT", () => {
+    void stop();
+  });
 }
 
 if (require.main === module) {

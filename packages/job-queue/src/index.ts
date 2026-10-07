@@ -31,3 +31,10 @@ export {
   observePostgresPool,
   postgresAndRedisReady,
 } from "./infrastructure/readiness.js";
+
+export {
+  RedisJobEventPublisher,
+  RedisJobEventSubscriber,
+  JOB_PROGRESS_WINDOW_MS,
+  projectJobChannel,
+} from "./infrastructure/redis-job-events.js";

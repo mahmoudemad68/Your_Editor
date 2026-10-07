@@ -24,7 +24,7 @@
     "test": {
       "dependsOn": ["build"],
       "outputs": ["coverage/**", "coverage.xml", "dist-test/**"],
-      "env": ["FFMPEG_PATH", "FFPROBE_PATH"],
+      "env": ["FFMPEG_PATH", "FFPROBE_PATH", "CHROME_PATH", "PLAYWRIGHT_CHROME_EXECUTABLE"],
       "passThroughEnv": [
         "DATABASE_URL",
         "REDIS_URL",

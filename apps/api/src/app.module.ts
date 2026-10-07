@@ -1,3 +1,6 @@
+import { ProjectJobEvents } from "./application/job-events.js";
+import { JobEventsController } from "./presentation/job-events.controller.js";
+import { type JobEventSubscriber } from "@editagent/domain";
 import { MultipartUploads } from "./application/multipart-uploads.js";
 import { MultipartController } from "./presentation/multipart.controller.js";
 import type { UploadSessionRepository } from "@editagent/domain";
@@ -52,6 +55,7 @@ import {
 import { type SessionTokens } from "./application/session-tokens.js";
 
 export interface ApiComposition {
+  readonly jobEvents?: JobEventSubscriber;
   readonly projects: ProjectRepository;
   readonly clock: Clock;
   readonly ids: ProjectIdGenerator;
@@ -93,10 +97,19 @@ export class AppModule {
         ProjectsController,
         UploadsController,
         MediaController,
+        ...(composition.jobEvents === undefined ? [] : [JobEventsController]),
         ...(composition.uploadSessions === undefined ? [] : [MultipartController]),
         ...(composition.auth === undefined ? [] : [AuthController]),
       ],
       providers: [
+        ...(composition.jobEvents === undefined
+          ? []
+          : [
+              {
+                provide: ProjectJobEvents,
+                useValue: new ProjectJobEvents(composition.projects, composition.jobEvents),
+              },
+            ]),
         ...(composition.uploadSessions === undefined
           ? []
           : [
