@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import { beforeEach, afterEach, test } from "node:test";
 import { proxyInspectionJob, proxyJobEvents } from "./job-proxy";
+import {
+  JobStreamRegistry,
+  jobStreamRegistry,
+  MAX_ACTIVE_JOB_PROXY_STREAMS,
+} from "../infrastructure/job-stream-lifecycle";
+import { EventEmitter } from "node:events";
 const oldBase = process.env.API_BASE_URL;
 beforeEach(() => {
   process.env.API_BASE_URL = "http://api.test";
@@ -52,6 +58,7 @@ test("BFF fixed route streams early bytes, safe cookies/correlation and downstre
   await reader.cancel();
   assert.equal(upstreamSignal?.aborted, true);
   assert.equal(cancelled, 1);
+  assert.equal(jobStreamRegistry.count, 0);
 });
 test("BFF preserves authentication/non-disclosure statuses and rejects invalid project before fetching", async () => {
   for (const status of [401, 404, 503]) {
@@ -73,6 +80,7 @@ test("BFF preserves authentication/non-disclosure statuses and rejects invalid p
     400,
   );
   assert.equal(fetched, false);
+  assert.equal(jobStreamRegistry.count, 0);
 });
 test("BFF downstream request abort propagates upstream; retry forwards CSRF, no arbitrary body/policy", async () => {
   const controller = new AbortController();
@@ -94,6 +102,7 @@ test("BFF downstream request abort propagates upstream; retry forwards CSRF, no 
   );
   controller.abort();
   assert.equal(upstreamSignal?.aborted, true);
+  assert.equal(jobStreamRegistry.count, 0);
   await response.body?.cancel();
   await proxyInspectionJob(
     new Request("http://web.test/", {
@@ -111,4 +120,51 @@ test("BFF downstream request abort propagates upstream; retry forwards CSRF, no 
       return Response.json({ jobId: PROJECT });
     },
   );
+});
+test("bounded active-stream registry installs one signal pair and aborts all idempotently", () => {
+  const registry = new JobStreamRegistry();
+  const signals = new EventEmitter();
+  registry.install(signals as NodeJS.Process);
+  registry.install(signals as NodeJS.Process);
+  assert.equal(signals.listenerCount("SIGTERM"), 1);
+  assert.equal(signals.listenerCount("SIGINT"), 1);
+  const controllers = Array.from(
+    { length: MAX_ACTIVE_JOB_PROXY_STREAMS },
+    () => new AbortController(),
+  );
+  for (const controller of controllers) assert.ok(registry.register(controller));
+  assert.equal(registry.register(new AbortController()), null, "registry has a hard capacity");
+  signals.emit("SIGTERM");
+  assert.equal(registry.count, 0);
+  assert.ok(controllers.every((controller) => controller.signal.aborted));
+  signals.emit("SIGINT");
+  assert.equal(registry.count, 0);
+  assert.equal(registry.register(new AbortController()), null, "shutdown admits no new streams");
+});
+test("BFF unregisters on EOF and upstream read failure; repeated cancellation is harmless", async () => {
+  for (const fail of [false, true]) {
+    const response = await proxyJobEvents(
+      new Request("http://web.test/"),
+      PROJECT,
+      async () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              if (fail) controller.error(new Error("unsafe internal details"));
+              else controller.close();
+            },
+          }),
+          { headers: { "content-type": "text/event-stream" } },
+        ),
+    );
+    await response.text().catch(() => undefined);
+    assert.equal(jobStreamRegistry.count, 0);
+  }
+  const registry = new JobStreamRegistry();
+  const controller = new AbortController();
+  const unregister = registry.register(controller)!;
+  unregister();
+  unregister();
+  assert.equal(registry.count, 0);
+  assert.equal(registry.shutdown(), 0);
 });

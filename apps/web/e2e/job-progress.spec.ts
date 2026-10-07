@@ -3,12 +3,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { test, expect } from "@playwright/test";
+import { observeJobs, readJobTrace } from "./job-observation";
 test("US-131 real PostgreSQL/BullMQ/Redis/BFF/browser progress and immutable failed-job retry without reload", async ({
   page,
   request,
 }, testInfo) => {
   const dir = mkdtempSync(join(tmpdir(), "us131-browser-"));
   try {
+    await observeJobs(page);
     await page.setViewportSize({ width: 360, height: 780 });
     expect((await request.post("http://127.0.0.1:3032/reset", { data: { jobs: true } })).ok()).toBe(
       true,
@@ -119,6 +121,7 @@ test("US-131 real PostgreSQL/BullMQ/Redis/BFF/browser progress and immutable fai
     expect(await page.evaluate(() => performance.timeOrigin)).toBe(documentOrigin);
     expect(sseRequests).toBe(1);
     expect(await page.locator("body").textContent()).not.toMatch(/secret\/path|token=unsafe/);
+    const trace = await readJobTrace(page);
     const evidence = {
       projectId,
       noPageReload: navigations === 0,
@@ -127,6 +130,17 @@ test("US-131 real PostgreSQL/BullMQ/Redis/BFF/browser progress and immutable fai
       predecessor,
       successor,
       final,
+      latency: (() => {
+        const values = final.reports
+          .map(
+            (report: { jobId: string; reportedAt: number }) =>
+              trace.domProgress[report.jobId] - report.reportedAt,
+          )
+          .sort((a: number, b: number) => a - b);
+        expect(values).toHaveLength(3);
+        expect(values.every((value: number) => value >= 0 && value <= 1000)).toBe(true);
+        return { min: values[0], median: values[1], max: values[2], samples: values };
+      })(),
     };
     await testInfo.attach("us131-real-flow", {
       body: JSON.stringify(evidence, null, 2),

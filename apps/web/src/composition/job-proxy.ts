@@ -1,4 +1,5 @@
 import { loadWebConfig } from "../infrastructure/config";
+import { jobStreamRegistry } from "../infrastructure/job-stream-lifecycle";
 import { correlationIdFromRequest } from "./project-actions";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -19,13 +20,35 @@ export async function proxyJobEvents(
   const headers = { "cache-control": "private, no-store" };
   if (!UUID.test(project)) return new Response(null, { status: 400, headers });
   const abort = new AbortController();
-  const stop = () => abort.abort();
-  request.signal.addEventListener("abort", stop, { once: true });
-  if (request.signal.aborted) stop();
+  const unregister = jobStreamRegistry.register(abort);
+  if (!unregister) return new Response(null, { status: 503, headers });
+  let finished = false;
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  let downstream: ReadableStreamDefaultController<Uint8Array> | undefined;
   const cleanup = () => {
+    if (finished) return;
+    finished = true;
+    unregister();
     request.signal.removeEventListener("abort", stop);
-    stop();
+    abort.signal.removeEventListener("abort", stop);
+    abort.abort();
+    void reader
+      ?.cancel()
+      .catch(() => {})
+      .finally(() => reader?.releaseLock());
   };
+  const stop = () => {
+    if (finished) return;
+    try {
+      downstream?.close();
+    } catch {
+      /* Downstream cancellation may already have closed the stream. */
+    }
+    cleanup();
+  };
+  request.signal.addEventListener("abort", stop, { once: true });
+  abort.signal.addEventListener("abort", stop, { once: true });
+  if (request.signal.aborted) stop();
   try {
     const upstream = await fetchImpl(
       `${loadWebConfig().apiBaseUrl}/projects/${project}/jobs/events`,
@@ -40,29 +63,42 @@ export async function proxyJobEvents(
       cleanup();
       return new Response(null, { status: upstream.ok ? 502 : upstream.status, headers });
     }
-    const reader = upstream.body.getReader();
+    if (finished) {
+      await upstream.body.cancel();
+      return new Response(null, { status: 503, headers });
+    }
+    reader = upstream.body.getReader();
     const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        downstream = controller;
+      },
       async pull(controller) {
         try {
-          const chunk = await reader.read();
+          const chunk = await reader!.read();
+          if (finished) return;
           if (chunk.done) {
             controller.close();
-            reader.releaseLock();
             cleanup();
           } else controller.enqueue(chunk.value);
         } catch {
+          if (finished) return;
           controller.error(new Error("The event stream was interrupted."));
           cleanup();
         }
       },
-      async cancel() {
+      cancel() {
         cleanup();
-        await reader.cancel().catch(() => {});
-        reader.releaseLock();
       },
     });
     return new Response(body, {
-      headers: { ...headers, "content-type": "text/event-stream", "x-accel-buffering": "no" },
+      // This connection stays open for the SSE body, but must not become an
+      // idle HTTP keep-alive socket after shutdown closes that body.
+      headers: {
+        ...headers,
+        "content-type": "text/event-stream",
+        "x-accel-buffering": "no",
+        connection: "close",
+      },
     });
   } catch {
     cleanup();

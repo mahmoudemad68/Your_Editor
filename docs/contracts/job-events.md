@@ -190,3 +190,13 @@ PostgreSQL-authoritative application state after gaps/disconnects; adding a
 snapshot/state-query UX belongs to a later application decision. The old
 connection's resources are released on close; every replacement is independently
 authorized.
+
+The shared Redis subscriber closes all affected Project SSE streams when a
+previously ready connection loses continuity. Initial Redis readiness is not a
+reset. Each old subscription is notified once, even across repeated retries.
+This is a transport EOF/reset, not a JobEvent; v1 JSON is unchanged. API clients
+reconnect and reconcile PostgreSQL state because messages in the gap are lost.
+Unavailable subscriptions fail with 503; ordinary heartbeat comments do not
+prove Redis continuity. Reconnect rechecks authentication and Project membership.
+A reset while output is blocked uses the existing forced socket-abort cleanup,
+so graceful response ending cannot strand a blocked socket.

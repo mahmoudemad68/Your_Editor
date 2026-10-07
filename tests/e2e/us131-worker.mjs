@@ -28,6 +28,11 @@ process.once("message", ({ queueName, mode }) => {
             async run(envelope, handler, signal) {
               // Test pacing makes a real worker-reported stage observable to the DOM.
               // Actual validation runs unchanged through the production isolated handler.
+              process.send?.({
+                type: "progress-reported",
+                jobId: envelope.jobId,
+                reportedAt: Date.now(),
+              });
               await queue.publishProgress(envelope.jobId, {
                 stage: "staging",
                 percentage: 0,

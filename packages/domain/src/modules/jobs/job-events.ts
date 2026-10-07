@@ -62,6 +62,12 @@ export interface JobEventSubscription {
   close(): Promise<void>;
 }
 export interface JobEventSubscriber {
-  subscribe(projectId: string, receive: (event: JobEvent) => void): Promise<JobEventSubscription>;
+  /** A reset means live continuity was lost; there is no replay. Consumers
+   * should close/reconnect and reconcile authoritative state. Not a JobEvent. */
+  subscribe(
+    projectId: string,
+    receive: (event: JobEvent) => void,
+    onTransportReset?: () => void,
+  ): Promise<JobEventSubscription>;
   close(): Promise<void>;
 }

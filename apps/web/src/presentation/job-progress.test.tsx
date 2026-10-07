@@ -172,6 +172,18 @@ test("reconnect reconciles authoritative successor and unmount releases stream/s
   f.result.unmount();
   assert.equal(f.stream.closed, 1);
 });
+test("Running reconciliation after a continuity gap discards stale percentages until a new report", async () => {
+  const f = fixture("Running");
+  await screen.findByText("Processing…");
+  await f.stream.emit(progress(1, 75));
+  assert.ok(screen.getByText("Creating proxy · 75%"));
+  f.current({ ...snapshot("Running"), sequence: 2 });
+  await act(async () => f.stream.listener?.reconcile());
+  assert.ok(screen.getByText("Processing…"));
+  assert.equal(screen.getByRole("progressbar").hasAttribute("value"), false);
+  await f.stream.emit(progress(3, 80));
+  assert.ok(screen.getByText("Creating proxy · 80%"));
+});
 test("snapshot race and pre-snapshot events do not overwrite newer SSE; retry race and cleanup", async () => {
   let resolve!: (job: InspectionJob | null) => void;
   const api: JobStatusApi = {

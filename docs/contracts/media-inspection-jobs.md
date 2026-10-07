@@ -95,8 +95,23 @@ alert if the request fails. Validation rejection keeps its existing safe message
 Layout uses flexible wrapping and no fixed desktop widths.
 
 Redis pub/sub cannot recover progress emitted while offline. After reconnection,
-the database restores identity/status/attempt; the last observed percentage may
-remain for the same running attempt until new live progress arrives. Discovery
+the database restores identity/status/attempt. A reopened stream clears old
+percentages/buffered progress; a still-Running Job is explicitly indeterminate
+until a new live report. Subscriber continuity loss closes affected API streams,
+which triggers the existing browser reconnect loop and snapshot reconciliation
+without polling, page reload or user action. Discovery
 of an unpublished initial Job needs its first live event, a reconnect, or manual
 Refresh details/status fallback. No snapshot exposes Job payloads. The accepted
 US-130 findings F-1, F-3, F-4, F-5, F-6, F-7, N-1, and N-2 are unchanged.
+
+## Web process shutdown
+
+Node instrumentation installs one additional SIGTERM/SIGINT listener pair using
+a process-wide symbol-guarded registry. At most 1024 active proxy controllers are
+retained; saturation/shutdown rejects new streams with 503. Each request
+unregisters on downstream abort, cancel, upstream failure or EOF. Shutdown
+synchronously clears the registry and aborts all upstream fetches/readers while
+closing downstream bodies. Cleanup is idempotent; Next retains its own graceful
+shutdown and exit handling (`NEXT_MANUAL_SIG_HANDLE` is not used). SSE responses
+use `Connection: close`: the stream remains open normally, but its completed body
+does not leave an idle HTTP keep-alive socket delaying process shutdown.

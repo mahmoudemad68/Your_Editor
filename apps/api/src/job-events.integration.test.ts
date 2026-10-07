@@ -45,6 +45,61 @@ async function until(predicate: () => boolean, timeout = 4000): Promise<void> {
   while (!predicate() && Date.now() < end) await delay(10);
   assert.ok(predicate(), "condition did not arrive");
 }
+test("real Redis initial ready is silent; CLIENT KILL resets each Project subscription once", async () => {
+  const redisUrl = process.env["REDIS_URL"] ?? "redis://127.0.0.1:6379/0";
+  const redis = new Redis(redisUrl);
+  const subscriber = new RedisJobEventSubscriber(redisUrl);
+  let a = 0,
+    b = 0,
+    next = 0;
+  const subscriptions = [];
+  const kill = async () => {
+    const client = String(await redis.client("LIST"))
+      .split("\n")
+      .find((line) => line.includes(`name=${subscriber.connectionName} `));
+    assert.ok(client);
+    await redis.client("KILL", "ID", client.match(/id=(\d+)/)![1]!);
+  };
+  try {
+    subscriptions.push(
+      await subscriber.subscribe(
+        newId(),
+        () => {},
+        () => a++,
+      ),
+    );
+    subscriptions.push(
+      await subscriber.subscribe(
+        newId(),
+        () => {},
+        () => b++,
+      ),
+    );
+    assert.deepEqual([a, b], [0, 0], "initial connection is not a continuity break");
+    await kill();
+    await until(() => a === 1 && b === 1);
+    await delay(200);
+    await kill();
+    await delay(200);
+    assert.deepEqual([a, b], [1, 1], "each old subscription is reset only once");
+    subscriptions.push(
+      await subscriber.subscribe(
+        newId(),
+        () => {},
+        () => next++,
+      ),
+    );
+    assert.equal(next, 0, "a new subscription after recovery is not reset on ready");
+    await kill();
+    await until(() => next === 1);
+    assert.deepEqual([a, b, next], [1, 1, 1]);
+    for (const subscription of subscriptions) await subscription.close().catch(() => {});
+    assert.equal(subscriber.subscriptionCount, 0);
+  } finally {
+    await subscriber.close();
+    redis.disconnect();
+  }
+});
 interface Received {
   event: JobEvent;
   receivedAt: number;
@@ -227,9 +282,9 @@ test(
         assert.equal(denied.status, 404);
         assert.equal(((await denied.json()) as { message: string }).message, "Project not found.");
       }
-      const stream = await connect(route(a), issued.token);
+      let stream = await connect(route(a), issued.token);
       streams.push(stream);
-      const view = await connect(route(a), viewerToken.token);
+      let view = await connect(route(a), viewerToken.token);
       streams.push(view);
       const id = await create();
       await runWorker();
@@ -454,8 +509,13 @@ test(
       const subscriberId = subscriberClient.match(/id=(\d+)/)?.[1];
       assert.ok(subscriberId);
       await redis.client("KILL", "ID", subscriberId);
-      await delay(500);
+      await until(() => stream.res.destroyed && view.res.destroyed);
+      await until(() => subscriber.subscriptionCount === 0);
+      stream = await connect(route(a), issued.token);
+      view = await connect(route(a), viewerToken.token);
+      streams.push(stream, view);
       const afterReconnect = await create();
+      const otherAfterReconnect = await create(b);
       await runWorker();
       await until(() =>
         stream.events.some(
@@ -465,6 +525,9 @@ test(
             event.status === "Completed",
         ),
       );
+      await runWorker();
+      assert.equal((await jobs.findById(jobId(otherAfterReconnect)))?.status, "Completed");
+      assert.ok(stream.events.every(({ event }) => event.projectId === a));
       const count = stream.events.length;
       await redis.publish(projectJobChannel(a), "{broken");
       await redis.publish(

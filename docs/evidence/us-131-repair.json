@@ -1,0 +1,196 @@
+{
+  "previousQaSha": "a39270f56b8106b2fd925727f01abf265a45d5c0",
+  "scope": ["F31-1", "F31-2"],
+  "shutdown": [
+    {
+      "mode": "next-start",
+      "streamsBefore": 1,
+      "streamsAfter": 0,
+      "exitMs": 51.73897299999999,
+      "upstreamReleaseMs": 5.203213000000005,
+      "normalReleaseMs": 11.531223000000182,
+      "establishedSocketsAfter": 0
+    },
+    {
+      "mode": "next-start",
+      "streamsBefore": 3,
+      "streamsAfter": 0,
+      "exitMs": 25.845770000000357,
+      "upstreamReleaseMs": 9.459170000000086,
+      "normalReleaseMs": 9.505395000000135,
+      "establishedSocketsAfter": 0
+    },
+    {
+      "mode": "standalone",
+      "streamsBefore": 1,
+      "streamsAfter": 0,
+      "exitMs": 48.07055799999989,
+      "upstreamReleaseMs": 8.258744000000206,
+      "normalReleaseMs": 9.731737000000066,
+      "establishedSocketsAfter": 0
+    },
+    {
+      "mode": "standalone",
+      "streamsBefore": 3,
+      "streamsAfter": 0,
+      "exitMs": 19.591767999999774,
+      "upstreamReleaseMs": 4.352858999999626,
+      "normalReleaseMs": 8.597365000000082,
+      "establishedSocketsAfter": 0
+    }
+  ],
+  "dockerRuntime": {
+    "imageId": "sha256:1c8b8d72c631b1a8a061a06fde524979cc70e7dcedb82f8f72b3a754103d3042",
+    "results": [
+      {
+        "mode": "docker-runtime",
+        "streamsBefore": 3,
+        "streamsAfter": 0,
+        "exitMs": 285.07533799999965,
+        "upstreamReleaseMs": 35.19168899999977,
+        "normalReleaseMs": 10.615461999999752,
+        "establishedSocketsAfter": 0
+      }
+    ]
+  },
+  "redisContinuityRecovery": {
+    "projectA": "01a116ba-638c-7d80-a513-c3ba21f8b0b6",
+    "projectB": "01a116ba-6525-77aa-a4cf-5ff7bd304955",
+    "redisContinuityLostAt": 1791382677201,
+    "jobCompletedInPgAt": 1791382679096,
+    "redisReadyAt": 1791382680518,
+    "oldSseClosedAt": 1791382677213,
+    "newSseOpenAt": 1791382682505,
+    "snapshotReconciledAt": 1791382682520,
+    "domCompletedAt": 1791382682525,
+    "recoveryMs": 2007,
+    "reloads": 0,
+    "activeProjectStreams": 1,
+    "crossProjectEvents": 0,
+    "revokedProjectReconnectStatus": 404,
+    "durableJobs": [
+      {
+        "id": "01a116ba-64a6-71a8-972f-4e9578f10f59",
+        "status": "Completed",
+        "subject_id": "01a116ba-64a6-7d5c-ae90-890cf78c31a9",
+        "idempotency_key": "media.inspect.01a116ba-64a6-7d5c-ae90-890cf78c31a9",
+        "timeout_ms": 300000,
+        "max_attempts": 2,
+        "attempt_count": 1,
+        "created_at": "1791382676656",
+        "updated_at": "1791382678369"
+      },
+      {
+        "id": "01a116ba-6649-794a-a5b1-5e6321ed5115",
+        "status": "Completed",
+        "subject_id": "01a116ba-6649-77e4-aaae-a05e7f1fc437",
+        "idempotency_key": "media.inspect.01a116ba-6649-77e4-aaae-a05e7f1fc437",
+        "timeout_ms": 300000,
+        "max_attempts": 2,
+        "attempt_count": 1,
+        "created_at": "1791382677073",
+        "updated_at": "1791382679073"
+      }
+    ],
+    "accessRefresh": true
+  },
+  "sessions": {
+    "logoutStopsStream": true,
+    "reloginOpensStream": true,
+    "expiredSessionStopsLoop": true,
+    "reconnectAttempts": 1
+  },
+  "workerToDomLatencyMs": {
+    "min": 7,
+    "median": 9,
+    "max": 10,
+    "samples": [7, 9, 10]
+  },
+  "retry": {
+    "predecessorId": "01a116ba-3f77-738f-ac55-89a8c2cc36e7",
+    "successorId": "01a116ba-4528-7cf1-bc96-701dcfc40e7a",
+    "predecessorUnchanged": true,
+    "successorFinalStatus": "Completed",
+    "oneProjectStream": 1,
+    "noPageReload": true
+  },
+  "slowClientRegression": {
+    "inputEvents": 16000,
+    "maxRedisPublishMs": 15,
+    "maxWatchdogs": 3,
+    "clients": [
+      {
+        "client": "slow-1",
+        "clientConnectedAt": 1791382531418,
+        "firstEventWrittenAt": 1791382531422,
+        "backpressureDetectedAt": 1791382564988,
+        "lastConfirmedForwardProgress": 1791382564558,
+        "lastProgressAtBackpressure": 1791382564558,
+        "watchdogDeadline": 1791382569558,
+        "forcedSocketDestroyAt": 1791382569560,
+        "normalEndAt": null,
+        "serverSocketClosedAt": 1791382569560,
+        "blockedDurationMs": 4572,
+        "socketDestroyed": true,
+        "kernelState": "ABSENT",
+        "kernelTxQueueBytes": 0,
+        "serverWrites": 8908,
+        "destroyCalls": 1,
+        "drainListeners": 0,
+        "closeListeners": 0,
+        "nodeWritableBytes": 0
+      },
+      {
+        "client": "slow-2",
+        "clientConnectedAt": 1791382531424,
+        "firstEventWrittenAt": 1791382531427,
+        "backpressureDetectedAt": 1791382564932,
+        "lastConfirmedForwardProgress": 1791382564493,
+        "lastProgressAtBackpressure": 1791382564493,
+        "watchdogDeadline": 1791382569493,
+        "forcedSocketDestroyAt": 1791382569494,
+        "normalEndAt": null,
+        "serverSocketClosedAt": 1791382569495,
+        "blockedDurationMs": 4562,
+        "socketDestroyed": true,
+        "kernelState": "ABSENT",
+        "kernelTxQueueBytes": 0,
+        "serverWrites": 8887,
+        "destroyCalls": 1,
+        "drainListeners": 0,
+        "closeListeners": 0,
+        "nodeWritableBytes": 0
+      },
+      {
+        "client": "slow-3",
+        "clientConnectedAt": 1791382531428,
+        "firstEventWrittenAt": 1791382531430,
+        "backpressureDetectedAt": 1791382564954,
+        "lastConfirmedForwardProgress": 1791382564516,
+        "lastProgressAtBackpressure": 1791382564516,
+        "watchdogDeadline": 1791382569516,
+        "forcedSocketDestroyAt": 1791382569516,
+        "normalEndAt": null,
+        "serverSocketClosedAt": 1791382569517,
+        "blockedDurationMs": 4562,
+        "socketDestroyed": true,
+        "kernelState": "ABSENT",
+        "kernelTxQueueBytes": 0,
+        "serverWrites": 8895,
+        "destroyCalls": 1,
+        "drainListeners": 0,
+        "closeListeners": 0,
+        "nodeWritableBytes": 0
+      }
+    ]
+  },
+  "checks": {
+    "webTests": 92,
+    "apiTests": 107,
+    "playwrightTests": 16,
+    "pnpmCheck": "PASS",
+    "architecture": "PASS",
+    "apiClient": "PASS",
+    "standardAndGpuCompose": "PASS"
+  }
+}

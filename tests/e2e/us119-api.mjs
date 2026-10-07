@@ -135,6 +135,16 @@ const control = createServer((request, response) => {
       if (url.pathname === "/reset") await reset(body.jobs === true);
       else if (url.pathname === "/job-observe") await jobFixture.observe(body.projectId);
       else if (url.pathname === "/job-run") await jobFixture.run(body.mode);
+      else if (url.pathname === "/job-transport") {
+        response.setHeader("content-type", "application/json");
+        response.end(JSON.stringify(await jobFixture.resetTransport(body.action)));
+        return;
+      } else if (url.pathname === "/job-production-run") {
+        response.setHeader("content-type", "application/json");
+        response.end(JSON.stringify(await jobFixture.runProduction()));
+        return;
+      } else if (url.pathname === "/job-revoke-membership")
+        await jobFixture.revokeMembership(body.projectId, body.email);
       else if (url.pathname === "/advance") offset += BigInt(body.ms);
       else if (url.pathname === "/revoke") {
         const user = await users.findByEmail(body.email);
@@ -142,6 +152,10 @@ const control = createServer((request, response) => {
       }
     }
     response.setHeader("content-type", "application/json");
+    if (url.pathname === "/job-transport-state") {
+      response.end(JSON.stringify(await jobFixture.transportState()));
+      return;
+    }
     if (url.pathname === "/job-evidence") {
       response.end(JSON.stringify(await jobFixture.evidence()));
       return;

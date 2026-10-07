@@ -49,6 +49,10 @@ export class InspectionJobState {
     this.stopStream = this.stream.subscribe(this.project, {
       event: (e) => this.event(e),
       reconcile: () => {
+        // A reopened stream has no replay. Percentages from before the gap are
+        // not authoritative; use indeterminate progress until a new report.
+        this.buffered.clear();
+        this.publish({ progress: null });
         void this.reconcile();
       },
     });
