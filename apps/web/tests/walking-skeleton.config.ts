@@ -1,9 +1,16 @@
 import { defineConfig } from "@playwright/test";
+import path from "node:path";
+
+const artifacts = path.resolve(
+  __dirname,
+  "../../../.local/walking-skeleton-artifacts",
+  process.env.WALKING_SKELETON_SCENARIO ?? "healthy",
+);
 
 /** Real Compose only: no webServer/test-owned API or fixture controls. */
 export default defineConfig({
   testDir: "../walking-skeleton",
-  outputDir: `../../../.local/walking-skeleton-artifacts/${process.env.WALKING_SKELETON_SCENARIO ?? "healthy"}/playwright`,
+  outputDir: path.join(artifacts, "playwright"),
   workers: 1,
   retries: 0,
   timeout: 60_000,
@@ -12,7 +19,7 @@ export default defineConfig({
     [
       "json",
       {
-        outputFile: `../../.local/walking-skeleton-artifacts/${process.env.WALKING_SKELETON_SCENARIO ?? "healthy"}/results.json`,
+        outputFile: path.join(artifacts, "results.json"),
       },
     ],
   ],
