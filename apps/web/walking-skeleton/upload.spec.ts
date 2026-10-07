@@ -19,7 +19,10 @@ test("US-117 real upload → production metadata Job → exact metadata DOM", as
   let navigations = 0;
   const diagnostics: { at: number; kind: string; detail: string }[] = [];
   page.on("framenavigated", (frame) => {
-    if (frame === page.mainFrame()) navigations++;
+    if (frame === page.mainFrame()) {
+      navigations++;
+      diagnostics.push({ at: Date.now(), kind: "navigation", detail: frame.url() });
+    }
   });
   page.on("console", (message) =>
     diagnostics.push({ at: Date.now(), kind: "console", detail: message.text() }),
@@ -50,6 +53,10 @@ test("US-117 real upload → production metadata Job → exact metadata DOM", as
       await page.getByLabel("Project name", { exact: true }).fill("Walking skeleton");
       await page.getByRole("button", { name: "Create", exact: true }).click();
       await page.getByRole("link", { name: "Open project" }).click();
+      // Finish the intended Project navigation before measuring upload reloads.
+      await expect(page).toHaveURL(/\/projects\/[0-9a-f-]{36}$/);
+      await page.waitForLoadState("domcontentloaded");
+      await expect(page.locator("#media-file")).toBeAttached();
     });
     const projectId = page.url().split("/").pop()!;
     const beforeMetadataNavigationCount = navigations;
