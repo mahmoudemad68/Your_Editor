@@ -135,6 +135,8 @@ The dedicated `Walking skeleton E2E` workflow runs for PR changes in apps,
 workers, packages, infra, tests, tools/test, compose files, package/lock/workspace
 files, TS configs, LFS attributes or the workflow itself. Concurrency cancels
 superseded PR runs. Standard/GPU configs remain validated; the test is CPU-only.
+CI reuses Chrome from the recorded runner toolchain; hosts without it use a
+bounded download fallback. The exact browser version is printed in the job log.
 A 15-minute safety timeout allows runner setup; target full-job duration is ten
 minutes. Both expected-negative and healthy evidence are uploaded.
 
