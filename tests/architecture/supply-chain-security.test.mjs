@@ -1,6 +1,6 @@
 /**
  * The supply-chain workflow scans dependencies and the images compose.yaml
- * already builds or pins. It does not publish images or deploy staging.
+ * already builds or pins, plus the MinIO test image. It does not publish images.
  */
 
 import assert from "node:assert/strict";
@@ -27,12 +27,15 @@ function run(command, args, options = {}) {
   return spawnSync(command, args, { encoding: "utf8", ...options });
 }
 
-test("compose images and Dockerfiles on main are the scan matrix", () => {
+test("all compose images and the MinIO test image are the scan matrix", () => {
   const workflow = read(".github/workflows/supply-chain.yml");
   const compose = read("compose.yaml");
   const dockerfiles = [...workflow.matchAll(/dockerfile: (\S+)/g)].map((match) => match[1]);
   const composeDockerfiles = [...compose.matchAll(/dockerfile: (\S+)/g)].map((match) => match[1]);
-  assert.deepEqual([...new Set(dockerfiles)].sort(), [...new Set(composeDockerfiles)].sort());
+  assert.deepEqual(
+    [...new Set(dockerfiles)].sort(),
+    [...new Set([...composeDockerfiles, "tests/integration/support/Minio.Dockerfile"])].sort(),
+  );
   for (const dockerfile of dockerfiles) {
     read(dockerfile);
   }

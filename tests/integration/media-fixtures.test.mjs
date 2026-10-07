@@ -32,6 +32,16 @@ test("six LFS media fixtures are real binaries under 5 MB with verified metadata
       assert.equal(v.width, fixture.expected.width);
       assert.equal(v.height, fixture.expected.height);
       assert.equal(v.avg_frame_rate, fixture.expected.frameRate);
+      assert.equal(v.r_frame_rate, fixture.expected.nominalFrameRate);
+      assert.equal(
+        data.streams.find((s) => s.codec_type === "audio")?.codec_name ?? null,
+        fixture.expected.audioCodec,
+      );
+      assert.equal(
+        v.side_data_list?.find((s) => s.rotation !== undefined)?.rotation ??
+          Number(v.tags?.rotate ?? 0),
+        fixture.expected.rotation,
+      );
       assert.equal(Math.round(Number(data.format.duration) * 1000000), fixture.expected.durationUs);
     } else assert.throws(() => execFileSync("ffprobe", ["-v", "quiet", file], { stdio: "pipe" }));
   }
