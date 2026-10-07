@@ -39,8 +39,7 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Install FFprobe and Chromium
         run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg
+          sh tools/test/ensure-ffmpeg.sh
           sh tools/test/ensure-chrome.sh
       - name: Verify LFS fixture contents and Compose profiles
         run: |
