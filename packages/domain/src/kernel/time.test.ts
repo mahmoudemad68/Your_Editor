@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { test } from "vitest";
 import { frameIndex, frameRate, microseconds } from "./time.js";
 
 test("microseconds accepts a non-negative integer", () => {

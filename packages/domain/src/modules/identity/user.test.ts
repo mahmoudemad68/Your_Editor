@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { test } from "vitest";
 import { DomainError } from "../../kernel/error.js";
 import { userId } from "../../kernel/id.js";
 import { normalizeEmail, User } from "./user.js";

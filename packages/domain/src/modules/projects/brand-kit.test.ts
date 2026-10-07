@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { test } from "vitest";
 import { brandKitId, projectId } from "../../kernel/id.js";
 import { BrandKit } from "./brand-kit.js";
 

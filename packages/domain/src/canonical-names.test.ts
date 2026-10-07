@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { test } from "vitest";
 import { AgentRun, CreativeMemory } from "./modules/agent/agent-run.js";
 import { Component } from "./modules/components/component.js";
 import { Critique } from "./modules/critic/critique.js";

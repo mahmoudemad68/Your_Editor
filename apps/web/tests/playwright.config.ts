@@ -15,7 +15,8 @@ export default defineConfig({
       executablePath: process.env.PLAYWRIGHT_CHROME_EXECUTABLE ?? "/opt/google/chrome/chrome",
       args: ["--no-sandbox"],
     },
-    trace: "off",
+    trace: "retain-on-failure",
+    screenshot: "only-on-failure",
   },
   webServer: [
     {
