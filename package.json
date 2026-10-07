@@ -19,7 +19,9 @@
     "test:coverage": "pnpm --filter @editagent/domain test",
     "test:integration": "node --test tests/integration/testcontainers.test.mjs",
     "test:fixtures": "node --test tests/integration/media-fixtures.test.mjs",
-    "test:e2e": "pnpm --filter @editagent/web test:e2e"
+    "test:e2e": "pnpm --filter @editagent/web test:e2e",
+    "test:walking-skeleton": "node tools/test/run-walking-skeleton.mjs",
+    "test:services": "node tools/test/with-services.mjs"
   },
   "devDependencies": {
     "@aws-sdk/client-s3": "3.1018.0",

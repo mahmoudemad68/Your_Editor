@@ -52,6 +52,7 @@ coverage. Bound timeouts; end clients, streams and containers on every outcome.
 
 ```sh
 pnpm test:integration
+pnpm test:services pnpm check # disposable PostgreSQL/Redis/MinIO for existing suites
 node --test tests/integration/domain-coverage-gate.test.mjs
 ```
 
@@ -94,8 +95,51 @@ browser activity: restrict artifact access/retention and sanitize exported evide
 **Full-stack walking skeleton** is separate US-117 coverage of actual Compose
 web/API/PostgreSQL/Redis/SeaweedFS/media-worker and real FFprobe processing.
 Its primary flow uses no test-control API or database insertion. It complements,
-and never replaces, the harness suite. The follow-on US-117 commit adds its
-runner, dedicated PR workflow and failure diagnostics.
+and never replaces, the harness suite.
+
+```sh
+pnpm test:walking-skeleton
+pnpm test:walking-skeleton --verify-failure  # stopped worker negative proof + healthy flow
+# Only when the current production images are already built:
+pnpm test:walking-skeleton --skip-build --verify-failure
+```
+
+The runner uses a disposable `walking-skeleton` Compose project and removes only
+its volumes, preserving historical product volumes. It starts from `down -v`,
+validates config, builds the actual runtime images, starts storage through the
+accepted firewall installer, creates the test bucket/CORS policy, and waits for
+health. It starts no AI/GPU/transcription models. Authentication is real
+UI signup/signout/login; Project creation/upload are UI-only. The fixture has
+exact h264, 320×180, 25/1 fps, 2000000 µs expectations. Metadata must arrive through
+actual media-worker/FFprobe. No derivative completion is required. The optional
+negative proof stops media-worker, requires the same metadata assertion to fail
+within eight seconds, preserves failure evidence, restores the worker and reruns
+healthy. A zero exit or a different failure stage invalidates the proof.
+
+Docker and storage-firewall root/sudo privileges are prerequisites. Existing
+storage subnet conflicts fail clearly: stop the other stack or remove its empty
+network first. Hosts without the required IPv6 firewall backend fail closed; use the dedicated
+GitHub-hosted job or a supported local Docker host for the real-stack proof. Managed-cloud image builds batch equivalent source COPYs
+and supply build-only CA/proxy trust to fit VFS storage; ordinary hosts/CI use
+unmodified production Dockerfiles. TLS is never disabled.
+
+The dedicated `Walking skeleton E2E` workflow runs for PR changes in apps,
+workers, packages, infra, tests, tools/test, compose files, package/lock/workspace
+files, TS configs, LFS attributes or the workflow itself. Concurrency cancels
+superseded PR runs. Standard/GPU configs remain validated; the test is CPU-only.
+A 15-minute safety timeout allows runner setup; target full-job duration is ten
+minutes. Both expected-negative and healthy evidence are uploaded.
+
+Failure output: `.local/walking-skeleton-artifacts/`: retained trace, failure
+screenshot, result metadata, browser console/status summary, Compose status,
+service logs and safe durable Job status diagnostics. Before upload the sanitizer
+redacts cookies/authorization/CSRF, passwords, request bodies, JWTs, URL credentials
+and signed query strings, including ZIP resources and embedded JSON/base64
+attachments. Ephemeral generated passwords live outside the artifact tree in a
+0600 file, are redacted, then deleted. Screenshots show masked password inputs.
+The sanitizer has an executable regression test. Artifact retention is seven
+days; names include the workflow run ID. Startup/test failures still collect
+logs, preserve nonzero exit and always run `down -v --remove-orphans`.
 
 ## CI and debugging
 

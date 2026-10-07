@@ -80,6 +80,14 @@ jobs:
           python3 infra/scripts/node-audit-report.py supply-chain-evidence/node-audit.json
           echo "status=$?" >> "${GITHUB_OUTPUT}"
 
+      - name: Scan development dependencies
+        id: node_dev
+        run: |
+          set +e
+          pnpm audit --dev --json > supply-chain-evidence/node-dev-audit.json
+          python3 infra/scripts/node-audit-report.py supply-chain-evidence/node-dev-audit.json
+          echo "status=$?" >> "${GITHUB_OUTPUT}"
+
       - name: Scan Python dependencies
         id: python
         env:
@@ -94,6 +102,7 @@ jobs:
           set -eu
           test "${{ steps.secrets.outputs.status }}" = "0"
           test "${{ steps.node.outputs.status }}" = "0"
+          test "${{ steps.node_dev.outputs.status }}" = "0"
           test "${{ steps.python.outputs.status }}" = "0"
           printf 'pass\n' > dependencies
 
