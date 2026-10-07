@@ -149,12 +149,40 @@ Backpressure stops writes when `response.write` returns false. Each client has a
 maximum of 64 pending observations. Pending progress for a job coalesces to its
 latest value, appended in sequence order; state observations are retained ahead
 of intermediate progress. An overflow first evicts intermediate progress. If
-all 64 slots are state observations, or the client does not drain for five
-seconds, the API disconnects that client rather than storing unlimited state.
+all 64 slots are state observations, the API forcibly destroys that client's
+HTTP response/socket rather than storing unlimited state. For non-draining
+output, a single watchdog uses a **5000 ms** deadline measured from the last
+successful Node write callback or `drain`, using a monotonic clock. When `write`
+first returns false, it computes the remaining interval and aborts immediately
+if the confirmed-progress deadline has already expired. Additional queued events
+do not renew the deadline. Only a completed write callback or `drain` confirms
+writable progress; a returning `true` merely accepts data for buffering.
+The watchdog resets the underlying HTTP TCP socket (`resetAndDestroy`) and
+destroys the response at the bounded deadline,
+instead of calling `end()` and leaving blocked output awaiting a remote read.
 Within the bounded connection buffer, latest progress and terminal states are
 preserved and flushed on drain. A disconnected connection has no guarantee of
 receiving its queued events. Redis publication and workers never wait for browser
 writes, drain events or client acknowledgements.
+
+A client application can stop reading while its kernel receive buffer and the
+server's kernel send buffer still accept output. SSE has no browser read
+acknowledgements, so the server cannot know precisely when the application stopped
+reading. Node write callbacks and `drain` indicate local writable progress, not
+remote application consumption. The 5000 ms enforcement starts from confirmed
+local progress once Node exposes backpressure; it is **not** a promise to close
+a socket exactly five seconds after the browser stops reading. Once output is
+blocked and no further writable progress occurs, forced destruction prevents an
+indefinitely retained server-side established connection. Scheduler delays may
+slightly exceed the configured deadline.
+
+Ordinary browser disconnect, authorization revocation and application shutdown
+use idempotent graceful cleanup. Slow timeout/state-buffer overflow use a distinct
+forced-abort path. Both stop accepting events, clear pending buffers and
+heartbeat/watchdog timers, remove drain/close listeners, untrack the stream and
+release its project subscription. Forced abort then resets/destroys the HTTP TCP socket and response, releasing
+queued kernel output as well as the Node handle; it does not rely on graceful
+HTTP response ending or leave a zero-window orphan in FIN_WAIT1.
 
 Reconnection resumes authorized **live** delivery only. `Last-Event-ID` is not a
 replay request and no initial snapshot is emitted. Clients must reconcile with

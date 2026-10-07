@@ -1,3 +1,4 @@
+import { performance } from "node:perf_hooks";
 import {
   BadRequestException,
   Controller,
@@ -28,7 +29,9 @@ import { requireActor } from "./actor.js";
 interface StreamResponse {
   setHeader(name: string, value: string): void;
   flushHeaders(): void;
-  write(chunk: string): boolean;
+  write(chunk: string, callback: (error?: Error | null) => void): boolean;
+  destroy(): void;
+  readonly socket?: { resetAndDestroy(): unknown } | null;
   end(): void;
   once(event: string, callback: () => void): void;
   on(event: string, callback: () => void): void;
@@ -36,6 +39,7 @@ interface StreamResponse {
 }
 export const SSE_MAX_PENDING_EVENTS = 64;
 export const SSE_HEARTBEAT_MS = 15000;
+export const SSE_SLOW_CLIENT_TIMEOUT_MS = 5000;
 
 @ApiTags("jobs")
 @Controller("projects")
@@ -72,28 +76,53 @@ export class JobEventsController {
     let ready = false;
     let blocked = false;
     let pumping = false;
+    let lastWritableProgress = performance.now();
     const timers: { heartbeat?: ReturnType<typeof setInterval> } = {};
     let slowTimer: ReturnType<typeof setTimeout> | undefined;
     let subscription: JobEventSubscription | undefined;
     const pending: JobEvent[] = [];
     let untrack = () => undefined as void;
-    const close = () => {
+    const cleanup = (force: boolean) => {
       if (closed) return;
       closed = true;
       pending.length = 0;
       if (timers.heartbeat) clearInterval(timers.heartbeat);
+      delete timers.heartbeat;
       if (slowTimer) clearTimeout(slowTimer);
+      slowTimer = undefined;
       response.removeListener("drain", drain);
       response.removeListener("close", close);
       untrack();
       void subscription?.close().catch(() => undefined);
-      response.end();
+      if (force) {
+        // A TCP reset releases queued kernel output; close/end can leave a
+        // zero-window orphan in FIN_WAIT1 after the Node handle is gone.
+        response.socket?.resetAndDestroy();
+        response.destroy();
+      } else response.end();
+    };
+    const close = () => cleanup(false);
+    const abortSlowClient = () => cleanup(true);
+    const enforceBlockedDeadline = () => {
+      slowTimer = undefined;
+      if (closed || !blocked) return;
+      const remaining = SSE_SLOW_CLIENT_TIMEOUT_MS - (performance.now() - lastWritableProgress);
+      if (remaining <= 0) abortSlowClient();
+      else {
+        slowTimer = setTimeout(enforceBlockedDeadline, remaining);
+        slowTimer.unref();
+      }
     };
     const write = (text: string) => {
-      if (!response.write(text)) {
+      if (closed) return;
+      const writable = response.write(text, (error) => {
+        if (closed) return;
+        if (error) close();
+        else lastWritableProgress = performance.now();
+      });
+      if (!writable && !closed) {
         blocked = true;
-        slowTimer = setTimeout(close, 5000);
-        slowTimer.unref();
+        if (!slowTimer) enforceBlockedDeadline();
       }
     };
     const pump = async () => {
@@ -113,6 +142,8 @@ export class JobEventsController {
       }
     };
     const drain = () => {
+      if (closed) return;
+      lastWritableProgress = performance.now();
       blocked = false;
       if (slowTimer) clearTimeout(slowTimer);
       slowTimer = undefined;
@@ -134,7 +165,7 @@ export class JobEventsController {
           const progressIndex = pending.findIndex((item) => item.kind === "progress");
           if (progressIndex >= 0) pending.splice(progressIndex, 1);
           else {
-            close();
+            abortSlowClient();
             return;
           }
         }
