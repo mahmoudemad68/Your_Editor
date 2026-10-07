@@ -94,7 +94,7 @@ are removed after local verification; no staging/production deployment occurs.
 
 ## Supply chain and actual transport limits
 
-Dependency manifests/lockfiles and Docker base images are unchanged. The current
+Dependency versions/lockfiles and Docker base images are unchanged. The current
 Node audit reports 0 Critical, 1 HIGH (`source-map-js`, CVE-2026-93749 /
 GHSA-68fv-2mgg-jv7q), and 2 Moderate (Ajv and OpenTelemetry core) findings. Python
 audit reports no known vulnerabilities. The accepted baseline's downloaded image

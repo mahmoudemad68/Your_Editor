@@ -28,6 +28,7 @@ RUN pnpm install --frozen-lockfile --ignore-scripts
 FROM deps AS build
 RUN apt-get update && apt-get install -y --no-install-recommends gcc libc6-dev && rm -rf /var/lib/apt/lists/*
 COPY tools/media tools/media
+COPY tools/schema tools/schema
 COPY tsconfig.base.json ./
 COPY workers/media-worker workers/media-worker
 COPY packages/domain packages/domain

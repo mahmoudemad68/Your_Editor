@@ -29,6 +29,7 @@ RUN pnpm install --frozen-lockfile
 
 FROM deps AS build
 COPY tsconfig.base.json ./
+COPY tools/schema tools/schema
 COPY apps/api apps/api
 COPY packages/domain packages/domain
 COPY packages/schemas packages/schemas
