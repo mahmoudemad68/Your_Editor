@@ -41,7 +41,13 @@ def text(value: str, secrets: list[str]) -> str:
 def clean(value: object, secrets: list[str]) -> object:
     if isinstance(value, dict):
         if isinstance(value.get("name"), str) and SENSITIVE.search(value["name"]):
-            return {**value, "value": "[REDACTED]"}
+            value = {**value, "value": "[REDACTED]"}
+        if value.get("type") == "password":
+            value = {
+                **value,
+                "value": "[REDACTED]",
+                "__playwright_value_": "[REDACTED]",
+            }
         if isinstance(value.get("body"), str):
             try:
                 raw = base64.b64decode(value["body"], validate=True)

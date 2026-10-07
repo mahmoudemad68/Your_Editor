@@ -21,6 +21,16 @@ test("exported trace/logs redact sessions, passwords and signed URLs, preserving
         url: "https://storage.test/object?X-Amz-Signature=secret",
         data: "test-password",
         status: 503,
+        frameSnapshot: [
+          "INPUT",
+          {
+            name: "password",
+            type: "password",
+            value: "test-password",
+            __playwright_value_: "test-password",
+          },
+        ],
+        headerWithExtraField: { name: "cookie", value: "session-value", captured: "test-password" },
       }) + "\n",
     );
     writeFileSync(
