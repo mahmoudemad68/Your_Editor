@@ -3,4 +3,4 @@
 set -eu
 root=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 "$root/supply-chain-services.sh"
-printf '%s\n' dependencies
+printf '%s\n' test-minio dependencies

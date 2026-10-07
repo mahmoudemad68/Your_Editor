@@ -135,6 +135,7 @@ test("the security gate rejects a missing or failed scan and accepts a complete 
     "seaweedfs",
     "postgres",
     "redis",
+    "test-minio",
     "dependencies",
   ]);
   const gate = path.join(root, "infra/scripts/supply-chain-security-gate.sh");

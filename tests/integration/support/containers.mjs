@@ -8,13 +8,20 @@ export const TEST_IMAGES = Object.freeze({
   postgres:
     "postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea",
   redis: "redis:7.4-alpine@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499",
-  minio: "editagent-test-minio:9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a",
+  minio: "editagent-test-minio:9e49d5e-security-2",
 });
 export async function buildMinioImage() {
   try {
     execFileSync("docker", ["image", "inspect", TEST_IMAGES.minio], { stdio: "ignore" });
   } catch {
-    const args = ["build", "-f", "Minio.Dockerfile", "-t", TEST_IMAGES.minio];
+    const root = path.resolve(import.meta.dirname, "../../..");
+    const args = [
+      "build",
+      "-f",
+      "tests/integration/support/Minio.Dockerfile",
+      "-t",
+      TEST_IMAGES.minio,
+    ];
     if (process.env.CODEX_PROXY_CERT) {
       args.push("--secret", "id=proxy_ca,src=/etc/ssl/certs/ca-certificates.crt");
       for (const name of ["HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY"])
@@ -27,7 +34,7 @@ export async function buildMinioImage() {
       }
     }
     execFileSync("docker", [...args, "."], {
-      cwd: path.resolve(import.meta.dirname),
+      cwd: root,
       stdio: "inherit",
       timeout: 600000,
     });

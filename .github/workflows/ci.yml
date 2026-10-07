@@ -179,6 +179,9 @@ jobs:
       - name: Test
         run: pnpm test
 
+      - name: Aggregate project check
+        run: pnpm check
+
       - name: Upload coverage reports
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v7

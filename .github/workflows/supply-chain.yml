@@ -146,6 +146,8 @@ jobs:
             dockerfile: infra/postgres/Dockerfile
           - service: redis
             dockerfile: infra/redis/Dockerfile
+          - service: test-minio
+            dockerfile: tests/integration/support/Minio.Dockerfile
     steps:
       - name: Check out repository
         uses: actions/checkout@v7

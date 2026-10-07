@@ -52,9 +52,14 @@ coverage. Bound timeouts; end clients, streams and containers on every outcome.
 
 ```sh
 pnpm test:integration
-pnpm test:services pnpm check # disposable PostgreSQL/Redis/MinIO for existing suites
+pnpm test:services pnpm --filter @editagent/media-worker test
 node --test tests/integration/domain-coverage-gate.test.mjs
 ```
+
+The convenience `test:services` wrapper is for tests compatible with MinIO.
+SeaweedFS-specific S3 contract tests deliberately require product storage; run
+the full `pnpm check` against the Compose services as CI does. Do not substitute
+MinIO and weaken those storage assertions.
 
 MinIO community is archived and the upstream image/download distribution is
 unavailable. The helper builds the final release from checksum-verified source
@@ -149,3 +154,10 @@ existing harness E2E. Run one test as shown above before broad checks. Coverage
 files reside in each package's coverage directory; Playwright traces can be
 opened with `pnpm --filter @editagent/web exec playwright show-trace <trace.zip>`.
 Always preserve the failing exit code while collecting evidence and cleaning up.
+
+The test-only MinIO image uses the final archived upstream release and checked-in
+`tests/integration/support/minio.go.mod` / `minio.go.sum` with patched dependencies.
+Builds use `-mod=readonly`; changing either lockfile requires a new image cache tag
+and the mandatory `image test-minio` SBOM/Trivy scan. The initial upstream binary
+had 4 Critical and 35 HIGH findings; the patched binary has zero of both. These
+are test-only dependency fixes, separate from accepted production image debt.
