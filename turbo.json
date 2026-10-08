@@ -38,5 +38,6 @@
         "PROBE_TMPDIR"
       ]
     }
-  }
+  },
+  "globalDependencies": ["tools/test/vitest.config.mts"]
 }

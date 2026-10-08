@@ -54,6 +54,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
+        with:
+          lfs: true
 
       - name: Start SeaweedFS
         run: |
@@ -146,9 +148,6 @@ jobs:
       - name: Build
         run: pnpm build
 
-      - name: Check generated API client
-        run: pnpm --filter @editagent/web check:api-client
-
       - name: Lint
         run: pnpm lint
 
@@ -160,14 +159,20 @@ jobs:
 
       - name: Install FFmpeg and Chrome
         run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg
-          wget -q -O /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
-          sudo apt-get install -y /tmp/chrome.deb
+          sh tools/test/ensure-ffmpeg.sh
+          sh tools/test/ensure-chrome.sh
           ffprobe -version
           command -v google-chrome
           google-chrome --version
 
+      - name: Verify Git LFS fixture checkout
+        run: |
+          git lfs version
+          git lfs ls-files
+          pnpm test:fixtures
+
+      # pnpm test includes the generated API-client gate, domain coverage,
+      # pytest, Testcontainers and harness Playwright; execute each once.
       - name: Test
         run: pnpm test
 

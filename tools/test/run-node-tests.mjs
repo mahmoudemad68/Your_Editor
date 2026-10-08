@@ -10,7 +10,7 @@ if (testFiles.length === 0) {
 
 mkdirSync("coverage", { recursive: true });
 
-// Reports only. Percentage gates belong to US-116, not this baseline.
+// Retained node:test suites emit reports; domain Vitest owns its 80% line gate.
 const args = [
   "--test",
   "--experimental-test-coverage",

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { test } from "vitest";
 import { instant } from "../../kernel/clock.js";
 import { DomainError } from "../../kernel/error.js";
 import { derivedAssetId, mediaAssetId, projectId } from "../../kernel/id.js";

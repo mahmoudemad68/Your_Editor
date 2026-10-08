@@ -42,7 +42,8 @@ select = ["E", "F", "I", "UP", "B"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-# Emit a report. Do not set --cov-fail-under here; US-116 owns percentage gates.
+markers = ["integration: requires external services; use deterministic fixtures and explicit cleanup"]
+# Python reports remain worker-local; the mandatory 80% gate is domain Vitest.
 addopts = "--cov --cov-report=term-missing --cov-report=xml"
 
 [tool.coverage.run]

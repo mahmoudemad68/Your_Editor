@@ -1,0 +1,71 @@
+name: Walking skeleton E2E
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "apps/**"
+      - "workers/**"
+      - "packages/**"
+      - "infra/**"
+      - "tests/**"
+      - "tools/test/**"
+      - "compose*"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "tsconfig*"
+      - ".gitattributes"
+      - ".github/workflows/e2e.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: walking-skeleton-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  walking-skeleton:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          lfs: true
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - name: Install workspace
+        run: pnpm install --frozen-lockfile
+      - name: Install FFprobe and Chromium
+        run: |
+          sh tools/test/ensure-ffmpeg.sh
+          sh tools/test/ensure-chrome.sh
+      - name: Verify LFS fixture contents and Compose profiles
+        run: |
+          git lfs version
+          git lfs ls-files
+          pnpm test:fixtures
+          ./infra/scripts/validate-compose.sh
+      - name: Real Compose upload and broken-worker failure proof
+        run: pnpm test:walking-skeleton --verify-failure
+      - name: Collect and sanitize runtime diagnostics
+        id: diagnostics
+        if: always()
+        run: |
+          mkdir -p .local/walking-skeleton-artifacts
+          COMPOSE_PROJECT_NAME=walking-skeleton docker compose ps --all --format json > .local/walking-skeleton-artifacts/final-compose-status.json
+          python3 tools/test/sanitize-artifacts.py .local/walking-skeleton-artifacts --secret-file .local/walking-skeleton-secret-values.json
+          python3 tools/test/audit-artifacts.py .local/walking-skeleton-artifacts --secret-file .local/walking-skeleton-secret-values.json
+          rm -f .local/walking-skeleton-secret-values.json
+      - name: Upload failure proof and diagnostics
+        if: ${{ !cancelled() && steps.diagnostics.outcome == 'success' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: walking-skeleton-e2e-${{ github.run_id }}
+          path: .local/walking-skeleton-artifacts
+          if-no-files-found: error
+          retention-days: 7
+      - name: Remove disposable Compose stack
+        if: always()
+        run: COMPOSE_PROJECT_NAME=walking-skeleton docker compose down -v --remove-orphans

@@ -77,6 +77,7 @@ function chromePath(): string {
 }
 
 test("a cross-site browser form cannot inject a sign-in session", async () => {
+  const executable = chromePath();
   const clock = new MutableClock();
   const users = new InMemoryUserRepository();
   const sessions = new InMemoryRefreshSessionRepository();
@@ -147,7 +148,7 @@ test("a cross-site browser form cannot inject a sign-in session", async () => {
   const attackerPort = await listen(attacker);
   const profile = mkdtempSync(path.join(tmpdir(), "editagent-chrome-"));
   const chrome = spawn(
-    chromePath(),
+    executable,
     [
       "--headless=new",
       "--disable-gpu",

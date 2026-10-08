@@ -78,5 +78,5 @@ ENV NODE_ENV=production \
     FFMPEG_PATH=/usr/local/bin/ffmpeg \
     FFPROBE_PATH=/usr/local/bin/ffprobe
 HEALTHCHECK --interval=5s --timeout=3s --start-period=10s --retries=20 \
-  CMD ["node", "-e", "require('node:fs').accessSync('/tmp/editagent.ready')"]
+  CMD ["node", "-e", "fetch('http://127.0.0.1:3200/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
 CMD ["node", "dist/index.js"]

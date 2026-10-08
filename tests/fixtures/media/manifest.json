@@ -1,0 +1,99 @@
+{
+  "generation": "FFmpeg with libx264, AAC and libflite; see generate.mjs",
+  "license": "CC0-1.0 synthetic test inputs",
+  "fixtures": [
+    {
+      "name": "talking-head",
+      "file": "talking-head.mp4",
+      "purpose": "Animated geometric avatar and synthesized speech (flite kal); walking-skeleton metadata input",
+      "bytes": 15417,
+      "sha256": "74ffa94b98b12b32fd2e5a70223346084889785125a2681b0a067343c47712dc",
+      "expected": {
+        "codec": "h264",
+        "width": 320,
+        "height": 180,
+        "frameRate": "25/1",
+        "nominalFrameRate": "25/1",
+        "durationUs": 2000000,
+        "audioCodec": "aac",
+        "rotation": 0
+      }
+    },
+    {
+      "name": "silence-gaps",
+      "file": "silence-gaps.mp4",
+      "purpose": "Four seconds with alternating one-second tone/silence",
+      "bytes": 88101,
+      "sha256": "3e4d051c2be68d2a3f49659a99b16e7ca8d77b32723c9c0ab696c61255e9d41d",
+      "expected": {
+        "codec": "h264",
+        "width": 320,
+        "height": 180,
+        "frameRate": "25/1",
+        "nominalFrameRate": "25/1",
+        "durationUs": 4000000,
+        "audioCodec": "aac",
+        "rotation": 0
+      }
+    },
+    {
+      "name": "two-speakers",
+      "file": "two-speakers.mp4",
+      "purpose": "Two sequential synthesized voices (flite kal and slt), padded to four seconds",
+      "bytes": 26288,
+      "sha256": "34e6681fafbdf4b573f1add4412fdbbfe55cce3d09a148c107d1dc9eb19b2c33",
+      "expected": {
+        "codec": "h264",
+        "width": 320,
+        "height": 180,
+        "frameRate": "25/1",
+        "nominalFrameRate": "25/1",
+        "durationUs": 4000000,
+        "audioCodec": "aac",
+        "rotation": 0
+      }
+    },
+    {
+      "name": "variable-frame-rate",
+      "file": "variable-frame-rate.mp4",
+      "purpose": "First second 30 fps, second second 10 fps; nonuniform packet spacing",
+      "bytes": 28853,
+      "sha256": "4e64f1044dfb91a7d77b33b0d1f84c1256f1d33d0ab701ec5c2910a6cbd9093d",
+      "expected": {
+        "codec": "h264",
+        "width": 320,
+        "height": 180,
+        "frameRate": "200/9",
+        "nominalFrameRate": "30/1",
+        "durationUs": 1800000,
+        "audioCodec": null,
+        "rotation": 0
+      }
+    },
+    {
+      "name": "rotated-phone",
+      "file": "rotated-phone.mp4",
+      "purpose": "Stored landscape with 90-degree display matrix",
+      "bytes": 33095,
+      "sha256": "bae6073074d2dab32a797eacf96c043dcb7eff8416c009f3335d6fa88894cac0",
+      "expected": {
+        "codec": "h264",
+        "width": 320,
+        "height": 180,
+        "frameRate": "25/1",
+        "nominalFrameRate": "25/1",
+        "durationUs": 2000000,
+        "audioCodec": null,
+        "rotation": 90
+      }
+    },
+    {
+      "name": "corrupt",
+      "file": "corrupt.mp4",
+      "purpose": "Truncated MP4 header; intentional negative input",
+      "bytes": 22,
+      "sha256": "2c797a1bedf80dfe8b850ea221ad9098bd5084d023fc9935d072f56dd15f2415",
+      "expected": null
+    }
+  ]
+}

@@ -1,0 +1,2 @@
+# Only the six canonical binary media fixtures use Git LFS.
+tests/fixtures/media/*.mp4 filter=lfs diff=lfs merge=lfs -text

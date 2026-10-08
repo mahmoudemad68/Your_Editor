@@ -14,20 +14,33 @@
     "format": "prettier --write .",
     "architecture": "depcruise --config .dependency-cruiser.cjs apps packages workers && turbo run lint --filter=@editagent/ai-worker",
     "check": "python3 tools/roadmap/build_roadmap.py --check && pnpm build && pnpm lint && pnpm typecheck && pnpm test",
-    "prepare": "husky"
+    "prepare": "husky",
+    "test:unit": "pnpm --filter @editagent/domain test",
+    "test:coverage": "pnpm --filter @editagent/domain test",
+    "test:integration": "node --test tests/integration/testcontainers.test.mjs",
+    "test:fixtures": "node --test tests/integration/media-fixtures.test.mjs",
+    "test:e2e": "pnpm --filter @editagent/web test:e2e",
+    "test:walking-skeleton": "node tools/test/run-walking-skeleton.mjs",
+    "test:services": "node tools/test/with-services.mjs"
   },
   "devDependencies": {
+    "@aws-sdk/client-s3": "3.1018.0",
     "@commitlint/cli": "21.2.3",
     "@commitlint/config-conventional": "21.2.3",
     "@eslint/js": "10.0.1",
+    "@vitest/coverage-v8": "5.0.3",
     "dependency-cruiser": "18.4.0",
     "eslint": "10.11.0",
     "husky": "9.1.7",
+    "ioredis": "5.11.0",
     "lint-staged": "16.4.0",
+    "pg": "8.22.0",
     "prettier": "3.9.9",
+    "testcontainers": "12.2.0",
     "turbo": "2.11.5",
     "typescript": "6.0.3",
-    "typescript-eslint": "8.71.0"
+    "typescript-eslint": "8.71.0",
+    "vitest": "5.0.3"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
