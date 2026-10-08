@@ -63,7 +63,9 @@ videos, reference MP4s, private consent documents, secrets or presigned URLs, in
 
 ## Render and complete human references
 
-Each source's `referenceArtifacts` points to JSON metadata and private objects. Edit specifications
+Each source's `referenceArtifacts` points to JSON metadata and private objects. Artifacts inherit their
+source category and applicable source license/attribution; reel entries record their own rendered
+`durationUs`, independently of full-source duration. Edit specifications
 contain source ID/hash, dataset version, ordered source intervals and contiguous output offsets,
 all in decimal integer microseconds. An approved edit is frozen. A render receipt ties source,
 editorial fingerprint, output SHA, duration and FFmpeg/ffprobe versions together. Review bookkeeping

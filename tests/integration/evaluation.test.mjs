@@ -487,3 +487,9 @@ test("unknown roadmap reporting story and empty formulas are rejected", () => {
   data.registry.metrics[0].formula = "  ";
   assert.equal(report(data).DATASET_STRUCTURALLY_VALID, false);
 });
+
+test("reference reel duration must match its render receipt", () => {
+  const data = fixture();
+  entry(data, "reference_reel").artifact.durationUs = "1";
+  assert.equal(report(data).DATASET_STRUCTURALLY_VALID, false);
+});

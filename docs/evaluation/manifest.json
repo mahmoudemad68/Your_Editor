@@ -54,7 +54,8 @@
           "sha256": "2993316646702edbbb7ea84e4328b54377b23f344b82fd4db7e0343007d1c491",
           "sizeBytes": "670478",
           "extension": "mp4",
-          "objectKey": "evaluation/evaluation-dataset-v1/references/commons-148215183-reference-reel/2993316646702edbbb7ea84e4328b54377b23f344b82fd4db7e0343007d1c491.mp4"
+          "objectKey": "evaluation/evaluation-dataset-v1/references/commons-148215183-reference-reel/2993316646702edbbb7ea84e4328b54377b23f344b82fd4db7e0343007d1c491.mp4",
+          "durationUs": "30000000"
         },
         {
           "id": "commons-148215183-render-receipt",
@@ -145,7 +146,8 @@
           "sha256": "dd284e723e31d58359a2212876fbf15307b777a014c07bcebd70cb67486307fd",
           "sizeBytes": "2081427",
           "extension": "mp4",
-          "objectKey": "evaluation/evaluation-dataset-v1/references/commons-165959826-reference-reel/dd284e723e31d58359a2212876fbf15307b777a014c07bcebd70cb67486307fd.mp4"
+          "objectKey": "evaluation/evaluation-dataset-v1/references/commons-165959826-reference-reel/dd284e723e31d58359a2212876fbf15307b777a014c07bcebd70cb67486307fd.mp4",
+          "durationUs": "29993000"
         },
         {
           "id": "commons-165959826-render-receipt",
@@ -236,7 +238,8 @@
           "sha256": "75af35ba5a168e2e26415329d700109260ba7ae18d48e7c554f5228db780388c",
           "sizeBytes": "1429228",
           "extension": "mp4",
-          "objectKey": "evaluation/evaluation-dataset-v1/references/commons-28956463-reference-reel/75af35ba5a168e2e26415329d700109260ba7ae18d48e7c554f5228db780388c.mp4"
+          "objectKey": "evaluation/evaluation-dataset-v1/references/commons-28956463-reference-reel/75af35ba5a168e2e26415329d700109260ba7ae18d48e7c554f5228db780388c.mp4",
+          "durationUs": "30000000"
         },
         {
           "id": "commons-28956463-render-receipt",
@@ -378,7 +381,8 @@
           "sha256": "6490481a36cf53b5568bce6000517c64a7a37548b58a41dd8807a020e91f5c0d",
           "sizeBytes": "4272625",
           "extension": "mp4",
-          "objectKey": "evaluation/evaluation-dataset-v1/references/commons-7740925-reference-reel/6490481a36cf53b5568bce6000517c64a7a37548b58a41dd8807a020e91f5c0d.mp4"
+          "objectKey": "evaluation/evaluation-dataset-v1/references/commons-7740925-reference-reel/6490481a36cf53b5568bce6000517c64a7a37548b58a41dd8807a020e91f5c0d.mp4",
+          "durationUs": "30000000"
         },
         {
           "id": "commons-7740925-render-receipt",
@@ -469,7 +473,8 @@
           "sha256": "d69668664fbfec23dc9ae9d73e36f26bec68111feea799819fab76ef898cf7b2",
           "sizeBytes": "2702693",
           "extension": "mp4",
-          "objectKey": "evaluation/evaluation-dataset-v1/references/commons-82236797-reference-reel/d69668664fbfec23dc9ae9d73e36f26bec68111feea799819fab76ef898cf7b2.mp4"
+          "objectKey": "evaluation/evaluation-dataset-v1/references/commons-82236797-reference-reel/d69668664fbfec23dc9ae9d73e36f26bec68111feea799819fab76ef898cf7b2.mp4",
+          "durationUs": "30000000"
         },
         {
           "id": "commons-82236797-render-receipt",
@@ -582,7 +587,8 @@
           "sha256": "c9bcf7923f672f9c09f7a3d809a711c1c822355620f1220117cbd009fc93cf5c",
           "sizeBytes": "1282118",
           "extension": "mp4",
-          "objectKey": "evaluation/evaluation-dataset-v1/references/commons-98650286-reference-reel/c9bcf7923f672f9c09f7a3d809a711c1c822355620f1220117cbd009fc93cf5c.mp4"
+          "objectKey": "evaluation/evaluation-dataset-v1/references/commons-98650286-reference-reel/c9bcf7923f672f9c09f7a3d809a711c1c822355620f1220117cbd009fc93cf5c.mp4",
+          "durationUs": "30000000"
         },
         {
           "id": "commons-98650286-render-receipt",

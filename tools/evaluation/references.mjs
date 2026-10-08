@@ -196,7 +196,7 @@ export async function renderReference(sourceId, root) {
       },
     };
     renameSync(temporary, resolve(root, `${reel.id}.mp4`));
-    Object.assign(reel, outputIdentity);
+    Object.assign(reel, outputIdentity, { durationUs });
     reel.objectKey = objectKey(manifest.datasetVersion, "references", reel);
     await refreshArtifact(manifest, editArtifact, edit);
     await refreshArtifact(manifest, receiptArtifact, receipt);

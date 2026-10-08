@@ -282,6 +282,7 @@ export function validateDataset(manifest, registry, documents = new Map()) {
           receipt.editId !== edit.id ||
           receipt.editContentSha256 !== contentSha256(edit) ||
           receipt.artifactSha256 !== reels[0].sha256 ||
+          receipt.durationUs !== reels[0].durationUs ||
           difference > 33334n ||
           difference < -33334n
         )
