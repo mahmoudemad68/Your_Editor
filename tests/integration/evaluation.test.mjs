@@ -36,7 +36,7 @@ function entry(data, type, index = 0) {
     s.referenceArtifacts.some((a) => a.type === type),
   )[index];
   const artifact = source.referenceArtifacts.find((a) => a.type === type);
-  return { source, artifact, doc: data.documents.get(artifact.metadataPath).data };
+  return { source, artifact, doc: data.documents.get(artifact.metadataPath)?.data };
 }
 function reindex(data) {
   for (const source of data.manifest.sources)
