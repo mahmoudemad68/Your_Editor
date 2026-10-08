@@ -16,7 +16,54 @@ Backend project authorization remains authoritative. This app does not send a us
 
 Same-origin `/api/projects` responses stay HTTP 200 with the typed JSON envelope. Every response, including a 401 envelope, sends `Cache-Control: private, no-store`. Upload begin, upload complete, and media details use the same envelope and cache header. The video bytes are PUT to the presigned URL. They are not proxied.
 
-There is no media list endpoint. After a full page reload, earlier uploads are not shown. That avoids storing media ids in the browser.
+US-125 lists persisted media with `GET /projects/:projectId/media` through the
+same-origin BFF. Earlier uploads survive a full reload; browser storage is never
+the library's source of truth. Upload completion refreshes the list. One shared
+Project Job stream reconciles snapshots after inspection/derivation state events
+and reconnects, without per-card SSE or interval polling.
+
+The Media Library shows responsive cards with real private US-128 poster JPEGs,
+integer-microsecond duration badges, and Processing / Failed / Ready states.
+Ready requires completed inspection, validated media, and usable proxy, poster
+and sprite records. Rejected cards show the domain's safe validation message;
+inspection failures show the persisted safe failure code. Failed/processing cards
+request no preview objects. Empty Projects invite a video upload.
+
+`GET /projects/:projectId/media/:mediaAssetId/preview` issues short-lived private
+object GET URLs only after persisted Project membership and source ownership
+checks. Owner, Editor and Viewer may read; missing/deleted/non-member Projects
+and cross-project media return the existing non-disclosing 404. Both reads and
+BFF envelopes use `Cache-Control: private, no-store`. The API never exposes
+standalone storage keys, raw derivative metadata, worker output or credentials,
+and never logs the URLs. URLs naturally include the addressed derivative object's
+path and signing parameters; they are neither persisted nor shared-cacheable.
+
+The API's independent PostgreSQL read adapter selects each usable preview variant
+by `created_at DESC, id DESC`, including immutable historical policies. It does
+not hardcode signatures. Sprite geometry and ordered integer timestamps are
+whitelisted from persisted `metadata.parameters`; malformed candidates are
+skipped. Hover maps clamped horizontal position to `min(count - 1, floor(x * count))`
+and maps that index to row/column, so unused cells are never selected. One sprite
+sheet is requested on first mouse/pen interaction and reused for every frame.
+Touch retains the poster; keyboard buttons open playback.
+
+Opening the controls-enabled HTML video player always fetches fresh preview URLs.
+It plays only the derived, video-only `proxy.mp4` directly from object storage,
+with `preload="metadata"`; Next/Nest do not stream bytes. Idle hover refreshes
+URLs before their TTL (with a 30-second margin), image failures refresh once, and
+player failures refresh once per opening. An explicit Refresh previews action
+provides bounded recovery without re-uploading or reloading the Project. The
+configured signing TTL is reused (default 900 seconds).
+
+Derivation remains operator/application triggered. There is no automatic
+upload/inspect-to-derive transition or browser scheduling endpoint in US-125.
+Validated media without derivatives remains Processing / Awaiting preview
+derivatives. The real Compose test in `walking-skeleton/media-library.spec.ts`
+uploads via UI, stops/restores the production worker for Processing, invokes the
+existing trusted derive publisher inside that worker image, and observes actual
+poster/sprite/proxy requests, metadata, advancing playback and seeking. It also
+tests real invalid-signature rejection, reload persistence, IDOR and unsigned
+object denial. QA screenshots stay in ignored local artifacts.
 
 Inspection stays pending until a worker records it. Automatic inspection is US-129. This page can refresh details; it does not run FFprobe.
 

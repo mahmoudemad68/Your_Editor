@@ -37,7 +37,7 @@ function browser(scenario) {
     {
       cwd: path.join(root, "apps/web"),
       stdio: "inherit",
-      timeout: 90000,
+      timeout: 240000,
       env: {
         ...env,
         WALKING_SKELETON_SCENARIO: scenario,

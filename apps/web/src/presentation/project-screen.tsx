@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { ProjectApi, ProjectRecord } from "../project-contract";
 import { MediaWorkspace } from "./media-upload";
+import { MediaLibrary } from "./media-library";
 import type { HashOptions } from "./sha256-file";
 import type { SignedPutRequest, SignedPutResult } from "./signed-upload";
 import { Button } from "./ui/button";
@@ -27,6 +28,8 @@ export function ProjectScreen({
   putObject?: (request: SignedPutRequest) => Promise<SignedPutResult>;
 }) {
   const [state, setState] = useState<ScreenState>({ status: "loading" });
+  const [libraryRevision, setLibraryRevision] = useState(0);
+  const uploaded = useCallback(() => setLibraryRevision((revision) => revision + 1), []);
 
   async function load(): Promise<void> {
     setState({ status: "loading" });
@@ -90,9 +93,11 @@ export function ProjectScreen({
           <MediaWorkspace
             project={state.project}
             api={api}
+            onUploaded={uploaded}
             {...(hashFile === undefined ? {} : { hashFile })}
             {...(putObject === undefined ? {} : { putObject })}
           />
+          <MediaLibrary projectId={state.project.id} refreshToken={libraryRevision} />
         </section>
       ) : null}
     </main>

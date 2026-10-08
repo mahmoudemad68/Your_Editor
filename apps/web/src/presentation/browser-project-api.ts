@@ -51,7 +51,7 @@ export const browserProjectApi: ProjectApi = {
     ),
 };
 
-async function request<T>(url: string, init?: RequestInit): Promise<ApiResult<T>> {
+export async function request<T>(url: string, init?: RequestInit): Promise<ApiResult<T>> {
   try {
     const headers = new Headers(init?.headers);
     if (!headers.has("x-request-id")) {
