@@ -385,6 +385,20 @@ class SanitizerRegression(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "credential audit failed"):
             artifact_audit.audit(self.artifacts, self.secret_file)
 
+    def test_redaction_markers_remain_stable_and_audit_rejects_suffix_secrets(self):
+        path = self.artifacts / "services.log"
+        path.write_text(
+            "api | password=MARKER_PASSWORD token=MARKER_TOKEN status=500\n"
+        )
+        self.sanitize()
+        first = path.read_bytes()
+        self.sanitize()
+        self.sanitize()
+        self.assertEqual(path.read_bytes(), first)
+        path.write_text("api | token=[REDACTED]SUFFIX_SECRET status=500")
+        with self.assertRaisesRegex(ValueError, "credential audit failed"):
+            artifact_audit.audit(self.artifacts, self.secret_file)
+
     def test_unknown_opaque_format_fails_publication(self):
         (self.artifacts / "unknown-resource").write_bytes(b"\xff\x00\x01opaque")
         with self.assertRaisesRegex(ValueError, "safely classified"):

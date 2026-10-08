@@ -29,7 +29,7 @@ URI = re.compile(r"[a-z][a-z0-9+.-]*://[^\s\"'<>\\]+", re.IGNORECASE)
 ASSIGNMENT = re.compile(
     r"(?i)(?<![\w-])([\"']?[\w-]{0,64}(?:authorization|cookie|password|passwd|secret|"
     r"token|credential|csrf|signature|x[-_]amz[-_][\w-]*|api[-_]?key|awsaccesskeyid)"
-    r"[\w-]{0,64}[\"']?\s*[=:]\s*)(\"[^\"\r\n]*\"|'[^'\r\n]*'|[^\s&;,#}\]\"']+)",
+    r"[\w-]{0,64}[\"']?\s*[=:]\s*)(\[REDACTED\]|\"[^\"\r\n]*\"|'[^'\r\n]*'|[^\s&;,#}\]\"']+)",
 )
 DEFAULT_SECRETS = [
     "editagent-dev-secret",

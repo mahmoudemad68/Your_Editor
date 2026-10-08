@@ -125,7 +125,12 @@ def audit(directory: Path, secret_file: Path | None = None) -> dict:
                 counts["db_credentials"] += 1
                 finding("userinfo")
         for match in ASSIGNMENT.finditer(decoded):
-            if not safe(match[2].strip("\"'")):
+            candidate = match[2].strip("\"'")
+            # Closing JSON/array/escaped-quote punctuation is not credential
+            # material. Never accept arbitrary text after the redaction marker.
+            if not safe(candidate) and not re.fullmatch(
+                r"\[REDACTED\][\]\)}\\]*", candidate
+            ):
                 finding(match[1])
 
     def structured(value, depth=0):
@@ -187,17 +192,19 @@ def audit(directory: Path, secret_file: Path | None = None) -> dict:
         # extension or successful decoding. This catches skipped canary logs and
         # known credentials embedded in otherwise opaque binary evidence.
         projected = RAW_ESCAPE.sub(b"", raw)
-        text(
-            bytes(b for b in projected if b in (9, 10, 13) or 32 <= b < 127).decode(
-                "ascii"
-            )
-        )
+        projected_text = bytes(
+            b for b in projected if b in (9, 10, 13) or 32 <= b < 127
+        ).decode("ascii")
+        inspect_text(projected_text, depth)
         decoded = normalized(
             raw.decode(
                 "utf-16" if raw.startswith((b"\xff\xfe", b"\xfe\xff")) else "utf-8-sig",
                 errors="replace",
             )
         )
+        inspect_text(decoded, depth)
+
+    def inspect_text(decoded, depth):
         try:
             parsed = json.loads(decoded)
         except ValueError:
