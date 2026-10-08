@@ -25,6 +25,7 @@ import {
   RenameProject,
 } from "./application/projects.js";
 import { GetMediaDetails } from "./application/media-details.js";
+import { MediaLibrary, type DerivedAssetReader } from "./application/media-library.js";
 import { type ReadinessProbe } from "./application/health.js";
 import {
   BeginMediaUpload,
@@ -63,6 +64,7 @@ export interface ApiComposition {
   readonly clock: Clock;
   readonly ids: ProjectIdGenerator;
   readonly media: MediaAssetRepository;
+  readonly derivedAssets?: DerivedAssetReader;
   readonly objects: IObjectStorage;
   readonly mediaIds: MediaAssetIdGenerator;
   readonly presignTtlSeconds: number;
@@ -179,6 +181,20 @@ export class AppModule {
             composition.projects,
             composition.objects,
             composition.clock,
+            composition.presignTtlSeconds,
+          ),
+        },
+        {
+          provide: MediaLibrary,
+          useValue: new MediaLibrary(
+            composition.projects,
+            composition.media,
+            composition.derivedAssets ?? {
+              async listByMediaAsset() {
+                return [];
+              },
+            },
+            composition.objects,
             composition.presignTtlSeconds,
           ),
         },

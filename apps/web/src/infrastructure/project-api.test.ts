@@ -4,6 +4,38 @@ import path from "node:path";
 import { test } from "node:test";
 import { createHttpProjectApi } from "./project-api";
 
+test("library BFF adapter uses generated read operations, cookies, no-store and no actor headers", async () => {
+  const seen: string[] = [];
+  const fetchImpl: typeof fetch = async (input, init) => {
+    const request = input as Request;
+    seen.push(new URL(request.url).pathname);
+    const headers = new Headers(init?.headers);
+    assert.equal(headers.get("cookie"), "session=test-cookie");
+    assert.equal(headers.has("x-user-id"), false);
+    assert.equal(headers.has("x-test-actor"), false);
+    assert.equal(init?.cache, "no-store");
+    assert.equal(request.method, "GET");
+    return Response.json(
+      request.url.endsWith("/preview")
+        ? {
+            expiresInSeconds: 900,
+            proxy: { available: false, url: null },
+            poster: { available: false, url: null },
+            sprite: { available: false, url: null, layout: null },
+          }
+        : { media: [] },
+    );
+  };
+  const api = createHttpProjectApi({
+    baseUrl: "http://api.test",
+    fetchImpl,
+    requestHeaders: new Headers({ cookie: "session=test-cookie" }),
+  });
+  assert.deepEqual(await api.listMedia("project"), { ok: true, data: [] });
+  assert.equal((await api.getMediaPreview("project", "media")).ok, true);
+  assert.deepEqual(seen, ["/projects/project/media", "/projects/project/media/media/preview"]);
+});
+
 test("production web source does not bind a test actor", () => {
   const root = path.resolve(__dirname, "../../src");
   const files = readdirSync(root, { recursive: true, encoding: "utf8" });

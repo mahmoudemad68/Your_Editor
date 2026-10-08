@@ -32,6 +32,7 @@ import { applyMigrations } from "./infrastructure/migrate.js";
 import { NodeMediaAssetIdGenerator } from "./infrastructure/node-media-asset-id-generator.js";
 import { NodeProjectIdGenerator } from "./infrastructure/node-project-id-generator.js";
 import { PostgresMediaAssetRepository } from "./infrastructure/postgres-media-repository.js";
+import { PostgresDerivedAssetReader } from "./infrastructure/postgres-derived-asset-reader.js";
 import { PostgresProjectRepository } from "./infrastructure/postgres-project-repository.js";
 import {
   PostgresUploadPublication,
@@ -107,6 +108,7 @@ export async function bootstrap(): Promise<void> {
     clock,
     ids: new NodeProjectIdGenerator(),
     media: new PostgresMediaAssetRepository(pool),
+    derivedAssets: new PostgresDerivedAssetReader(pool),
     objects: new S3ObjectStorage(config.objectStorage),
     mediaIds: new NodeMediaAssetIdGenerator(),
     presignTtlSeconds: config.objectStorage.presignTtlSeconds,

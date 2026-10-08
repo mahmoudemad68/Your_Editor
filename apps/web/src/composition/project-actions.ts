@@ -82,3 +82,11 @@ export async function getMediaDetails(
 ): Promise<ApiResult<MediaDetails>> {
   return api(request).getMediaDetails(projectId, mediaAssetId);
 }
+
+export async function listMedia(projectId: string, request: Request) {
+  return api(request).listMedia(projectId);
+}
+
+export async function getMediaPreview(projectId: string, mediaAssetId: string, request: Request) {
+  return api(request).getMediaPreview(projectId, mediaAssetId);
+}

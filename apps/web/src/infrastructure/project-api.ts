@@ -2,6 +2,7 @@ import { CORRELATION_HEADER } from "@editagent/shared";
 
 import { createGeneratedClient } from "../generated/client";
 import type { ApiResult, ProjectApi, RequestOptions, UploadDeclaration } from "../project-contract";
+import type { MediaLibraryApi } from "../media-library-contract";
 
 export interface ProjectApiOptions {
   readonly baseUrl: string;
@@ -15,7 +16,7 @@ export interface ProjectApiOptions {
  * It does not add an actor header, a user id, or a development token.
  * The composition root forwards the incoming cookie and explicit CSRF header.
  */
-export function createHttpProjectApi(options: ProjectApiOptions): ProjectApi {
+export function createHttpProjectApi(options: ProjectApiOptions): ProjectApi & MediaLibraryApi {
   const baseFetch = options.fetchImpl ?? fetch;
   const fetchImpl: typeof fetch = (input, init) => {
     const headers = new Headers(input instanceof Request ? input.headers : undefined);
@@ -26,6 +27,31 @@ export function createHttpProjectApi(options: ProjectApiOptions): ProjectApi {
   };
   const client = createGeneratedClient(options.baseUrl, fetchImpl);
   return {
+    async listMedia(projectId, options) {
+      try {
+        const result = await client.GET("/projects/{projectId}/media", {
+          params: { path: { projectId } },
+          signal: options?.signal,
+        });
+        if (result.response.ok && result.data !== undefined)
+          return { ok: true, data: result.data.media };
+        return failureResult(result.response, result.error);
+      } catch {
+        return unreachable();
+      }
+    },
+    async getMediaPreview(projectId, mediaAssetId, options) {
+      try {
+        const result = await client.GET("/projects/{projectId}/media/{mediaAssetId}/preview", {
+          params: { path: { projectId, mediaAssetId } },
+          signal: options?.signal,
+        });
+        if (result.response.ok && result.data !== undefined) return { ok: true, data: result.data };
+        return failureResult(result.response, result.error);
+      } catch {
+        return unreachable();
+      }
+    },
     async listProjects() {
       try {
         const result = await client.GET("/projects");

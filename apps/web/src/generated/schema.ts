@@ -106,6 +106,40 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/projects/{projectId}/media": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** List persisted Project media and preview availability. */
+    get: operations["MediaController_index"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/projects/{projectId}/media/{mediaAssetId}/preview": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Issue temporary private derivative GET URLs after Project authorization. */
+    get: operations["MediaController_preview"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/projects/{projectId}/media/{mediaAssetId}": {
     parameters: {
       query?: never;
@@ -398,6 +432,56 @@ export interface components {
       byteSize: string;
       /** @description Unix epoch milliseconds as a decimal string. */
       createdAt: string;
+    };
+    PreviewAvailabilityDto: {
+      proxy: boolean;
+      poster: boolean;
+      sprite: boolean;
+    };
+    MediaLibraryItemDto: {
+      /** Format: uuid */
+      id: string;
+      displayFilename: string | null;
+      /** @enum {string} */
+      kind: "video" | "audio" | "image";
+      /** @description Integer microseconds, decimal string. */
+      duration: string | null;
+      /** @enum {string} */
+      inspectionStatus: "pending" | "completed" | "failed";
+      /** @enum {string} */
+      validationStatus: "pending" | "validated" | "rejected";
+      rejectionCode: string | null;
+      rejectionMessage: string | null;
+      inspectionError: string | null;
+      /** @description Creation time in integer epoch milliseconds. */
+      createdAt: string;
+      previews: components["schemas"]["PreviewAvailabilityDto"];
+    };
+    MediaLibraryResponseDto: {
+      media: components["schemas"]["MediaLibraryItemDto"][];
+    };
+    PreviewAssetDto: {
+      available: boolean;
+      url: string | null;
+    };
+    SpriteLayoutDto: {
+      tileWidth: number;
+      tileHeight: number;
+      columns: number;
+      rows: number;
+      /** @description Sample timestamps in integer microseconds. */
+      timestampsUs: string[];
+    };
+    SpritePreviewDto: {
+      available: boolean;
+      url: string | null;
+      layout: components["schemas"]["SpriteLayoutDto"] | null;
+    };
+    MediaPreviewResponseDto: {
+      expiresInSeconds: number;
+      proxy: components["schemas"]["PreviewAssetDto"];
+      poster: components["schemas"]["PreviewAssetDto"];
+      sprite: components["schemas"]["SpritePreviewDto"];
     };
     MediaStreamDto: {
       /** @enum {string} */
@@ -879,6 +963,91 @@ export interface operations {
       };
       /** @description Object storage is unavailable. */
       502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  MediaController_index: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        projectId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["MediaLibraryResponseDto"];
+        };
+      };
+      /** @description The Project id is not a UUIDv7. */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Sign in is required. */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description The Project is not visible to the caller. */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  MediaController_preview: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        projectId: string;
+        mediaAssetId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["MediaPreviewResponseDto"];
+        };
+      };
+      /** @description The Project id or MediaAsset id is not a UUIDv7. */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Sign in is required. */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description The MediaAsset is not visible to the caller. */
+      404: {
         headers: {
           [name: string]: unknown;
         };

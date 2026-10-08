@@ -49,10 +49,12 @@ export function MediaWorkspace({
   uploadState = durableUploads,
   jobApi,
   jobStream,
+  onUploaded,
 }: {
   project: ProjectRecord;
   jobApi?: JobStatusApi;
   jobStream?: JobEventStream;
+  onUploaded?: () => void;
   api: ProjectApi;
   hashFile?: (file: Blob, options?: HashOptions) => Promise<string>;
   putObject?: (request: SignedPutRequest) => Promise<SignedPutResult>;
@@ -406,6 +408,7 @@ export function MediaWorkspace({
     generation: number,
     signal: AbortSignal,
   ): Promise<void> {
+    onUploaded?.();
     const seq = ++detailsSeqRef.current;
     const details = await api.getMediaDetails(project.id, mediaAssetId, { signal });
     if (!isCurrent(generation) || signal.aborted || seq !== detailsSeqRef.current) {
@@ -525,8 +528,7 @@ export function MediaWorkspace({
         />
       ) : (
         <p className="text-sm text-muted">
-          Only an Owner or Editor can upload media. You can view details for an upload started in
-          this visit. Earlier uploads are not listed here.
+          Only an Owner or Editor can upload media. You can preview footage in the Media Library.
         </p>
       )}
       <UploadStatus
