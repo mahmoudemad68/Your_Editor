@@ -46,8 +46,12 @@ function browser(scenario) {
   if (result.error) throw result.error;
   return result.status ?? 1;
 }
-async function diagnostics() {
-  mkdirSync(artifacts, { recursive: true });
+async function diagnostics(destination = artifacts) {
+  mkdirSync(destination, { recursive: true });
+  writeFileSync(
+    path.join(destination, "captured-at.json"),
+    JSON.stringify({ capturedAt: new Date().toISOString() }),
+  );
   for (const [file, args] of [
     ["compose-ps.json", ["ps", "--all", "--format", "json"]],
     ["services.log", ["logs", "--no-color", "--timestamps"]],
@@ -58,7 +62,7 @@ async function diagnostics() {
       encoding: "utf8",
       timeout: 30000,
     });
-    writeFileSync(path.join(artifacts, file), (result.stdout ?? "") + (result.stderr ?? ""));
+    writeFileSync(path.join(destination, file), (result.stdout ?? "") + (result.stderr ?? ""));
   }
   const result = spawnSync(
     "docker",
@@ -78,7 +82,7 @@ async function diagnostics() {
     { cwd: root, env, encoding: "utf8", timeout: 10000 },
   );
   writeFileSync(
-    path.join(artifacts, "durable-jobs.txt"),
+    path.join(destination, "durable-jobs.txt"),
     (result.stdout ?? "") + (result.stderr ?? ""),
   );
 }
@@ -142,8 +146,10 @@ try {
     const code = browser("negative");
     const report = readFileSync(path.join(artifacts, "negative/results.json"), "utf8");
     assertBrokenMetadataProof(JSON.parse(report), code);
+    const negativeRuntime = path.join(artifacts, "negative/runtime");
+    await diagnostics(negativeRuntime);
     writeFileSync(
-      path.join(artifacts, "negative-proof.json"),
+      path.join(artifacts, "negative/runtime/negative-proof.json"),
       JSON.stringify(
         {
           result: "FAIL_AS_EXPECTED",
@@ -154,11 +160,23 @@ try {
         2,
       ),
     );
+    execFileSync(
+      "python3",
+      [
+        "tools/test/sanitize-artifacts.py",
+        path.join(artifacts, "negative"),
+        "--secret-file",
+        secretFile,
+      ],
+      { cwd: root, stdio: "inherit" },
+    );
+    console.log("NEGATIVE_DIAGNOSTICS_CAPTURED_BEFORE_WORKER_RESTART", negativeRuntime);
     console.log("BROKEN_METADATA_FLOW_TEST_RESULT FAIL_AS_EXPECTED");
     await compose(["up", "-d", "--no-build", "--wait", "media-worker"]);
   }
   const code = browser("healthy");
   if (code !== 0) throw new Error(`Walking skeleton failed (${code})`);
+  await diagnostics(path.join(artifacts, "healthy/runtime"));
 } finally {
   try {
     await diagnostics();
@@ -167,8 +185,13 @@ try {
       ["tools/test/sanitize-artifacts.py", artifacts, "--secret-file", secretFile],
       { cwd: root, stdio: "inherit" },
     );
-  } finally {
+    execFileSync(
+      "python3",
+      ["tools/test/audit-artifacts.py", artifacts, "--secret-file", secretFile],
+      { cwd: root, stdio: "inherit" },
+    );
     rmSync(secretFile, { force: true });
+  } finally {
     await compose(["down", "-v", "--remove-orphans"]);
   }
 }

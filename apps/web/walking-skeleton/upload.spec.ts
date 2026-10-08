@@ -15,7 +15,24 @@ test("US-117 real upload → production metadata Job → exact metadata DOM", as
   const password = `Test-only-${randomUUID()}!`;
   const secretFile = path.join(root, ".local/walking-skeleton-secret-values.json");
   const previous = existsSync(secretFile) ? JSON.parse(readFileSync(secretFile, "utf8")) : [];
-  writeFileSync(secretFile, JSON.stringify([...previous, password]), { mode: 0o600 });
+  const knownSecrets = new Set<string>([...previous, password]);
+  const rememberSecrets = (values: string[]) => {
+    for (const value of values) if (value) knownSecrets.add(value);
+    writeFileSync(secretFile, JSON.stringify([...knownSecrets]), { mode: 0o600 });
+  };
+  rememberSecrets([]);
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    rememberSecrets(
+      [...url.searchParams]
+        .filter(([name]) =>
+          /^(?:x-amz-(?:signature|credential|security-token)|signature|awsaccesskeyid)$/i.test(
+            name,
+          ),
+        )
+        .map(([, value]) => value),
+    );
+  });
   let navigations = 0;
   const diagnostics: { at: number; kind: string; detail: string }[] = [];
   page.on("framenavigated", (frame) => {
@@ -49,6 +66,7 @@ test("US-117 real upload → production metadata Job → exact metadata DOM", as
       await page.getByRole("button", { name: "Sign in", exact: true }).click();
       await expect(page.getByRole("button", { name: "Sign out", exact: true })).toBeVisible();
     });
+    rememberSecrets((await page.context().cookies()).map((cookie) => cookie.value));
     await test.step("Create and open Project through UI", async () => {
       await page.getByRole("button", { name: "Create project", exact: true }).first().click();
       await page.getByLabel("Project name", { exact: true }).fill("Walking skeleton");

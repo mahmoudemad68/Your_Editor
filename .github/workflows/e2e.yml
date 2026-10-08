@@ -56,6 +56,8 @@ jobs:
           mkdir -p .local/walking-skeleton-artifacts
           COMPOSE_PROJECT_NAME=walking-skeleton docker compose ps --all --format json > .local/walking-skeleton-artifacts/final-compose-status.json
           python3 tools/test/sanitize-artifacts.py .local/walking-skeleton-artifacts --secret-file .local/walking-skeleton-secret-values.json
+          python3 tools/test/audit-artifacts.py .local/walking-skeleton-artifacts --secret-file .local/walking-skeleton-secret-values.json
+          rm -f .local/walking-skeleton-secret-values.json
       - name: Upload failure proof and diagnostics
         if: ${{ !cancelled() && steps.diagnostics.outcome == 'success' }}
         uses: actions/upload-artifact@v7

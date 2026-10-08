@@ -118,8 +118,11 @@ UI signup/signout/login; Project creation/upload are UI-only. The fixture has
 exact h264, 320×180, 25/1 fps, 2000000 µs expectations. Metadata must arrive through
 actual media-worker/FFprobe. No derivative completion is required. The optional
 negative proof stops media-worker, requires the same metadata assertion to fail
-within eight seconds, preserves failure evidence, restores the worker and reruns
-healthy. A zero exit or a different failure stage invalidates the proof. The checker parses
+within eight seconds, captures `negative/runtime/` **before** restarting the worker,
+then restores the worker and reruns
+healthy with separate `healthy/runtime/` diagnostics. The negative snapshot includes
+Compose/container state, logs, durable Job rows, capture time and proof JSON; it
+records the actual Queued state rather than later recovered state. A zero exit or a different failure stage invalidates the proof. The checker parses
 execution errors only; source text and attachments cannot satisfy the expected
 metadata assertion. Its regression also rejects a captured real authentication
 error and accepts a captured real metadata timeout.
@@ -144,8 +147,13 @@ Failure output: `.local/walking-skeleton-artifacts/`: retained trace, failure
 screenshot, result metadata, browser console/status summary, Compose status,
 service logs and safe durable Job status diagnostics. Before upload the sanitizer
 redacts cookies/authorization/CSRF, passwords, request bodies, JWTs, URL credentials
-and signed query strings, including ZIP resources and embedded JSON/base64
-attachments. Ephemeral generated passwords live outside the artifact tree in a
+and signing values in structured query/header pairs, URLs/fragments and raw text.
+It handles known raw/percent/form/base64 secret variants, UTF-8 base64 bodies,
+nested JSON and ZIP entries/names. Archive nesting is limited to three levels
+and 64 MiB expanded bytes; unsupported archives fail publication closed.
+Binary screenshots/blobs remain byte-identical. A separate post-sanitization
+audit checks structured fields, text, decoded bodies and archives and prints
+counts only. The upload step requires both sanitizer and audit success. Ephemeral generated passwords live outside the artifact tree in a
 0600 file, are redacted, then deleted. Screenshots show masked password inputs.
 The sanitizer has an executable regression test. Artifact retention is seven
 days; names include the workflow run ID. Startup/test failures still collect
@@ -155,7 +163,8 @@ logs, preserve nonzero exit and always run `down -v --remove-orphans`.
 
 Fast CI runs frozen installation, LFS integrity, build/lint/architecture/typecheck,
 all tests (including Testcontainers and the domain gate), coverage artifacts and
-existing harness E2E. Run one test as shown above before broad checks. Coverage
+existing harness E2E. Each explicit CI gate runs once; CI does not repeat
+`pnpm check` after these steps. The local aggregate command keeps its full meaning. Run one test as shown above before broad checks. Coverage
 files reside in each package's coverage directory; Playwright traces can be
 opened with `pnpm --filter @editagent/web exec playwright show-trace <trace.zip>`.
 Always preserve the failing exit code while collecting evidence and cleaning up.

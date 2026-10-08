@@ -64,9 +64,9 @@ test("exported trace/logs redact sessions, passwords and signed URLs, preserving
     for (const secret of [
       "session-value",
       "test-password",
-      "X-Amz-Signature",
+      "Signature=secret",
       "user:pass",
-      "?token=",
+      "token=secret",
     ])
       assert.equal(combined.includes(secret), false);
     assert.match(combined, /503/);
@@ -74,4 +74,10 @@ test("exported trace/logs redact sessions, passwords and signed URLs, preserving
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("F32 sanitizer structured, encoded, nested archive and binary regressions", () => {
+  execFileSync("python3", ["tests/integration/support/sanitizer-regressions.py"], {
+    stdio: "inherit",
+  });
 });
