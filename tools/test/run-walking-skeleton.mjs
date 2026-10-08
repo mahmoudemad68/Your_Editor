@@ -33,6 +33,8 @@ function browser(scenario) {
       "test",
       "--config",
       "tests/walking-skeleton.config.ts",
+      // The fail-closed negative proof expects exactly the original upload test.
+      ...(scenario === "negative" ? ["upload.spec.ts"] : []),
     ],
     {
       cwd: path.join(root, "apps/web"),
