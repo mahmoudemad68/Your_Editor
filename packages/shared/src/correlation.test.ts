@@ -39,3 +39,15 @@ test("the current correlation id follows the bound request", () => {
   bindCorrelationId("web-request-1");
   assert.equal(currentCorrelationId(), "web-request-1");
 });
+
+test("request IDs reject leading/trailing controls, oversized values and injection", () => {
+  for (const value of [
+    "\nvalid",
+    "valid\r",
+    "valid\n",
+    "valid\u0000",
+    "valid\u001b",
+    "x".repeat(129),
+  ])
+    assert.equal(acceptCorrelationId(value), null);
+});

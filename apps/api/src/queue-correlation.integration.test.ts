@@ -392,7 +392,7 @@ test(
         attempts.rows.some((row) => row.status === "Completed"),
         true,
       );
-      const workerLines = jsonLines(workerOut);
+      const workerLines = jsonLines(workerOut).filter((line) => line["jobId"] === jobId);
       assert.deepEqual(
         workerLines.map((line) => line["message"]),
         ["job.started", "job.finished"],

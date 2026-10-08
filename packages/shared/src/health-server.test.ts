@@ -44,3 +44,17 @@ function listen(port: number, options?: { ready: () => boolean }): Promise<Serve
     server.once("error", reject);
   });
 }
+
+test("a synchronous readiness failure returns 503 while liveness remains healthy", async () => {
+  const server = await listen(0, {
+    ready: () => {
+      throw new Error("private dependency detail");
+    },
+  });
+  try {
+    await expectStatus(server, "/ready", 503, { status: "not-ready" });
+    await expectStatus(server, "/health", 200, { status: "ok" });
+  } finally {
+    server.close();
+  }
+});

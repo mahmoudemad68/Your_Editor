@@ -1,5 +1,6 @@
 import { loadWebConfig } from "../infrastructure/config";
-import { CORRELATION_HEADER, createCorrelationId } from "@editagent/shared";
+import { CORRELATION_HEADER } from "@editagent/shared";
+import { correlationIdFromRequest } from "./project-actions";
 
 export type AuthAction = "register" | "login" | "refresh" | "logout" | "me";
 
@@ -18,7 +19,7 @@ export async function proxyAuth(
   ) {
     return reply({ message: "This authentication request was refused." }, 403);
   }
-  const headers = new Headers({ [CORRELATION_HEADER]: createCorrelationId() });
+  const headers = new Headers({ [CORRELATION_HEADER]: correlationIdFromRequest(request) });
   for (const name of ["cookie", "x-editagent-csrf", "origin", "sec-fetch-site", "content-type"]) {
     const value = request.headers.get(name);
     if (value !== null) headers.set(name, value);

@@ -45,8 +45,8 @@ export async function bootstrap(): Promise<void> {
   const logger = createServiceLogger("api");
   const config = loadApiConfig();
   const pool = new Pool({ connectionString: config.databaseUrl });
-  observePostgresPool(pool, (error) => {
-    logger.error({ err: error.message }, "postgres.pool.disconnected");
+  observePostgresPool(pool, () => {
+    logger.error({ errorCode: "postgres_connection_lost" }, "postgres.pool.disconnected");
   });
   await applyMigrations(pool);
   const clock = new SystemClock();
@@ -137,10 +137,8 @@ if (require.main === module) {
   bootstrap().catch((error: unknown) => {
     if (error instanceof ConfigurationError) {
       process.stderr.write(`${error.message}\n`);
-    } else if (error instanceof Error) {
-      process.stderr.write(`${error.stack ?? error.message}\n`);
     } else {
-      process.stderr.write(`${String(error)}\n`);
+      createServiceLogger("api").error({ errorCode: "startup_failed" }, "service.startup.failed");
     }
     process.exitCode = 1;
   });

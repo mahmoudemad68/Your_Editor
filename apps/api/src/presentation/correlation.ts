@@ -31,7 +31,7 @@ export function bindRequestCorrelation(
     bindCorrelationId(correlationId);
     logWithCorrelation(logger, correlationId, "request.received", {
       method: request.method ?? "GET",
-      path: request.originalUrl ?? request.url ?? "/",
+      path: (request.originalUrl ?? request.url ?? "/").split("?")[0] ?? "/",
     });
     next();
   };

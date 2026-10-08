@@ -17,7 +17,8 @@ export function startHealthServer(port: number, options: HealthServerOptions = {
       return;
     }
     if (request.method === "GET" && path === "/ready") {
-      void Promise.resolve(options.ready ? options.ready() : false)
+      void Promise.resolve()
+        .then(() => (options.ready ? options.ready() : false))
         .then((ready) => {
           writeJson(response, ready ? 200 : 503, { status: ready ? "ready" : "not-ready" });
         })
