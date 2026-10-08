@@ -32,12 +32,16 @@ async function postgresProbe(pool: Pool): Promise<boolean> {
   const pending = pool.connect();
   let client: PoolClient | undefined;
   let released = false;
+  // Checked-out clients do not have the pool idle-error listener. Keep this
+  // handler only for the probe; returning it to the pool must not retain it.
+  const onClientError = (): void => undefined;
   const release = (destroy: boolean): void => {
     if (released) {
       return;
     }
     released = true;
     if (client !== undefined) {
+      client.removeListener("error", onClientError);
       client.release(destroy);
       return;
     }
@@ -50,7 +54,7 @@ async function postgresProbe(pool: Pool): Promise<boolean> {
   };
   try {
     client = await withDeadline(pending, READINESS_DEADLINE_MS);
-    client.on("error", () => undefined);
+    client.on("error", onClientError);
     await withDeadline(client.query("SELECT 1"), READINESS_DEADLINE_MS);
     release(false);
     return true;

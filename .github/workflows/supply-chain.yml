@@ -14,8 +14,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: supply-chain-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: supply-chain-${{ github.workflow }}-${{ github.event_name == 'push' && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'push' }}
 
 jobs:
   dependencies:
@@ -56,6 +56,9 @@ jobs:
 
       - name: Install secret scanner
         run: ./infra/scripts/install-supply-chain-tools.sh gitleaks
+
+      - name: Prove synthetic secret rejection
+        run: python3 infra/scripts/secret-canary.py
 
       - name: Scan for secrets
         id: secrets
@@ -173,6 +176,18 @@ jobs:
       - name: Generate SBOM and scan
         run: ./infra/scripts/supply-chain-scan-image.sh "${{ matrix.service }}" "editagent-${{ matrix.service }}:${GITHUB_SHA}"
 
+      - name: Preserve scanned production image for main publication
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && matrix.service != 'test-minio'
+        run: docker save "editagent-${{ matrix.service }}:${GITHUB_SHA}" | gzip > scanned-image.tar.gz
+
+      - name: Upload scanned image
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && matrix.service != 'test-minio'
+        uses: actions/upload-artifact@v7
+        with:
+          name: scanned-image-${{ matrix.service }}
+          path: scanned-image.tar.gz
+          retention-days: 2
+
       - name: Upload SBOM
         if: always()
         uses: actions/upload-artifact@v7
@@ -230,3 +245,118 @@ jobs:
         env:
           SCAN_DIR: scan-results
         run: ./infra/scripts/supply-chain-security-gate.sh
+
+  publish:
+    name: publish ${{ matrix.service }}
+    needs: [dependencies, images, supply-chain-security]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          [
+            api,
+            web,
+            media-worker,
+            render-worker,
+            agent-worker,
+            ai-worker,
+            seaweedfs,
+            postgres,
+            redis,
+          ]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v7
+        with:
+          name: scanned-image-${{ matrix.service }}
+      - uses: actions/download-artifact@v7
+        with:
+          name: supply-chain-sbom-${{ matrix.service }}
+      - name: Load exact scanned bytes and log in to GHCR
+        env:
+          REGISTRY_TOKEN: ${{ github.token }}
+        run: |
+          gzip -dc scanned-image.tar.gz | docker load
+          printf '%s' "$REGISTRY_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+      - name: Publish immutable SHA tag and capture digest/SBOM binding
+        run: ./infra/scripts/publish-release-image.sh '${{ matrix.service }}'
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-image-${{ matrix.service }}
+          path: release/
+          retention-days: 90
+      - name: Remove registry authentication
+        if: always()
+        run: docker logout ghcr.io
+
+  release:
+    name: release manifest
+    needs: publish
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: release-image-*
+          merge-multiple: true
+          path: release/
+      - name: Validate complete immutable image set
+        run: python3 infra/scripts/release_manifest.py assemble --sha "$GITHUB_SHA" --directory release
+      - name: Bundle accepted release infrastructure
+        run: |
+          mkdir -p bundle
+          git archive "$GITHUB_SHA" compose.yaml compose.staging.yaml infra | tar -x -C bundle
+          cp release/* bundle/
+          tar -czf release-bundle.tar.gz -C bundle .
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-${{ github.sha }}
+          path: |
+            release/
+            release-bundle.tar.gz
+          retention-days: 90
+
+  staging:
+    name: owner-approved staging
+    needs: release
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.STAGING_CD_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: read
+      packages: read
+    environment: staging
+    concurrency:
+      group: staging-deployment
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+      - name: Require configured Owner review protection
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/environments/staging" > environment.json
+          python3 -c 'import json; e=json.load(open("environment.json")); assert any(r.get("type")=="required_reviewers" and r.get("reviewers") and r.get("prevent_self_review") for r in e.get("protection_rules",[])), "Owner Environment protection is required"'
+      - uses: actions/download-artifact@v7
+        with:
+          name: release-${{ github.sha }}
+      - name: Deploy immutable image set and run bounded smoke
+        env:
+          STAGING_HOST: ${{ secrets.STAGING_HOST }}
+          STAGING_USER: ${{ secrets.STAGING_USER }}
+          STAGING_PATH: ${{ secrets.STAGING_PATH }}
+          STAGING_SSH_KEY: ${{ secrets.STAGING_SSH_KEY }}
+          STAGING_KNOWN_HOSTS: ${{ secrets.STAGING_KNOWN_HOSTS }}
+          GHCR_PULL_TOKEN: ${{ github.token }}
+          GHCR_PULL_USER: ${{ github.actor }}
+        run: ./infra/scripts/staging-ssh.sh

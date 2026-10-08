@@ -52,9 +52,8 @@ export async function consumeMediaJobs(
       if (outcome === "idle") {
         await delay(200);
       }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      process.stderr.write(`media-worker job loop: ${message}\n`);
+    } catch {
+      logger.error({ errorCode: "job_loop_failed" }, "job.consumer.failed");
       await delay(500);
     }
   }

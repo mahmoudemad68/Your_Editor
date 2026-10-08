@@ -7,6 +7,8 @@ export async function register(): Promise<void> {
   }
   const { loadWebConfig } = await import("./infrastructure/config");
   loadWebConfig();
+  const { startNoopTracing } = await import("@editagent/shared");
+  startNoopTracing("web");
   const { jobStreamRegistry } = await import("./infrastructure/job-stream-lifecycle");
   jobStreamRegistry.install();
 }

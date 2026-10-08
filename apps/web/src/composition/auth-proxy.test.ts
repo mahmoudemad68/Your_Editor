@@ -35,6 +35,7 @@ test("auth proxy preserves cookie lines/attributes and incoming security headers
       headers: {
         cookie: "editagent_refresh=opaque; editagent_csrf=readable",
         "x-editagent-csrf": "explicit",
+        "x-request-id": "web-auth-request",
         origin: "https://app.example",
       },
     }),
@@ -46,6 +47,8 @@ test("auth proxy preserves cookie lines/attributes and incoming security headers
       assert.equal(headers.get("cookie"), "editagent_refresh=opaque; editagent_csrf=readable");
       assert.equal(headers.get("x-editagent-csrf"), "explicit");
       assert.equal(headers.get("origin"), "https://app.example");
+      if (url === "http://api/auth/refresh")
+        assert.equal(headers.get("x-request-id"), "web-auth-request");
       const reply = Response.json({ id: "user", email: "owner@example.test" });
       for (const cookie of cookies) reply.headers.append("set-cookie", cookie);
       return reply;

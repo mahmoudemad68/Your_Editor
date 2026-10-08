@@ -5,6 +5,29 @@ import { acceptCorrelationId } from "./correlation.js";
 
 export type JsonLogger = Logger;
 
+// Application logs contain operational metadata, never arbitrary request/error
+// objects. Extend this list deliberately when adding an operational field.
+const LOG_FIELDS = new Set([
+  "service",
+  "correlationId",
+  "traceId",
+  "jobId",
+  "jobType",
+  "subjectId",
+  "eventKind",
+  "method",
+  "path",
+  "status",
+  "attempt",
+  "stage",
+  "percentage",
+  "errorCode",
+  "component",
+  "duplicate",
+  "abortedStreams",
+  "activeStreams",
+]);
+
 export function createServiceLogger(service: string, stream?: Writable): JsonLogger {
   return pino(
     {
@@ -12,6 +35,14 @@ export function createServiceLogger(service: string, stream?: Writable): JsonLog
       base: { service },
       messageKey: "message",
       formatters: {
+        log(fields) {
+          return Object.fromEntries(
+            Object.entries(fields).filter(
+              ([key, value]) =>
+                LOG_FIELDS.has(key) && ["string", "number", "boolean"].includes(typeof value),
+            ),
+          );
+        },
         level(label) {
           return { level: label };
         },

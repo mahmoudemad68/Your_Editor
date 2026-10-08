@@ -21,8 +21,11 @@ test("US-117 real upload → production metadata Job → exact metadata DOM", as
     writeFileSync(secretFile, JSON.stringify([...knownSecrets]), { mode: 0o600 });
   };
   rememberSecrets([]);
+  let uploadCorrelationId: string | undefined;
   page.on("request", (request) => {
     const url = new URL(request.url());
+    if (url.pathname.endsWith("/uploads/complete"))
+      uploadCorrelationId = request.headers()["x-request-id"];
     rememberSecrets(
       [...url.searchParams]
         .filter(([name]) =>
@@ -123,6 +126,7 @@ test("US-117 real upload → production metadata Job → exact metadata DOM", as
     const value = (name: string) =>
       page.getByText(name, { exact: true }).locator("..").locator("dd").textContent();
     const evidence = {
+      uploadCorrelationId,
       projectId,
       mediaAssetId,
       fixture: fixture.file,
@@ -139,6 +143,7 @@ test("US-117 real upload → production metadata Job → exact metadata DOM", as
     };
     expect(evidence.processingNavigations).toBe(0);
     expect(evidence.noReload).toBe(true);
+    expect(uploadCorrelationId).toMatch(/^req_[a-f0-9]{32}$/);
     await testInfo.attach("walking-skeleton-evidence", {
       body: JSON.stringify(evidence, null, 2),
       contentType: "application/json",

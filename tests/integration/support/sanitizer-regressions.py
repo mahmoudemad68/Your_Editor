@@ -45,6 +45,38 @@ class SanitizerRegression(unittest.TestCase):
             artifact_audit.audit(self.artifacts, self.secret_file)["secret"], 0
         )
 
+    def test_minified_trace_assets_redact_complete_assignment_boundaries(self):
+        # Real browser trace resources include source bundles. Adjacent quoted
+        # expressions and += must not leave material attached to the marker.
+        source = (
+            'cannotHaveUsernamePasswordPort:function(){return "file"===this.scheme},'
+            'credentials="same-origin",'
+            'withCredentials:"omit"===o.credentials,'
+            'document.cookie="editagent_csrf="+value;'
+            'password+=STATIC_PASSWORD;token="STATIC_TOKEN";'
+            '"password"===type&&"textarea"===tag;'
+            '"credentialless":case"default":case"defer":break;'
+            '"use-credentials"===mode?"":void 0;status=503;stage=uploading'
+        )
+        path = self.artifacts / "resource.js"
+        path.write_text(source)
+        with zipfile.ZipFile(self.artifacts / "trace.zip", "w") as archive:
+            archive.writestr("resources/browser.js", source)
+        with self.assertRaisesRegex(ValueError, "credential audit failed"):
+            artifact_audit.audit(self.artifacts, self.secret_file)
+        self.sanitize()
+        result = path.read_text()
+        self.assertNotIn("STATIC_PASSWORD", result)
+        self.assertNotIn("STATIC_TOKEN", result)
+        self.assertIn("status=503", result)
+        self.assertIn("stage=uploading", result)
+        once = path.read_bytes()
+        self.sanitize()
+        self.assertEqual(path.read_bytes(), once)
+        with zipfile.ZipFile(self.artifacts / "trace.zip") as archive:
+            self.assertIsNone(archive.testzip())
+            self.assertNotIn(b"STATIC_PASSWORD", archive.read("resources/browser.js"))
+
     def test_structured_presigned_and_name_value_pairs(self):
         keys = [
             "X-Amz-Signature",

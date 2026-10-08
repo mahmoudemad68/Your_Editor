@@ -1,9 +1,11 @@
 /** Disposable real production composition. No fixture API or direct DB inserts. */
 import { command, buildProductImages } from "./compose-build.mjs";
+import { verifyReadinessCycles } from "./readiness-cycles.mjs";
 import { assertBrokenMetadataProof } from "./walking-skeleton-proof.mjs";
 import { spawnSync, execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
+import { Buffer } from "node:buffer";
 import path from "node:path";
 import process from "node:process";
 import console from "node:console";
@@ -189,6 +191,98 @@ try {
   }
   const code = browser("healthy");
   if (code !== 0) throw new Error(`Walking skeleton failed (${code})`);
+  // Read-only proof from the actual browser-generated ID, durable Job and
+  // production JSON logs. No handcrafted header or fixture API participates.
+  const report = JSON.parse(readFileSync(path.join(artifacts, "healthy/results.json"), "utf8"));
+  const findEvidence = (value) => {
+    if (value && typeof value === "object") {
+      if (value.name === "walking-skeleton-evidence" && value.body)
+        return JSON.parse(Buffer.from(value.body, "base64").toString("utf8"));
+      for (const child of Object.values(value)) {
+        const result = findEvidence(child);
+        if (result) return result;
+      }
+    }
+  };
+  const evidence = findEvidence(report);
+  if (!evidence || !/^req_[a-f0-9]{32}$/.test(evidence.uploadCorrelationId))
+    throw new Error("Browser correlation evidence missing");
+  const job = evidence.jobSnapshot.job.jobId;
+  if (!/^[a-f0-9-]{36}$/.test(job)) throw new Error("Invalid Job evidence identity");
+  const persisted = execFileSync(
+    "docker",
+    [
+      "compose",
+      "exec",
+      "-T",
+      "postgres",
+      "psql",
+      "-U",
+      env.POSTGRES_USER ?? "editagent",
+      "-d",
+      env.POSTGRES_DB ?? "editagent",
+      "-Atc",
+      `SELECT payload->>'correlationId' FROM jobs WHERE id = '${job}'::uuid`,
+    ],
+    { cwd: root, env, encoding: "utf8", timeout: 10000 },
+  ).trim();
+  const lines = (service) =>
+    execFileSync("docker", ["compose", "logs", "--no-color", service], {
+      cwd: root,
+      env,
+      encoding: "utf8",
+      timeout: 10000,
+    })
+      .split("\n")
+      .flatMap((line) => {
+        const start = line.indexOf("{");
+        if (start < 0) return [];
+        try {
+          return [JSON.parse(line.slice(start))];
+        } catch {
+          return [];
+        }
+      });
+  const api = lines("api").filter((line) => line.correlationId === persisted);
+  const worker = lines("media-worker").filter((line) => line.jobId === job);
+  if (
+    persisted !== evidence.uploadCorrelationId ||
+    !api.some((line) => line.message === "job.accepted") ||
+    !api.some((line) => line.message === "request.received") ||
+    worker.length < 2 ||
+    worker.some((line) => line.correlationId !== persisted)
+  )
+    throw new Error("Web/API/PostgreSQL/worker correlation chain differs");
+  const correlationProof = {
+    requestId: persisted,
+    jobId: job,
+    apiLines: api.length,
+    workerLines: worker.length,
+    allWorkerJobLinesMatch: true,
+    productionBrowserHeader: true,
+  };
+  writeFileSync(
+    path.join(artifacts, "healthy/correlation-proof.json"),
+    JSON.stringify(correlationProof),
+  );
+  console.log("US115_CORRELATION_EVIDENCE", JSON.stringify(correlationProof));
+  const readinessProof = await verifyReadinessCycles(root, env);
+  writeFileSync(
+    path.join(artifacts, "healthy/readiness-proof.json"),
+    JSON.stringify(readinessProof),
+  );
+  execFileSync(
+    "python3",
+    [
+      "infra/scripts/staging_smoke.py",
+      "--local-test",
+      "--services",
+      "api,web,media-worker,postgres,redis,seaweed-master,seaweed-volume,seaweed-filer,seaweed-s3",
+      "--timeout",
+      "30",
+    ],
+    { cwd: root, env, stdio: "inherit" },
+  );
   await diagnostics(path.join(artifacts, "healthy/runtime"));
 } finally {
   try {

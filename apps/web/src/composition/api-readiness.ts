@@ -4,7 +4,11 @@ import { loadWebConfig } from "../infrastructure/config";
 export async function apiDependenciesReady(): Promise<boolean> {
   try {
     const config = loadWebConfig();
-    const response = await fetch(new URL("/ready", config.apiBaseUrl), { cache: "no-store" });
+    const response = await fetch(new URL("/ready", config.apiBaseUrl), {
+      cache: "no-store",
+      redirect: "error",
+      signal: AbortSignal.timeout(2000),
+    });
     return response.ok;
   } catch {
     return false;

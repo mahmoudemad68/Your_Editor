@@ -13,8 +13,7 @@ export function acceptCorrelationId(value: string | undefined): string | null {
   if (value === undefined) {
     return null;
   }
-  const trimmed = value.trim();
-  return CORRELATION_PATTERN.test(trimmed) ? trimmed : null;
+  return CORRELATION_PATTERN.test(value) ? value : null;
 }
 
 export function createCorrelationId(): string {

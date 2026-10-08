@@ -1,10 +1,10 @@
 import {
   keepProcessAlive,
+  createServiceLogger,
   startHealthServer,
   startNoopTracing,
   WORKER_HEALTH_PORT,
 } from "@editagent/shared";
-import { describeWorker } from "./application/describe.js";
 import { loadRenderWorkerConfig } from "./infrastructure/config.js";
 
 export function main(): void {
@@ -13,7 +13,7 @@ export function main(): void {
   // Config has loaded and this process has no further dependency probe.
   // /health stays liveness. /ready means the process can accept work.
   startHealthServer(WORKER_HEALTH_PORT, { ready: () => true });
-  process.stdout.write(`${describeWorker()}\n`);
+  createServiceLogger("render-worker").info("service.started");
   keepProcessAlive();
 }
 

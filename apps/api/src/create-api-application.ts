@@ -18,7 +18,7 @@ type RequestHandler = (request: object, response: unknown, next: () => void) => 
 export async function createApiApplication(
   composition: ApiComposition,
   beforeRoutes?: (use: (handler: RequestHandler) => void) => void,
-  logger: JsonLogger = createServiceLogger("api"),
+  logger: JsonLogger = composition.logger ?? createServiceLogger("api"),
 ): Promise<INestApplication> {
   startNoopTracing("api");
   const adapter = new ExpressAdapter();
@@ -41,7 +41,7 @@ export async function createApiApplication(
       transform: false,
     }),
   );
-  app.useGlobalFilters(new ProjectExceptionFilter());
+  app.useGlobalFilters(new ProjectExceptionFilter(logger));
   return app;
 }
 

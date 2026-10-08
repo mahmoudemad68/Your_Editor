@@ -61,6 +61,8 @@ export class SessionClient {
 
   private raw(url: string, init?: RequestInit): Promise<Response> {
     const headers = new Headers(init?.headers);
+    if (!headers.has("x-request-id"))
+      headers.set("x-request-id", `req_${crypto.randomUUID().replace(/-/g, "")}`);
     if (!["GET", "HEAD"].includes((init?.method ?? "GET").toUpperCase())) {
       const csrf = this.readCsrf();
       if (csrf !== null) headers.set("x-editagent-csrf", csrf);
