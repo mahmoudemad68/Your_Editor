@@ -148,9 +148,6 @@ jobs:
       - name: Build
         run: pnpm build
 
-      - name: Check generated API client
-        run: pnpm --filter @editagent/web check:api-client
-
       - name: Lint
         run: pnpm lint
 
@@ -174,6 +171,8 @@ jobs:
           git lfs ls-files
           pnpm test:fixtures
 
+      # pnpm test includes the generated API-client gate, domain coverage,
+      # pytest, Testcontainers and harness Playwright; execute each once.
       - name: Test
         run: pnpm test
 

@@ -164,7 +164,9 @@ logs, preserve nonzero exit and always run `down -v --remove-orphans`.
 Fast CI runs frozen installation, LFS integrity, build/lint/architecture/typecheck,
 all tests (including Testcontainers and the domain gate), coverage artifacts and
 existing harness E2E. Each explicit CI gate runs once; CI does not repeat
-`pnpm check` after these steps. The local aggregate command keeps its full meaning. Run one test as shown above before broad checks. Coverage
+`pnpm check` after these steps. The generated API-client gate executes inside
+`pnpm test`, without a duplicate standalone step. The local aggregate command
+keeps its full meaning. Run one test as shown above before broad checks. Coverage
 files reside in each package's coverage directory; Playwright traces can be
 opened with `pnpm --filter @editagent/web exec playwright show-trace <trace.zip>`.
 Always preserve the failing exit code while collecting evidence and cleaning up.
