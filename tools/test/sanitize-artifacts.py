@@ -29,7 +29,7 @@ URI = re.compile(r"[a-z][a-z0-9+.-]*://[^\s\"'<>\\]+", re.IGNORECASE)
 ASSIGNMENT = re.compile(
     r"(?i)(?<![\w-])([\"']?[\w-]{0,64}(?:authorization|cookie|password|passwd|secret|"
     r"token|credential|csrf|signature|x[-_]amz[-_][\w-]*|api[-_]?key|awsaccesskeyid)"
-    r"[\w-]{0,64}[\"']?\s*[=:]\s*)(\[REDACTED\]|\"[^\"\r\n]*\"|'[^'\r\n]*'|[^\s&;,#}\]\"']+)",
+    r"[\w-]{0,64}[\"']?\s*\+?[=:]\s*)(\"[^\"\r\n]*\"|'[^'\r\n]*'|[^\s&;,<>}]+)",
 )
 DEFAULT_SECRETS = [
     "editagent-dev-secret",
@@ -180,7 +180,9 @@ def text(value: str, secrets: list[str]) -> str:
             return REDACTED
 
     value = URI.sub(uri, value)
-    return ASSIGNMENT.sub(lambda m: m[1] + REDACTED, value)
+    # Quoted markers have an explicit end even beside minified JS expressions.
+    # Consume the whole assignment token; never retain a secret marker suffix.
+    return ASSIGNMENT.sub(lambda m: m[1] + json.dumps(REDACTED), value)
 
 
 def clean(value: object, secrets: list[str], depth: int = 0) -> object:
