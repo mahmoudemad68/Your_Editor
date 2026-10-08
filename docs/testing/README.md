@@ -151,7 +151,18 @@ and signing values in structured query/header pairs, URLs/fragments and raw text
 It handles known raw/percent/form/base64 secret variants, UTF-8 base64 bodies,
 nested JSON and ZIP entries/names. Archive nesting is limited to three levels
 and 64 MiB expanded bytes; unsupported archives fail publication closed.
-Binary screenshots/blobs remain byte-identical. A separate post-sanitization
+Known text artifact extensions are decoded even with terminal controls. CSI/OSC
+escapes and unsafe controls are removed, malformed UTF-8 logs use replacement
+characters, and UTF-16 BOM text becomes UTF-8. Binary signatures (including
+screenshots/media/fonts/icons) take precedence; recognized binary blobs remain
+byte-identical. Unknown opaque formats fail closed. ZIP extensions/prefixes
+require valid, readable archives, including CRC and nested-archive validation.
+The independent auditor imports no sanitizer classifier or detection patterns:
+it scans raw known-secret encodings and a terminal-normalized ASCII projection,
+then separately decodes/parses structured text. Even binary evidence receives
+the raw scan; a binary secret causes publication failure rather than corruption.
+Actual services.log input control/ANSI presence is captured beside each runtime
+snapshot; sanitizer and auditor report services-log counts. A separate post-sanitization
 audit checks structured fields, text, decoded bodies and archives and prints
 counts only. The upload step requires both sanitizer and audit success. Ephemeral generated passwords live outside the artifact tree in a
 0600 file, are redacted, then deleted. Screenshots show masked password inputs.

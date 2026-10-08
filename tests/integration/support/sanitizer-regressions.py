@@ -4,6 +4,7 @@ import base64
 import importlib.util
 import io
 import json
+import subprocess
 import tempfile
 import unittest
 import zipfile
@@ -241,12 +242,153 @@ class SanitizerRegression(unittest.TestCase):
         archive.write_bytes(raw)
         with self.assertRaisesRegex(ValueError, "nesting"):
             self.sanitize()
+        with self.assertRaisesRegex(ValueError, "nesting"):
+            artifact_audit.audit(self.artifacts, self.secret_file)
         self.assertEqual(archive.read_bytes(), raw)
         archive.unlink()
         with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as z:
             z.writestr("large.txt", "x" * (san.MAX_EXPANDED_BYTES + 1))
         with self.assertRaisesRegex(ValueError, "expanded bytes"):
             self.sanitize()
+        with self.assertRaisesRegex(ValueError, "expanded-byte"):
+            artifact_audit.audit(self.artifacts, self.secret_file)
+
+    def test_ansi_controls_and_independent_audit_canary(self):
+        path = self.artifacts / "services.log"
+        source = (
+            "\x1b[2Kapi | \x1b[31mpassword=ANSI_PASSWORD\x1b[0m status=500 "
+            "token=ANSI_TOKEN X-Amz-Signature=ANSI_SIGNATURE "
+            "Bearer ANSI_BEARER editagent-dev-password\n"
+            "\x1b]0;terminal title\x07worker | pass\bword=CONTROL_PASSWORD\x00 stage=probing\tstatus=503\r\n"
+        )
+        path.write_text(source)
+        result = subprocess.run(
+            [
+                "python3",
+                str(ROOT / "tools/test/audit-artifacts.py"),
+                str(self.artifacts),
+            ],
+            capture_output=True,
+            check=False,
+            timeout=10,
+        )
+        self.assertEqual(result.returncode, 1)
+        print("AUDIT_WITHOUT_SANITIZER_EXIT_CODE", result.returncode)
+        stats = san.sanitize(self.artifacts, self.secret_file)
+        self.assertEqual(stats["servicesLogFilesFound"], 1)
+        self.assertEqual(stats["servicesLogFilesSanitized"], 1)
+        report = artifact_audit.audit(self.artifacts, self.secret_file)
+        self.assertEqual(report["secret"], 0)
+        self.assertEqual(report["servicesLogFilesAudited"], 1)
+        value = path.read_text()
+        for canary in (
+            "ANSI_PASSWORD",
+            "ANSI_TOKEN",
+            "ANSI_SIGNATURE",
+            "ANSI_BEARER",
+            "editagent-dev-password",
+            "CONTROL_PASSWORD",
+            "\x1b",
+            "\x00",
+            "\b",
+        ):
+            self.assertNotIn(canary, value)
+        self.assertIn("api |", value)
+        self.assertIn("stage=probing", value)
+        self.assertIn("status=500", value)
+        self.assertIn("status=503", value)
+
+    def test_text_encodings_never_bypass(self):
+        cases = {
+            "malformed.log": b"\xffapi | password=ENCODING_PASSWORD token=ENCODING_TOKEN status=500\xfe",
+            "le.txt": ("api | password=ENCODING_PASSWORD status=500").encode("utf-16"),
+            "be.log": b"\xfe\xff"
+            + ("api | X-Amz-Signature=ENCODING_SIGNATURE status=500").encode(
+                "utf-16-be"
+            ),
+        }
+        for name, raw in cases.items():
+            path = self.artifacts / name
+            path.write_bytes(raw)
+        with self.assertRaisesRegex(ValueError, "credential audit failed"):
+            artifact_audit.audit(self.artifacts, self.secret_file)
+        self.sanitize()
+        for name in cases:
+            value = (self.artifacts / name).read_text(encoding="utf-8")
+            self.assertNotIn("ENCODING_PASSWORD", value)
+            self.assertNotIn("ENCODING_TOKEN", value)
+            self.assertNotIn("ENCODING_SIGNATURE", value)
+            self.assertIn("status=500", value)
+        self.assertIn("\ufffd", (self.artifacts / "malformed.log").read_text())
+
+    def test_alternate_pairs_and_quoted_plaintext_assignments(self):
+        pairs = [
+            {"key": "X-Amz-Signature", "val": "PAIR_SIGNATURE"},
+            {"key": "password", "value": "PAIR_PASSWORD"},
+            {"name": "token", "val": "PAIR_TOKEN"},
+        ]
+        path = self.artifacts / "pairs.json"
+        path.write_text(json.dumps({"pairs": pairs, "status": 503}))
+        log = self.artifacts / "quoted.log"
+        log.write_text(
+            'api | "password" : "QUOTED_PASSWORD" status=500\n'
+            "worker | 'token' = 'QUOTED_TOKEN' stage=staging\n"
+            'storage | "X-Amz-Signature":"QUOTED_SIGNATURE" status=403\n'
+        )
+        with self.assertRaisesRegex(ValueError, "credential audit failed"):
+            artifact_audit.audit(self.artifacts, self.secret_file)
+        self.sanitize()
+        result = json.loads(path.read_text())
+        self.assertEqual(result["pairs"][0]["val"], "[REDACTED]")
+        self.assertEqual(result["pairs"][1]["value"], "[REDACTED]")
+        self.assertEqual(result["pairs"][2]["val"], "[REDACTED]")
+        self.assertEqual(result["status"], 503)
+        for canary in ("QUOTED_PASSWORD", "QUOTED_TOKEN", "QUOTED_SIGNATURE"):
+            self.assertNotIn(canary, log.read_text())
+        self.assertIn("stage=staging", log.read_text())
+
+    def test_malformed_archives_fail_closed_in_both_paths(self):
+        out = io.BytesIO()
+        with zipfile.ZipFile(out, "w", zipfile.ZIP_STORED) as z:
+            z.writestr("services.log", "CRC_PAYLOAD password=ARCHIVE_PASSWORD")
+        valid = out.getvalue()
+        crc_bad = bytearray(valid)
+        crc_bad[valid.index(b"CRC_PAYLOAD")] ^= 1
+        nested = io.BytesIO()
+        with zipfile.ZipFile(nested, "w") as z:
+            z.writestr("inner.zip", b"PK\x03\x04truncated")
+        cases = [
+            ("broken.zip", valid[:-22]),
+            ("prefix.bin", b"PK\x03"),
+            ("not-a-zip.zip", b"opaque bytes"),
+            ("crc.zip", bytes(crc_bad)),
+            ("nested.zip", nested.getvalue()),
+        ]
+        for name, raw in cases:
+            with self.subTest(name=name):
+                path = self.artifacts / name
+                path.write_bytes(raw)
+                for action in (san.sanitize, artifact_audit.audit):
+                    with self.assertRaises(
+                        (ValueError, zipfile.BadZipFile, RuntimeError)
+                    ):
+                        action(self.artifacts, self.secret_file)
+                self.assertEqual(path.read_bytes(), raw)
+                path.unlink()
+
+    def test_binary_known_secret_is_detected_without_lossy_sanitization(self):
+        path = self.artifacts / "blob.bin"
+        raw = b"\x00\x01" + self.known.encode() + b"\x00\xff"
+        path.write_bytes(raw)
+        san.sanitize(self.artifacts, self.secret_file)
+        self.assertEqual(path.read_bytes(), raw)
+        with self.assertRaisesRegex(ValueError, "credential audit failed"):
+            artifact_audit.audit(self.artifacts, self.secret_file)
+
+    def test_unknown_opaque_format_fails_publication(self):
+        (self.artifacts / "unknown-resource").write_bytes(b"\xff\x00\x01opaque")
+        with self.assertRaisesRegex(ValueError, "safely classified"):
+            san.sanitize(self.artifacts, self.secret_file)
 
 
 if __name__ == "__main__":

@@ -6,7 +6,6 @@ bodies, nested serialized JSON and archive names. Print counts only, never value
 
 import argparse
 import base64
-import importlib.util
 import io
 import json
 import re
@@ -14,25 +13,63 @@ import zipfile
 from pathlib import Path
 from urllib.parse import unquote_plus
 
-spec = importlib.util.spec_from_file_location(
-    "sanitize_artifacts", Path(__file__).with_name("sanitize-artifacts.py")
+# Independent detector: never import sanitizer classifiers or patterns.
+MAX_ARCHIVE_DEPTH = 3
+MAX_EXPANDED_BYTES = 64 * 1024 * 1024
+MAX_JSON_DEPTH = 32
+DEFAULT_SECRETS = [
+    "editagent-dev-secret",
+    "editagent-dev-password",
+    "local-development-jwt-secret-32chars",
+]
+JWT = re.compile(r"eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+")
+ESCAPE = re.compile(
+    r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-_]|\x9b[0-?]*[ -/]*[@-~]"
 )
-san = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(san)
+RAW_ESCAPE = re.compile(
+    rb"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-_]"
+)
+
+
+def variants(secrets):
+    from urllib.parse import quote, quote_plus
+
+    values = set()
+    for secret in secrets:
+        if not isinstance(secret, str):
+            raise TypeError("Audit secrets must be strings")
+        if secret:
+            values.update((secret, quote(secret, safe=""), quote_plus(secret, safe="")))
+            for encoder in (base64.b64encode, base64.urlsafe_b64encode):
+                encoded = encoder(secret.encode()).decode()
+                values.update((encoded, encoded.rstrip("=")))
+    return values
+
+
+def normalized(value):
+    # Audit stripping is separate from the sanitizer's decoder. Raw-byte
+    # projection below remains a second check even when JSON parsing succeeds.
+    return "".join(
+        c
+        for c in ESCAPE.sub("", value)
+        if c in "\t\n\r" or ord(c) >= 32 and not 127 <= ord(c) <= 159
+    )
+
+
 KEY = re.compile(
     r"authorization|cookie|password|passwd|secret|token|credential|csrf|signature|x[-_]amz[-_]|api[-_]?key|awsaccesskeyid",
     re.IGNORECASE,
 )
 ASSIGNMENT = re.compile(
-    r"(?i)([\w-]*(?:password|passwd|secret|token|credential|csrf|signature|x-amz-[\w-]*|api[_-]?key|awsaccesskeyid)[\w-]*\s*[=:]\s*)([^\s&;,\"'<>}]+)"
+    r"(?i)([\"']?[\w-]*(?:password|passwd|secret|token|credential|csrf|signature|x-amz-[\w-]*|api[_-]?key|awsaccesskeyid)[\w-]*[\"']?\s*[=:]\s*)(\"[^\"\r\n]*\"|'[^'\r\n]*'|[^\s&;,<>}]+)"
 )
 BEARER = re.compile(r"\bBearer\s+(\S+)", re.IGNORECASE)
 URI_USER = re.compile(r"[a-z][a-z0-9+.-]*://([^/@\s]+)@", re.IGNORECASE)
 
 
 def audit(directory: Path, secret_file: Path | None = None) -> dict:
-    known = san.secret_variants(
-        san.DEFAULT_SECRETS
+    known = variants(
+        DEFAULT_SECRETS
         + (
             json.loads(secret_file.read_text())
             if secret_file and secret_file.exists()
@@ -51,7 +88,14 @@ def audit(directory: Path, secret_file: Path | None = None) -> dict:
         )
     }
     entries = 0
-    budget = [san.MAX_EXPANDED_BYTES]
+    service_logs_found = 0
+    service_logs_audited = 0
+    raw_known = {
+        secret.encode(encoding)
+        for secret in known
+        for encoding in ("utf-8", "utf-16-le", "utf-16-be")
+    }
+    budget = [MAX_EXPANDED_BYTES]
 
     def safe(value):
         return value is None or value == "" or value == "[REDACTED]"
@@ -66,10 +110,11 @@ def audit(directory: Path, secret_file: Path | None = None) -> dict:
             counts["token"] += 1
 
     def text(value):
+        value = normalized(value)
         decoded = unquote_plus(value)
         if any(secret in value or secret in decoded for secret in known):
             finding("known")
-        if san.JWT.search(value):
+        if JWT.search(value):
             finding("token")
         for match in BEARER.finditer(value):
             if not safe(match[1].strip("\"'.,}")):
@@ -80,26 +125,22 @@ def audit(directory: Path, secret_file: Path | None = None) -> dict:
                 counts["db_credentials"] += 1
                 finding("userinfo")
         for match in ASSIGNMENT.finditer(decoded):
-            if not safe(
-                match[2].rstrip("]")
-                if not match[2].startswith("[REDACTED]")
-                else "[REDACTED]"
-            ):
+            if not safe(match[2].strip("\"'")):
                 finding(match[1])
 
     def structured(value, depth=0):
-        if depth > san.MAX_JSON_DEPTH:
+        if depth > MAX_JSON_DEPTH:
             raise ValueError("Artifact audit nesting exceeds safe limit")
         if isinstance(value, dict):
-            if (
-                isinstance(value.get("name"), str)
-                and KEY.search(value["name"])
-                and "value" in value
-                and not safe(value["value"])
-            ):
-                finding(value["name"])
+            for key_field in ("name", "key"):
+                if isinstance(value.get(key_field), str) and KEY.search(
+                    normalized(value[key_field])
+                ):
+                    for value_field in ("value", "val"):
+                        if value_field in value and not safe(value[value_field]):
+                            finding(value[key_field])
             for key, child in value.items():
-                if KEY.search(key) and not safe(child):
+                if KEY.search(normalized(key)) and not safe(child):
                     finding(key)
                 elif key == "body" and isinstance(child, str):
                     try:
@@ -124,11 +165,15 @@ def audit(directory: Path, secret_file: Path | None = None) -> dict:
                 else:
                     text(value)
 
-    def content(raw, archive_depth=0, depth=0):
+    def content(raw, archive_depth=0, depth=0, name=""):
         nonlocal entries
         entries += 1
-        if zipfile.is_zipfile(io.BytesIO(raw)):
-            if archive_depth >= san.MAX_ARCHIVE_DEPTH:
+        # No binary/text classifier may suppress a raw known-secret check.
+        if any(secret in raw for secret in raw_known):
+            finding("known_raw")
+        archive_claim = Path(name).suffix.lower() == ".zip" or raw.startswith(b"PK")
+        if archive_claim or zipfile.is_zipfile(io.BytesIO(raw)):
+            if archive_depth >= MAX_ARCHIVE_DEPTH:
                 raise ValueError("Artifact audit archive nesting exceeds safe limit")
             with zipfile.ZipFile(io.BytesIO(raw)) as z:
                 for entry in z.infolist():
@@ -136,14 +181,23 @@ def audit(directory: Path, secret_file: Path | None = None) -> dict:
                     if budget[0] < 0:
                         raise ValueError("Artifact audit expanded-byte budget exceeded")
                     text(entry.filename)
-                    content(z.read(entry), archive_depth + 1, depth)
+                    content(z.read(entry), archive_depth + 1, depth, entry.filename)
             return
-        try:
-            decoded = raw.decode("utf-8")
-        except UnicodeDecodeError:
-            return
-        if not san.is_text(decoded):
-            return
+        # Scan a control-free ASCII projection regardless of encoding, magic,
+        # extension or successful decoding. This catches skipped canary logs and
+        # known credentials embedded in otherwise opaque binary evidence.
+        projected = RAW_ESCAPE.sub(b"", raw)
+        text(
+            bytes(b for b in projected if b in (9, 10, 13) or 32 <= b < 127).decode(
+                "ascii"
+            )
+        )
+        decoded = normalized(
+            raw.decode(
+                "utf-16" if raw.startswith((b"\xff\xfe", b"\xfe\xff")) else "utf-8-sig",
+                errors="replace",
+            )
+        )
         try:
             parsed = json.loads(decoded)
         except ValueError:
@@ -164,8 +218,17 @@ def audit(directory: Path, secret_file: Path | None = None) -> dict:
     for file in directory.rglob("*"):
         if file.is_file():
             text(str(file.relative_to(directory)))
-            content(file.read_bytes())
-    result = {"entriesAudited": entries, **counts}
+            if file.name == "services.log":
+                service_logs_found += 1
+            content(file.read_bytes(), name=str(file))
+            if file.name == "services.log":
+                service_logs_audited += 1
+    result = {
+        "entriesAudited": entries,
+        "servicesLogFilesFound": service_logs_found,
+        "servicesLogFilesAudited": service_logs_audited,
+        **counts,
+    }
     if counts["secret"]:
         raise ValueError("Artifact credential audit failed: " + json.dumps(result))
     return result

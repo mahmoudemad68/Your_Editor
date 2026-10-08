@@ -62,7 +62,20 @@ async function diagnostics(destination = artifacts) {
       encoding: "utf8",
       timeout: 30000,
     });
-    writeFileSync(path.join(destination, file), (result.stdout ?? "") + (result.stderr ?? ""));
+    const output = (result.stdout ?? "") + (result.stderr ?? "");
+    writeFileSync(path.join(destination, file), output);
+    if (file === "services.log")
+      writeFileSync(
+        path.join(destination, "services-log-input.json"),
+        JSON.stringify({
+          file,
+          ansiBeforeSanitization: [...output].some((c) => [27, 155, 157].includes(c.charCodeAt(0))),
+          controlsBeforeSanitization: [...output].some((c) => {
+            const code = c.charCodeAt(0);
+            return (code < 32 && ![9, 10, 13].includes(code)) || (code >= 127 && code <= 159);
+          }),
+        }),
+      );
   }
   const result = spawnSync(
     "docker",
