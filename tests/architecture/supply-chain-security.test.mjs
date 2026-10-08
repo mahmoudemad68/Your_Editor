@@ -1,6 +1,6 @@
 /**
  * The supply-chain workflow scans dependencies and the images compose.yaml
- * already builds or pins, plus the MinIO test image. It does not publish images.
+ * already builds or pins, plus the MinIO test image. Scan jobs cannot publish.
  */
 
 import assert from "node:assert/strict";
@@ -69,9 +69,10 @@ test("the security check reports high and critical findings and does not publish
   assert.match(scanner, /spdx-json=/);
   assert.match(scanner, /vulnerability ignore file is not allowed/);
   assert.equal(workflow.includes("docker push"), false);
-  assert.equal(workflow.includes("packages: write"), false);
-  assert.equal(workflow.includes("environment: staging"), false);
-  assert.equal(workflow.includes("ghcr.io"), false);
+  const scanJobs = workflow.split("\n  publish:")[0];
+  assert.equal(scanJobs.includes("packages: write"), false);
+  assert.equal(scanJobs.includes("environment: staging"), false);
+  assert.equal(scanJobs.includes("ghcr.io"), false);
   assert.match(scanner, /--ignore-unfixed=false/);
   assert.equal(
     scanner.replaceAll("--ignore-unfixed=false", "").includes("--ignore-unfixed"),

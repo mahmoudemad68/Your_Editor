@@ -1,0 +1,54 @@
+# Deployment-only override. Images are required immutable registry digests.
+services:
+  api:
+    build: !reset null
+    image: ${API_IMAGE:?Immutable api image is required}
+    ports: !override
+      - "127.0.0.1:3001:3001"
+    environment:
+      EDITAGENT_RUNTIME: production
+      AUTH_COOKIE_SECURE: "true"
+      AUTH_TRUSTED_ORIGINS: ${AUTH_TRUSTED_ORIGINS:?Trusted HTTPS origin required}
+      S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:?Public S3 endpoint required}
+  web:
+    build: !reset null
+    image: ${WEB_IMAGE:?Immutable web image is required}
+    ports: !override
+      - "127.0.0.1:3000:3000"
+  media-worker:
+    build: !reset null
+    image: ${MEDIA_WORKER_IMAGE:?Immutable media-worker image is required}
+  render-worker:
+    build: !reset null
+    image: ${RENDER_WORKER_IMAGE:?Immutable render-worker image is required}
+  agent-worker:
+    build: !reset null
+    image: ${AGENT_WORKER_IMAGE:?Immutable agent-worker image is required}
+  ai-worker:
+    build: !reset null
+    image: ${AI_WORKER_IMAGE:?Immutable ai-worker image is required}
+  postgres:
+    build: !reset null
+    image: ${POSTGRES_IMAGE:?Immutable postgres image is required}
+    ports: !override
+      - "127.0.0.1:5432:5432"
+  redis:
+    build: !reset null
+    image: ${REDIS_IMAGE:?Immutable redis image is required}
+    ports: !override
+      - "127.0.0.1:6379:6379"
+  seaweed-master:
+    build: !reset null
+    image: ${SEAWEEDFS_IMAGE:?Immutable seaweedfs image is required}
+  seaweed-volume:
+    build: !reset null
+    image: ${SEAWEEDFS_IMAGE:?Immutable seaweedfs image is required}
+  seaweed-filer:
+    build: !reset null
+    image: ${SEAWEEDFS_IMAGE:?Immutable seaweedfs image is required}
+  seaweed-s3:
+    build: !reset null
+    image: ${SEAWEEDFS_IMAGE:?Immutable seaweedfs image is required}
+  ai-worker-gpu:
+    build: !reset null
+    image: ${AI_WORKER_IMAGE:?Immutable ai-worker image is required}
