@@ -1,5 +1,6 @@
 /** Disposable real production composition. No fixture API or direct DB inserts. */
 import { command, buildProductImages } from "./compose-build.mjs";
+import { verifyReadinessCycles } from "./readiness-cycles.mjs";
 import { assertBrokenMetadataProof } from "./walking-skeleton-proof.mjs";
 import { spawnSync, execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
@@ -265,6 +266,11 @@ try {
     JSON.stringify(correlationProof),
   );
   console.log("US115_CORRELATION_EVIDENCE", JSON.stringify(correlationProof));
+  const readinessProof = await verifyReadinessCycles(root, env);
+  writeFileSync(
+    path.join(artifacts, "healthy/readiness-proof.json"),
+    JSON.stringify(readinessProof),
+  );
   execFileSync(
     "python3",
     [

@@ -1,7 +1,7 @@
 import { InspectionRetryConflict } from "../application/inspection-job.js";
 import { type ArgumentsHost, Catch, type ExceptionFilter, HttpException } from "@nestjs/common";
 import { DomainError, MediaAssetConflict, ProjectConflict } from "@editagent/domain";
-import { createCorrelationId, currentCorrelationId } from "@editagent/shared";
+import { createCorrelationId, currentCorrelationId, type JsonLogger } from "@editagent/shared";
 import { ProjectForbiddenError, ProjectNotFoundError } from "../application/project-access.js";
 import {
   ObjectStorageUnavailable,
@@ -20,6 +20,13 @@ interface HttpReply {
 /** Maps application and domain failures to HTTP. It does not decide membership. */
 @Catch()
 export class ProjectExceptionFilter implements ExceptionFilter {
+  constructor(private readonly logger: JsonLogger) {}
+
+  private logFailure(status: number, errorCode: string): string {
+    const traceId = currentCorrelationId() ?? createCorrelationId();
+    this.logger.error({ correlationId: traceId, traceId, status, errorCode }, "request.failed");
+    return traceId;
+  }
   catch(exception: unknown, host: ArgumentsHost): void {
     const response = host.switchToHttp().getResponse<HttpReply>();
     // /ready has an established, deliberately small 503 response contract.
@@ -65,6 +72,7 @@ export class ProjectExceptionFilter implements ExceptionFilter {
       return;
     }
     if (exception instanceof ObjectStorageUnavailable) {
+      this.logFailure(502, "object_storage_unavailable");
       response.status(502).json({ statusCode: 502, message: exception.message });
       return;
     }
@@ -73,6 +81,10 @@ export class ProjectExceptionFilter implements ExceptionFilter {
       return;
     }
     const status = exception instanceof HttpException ? exception.getStatus() : 500;
+    const traceId = this.logFailure(
+      status,
+      exception instanceof HttpException ? "http_server_error" : "unexpected_server_error",
+    );
     const sent = response.status(status);
     sent.type?.("application/problem+json");
     sent.json({
@@ -80,7 +92,7 @@ export class ProjectExceptionFilter implements ExceptionFilter {
       title: status === 503 ? "Service Unavailable" : "Internal Server Error",
       status,
       detail: "An unexpected error occurred.",
-      traceId: currentCorrelationId() ?? createCorrelationId(),
+      traceId,
     });
   }
 }
