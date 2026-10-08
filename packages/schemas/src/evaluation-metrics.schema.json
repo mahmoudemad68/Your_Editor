@@ -1,0 +1,109 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://your-editor.example/schemas/evaluation-metrics.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "datasetVersion", "metrics"],
+  "properties": {
+    "schemaVersion": {
+      "const": "1.0"
+    },
+    "datasetVersion": {
+      "type": "string",
+      "pattern": "^evaluation-dataset-v[1-9][0-9]*$"
+    },
+    "metrics": {
+      "type": "array",
+      "minItems": 8,
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "name",
+          "definition",
+          "formula",
+          "unit",
+          "direction",
+          "aggregation",
+          "requiredInputs",
+          "edgeCases",
+          "firstReportingStory",
+          "reportingRationale",
+          "normalization"
+        ],
+        "properties": {
+          "id": {
+            "enum": [
+              "caption_wer",
+              "caption_sync_error",
+              "silence_removal_accuracy",
+              "content_retention",
+              "render_success_rate",
+              "editing_time",
+              "human_acceptance_rate",
+              "manual_corrections"
+            ]
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\S"
+          },
+          "definition": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\S"
+          },
+          "formula": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\S"
+          },
+          "unit": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\S"
+          },
+          "direction": {
+            "enum": ["minimize", "maximize"]
+          },
+          "aggregation": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\S"
+          },
+          "requiredInputs": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S"
+            }
+          },
+          "edgeCases": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\S"
+          },
+          "firstReportingStory": {
+            "type": "string",
+            "pattern": "^US-[0-9]{3}$"
+          },
+          "reportingRationale": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\S"
+          },
+          "normalization": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\S"
+          }
+        }
+      }
+    }
+  }
+}

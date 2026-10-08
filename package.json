@@ -21,7 +21,15 @@
     "test:fixtures": "node --test tests/integration/media-fixtures.test.mjs",
     "test:e2e": "pnpm --filter @editagent/web test:e2e",
     "test:walking-skeleton": "node tools/test/run-walking-skeleton.mjs",
-    "test:services": "node tools/test/with-services.mjs"
+    "test:services": "node tools/test/with-services.mjs",
+    "evaluation:validate": "node tools/evaluation/validate.mjs",
+    "evaluation:test": "node --test tests/integration/evaluation.test.mjs",
+    "evaluation:docs": "node tools/evaluation/docs.mjs",
+    "evaluation:sync": "node tools/evaluation/storage.mjs sync",
+    "evaluation:deep": "node tools/evaluation/storage.mjs deep",
+    "evaluation:render": "node tools/evaluation/references.mjs render",
+    "evaluation:review": "node tools/evaluation/references.mjs review",
+    "evaluation:version": "node tools/evaluation/version.mjs"
   },
   "devDependencies": {
     "@aws-sdk/client-s3": "3.1018.0",

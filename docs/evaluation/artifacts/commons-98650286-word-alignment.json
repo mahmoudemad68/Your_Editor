@@ -1,0 +1,14 @@
+{
+  "schemaVersion": "1.0",
+  "datasetVersion": "evaluation-dataset-v1",
+  "sourceId": "commons-98650286",
+  "sourceSha256": "86cf8af3ceb93561358aebe34c7a5ad39fc522660f695c8b8c667d453d6f7117",
+  "createdBy": "machine_candidate",
+  "review": {
+    "status": "awaiting_human_review"
+  },
+  "language": "en",
+  "words": [],
+  "annotationNotes": "Empty template awaiting actual human word-by-word transcription and timing; preserve original Unicode/case/punctuation. No invented transcript.",
+  "id": "commons-98650286-word-alignment"
+}

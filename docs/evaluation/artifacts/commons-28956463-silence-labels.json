@@ -1,0 +1,13 @@
+{
+  "schemaVersion": "1.0",
+  "datasetVersion": "evaluation-dataset-v1",
+  "sourceId": "commons-28956463",
+  "sourceSha256": "843d6c653030056f26018be17b933fd6c739ef59ce0e128152f385bf2b38d1f6",
+  "createdBy": "machine_candidate",
+  "review": {
+    "status": "awaiting_human_review"
+  },
+  "intervals": [],
+  "annotationNotes": "Empty template awaiting actual human-labelled silence ranges; not completed labels and not model predictions.",
+  "id": "commons-28956463-silence-labels"
+}

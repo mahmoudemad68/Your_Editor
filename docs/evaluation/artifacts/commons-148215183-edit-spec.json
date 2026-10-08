@@ -1,0 +1,11 @@
+{
+  "schemaVersion": "1.0",
+  "datasetVersion": "evaluation-dataset-v1",
+  "sourceId": "commons-148215183",
+  "sourceSha256": "793bade8dea8492b56d266f1d6fb2997f1c936cb01c0ff5c65fe449bbe59f0f1",
+  "createdBy": "machine_candidate",
+  "review": { "status": "awaiting_human_review" },
+  "segments": [{ "sourceStartUs": "0", "sourceEndUs": "30000000", "outputStartUs": "0" }],
+  "decisionNotes": "Machine-created first-30-second viewing candidate only. No human editorial decision or review has occurred; Owner must choose meaningful retained segments and record their decisions.",
+  "id": "commons-148215183-edit-spec"
+}
