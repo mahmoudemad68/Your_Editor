@@ -23,15 +23,36 @@ import { forkVersion } from "../../tools/evaluation/version.mjs";
 import { scopedMetricInputs } from "../../tools/evaluation/scoped-inputs.mjs";
 import { annotationEdit } from "../../tools/evaluation/annotation-clip.mjs";
 import { metricsMarkdown } from "../../tools/evaluation/docs.mjs";
+import {
+  normalizedModelWords,
+  silenceComplement,
+  wordMicroseconds,
+} from "../../tools/evaluation/annotations.mjs";
 
 const clone = (value) => JSON.parse(JSON.stringify(value));
-function fixture() {
+function fixture(actual = false) {
   const real = loadDataset();
-  return {
+  const data = {
     manifest: clone(real.manifest),
     registry: clone(real.registry),
     documents: new Map([...real.documents].map(([key, value]) => [key, clone(value)])),
   };
+  if (!actual) {
+    // Legacy synthetic fixtures continue exercising the original human-created contract.
+    delete data.manifest.ownerDecision;
+    for (const value of data.documents.values()) {
+      const doc = value.data;
+      if (doc.createdBy !== "machine_generated") continue;
+      doc.createdBy = "machine_candidate";
+      delete doc.generation;
+      doc.review = { status: "awaiting_human_review" };
+      doc.scope.selection = "machine_candidate";
+      if (doc.words) doc.words = [];
+      if (doc.intervals) doc.intervals = [];
+    }
+    reindex(data);
+  }
+  return data;
 }
 function report(data) {
   return validateDataset(data.manifest, data.registry, data.documents, data.storageEvidence);
@@ -61,6 +82,7 @@ function reindex(data) {
 function approve(doc, renderSha256) {
   // Synthetic test evidence ONLY; never applied to the real dataset.
   doc.createdBy = "human";
+  delete doc.generation;
   if (doc.scope) doc.scope.selection = "owner_confirmed";
   doc.review = {
     status: "approved",
@@ -109,10 +131,10 @@ function goldFixture() {
   reindex(data);
   return data;
 }
-test("actual manifest has six approved references but incomplete annotation and storage gold", () => {
-  const r = report(fixture());
+test("actual manifest meets Owner-approved gold under the explicit deviation; human creation and durable release remain incomplete", () => {
+  const r = report(fixture(true));
   assert.equal(r.DATASET_STRUCTURALLY_VALID, true, r.errors.join(";"));
-  assert.equal(r.US110_GOLD_COMPLETE, false);
+  assert.equal(r.US110_GOLD_COMPLETE, true);
   assert.equal(r.LICENSED_SOURCE_COUNT, 12);
   assert.equal(r.CATEGORY_COUNT, 6);
   assert.equal(r.APPROVED_HUMAN_REFERENCE_COUNT, 6);
@@ -120,6 +142,11 @@ test("actual manifest has six approved references but incomplete annotation and 
   assert.equal(r.APPROVED_WORD_ALIGNMENT_COUNT, 0);
   assert.equal(r.HUMAN_GOLD_COMPLETE, false);
   assert.equal(r.GOLD_STORAGE_DURABLE, false);
+  assert.equal(r.OWNER_APPROVED_SILENCE_LABEL_COUNT, 3);
+  assert.equal(r.OWNER_APPROVED_WORD_ALIGNMENT_COUNT, 3);
+  assert.equal(r.OWNER_APPROVED_GOLD, true);
+  assert.equal(r.HUMAN_CREATED_GOLD, false);
+  assert.equal(r.US110_RELEASE_COMPLETE, false);
 });
 test("synthetic genuine-human-shaped evidence satisfies unchanged 6/3/3 quota", () => {
   const r = report(goldFixture());
@@ -376,17 +403,21 @@ test("metric prose is generated from the canonical registry without drift", asyn
     readFileSync(resolve(repositoryRoot, "docs/evaluation/METRICS.md"), "utf8"),
   );
 });
-test("strict gold CLI exits nonzero while structural CLI passes", () => {
+test("project gold CLI accepts the Owner decision while original human and durable release gates fail", () => {
   for (const [args, expected] of [
     [[], 0],
-    [["--require-gold"], 1],
+    [["--require-gold"], 0],
+    [["--require-human-gold"], 1],
+    [["--require-release"], 1],
   ]) {
     const r = spawnSync(process.execPath, ["tools/evaluation/validate.mjs", ...args], {
       cwd: repositoryRoot,
       encoding: "utf8",
     });
     assert.equal(r.status, expected, r.stderr);
-    assert.match(r.stdout, /"US110_GOLD_COMPLETE": false/);
+    assert.match(r.stdout, /"US110_GOLD_COMPLETE": true/);
+    assert.match(r.stdout, /"HUMAN_CREATED_GOLD": false/);
+    assert.match(r.stdout, /"US110_RELEASE_COMPLETE": false/);
   }
 });
 const config = {
@@ -482,6 +513,7 @@ test("version fork archives historical metadata and resets approval bookkeeping"
     await forkVersion("evaluation-dataset-v2", root);
     const current = loadDataset(root);
     assert.equal(current.manifest.datasetVersion, "evaluation-dataset-v2");
+    assert.equal(current.manifest.ownerDecision, undefined);
     assert.equal(report(current).DATASET_STRUCTURALLY_VALID, true);
     const archive = loadDataset(resolve(root, "docs/evaluation/releases/evaluation-dataset-v1"));
     assert.equal(archive.manifest.datasetVersion, "evaluation-dataset-v1");
@@ -773,4 +805,149 @@ test("unreleased approved artifact requires explicit review invalidation, not a 
   };
   doc.review = { status: "awaiting_human_review" };
   assert.throws(() => assertArtifactMutable(data.manifest, doc), /fork a later/);
+});
+
+test("Owner-generated gold preserves real machine provenance and separate counters", () => {
+  const data = fixture(true),
+    r = report(data);
+  assert.equal(r.DATASET_STRUCTURALLY_VALID, true, r.errors.join("; "));
+  assert.equal(r.OWNER_APPROVED_GOLD, true);
+  assert.equal(r.HUMAN_CREATED_GOLD, false);
+  assert.equal(r.US110_RELEASE_COMPLETE, false);
+  const arabic = data.manifest.sources.find((s) => s.id === "commons-82236797");
+  const words = data.documents.get(
+    arabic.referenceArtifacts.find((a) => a.type === "word_alignment").metadataPath,
+  ).data.words;
+  assert.ok(words.some((w) => /[\u0600-\u06ff]/.test(w.text)));
+  assert.ok(words.every((w) => !w.text.includes("\ufffd")));
+  for (const type of ["word_alignment", "silence_labels"]) {
+    const { doc } = entry(data, type);
+    assert.equal(doc.createdBy, "machine_generated");
+    assert.equal(doc.review.evidence.approvalBasis, "owner_accepted_generated");
+    assert.equal(doc.review.evidence.reviewerId, "project-owner");
+    assert.equal(doc.review.evidence.reviewedContentSha256, contentSha256(doc));
+  }
+});
+const generatedMutations = {
+  "missing Owner waiver": (d) => {
+    delete d.manifest.ownerDecision;
+  },
+  "invalid Owner decision date": (d) => {
+    d.manifest.ownerDecision.decidedAt = "2026-99-99T00:00:00Z";
+  },
+  "wrong accepted source": (d) => {
+    d.manifest.ownerDecision.acceptedSourceIds[0] = "commons-148215183";
+  },
+  "machine provenance falsely relabelled human": (d) => {
+    entry(d, "word_alignment").doc.createdBy = "human";
+  },
+  "missing generation provenance": (d) => {
+    delete entry(d, "word_alignment").doc.generation;
+  },
+  "wrong generating model": (d) => {
+    entry(d, "word_alignment").doc.generation.modelId = "unverified";
+  },
+  "wrong generating parameters": (d) => {
+    entry(d, "word_alignment").doc.generation.parameters.beamSize = 1;
+  },
+  "wrong generating tool version": (d) => {
+    entry(d, "word_alignment").doc.generation.toolVersions["faster-whisper"] = "unknown";
+  },
+  "wrong approval basis": (d) => {
+    entry(d, "word_alignment").doc.review.evidence.approvalBasis = "human_created";
+  },
+  "wrong waiver link": (d) => {
+    entry(d, "word_alignment").doc.review.evidence.deviationId = "unapproved";
+  },
+  "wrong generated reviewer": (d) => {
+    entry(d, "word_alignment").doc.review.evidence.reviewerId = "not-project-owner";
+  },
+  "different generated scope": (d) => {
+    entry(d, "word_alignment").doc.scope.endUs = "90001000";
+  },
+  "empty generated word gold": (d) => {
+    entry(d, "word_alignment").doc.words = [];
+  },
+  "empty generated silence gold": (d) => {
+    entry(d, "silence_labels").doc.intervals = [];
+  },
+};
+for (const [name, mutate] of Object.entries(generatedMutations))
+  test(`rejects generated baseline with ${name}`, () => {
+    const data = fixture(true);
+    mutate(data);
+    // Re-sign only synthetic copied fingerprints so semantic validation must catch the defect.
+    for (const value of data.documents.values())
+      if (value.data.createdBy === "machine_generated" && value.data.review.evidence)
+        value.data.review.evidence.reviewedContentSha256 = contentSha256(value.data);
+    reindex(data);
+    const r = report(data);
+    assert.equal(r.DATASET_STRUCTURALLY_VALID, false);
+    assert.equal(r.US110_GOLD_COMPLETE, false);
+  });
+test("unapproved generated output does not count despite the waiver", () => {
+  const data = fixture(true);
+  entry(data, "word_alignment").doc.review = { status: "awaiting_human_review" };
+  reindex(data);
+  const r = report(data);
+  assert.equal(r.DATASET_STRUCTURALLY_VALID, true, r.errors.join("; "));
+  assert.equal(r.OWNER_APPROVED_WORD_ALIGNMENT_COUNT, 2);
+  assert.equal(r.US110_GOLD_COMPLETE, false);
+});
+test("generated scoped metrics require the exact Owner decision and report provenance", () => {
+  const data = fixture(true);
+  const { doc, source } = entry(data, "word_alignment");
+  assert.throws(() => scopedMetricInputs("word_alignment", doc, source, []), /explicit Owner/);
+  const result = scopedMetricInputs("word_alignment", doc, source, [], data.manifest.ownerDecision);
+  assert.equal(result.provenance, "owner_approved_generated");
+  assert.equal(result.durationUs, "60000000");
+  const different = clone(data.manifest.ownerDecision);
+  different.scope.endUs = "91000000";
+  assert.throws(
+    () => scopedMetricInputs("word_alignment", doc, source, [], different),
+    /explicit Owner/,
+  );
+});
+test("word conversion keeps Arabic Unicode, source offsets and real positive model timing", () => {
+  const scope = { startUs: "30000000", endUs: "90000000" };
+  assert.equal(wordMicroseconds(0.0000005), 1n);
+  assert.deepEqual(
+    normalizedModelWords(
+      [
+        { text: " مرحباً،", start: 1.25, end: 1.5 },
+        { text: "zero", start: 2, end: 2 },
+      ],
+      scope,
+    ),
+    [{ text: "مرحباً،", startUs: "31250000", endUs: "31500000" }],
+  );
+  assert.throws(() => wordMicroseconds(NaN), /Invalid model/);
+  assert.throws(
+    () =>
+      normalizedModelWords(
+        [
+          { text: "a", start: 1, end: 2 },
+          { text: "b", start: 1.5, end: 3 },
+        ],
+        scope,
+      ),
+    /overlap/,
+  );
+});
+test("silence conversion complements actual VAD samples inside the full accepted scope", () => {
+  const scope = { startUs: "30000000", endUs: "90000000" };
+  assert.deepEqual(silenceComplement([{ start: 16000, end: 32000 }], scope), [
+    { startUs: "30000000", endUs: "31000000" },
+    { startUs: "32000000", endUs: "90000000" },
+  ]);
+  assert.deepEqual(silenceComplement([{ start: 0, end: 960000 }], scope), []);
+  assert.throws(() => silenceComplement([{ start: 1, end: 960001 }], scope), /Invalid VAD/);
+});
+test("optional Python generation conversions are tested without inference dependencies", () => {
+  const result = spawnSync(
+    "python3",
+    ["-m", "unittest", "discover", "-s", "tools/evaluation", "-p", "test_generate.py"],
+    { cwd: repositoryRoot, encoding: "utf8" },
+  );
+  assert.equal(result.status, 0, result.stderr);
 });

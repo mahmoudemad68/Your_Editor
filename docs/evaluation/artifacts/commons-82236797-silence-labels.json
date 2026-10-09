@@ -3,10 +3,71 @@
   "datasetVersion": "evaluation-dataset-v1",
   "sourceId": "commons-82236797",
   "sourceSha256": "5f3eff8e19d9ea508f875082f177bd7dfdad70f56c03e0a33b6c8e5a7a2c0426",
-  "createdBy": "machine_candidate",
-  "review": { "status": "awaiting_human_review" },
-  "intervals": [],
-  "annotationNotes": "Empty template. Provisional 30–90s viewing window only, AWAITING_OWNER_SELECTION: Owner must listen, confirm/change the scope, and hand label it. No human selection or annotation has occurred.",
+  "createdBy": "machine_generated",
+  "review": {
+    "status": "approved",
+    "evidence": {
+      "reviewerId": "project-owner",
+      "reviewerRole": "project_owner",
+      "reviewedAt": "2026-10-09T06:39:13Z",
+      "decision": "approved",
+      "humanAttestation": true,
+      "notes": "The Project Owner explicitly reviewed the evaluation approach and accepts this generated annotation artifact as the project gold baseline. The Owner waived additional manual hand-labelling for US-110.",
+      "reviewedContentSha256": "96ad0bbba495de06714e20b9da2adcf24c95ef54eedf6b1163c308da4b36f4f8",
+      "approvalBasis": "owner_accepted_generated",
+      "deviationId": "us110-owner-generated-annotation-gold-v1"
+    }
+  },
+  "intervals": [
+    { "endUs": "30258000", "startUs": "30000000" },
+    { "endUs": "35794000", "startUs": "35342000" },
+    { "endUs": "41106000", "startUs": "40334000" },
+    { "endUs": "44978000", "startUs": "44718000" },
+    { "endUs": "46354000", "startUs": "46094000" },
+    { "endUs": "47282000", "startUs": "47086000" },
+    { "endUs": "54930000", "startUs": "54478000" },
+    { "endUs": "60274000", "startUs": "59438000" },
+    { "endUs": "61522000", "startUs": "60782000" },
+    { "endUs": "65714000", "startUs": "65358000" },
+    { "endUs": "68178000", "startUs": "67886000" },
+    { "endUs": "70322000", "startUs": "69166000" },
+    { "endUs": "72178000", "startUs": "71854000" },
+    { "endUs": "75442000", "startUs": "74798000" },
+    { "endUs": "76466000", "startUs": "76174000" },
+    { "endUs": "78098000", "startUs": "77998000" },
+    { "endUs": "80722000", "startUs": "80302000" },
+    { "endUs": "88114000", "startUs": "87758000" },
+    { "endUs": "90000000", "startUs": "89358000" }
+  ],
+  "annotationNotes": "Generated tool output, not manually hand-labelled. Scope accepted by the Owner's explicit US-110 deviation. Word timestamps use decimal half-up microseconds; VAD silence is the complement of speech sample ranges, floored to integer microseconds. Empty/zero-duration model words are omitted; raw inference identity is recorded. Final Owner acceptance is recorded separately in review evidence.",
   "id": "commons-82236797-silence-labels",
-  "scope": { "startUs": "30000000", "endUs": "90000000", "selection": "machine_candidate" }
+  "scope": { "startUs": "30000000", "endUs": "90000000", "selection": "owner_confirmed" },
+  "generation": {
+    "ffmpegVersion": "ffmpeg version 7.1.5-0+deb13u1 Copyright (c) 2000-2026 the FFmpeg developers",
+    "generatorSha256": "4e557c2d3839b10a5c3163a7a311739510691dc56e40970ea09735b7e4123cb4",
+    "inputAudioSha256": "f00e74d3b739b32e8cc20d1cceee06968aa40c1f5a7f001c244ff0ad47a1c5f4",
+    "method": "silero_vad_silence_complement",
+    "modelId": "silero_vad_v6.onnx",
+    "modelRevision": "4cbf549b8326f60f80f2536d9eefeb450a9abe83365a098031c89719f1be17d2",
+    "modelSha256": "4cbf549b8326f60f80f2536d9eefeb450a9abe83365a098031c89719f1be17d2",
+    "parameters": {
+      "min_silence_duration_ms": 100,
+      "min_speech_duration_ms": 250,
+      "neg_threshold": 0.35,
+      "speech_pad_ms": 30,
+      "threshold": 0.5
+    },
+    "rawOutputSha256": "40e6c700e6df18c10a0e1c8f81c9e268b3262116a695a1c183844527fd0f6bf2",
+    "recipeVersion": "eval-generated-annotations-v1",
+    "sampleRateHz": 16000,
+    "timestampPolicy": "source_us_round_half_up_bounded_v1",
+    "toolVersions": {
+      "av": "18.1.0",
+      "ctranslate2": "4.8.2",
+      "faster-whisper": "1.2.1",
+      "numpy": "2.4.6",
+      "onnxruntime": "1.31.0",
+      "tokenizers": "0.23.2"
+    }
+  }
 }

@@ -1,19 +1,21 @@
-import { contentSha256, validateDocument } from "./validate.mjs";
+import { contentSha256, validateDocument, generatedApprovalAllowed } from "./validate.mjs";
 
 // Input adapter only: no ASR, VAD, token normalization or fabricated gold.
-export function scopedMetricInputs(type, gold, source, predictions) {
+export function scopedMetricInputs(type, gold, source, predictions, ownerDecision = null) {
   if (!["word_alignment", "silence_labels"].includes(type))
     throw new Error("Unsupported scoped metric");
   validateDocument(type, gold, source, gold.datasetVersion);
   if (
-    gold.createdBy !== "human" ||
+    (gold.createdBy !== "human" && !generatedApprovalAllowed(gold, source, ownerDecision)) ||
     gold.review.status !== "approved" ||
     gold.review.evidence?.humanAttestation !== true ||
     gold.review.evidence.decision !== "approved" ||
     gold.review.evidence.reviewedContentSha256 !== contentSha256(gold) ||
     Number.isNaN(Date.parse(gold.review.evidence.reviewedAt))
   )
-    throw new Error("Scoped metrics require current approved human gold");
+    throw new Error(
+      "Scoped metrics require current approved human gold or the explicit Owner-generated deviation",
+    );
   const lower = BigInt(gold.scope.startUs),
     upper = BigInt(gold.scope.endUs);
   const clipped = [];
@@ -43,5 +45,6 @@ export function scopedMetricInputs(type, gold, source, predictions) {
     durationUs: String(upper - lower),
     gold: type === "word_alignment" ? gold.words : gold.intervals,
     predictions: clipped,
+    provenance: gold.createdBy === "human" ? "human_created" : "owner_approved_generated",
   };
 }

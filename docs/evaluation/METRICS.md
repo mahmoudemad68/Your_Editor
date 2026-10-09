@@ -6,7 +6,7 @@ Schema 1.0; dataset evaluation-dataset-v1. Machine outputs use ratios, milliseco
 
 ## Caption word error rate (`caption_wer`)
 
-**Definition:** Token-level Levenshtein errors against approved human word text, reported separately for each language.
+**Definition:** Token-level Levenshtein errors against approved word text (human-created or explicitly Owner-accepted generated baseline), reported separately for each language.
 
 **Formula:** WER = (S + D + I) / N
 
@@ -18,7 +18,7 @@ Schema 1.0; dataset evaluation-dataset-v1. Machine outputs use ratios, milliseco
 
 **Edge cases:** N=0 and zero hypothesis tokens: null (no reference); N=0 and nonempty hypothesis: null plus insertion count. Never divide by zero or report a perfect score for an unlabelled clip.
 
-**Normalization / protocol:** NFC Unicode, then Unicode casefold; remove Arabic U+064B..U+065F, U+0670 and tatweel U+0640; no Arabic letter folding (alef/hamza/ya/ta marbuta remain distinct). Replace every Unicode P* punctuation character with a space. Map Unicode Nd decimal digits to ASCII digits; never expand number words or regroup numbers. Collapse Unicode whitespace and split on spaces. Preserve original gold text unchanged. Pin the scorer Unicode database/version in each report. Evaluate only the approved word-gold scope. Include predicted words whose midpoint lies in [scope.startUs,scope.endUs); clip included start/end bounds to the scope before WER alignment and sync scoring. Words outside the window never become insertions. Raw text without timed scope attribution is insufficient for a scoped score. tools/evaluation/scoped-inputs.mjs implements this input rule.
+**Normalization / protocol:** NFC Unicode, then Unicode casefold; remove Arabic U+064B..U+065F, U+0670 and tatweel U+0640; no Arabic letter folding (alef/hamza/ya/ta marbuta remain distinct). Replace every Unicode P* punctuation character with a space. Map Unicode Nd decimal digits to ASCII digits; never expand number words or regroup numbers. Collapse Unicode whitespace and split on spaces. Preserve original gold text unchanged. Pin the scorer Unicode database/version in each report. Evaluate only the approved word-gold scope. Include predicted words whose midpoint lies in [scope.startUs,scope.endUs); clip included start/end bounds to the scope before WER alignment and sync scoring. Words outside the window never become insertions. Raw text without timed scope attribution is insufficient for a scoped score. tools/evaluation/scoped-inputs.mjs implements this input rule. Reports must identify human_created versus owner_approved_generated provenance and the Owner decision ID. Generated scoped gold requires that explicit decision in scopedMetricInputs. Agreement with the generating model is not independent human-ground-truth accuracy; no CP2 pass is inferred from baseline acceptance.
 
 **First reporting story:** US-201
 
@@ -40,7 +40,7 @@ Schema 1.0; dataset evaluation-dataset-v1. Machine outputs use ratios, milliseco
 
 **Edge cases:** No matched words: null, coverage=0; N=0: null coverage. Substitutions/deletions are not treated as accurate timestamps. Report coverage alongside the CP2 <=100ms gate so omissions cannot improve a score silently.
 
-**Normalization / protocol:** Use the caption WER text normalization only for lexical matching; raw integer microsecond start/end values are never rounded before subtraction. Use exactly the same approved word scope, midpoint inclusion and clipped predicted bounds as WER. All compared timestamps remain in SOURCE coordinates; never rebase just one side.
+**Normalization / protocol:** Use the caption WER text normalization only for lexical matching; raw integer microsecond start/end values are never rounded before subtraction. Use exactly the same approved word scope, midpoint inclusion and clipped predicted bounds as WER. All compared timestamps remain in SOURCE coordinates; never rebase just one side. Reports must identify human_created versus owner_approved_generated provenance and the Owner decision ID. Generated scoped gold requires that explicit decision in scopedMetricInputs. Agreement with the generating model is not independent human-ground-truth accuracy; no CP2 pass is inferred from baseline acceptance.
 
 **First reporting story:** US-201
 
@@ -62,7 +62,7 @@ Schema 1.0; dataset evaluation-dataset-v1. Machine outputs use ratios, milliseco
 
 **Edge cases:** Use half-open intervals [start,end), merged unions, no tolerance collar. Both P and G empty: precision=recall=F1=1 with no_silence=true; empty P/nonempty G: precision=1, recall=0, F1=0; nonempty P/empty G: precision=0, recall=1, F1=0. Empty speech denominator: null. Never label detector output as actual removal.
 
-**Normalization / protocol:** Union sorted intervals in source time; integer microseconds for all overlap arithmetic. Do not expand gold boundaries or forgive speech removal. Intersect P with the approved silence-gold scope before overlap scoring. Gold lies wholly inside that scope; speech is the scope minus G, not the entire source minus G. tools/evaluation/scoped-inputs.mjs applies the intersection. CP2 F1 >=0.9 is unchanged.
+**Normalization / protocol:** Union sorted intervals in source time; integer microseconds for all overlap arithmetic. Do not expand gold boundaries or forgive speech removal. Intersect P with the approved silence-gold scope before overlap scoring. Gold lies wholly inside that scope; speech is the scope minus G, not the entire source minus G. tools/evaluation/scoped-inputs.mjs applies the intersection. CP2 F1 >=0.9 is unchanged. Reports must identify human_created versus owner_approved_generated provenance and the Owner decision ID. Generated scoped gold requires that explicit decision in scopedMetricInputs. Agreement with the generating model is not independent human-ground-truth accuracy; no CP2 pass is inferred from baseline acceptance.
 
 **First reporting story:** US-202
 

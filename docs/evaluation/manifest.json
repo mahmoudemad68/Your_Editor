@@ -257,22 +257,22 @@
           "type": "silence_labels",
           "sourceId": "commons-28956463",
           "datasetVersion": "evaluation-dataset-v1",
-          "sha256": "dfe3b4ebee8ba4b8d3847f9b4931adb7aba23bfaee8bbff529793d8c6645029c",
-          "sizeBytes": "655",
+          "sha256": "7f990d09069e66a9cb444cee5d082fa0d17a749f87abd7321d099ae45dd9e3c0",
+          "sizeBytes": "3444",
           "extension": "json",
           "metadataPath": "docs/evaluation/artifacts/commons-28956463-silence-labels.json",
-          "objectKey": "evaluation/evaluation-dataset-v1/annotations/commons-28956463-silence-labels/dfe3b4ebee8ba4b8d3847f9b4931adb7aba23bfaee8bbff529793d8c6645029c.json"
+          "objectKey": "evaluation/evaluation-dataset-v1/annotations/commons-28956463-silence-labels/7f990d09069e66a9cb444cee5d082fa0d17a749f87abd7321d099ae45dd9e3c0.json"
         },
         {
           "id": "commons-28956463-word-alignment",
           "type": "word_alignment",
           "sourceId": "commons-28956463",
           "datasetVersion": "evaluation-dataset-v1",
-          "sha256": "5449593a696c4472c6c4ccfaa80e2dc310b0590e0bc79bdc0dc39bcb463afffa",
-          "sizeBytes": "671",
+          "sha256": "4a42f08f7eab4538c745ad01c2a32d42ada28a733b7d847fb691c0937b49fe0f",
+          "sizeBytes": "15894",
           "extension": "json",
           "metadataPath": "docs/evaluation/artifacts/commons-28956463-word-alignment.json",
-          "objectKey": "evaluation/evaluation-dataset-v1/annotations/commons-28956463-word-alignment/5449593a696c4472c6c4ccfaa80e2dc310b0590e0bc79bdc0dc39bcb463afffa.json"
+          "objectKey": "evaluation/evaluation-dataset-v1/annotations/commons-28956463-word-alignment/4a42f08f7eab4538c745ad01c2a32d42ada28a733b7d847fb691c0937b49fe0f.json"
         }
       ]
     },
@@ -492,22 +492,22 @@
           "type": "silence_labels",
           "sourceId": "commons-82236797",
           "datasetVersion": "evaluation-dataset-v1",
-          "sha256": "05738944aafb655a1d5d7c2b5f270a47c03ede5324f2311d23df2e3866faa90c",
-          "sizeBytes": "655",
+          "sha256": "11f5bd5144ff391e9cd408058b5dda41c5f36dbbe7c727bcdbdb740baac38733",
+          "sizeBytes": "3652",
           "extension": "json",
           "metadataPath": "docs/evaluation/artifacts/commons-82236797-silence-labels.json",
-          "objectKey": "evaluation/evaluation-dataset-v1/annotations/commons-82236797-silence-labels/05738944aafb655a1d5d7c2b5f270a47c03ede5324f2311d23df2e3866faa90c.json"
+          "objectKey": "evaluation/evaluation-dataset-v1/annotations/commons-82236797-silence-labels/11f5bd5144ff391e9cd408058b5dda41c5f36dbbe7c727bcdbdb740baac38733.json"
         },
         {
           "id": "commons-82236797-word-alignment",
           "type": "word_alignment",
           "sourceId": "commons-82236797",
           "datasetVersion": "evaluation-dataset-v1",
-          "sha256": "7e0ff09c5d87e7b779c1def798c31e67daacf3d2eb006312c60326c8f8263035",
-          "sizeBytes": "671",
+          "sha256": "342aa5a4d71c9ec0dac6263bfbe9139c58ab559c23245fb95093689d26f46f82",
+          "sizeBytes": "9836",
           "extension": "json",
           "metadataPath": "docs/evaluation/artifacts/commons-82236797-word-alignment.json",
-          "objectKey": "evaluation/evaluation-dataset-v1/annotations/commons-82236797-word-alignment/7e0ff09c5d87e7b779c1def798c31e67daacf3d2eb006312c60326c8f8263035.json"
+          "objectKey": "evaluation/evaluation-dataset-v1/annotations/commons-82236797-word-alignment/342aa5a4d71c9ec0dac6263bfbe9139c58ab559c23245fb95093689d26f46f82.json"
         }
       ]
     },
@@ -606,25 +606,35 @@
           "type": "silence_labels",
           "sourceId": "commons-98650286",
           "datasetVersion": "evaluation-dataset-v1",
-          "sha256": "32aa3f0631830de91d91940f9145f3ddc7394af2523a15839deb4df48089b54f",
-          "sizeBytes": "655",
+          "sha256": "5ef12f76d5897f724d7d616c9d3b5488c6ee5fa786093b274c3147930583f36d",
+          "sizeBytes": "2872",
           "extension": "json",
           "metadataPath": "docs/evaluation/artifacts/commons-98650286-silence-labels.json",
-          "objectKey": "evaluation/evaluation-dataset-v1/annotations/commons-98650286-silence-labels/32aa3f0631830de91d91940f9145f3ddc7394af2523a15839deb4df48089b54f.json"
+          "objectKey": "evaluation/evaluation-dataset-v1/annotations/commons-98650286-silence-labels/5ef12f76d5897f724d7d616c9d3b5488c6ee5fa786093b274c3147930583f36d.json"
         },
         {
           "id": "commons-98650286-word-alignment",
           "type": "word_alignment",
           "sourceId": "commons-98650286",
           "datasetVersion": "evaluation-dataset-v1",
-          "sha256": "1fd296f53b35dd7c2bc9633de823ecc9b8ee972250623948cf9913deeb0cc3e2",
-          "sizeBytes": "671",
+          "sha256": "89b0d1ece0f2353594342416fd4f3131d6bb30a069bc75b1b9e7a1e3e52a6494",
+          "sizeBytes": "13340",
           "extension": "json",
           "metadataPath": "docs/evaluation/artifacts/commons-98650286-word-alignment.json",
-          "objectKey": "evaluation/evaluation-dataset-v1/annotations/commons-98650286-word-alignment/1fd296f53b35dd7c2bc9633de823ecc9b8ee972250623948cf9913deeb0cc3e2.json"
+          "objectKey": "evaluation/evaluation-dataset-v1/annotations/commons-98650286-word-alignment/89b0d1ece0f2353594342416fd4f3131d6bb30a069bc75b1b9e7a1e3e52a6494.json"
         }
       ]
     }
   ],
-  "release": { "status": "unreleased" }
+  "release": { "status": "unreleased" },
+  "ownerDecision": {
+    "id": "us110-owner-generated-annotation-gold-v1",
+    "reviewerId": "project-owner",
+    "decidedAt": "2026-10-09T06:34:13Z",
+    "documentationPath": "docs/evaluation/OWNER_DECISION.md",
+    "originalRequirement": "hand-labelled silence ranges and word alignments for 3 clips",
+    "acceptedSourceIds": ["commons-28956463", "commons-98650286", "commons-82236797"],
+    "scope": { "startUs": "30000000", "endUs": "90000000" },
+    "storageForQa": "report_separately"
+  }
 }

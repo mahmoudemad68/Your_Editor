@@ -31,7 +31,8 @@
     "evaluation:review": "node tools/evaluation/references.mjs review",
     "evaluation:version": "node tools/evaluation/version.mjs",
     "evaluation:annotation-clip": "node tools/evaluation/annotation-clip.mjs",
-    "evaluation:certify": "node tools/evaluation/storage.mjs certify"
+    "evaluation:certify": "node tools/evaluation/storage.mjs certify",
+    "evaluation:import-generated": "node tools/evaluation/annotations.mjs"
   },
   "devDependencies": {
     "@aws-sdk/client-s3": "3.1018.0",

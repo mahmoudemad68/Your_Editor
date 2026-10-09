@@ -94,6 +94,9 @@
           }
         }
       ]
+    },
+    "ownerDecision": {
+      "$ref": "#/$defs/owner_decision"
     }
   },
   "$defs": {
@@ -147,6 +150,12 @@
             "renderSha256": {
               "type": "string",
               "pattern": "^[a-f0-9]{64}$"
+            },
+            "approvalBasis": {
+              "enum": ["human_created", "owner_accepted_generated"]
+            },
+            "deviationId": {
+              "const": "us110-owner-generated-annotation-gold-v1"
             }
           }
         }
@@ -561,7 +570,7 @@
           "pattern": "^[a-f0-9]{64}$"
         },
         "createdBy": {
-          "enum": ["machine_candidate", "human"]
+          "enum": ["machine_candidate", "human", "machine_generated"]
         },
         "review": {
           "$ref": "#/$defs/review"
@@ -591,8 +600,40 @@
         },
         "scope": {
           "$ref": "#/$defs/scope"
+        },
+        "generation": {
+          "$ref": "#/$defs/generation"
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "createdBy": {
+                "const": "machine_generated"
+              }
+            }
+          },
+          "then": {
+            "required": ["generation"],
+            "properties": {
+              "generation": {
+                "properties": {
+                  "method": {
+                    "const": "silero_vad_silence_complement"
+                  }
+                },
+                "type": "object"
+              }
+            }
+          },
+          "else": {
+            "not": {
+              "required": ["generation"]
+            }
+          }
+        }
+      ]
     },
     "word_alignment": {
       "type": "object",
@@ -631,7 +672,7 @@
           "pattern": "^[a-f0-9]{64}$"
         },
         "createdBy": {
-          "enum": ["machine_candidate", "human"]
+          "enum": ["machine_candidate", "human", "machine_generated"]
         },
         "review": {
           "$ref": "#/$defs/review"
@@ -686,8 +727,40 @@
         },
         "scope": {
           "$ref": "#/$defs/scope"
+        },
+        "generation": {
+          "$ref": "#/$defs/generation"
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "createdBy": {
+                "const": "machine_generated"
+              }
+            }
+          },
+          "then": {
+            "required": ["generation"],
+            "properties": {
+              "generation": {
+                "properties": {
+                  "method": {
+                    "const": "faster_whisper_word_timestamps"
+                  }
+                },
+                "type": "object"
+              }
+            }
+          },
+          "else": {
+            "not": {
+              "required": ["generation"]
+            }
+          }
+        }
+      ]
     },
     "render_receipt": {
       "type": "object",
@@ -862,6 +935,321 @@
           }
         }
       }
+    },
+    "owner_decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "reviewerId",
+        "decidedAt",
+        "documentationPath",
+        "originalRequirement",
+        "acceptedSourceIds",
+        "storageForQa",
+        "scope"
+      ],
+      "properties": {
+        "id": {
+          "const": "us110-owner-generated-annotation-gold-v1"
+        },
+        "reviewerId": {
+          "const": "project-owner"
+        },
+        "decidedAt": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+        },
+        "documentationPath": {
+          "const": "docs/evaluation/OWNER_DECISION.md"
+        },
+        "originalRequirement": {
+          "const": "hand-labelled silence ranges and word alignments for 3 clips"
+        },
+        "acceptedSourceIds": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "uniqueItems": true,
+          "items": {
+            "enum": ["commons-28956463", "commons-98650286", "commons-82236797"]
+          }
+        },
+        "storageForQa": {
+          "const": "report_separately"
+        },
+        "scope": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["startUs", "endUs"],
+          "properties": {
+            "startUs": {
+              "const": "30000000"
+            },
+            "endUs": {
+              "const": "90000000"
+            }
+          }
+        }
+      }
+    },
+    "generation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "recipeVersion",
+        "generatorSha256",
+        "inputAudioSha256",
+        "rawOutputSha256",
+        "sampleRateHz",
+        "toolVersions",
+        "ffmpegVersion",
+        "timestampPolicy",
+        "method",
+        "modelId",
+        "modelRevision",
+        "modelSha256",
+        "parameters"
+      ],
+      "properties": {
+        "recipeVersion": {
+          "const": "eval-generated-annotations-v1"
+        },
+        "generatorSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "inputAudioSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "rawOutputSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "sampleRateHz": {
+          "const": 16000
+        },
+        "toolVersions": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["faster-whisper", "ctranslate2", "onnxruntime", "numpy", "av", "tokenizers"],
+          "properties": {
+            "faster-whisper": {
+              "const": "1.2.1"
+            },
+            "ctranslate2": {
+              "const": "4.8.2"
+            },
+            "onnxruntime": {
+              "const": "1.31.0"
+            },
+            "numpy": {
+              "const": "2.4.6"
+            },
+            "av": {
+              "const": "18.1.0"
+            },
+            "tokenizers": {
+              "const": "0.23.2"
+            }
+          }
+        },
+        "ffmpegVersion": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "timestampPolicy": {
+          "const": "source_us_round_half_up_bounded_v1"
+        },
+        "method": {
+          "enum": ["faster_whisper_word_timestamps", "silero_vad_silence_complement"]
+        },
+        "modelId": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "modelRevision": {
+          "type": "string",
+          "pattern": "^(?:[a-f0-9]{40}|[a-f0-9]{64})$"
+        },
+        "modelSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "parameters": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "device",
+                "computeType",
+                "cpuThreads",
+                "beamSize",
+                "temperature",
+                "vadFilter"
+              ],
+              "properties": {
+                "device": {
+                  "const": "cpu"
+                },
+                "computeType": {
+                  "const": "int8"
+                },
+                "cpuThreads": {
+                  "const": 2
+                },
+                "beamSize": {
+                  "const": 5
+                },
+                "temperature": {
+                  "const": 0
+                },
+                "vadFilter": {
+                  "const": false
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "threshold",
+                "neg_threshold",
+                "min_speech_duration_ms",
+                "min_silence_duration_ms",
+                "speech_pad_ms"
+              ],
+              "properties": {
+                "threshold": {
+                  "const": 0.5
+                },
+                "neg_threshold": {
+                  "const": 0.35
+                },
+                "min_speech_duration_ms": {
+                  "const": 250
+                },
+                "min_silence_duration_ms": {
+                  "const": 100
+                },
+                "speech_pad_ms": {
+                  "const": 30
+                }
+              }
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "method": {
+                "const": "faster_whisper_word_timestamps"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "parameters": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "device",
+                  "computeType",
+                  "cpuThreads",
+                  "beamSize",
+                  "temperature",
+                  "vadFilter"
+                ],
+                "properties": {
+                  "device": {
+                    "const": "cpu"
+                  },
+                  "computeType": {
+                    "const": "int8"
+                  },
+                  "cpuThreads": {
+                    "const": 2
+                  },
+                  "beamSize": {
+                    "const": 5
+                  },
+                  "temperature": {
+                    "const": 0
+                  },
+                  "vadFilter": {
+                    "const": false
+                  }
+                }
+              },
+              "modelId": {
+                "const": "Systran/faster-whisper-small"
+              },
+              "modelRevision": {
+                "const": "536b0662742c02347bc0e980a01041f333bce120"
+              },
+              "modelSha256": {
+                "const": "3e305921506d8872816023e4c273e75d2419fb89b24da97b4fe7bce14170d671"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "method": {
+                "const": "silero_vad_silence_complement"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "parameters": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "threshold",
+                  "neg_threshold",
+                  "min_speech_duration_ms",
+                  "min_silence_duration_ms",
+                  "speech_pad_ms"
+                ],
+                "properties": {
+                  "threshold": {
+                    "const": 0.5
+                  },
+                  "neg_threshold": {
+                    "const": 0.35
+                  },
+                  "min_speech_duration_ms": {
+                    "const": 250
+                  },
+                  "min_silence_duration_ms": {
+                    "const": 100
+                  },
+                  "speech_pad_ms": {
+                    "const": 30
+                  }
+                }
+              },
+              "modelId": {
+                "const": "silero_vad_v6.onnx"
+              },
+              "modelRevision": {
+                "const": "4cbf549b8326f60f80f2536d9eefeb450a9abe83365a098031c89719f1be17d2"
+              },
+              "modelSha256": {
+                "const": "4cbf549b8326f60f80f2536d9eefeb450a9abe83365a098031c89719f1be17d2"
+              }
+            }
+          }
+        }
+      ]
     }
   }
 }

@@ -17,6 +17,7 @@ import {
   validateDocument,
   assertDatasetMutable,
   assertArtifactMutable,
+  validOwnerDecision,
 } from "./validate.mjs";
 import { hashStream } from "./storage.mjs";
 import { createReadStream } from "node:fs";
@@ -199,7 +200,7 @@ export async function renderReference(sourceId, root) {
 }
 export async function reviewArtifact(
   artifactId,
-  { decision, reviewerId, notes, attestHuman, root, now = new Date() },
+  { decision, reviewerId, notes, attestHuman, acceptGenerated = false, root, now = new Date() },
 ) {
   if (
     !attestHuman ||
@@ -221,7 +222,25 @@ export async function reviewArtifact(
   const doc = JSON.parse(readFileSync(resolve(repositoryRoot, artifact.metadataPath), "utf8"));
   assertArtifactMutable(manifest, doc);
   if (doc.id !== artifact.id) throw new Error("Annotation/edit ID differs from manifest");
-  if (doc.createdBy !== "human")
+  const generated = doc.createdBy === "machine_generated";
+  if (
+    generated &&
+    (!acceptGenerated ||
+      !validOwnerDecision(manifest.ownerDecision) ||
+      !manifest.ownerDecision.acceptedSourceIds.includes(source.id) ||
+      doc.scope?.startUs !== manifest.ownerDecision.scope.startUs ||
+      doc.scope?.endUs !== manifest.ownerDecision.scope.endUs ||
+      reviewerId !== manifest.ownerDecision.reviewerId ||
+      artifact.type === "edit_spec")
+  )
+    throw new Error(
+      "Generated annotation approval requires the recorded Owner deviation and explicit --accept-generated-baseline",
+    );
+  if (acceptGenerated && !generated)
+    throw new Error(
+      "Generated acceptance flag cannot approve a human edit or an empty machine candidate",
+    );
+  if (doc.createdBy !== "human" && !generated)
     throw new Error(
       "Owner must record their editorial decisions/hand labels and set createdBy=human before review",
     );
@@ -242,6 +261,9 @@ export async function reviewArtifact(
     humanAttestation: true,
     notes,
     reviewedContentSha256: contentSha256(doc),
+    ...(generated
+      ? { approvalBasis: "owner_accepted_generated", deviationId: manifest.ownerDecision.id }
+      : {}),
   };
   if (artifact.type === "edit_spec") {
     const receiptArtifact = source.referenceArtifacts.find((a) => a.type === "render_receipt");
@@ -273,6 +295,10 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     for (let i = 0; i < args.length; i++) {
       if (args[i] === "--attest-human-review") {
         values.attestHuman = true;
+        continue;
+      }
+      if (args[i] === "--accept-generated-baseline") {
+        values.acceptGenerated = true;
         continue;
       }
       const keys = {

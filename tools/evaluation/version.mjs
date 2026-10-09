@@ -45,6 +45,9 @@ export async function forkVersion(version, root = repositoryRoot) {
       errorOnExist: true,
       force: false,
     });
+  const decisionPath = resolve(root, "docs/evaluation/OWNER_DECISION.md");
+  if (existsSync(decisionPath))
+    cpSync(decisionPath, resolve(archive, "OWNER_DECISION.md"), { errorOnExist: true });
   const evidencePath = resolve(root, "docs/evaluation/storage-verification.json");
   if (existsSync(evidencePath)) {
     cpSync(evidencePath, resolve(archive, "storage-verification.json"), {
@@ -54,6 +57,8 @@ export async function forkVersion(version, root = repositoryRoot) {
     rmSync(evidencePath);
   }
   manifest.release = { status: "unreleased" };
+  // A version fork must receive its own genuine Owner acceptance, not inherit a waiver silently.
+  delete manifest.ownerDecision;
   manifest.datasetVersion = version;
   manifest.storage.prefix = `evaluation/${version}/`;
   registry.datasetVersion = version;

@@ -1,13 +1,15 @@
 # Evaluation baseline operator guide
 
-US-110 provides 12 licensed sources, six **Owner-approved human reference reels**, empty annotation
-templates and eight metric definitions. It currently reports `BLOCKED_ON_OWNER_GOLD`; it is not a
-completed gold dataset. The Owner personally watched the six prepared sources and intentionally
-retained each 00:00–00:30 reference interval. Those editorial decisions are recorded as human edits;
-the Owner has also personally watched and explicitly approved all six exact rendered reels.
-Approval evidence uses the stable reviewer ID `project-owner` and each verified reel SHA-256.
-Follow the Owner steps below to complete at least three hand-labelled silence/word clips and
-configure approved durable storage. Human-gold and release completeness remain false.
+US-110 provides 12 licensed sources, six genuinely human-created and Owner-approved reference
+reels, three generated word-alignment clips, three generated silence clips and eight metric
+definitions. The Project Owner explicitly waived additional manual hand-labelling and accepts
+technically verified generated annotations as the project baseline. See [OWNER_DECISION.md](OWNER_DECISION.md).
+Annotation `createdBy=machine_generated` preserves real producer provenance; `project-owner`
+approved the generated approach/artifacts through the explicit deviation. No annotation is claimed
+as manually hand-labelled. The 6/3/3 quotas remain unchanged.
+
+Gold acceptance for QA and durable release readiness are separate. Local private versioned storage
+is not a durable team archive; the Owner authorized QA preparation while that finding remains open.
 
 ## Offline validation
 
@@ -19,12 +21,16 @@ pnpm evaluation:validate --require-gold
 ```
 
 The first command needs normal package installation; metadata validation/tests thereafter require no
-network, bucket credentials, downloaded media or GPU. The ordinary validation command exits zero
-only for structural validity and prints `US110_GOLD_COMPLETE: false` until both genuine human quotas and durable-storage verification pass. `HUMAN_GOLD_COMPLETE` reports the 6/3/3 quotas separately from `GOLD_STORAGE_DURABLE`.
-`--require-gold` exits nonzero when six approved human references, three approved silence clips or
-three approved word-aligned clips are missing, or durable storage evidence is absent/stale. CI checks structure/document drift, not a fake gold
-completion. JSON Schemas live in `packages/schemas/src/evaluation-*.schema.json`; no generated
-bindings are maintained. `pnpm evaluation:docs` regenerates METRICS.md from metrics.json.
+network, bucket credentials, model downloads or GPU. Ordinary validation checks structure and prints
+human-created, Owner-approved, durable-storage and release states separately.
+`--require-gold` accepts the exact documented Owner deviation for this project; `--require-human-gold`
+continues to fail because manual annotation quotas are unmet. `--require-release` continues to fail
+until durable versioned storage is verified. Without an explicit valid Owner deviation, generated
+annotations cannot satisfy the gate and the original human-created/durable requirements remain.
+
+JSON Schemas live in `packages/schemas/src/evaluation-*.schema.json`; no generated bindings are maintained.
+`pnpm evaluation:docs` regenerates METRICS.md from metrics.json. Optional inference dependencies are
+isolated in the environment described below; offline CI does not import or install them.
 
 ## Obtain sources and inspect storage
 
@@ -113,73 +119,94 @@ identity authentication or cryptographic proof of watching. Keep review audit ac
 Rejected artifacts may be revised/rerendered and reviewed again in the unreleased version; a
 unreleased approval must be explicitly invalidated before revision, as described below. The other unapproved artifacts can receive their first gold inside v1.
 
-## Hand label silence and words
+## Generated annotation baseline under the Owner deviation
 
-Gold annotations cover explicit bounded **clips**, not whole source videos or the 30-second
-reference reels. Each word/silence pair has a provisional 60-second viewing scope. These offsets are
-machine candidates prepared for selection, **not a claim of suitable speech or an Owner decision**.
-The Owner must listen, confirm/change them, and choose roughly 45–60 seconds of useful speech with
-boundaries between words. No semantic selection or human labelling has happened yet.
+The Owner explicitly accepts the existing 30–90 second scopes for two English clips and one Arabic
+clip. Labels use SOURCE coordinates, decimal integer microseconds, ordered nonoverlapping ranges.
+Word/silence gold covers these 60-second windows, not full source videos or reference reels.
 
-| Source ID        | Language | Published title                                                                                       | Source duration (s) | Candidate start (s) | Candidate end (s) | Clip duration (s) |
-| ---------------- | -------- | ----------------------------------------------------------------------------------------------------- | ------------------: | ------------------: | ----------------: | ----------------: |
-| commons-28956463 | en       | What is a web science unMooc?.webm                                                                    |             125.382 |                  30 |                90 |                60 |
-| commons-98650286 | en       | Katherine Maher's message on the occasion of Wikipedia 20.webm                                        |             350.434 |                  30 |                90 |                60 |
-| commons-82236797 | ar       | Wikimedia Strategy 2030 - Diversity - Interview Walaa Abdelmanaem (AR) - لقاء مع ولاء عبد المنعم.webm |             626.744 |                  30 |                90 |                60 |
+| Source ID        | Language | Source duration (s) | Scope start (s) | Scope end (s) | Clip duration (s) |
+| ---------------- | -------- | ------------------: | --------------: | ------------: | ----------------: |
+| commons-28956463 | en       |             125.382 |              30 |            90 |                60 |
+| commons-98650286 | en       |             350.434 |              30 |            90 |                60 |
+| commons-82236797 | ar       |             626.744 |              30 |            90 |                60 |
 
-1. Obtain sources, inspect the source in a local player, and view the exact candidate windows:
+The existing `evaluation:annotation-clip` helper can extract each window for local viewing. It
+never changes labels or approval. The isolated generator uses benchmark-compatible Faster-Whisper
+and its bundled Silero ONNX model; it is not a production worker or a change to US-105's Draft PR.
+No WER/F1 quality score or CP2 pass is claimed against this generated baseline.
+
+Install optional pinned tooling outside production dependencies:
 
 ```sh
-pnpm evaluation:annotation-clip commons-28956463 --root .local/evaluation
-pnpm evaluation:annotation-clip commons-98650286 --root .local/evaluation
-pnpm evaluation:annotation-clip commons-82236797 --root .local/evaluation
+uv venv --python 3.11 .local/evaluation-tools/.venv
+uv pip install --python .local/evaluation-tools/.venv/bin/python \
+  -r tools/evaluation/requirements-generation.txt
 ```
 
-The local helper verifies source SHA/size, decodes local files with FFmpeg argument arrays, and
-prints the title, language, scope and output path. Open that MP4 in an ordinary video player. It
-never changes annotations, selects gold, records approval or accesses media URLs through FFmpeg.
-It refuses overwriting an existing local viewing clip. Delete only that helper output to regenerate.
-
-2. In each pair's readable `silence-labels.json` and `word-alignment.json`, confirm/change
-   `scope.startUs` and `scope.endUs`, then record `scope.selection="owner_confirmed"` **yourself after
-   listening**. Keep the pair's scopes equal to use the helper, or document intentionally separate
-   word/silence windows. Each independent annotation is validated against its own explicit scope.
-
-3. Hand label only that chosen window. Canonical timestamps are **SOURCE coordinates**, decimal
-   integer microseconds. A local extracted player's 0:05 corresponds to `scope.startUs + 5000000`.
-   Silence uses half-open `[startUs,endUs)`; words retain original text, case, punctuation and Unicode.
-   Every label must satisfy `scope.startUs <= startUs < endUs <= scope.endUs`; ranges are ordered and
-   nonoverlapping. The scope must satisfy `0 <= startUs < endUs <= source.durationUs`.
-
-4. Record actual methods/checks in `annotationNotes` and set `createdBy=human` only after your hand
-   labelling. Confirm the gold scope and review both text and boundaries. No ASR/VAD output is gold.
-   Then use the existing explicit Owner review commands:
+Download the immutable multilingual model (public MIT weights; keep them outside git):
 
 ```sh
-pnpm evaluation:review commons-82236797-silence-labels \
-  --decision approved --reviewer owner-stable-id \
-  --notes 'Actual listening and boundary-review details' --attest-human-review
-pnpm evaluation:review commons-82236797-word-alignment \
-  --decision approved --reviewer owner-stable-id \
-  --notes 'Actual Arabic word and timestamp review details' --attest-human-review
+HF_HUB_DISABLE_XET=1 .local/evaluation-tools/.venv/bin/python - <<'PYMODEL'
+from huggingface_hub import snapshot_download
+snapshot_download(
+    repo_id="Systran/faster-whisper-small",
+    revision="536b0662742c02347bc0e980a01041f333bce120",
+    local_dir=".local/evaluation-tools/model-small",
+    allow_patterns=["config.json", "model.bin", "tokenizer.json", "vocabulary.*"],
+)
+PYMODEL
+.local/evaluation-tools/.venv/bin/python tools/evaluation/generate.py \
+  --root .local/evaluation --model .local/evaluation-tools/model-small \
+  --output .local/evaluation-generated
+```
+
+The generator verifies pinned model weights and source identity, extracts local-only PCM using
+FFmpeg argument arrays, and makes real model calls. No network media URLs reach FFmpeg.
+Word times are decimal half-up microseconds; VAD sample times use integer floor conversion.
+Scope offsets produce SOURCE coordinates. Empty/zero-duration model words are omitted with raw
+provenance, never assigned invented durations; overlaps fail rather than get silently repaired.
+Raw inference, PCM and model weights remain ignored local files. Artifact generation fields retain
+exact model/tool/recipe/audio/raw-result identities and settings.
+
+For a _new unapproved_ annotation snapshot, import and technically validate before approval:
+
+```sh
+pnpm evaluation:import-generated --root .local/evaluation --output .local/evaluation-generated
 pnpm evaluation:validate
-pnpm evaluation:sync --root .local/evaluation --dry-run
-pnpm evaluation:sync --root .local/evaluation
-pnpm evaluation:deep
 ```
 
-Empty templates are not completed annotations and cannot count. Approval fingerprints make later
-content changes detectable. No private reviewer information or consent documents are required in
-git; use a stable non-secret pseudonym. Counts must reach 6/3/3 through real Owner work. Empty **approved** annotations and unconfirmed
-scopes fail validation, rather than count as gold. Counts are distinct licensed source IDs for each
-artifact type (one word artifact and one silence artifact per source); duplicate windows/IDs cannot
-inflate quotas. Two English plus one Arabic template are prepared, but all remain unlabelled.
+The importer replays conversions against raw inference and verifies every source/input/result before
+writing any annotation. It refuses approved artifacts; preserve provenance and explicitly invalidate
+review before a genuine authorized revision. Never silently mutate approved data. The current six
+annotations already have actual Owner approach acceptance; that authorization was supplied explicitly
+in the implementation conversation, not inferred by the Coding Agent.
+
+The review tool requires the manifest's exact deviation, accepted source/scope, stable reviewer,
+notes, attestation and explicit generated-baseline flag. This example records approach acceptance,
+not hand-labelling or a claim of watching every generated label:
+
+```sh
+pnpm evaluation:review commons-82236797-word-alignment \
+  --decision approved --reviewer project-owner \
+  --notes 'The Project Owner explicitly reviewed the evaluation approach and accepts this generated annotation artifact as the project gold baseline. The Owner waived additional manual hand-labelling for US-110.' \
+  --attest-human-review --accept-generated-baseline
+```
+
+Approval records `approvalBasis=owner_accepted_generated` and the deviation ID. Machine candidates,
+missing generation identity, empty labels, wrong scope/source or stale fingerprints cannot count.
+Generated gold requires the recorded Owner decision when calling `scopedMetricInputs`; returned
+provenance distinguishes it from human-created gold. Metrics retain their formulas and CP2 thresholds.
+
+An independently hand-labelled baseline remains a future option: only genuine manual production
+may use `createdBy=human`, and it must receive its own real approval. The current generated artifacts
+must never be relabelled as human-created to make the original gate pass.
 
 ## Durable completion and release lifecycle
 
 Local SeaweedFS is **not a durable team archive**. No durable target is currently configured:
-`GOLD_STORAGE_DURABLE=false` and release `US110_GOLD_COMPLETE=false`, even if human quotas later pass.
-Before Independent QA, the Owner must configure a real approved team S3-compatible destination
+`GOLD_STORAGE_DURABLE=false` and `US110_RELEASE_COMPLETE=false`. The Owner decision permits QA preparation with this storage finding; project `US110_GOLD_COMPLETE` reports Owner-accepted gold separately.
+For durable release readiness, the Owner must configure a real approved team S3-compatible destination
 (or explicitly approve another durable Project target), keep it private and enable native versioning.
 Do not invent a destination. In manifest `storage.durableTarget`, record non-secret `endpoint`
 (HTTPS), `approvedBy` (stable Owner ID), `approvedAt` (UTC) and `notes` explaining the actual durable
@@ -202,13 +229,15 @@ checks receipt consistency without bucket access; a metadata/target change inval
 Run certification again after all gold changes. These receipts are operator evidence, not a signed
 provider guarantee of durability; the Owner must actually approve and maintain the archive.
 
-Lifecycle: **unreleased v1 → human edits/labels → approval → strict validation → durable sync/deep
-verification → Independent QA → merge/release**. After QA/authorized release, freeze the snapshot by
+The original lifecycle requires human-created labels and durable storage. Under the documented
+Owner decision, verified generated labels and explicit Owner approval allow Independent QA with
+the local-storage finding; durable sync/deep verification is still required before a published
+release. After QA/authorized release, freeze the snapshot by
 setting manifest `release.status="published"` and `release.frozenDatasetSha256` to the
 `DATASET_SHA256` canonical fingerprint printed by `pnpm evaluation:validate`.
 This bookkeeping does not alter that fingerprint. A published snapshot cannot validate if its meaning
-changes or gold/storage evidence is incomplete. Render/review refuse a published snapshot.
-No publication or freeze is performed by the Coding Agent in this Draft PR.
+changes or approved gold/durable-storage evidence is incomplete. Render/review refuse a published snapshot.
+No publication or freeze is performed by the Coding Agent in this Draft PR. Forking clears the active Owner waiver; a later version needs its own genuine acceptance.
 
 Before publication, the Owner can revise approved v1 gold **without a version fork**: preserve the
 approved metadata/receipt in git first, then explicitly replace that artifact's `review` object with

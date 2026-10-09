@@ -27,9 +27,14 @@ const metricValidator = ajv.compile(
   ),
 );
 const validators = Object.fromEntries(
-  ["edit_spec", "silence_labels", "word_alignment", "render_receipt", "storage_evidence"].map(
-    (type) => [type, ajv.compile({ $ref: `${schema.$id}#/$defs/${type}` })],
-  ),
+  [
+    "edit_spec",
+    "silence_labels",
+    "word_alignment",
+    "render_receipt",
+    "storage_evidence",
+    "owner_decision",
+  ].map((type) => [type, ajv.compile({ $ref: `${schema.$id}#/$defs/${type}` })]),
 );
 export const categories = [
   "podcast",
@@ -153,6 +158,25 @@ export function assertArtifactMutable(manifest, document) {
       "Preserve the approval in git, then explicitly reset review to awaiting_human_review before revising this unreleased artifact",
     );
 }
+export function validOwnerDecision(decision) {
+  return Boolean(
+    decision &&
+    validators.owner_decision(decision) &&
+    !Number.isNaN(Date.parse(decision.decidedAt)),
+  );
+}
+export function generatedApprovalAllowed(document, source, decision) {
+  return Boolean(
+    validOwnerDecision(decision) &&
+    document.createdBy === "machine_generated" &&
+    decision.acceptedSourceIds.includes(source.id) &&
+    document.scope?.startUs === decision.scope.startUs &&
+    document.scope.endUs === decision.scope.endUs &&
+    document.review.evidence?.approvalBasis === "owner_accepted_generated" &&
+    document.review.evidence.deviationId === decision.id &&
+    document.review.evidence.reviewerId === decision.reviewerId,
+  );
+}
 export function durableStorageVerified(manifest, registry, evidence) {
   const target = manifest.storage.durableTarget;
   if (!target || !evidence || !validators.storage_evidence(evidence)) return false;
@@ -206,6 +230,8 @@ export function validateDataset(manifest, registry, documents = new Map(), stora
     APPROVED_HUMAN_REFERENCE_COUNT: 0,
     APPROVED_SILENCE_LABEL_COUNT: 0,
     APPROVED_WORD_ALIGNMENT_COUNT: 0,
+    OWNER_APPROVED_SILENCE_LABEL_COUNT: 0,
+    OWNER_APPROVED_WORD_ALIGNMENT_COUNT: 0,
   };
   const manifestOk = checkSchema(manifestValidator, manifest, "manifest", errors);
   const registryOk = checkSchema(metricValidator, registry, "metrics", errors);
@@ -215,11 +241,23 @@ export function validateDataset(manifest, registry, documents = new Map(), stora
       US110_GOLD_COMPLETE: false,
       HUMAN_GOLD_COMPLETE: false,
       GOLD_STORAGE_DURABLE: false,
+      HUMAN_CREATED_GOLD: false,
+      OWNER_APPROVED_GOLD: false,
+      OWNER_ACCEPTED_ANNOTATION_GOLD: false,
+      US110_RELEASE_COMPLETE: false,
       ...counts,
       errors,
     };
   if (manifest.datasetVersion !== registry.datasetVersion)
     errors.push("Metric registry dataset version differs");
+  if (manifest.ownerDecision && !validOwnerDecision(manifest.ownerDecision))
+    errors.push("Invalid Owner deviation evidence");
+  if (
+    manifest.ownerDecision?.acceptedSourceIds.some(
+      (id) => !manifest.sources.some((s) => s.id === id),
+    )
+  )
+    errors.push("Owner deviation refers to missing licensed sources");
   for (const metric of registry.metrics)
     if (!storyIds.has(metric.firstReportingStory))
       errors.push(`Unknown reporting story ${metric.firstReportingStory}`);
@@ -283,6 +321,7 @@ export function validateDataset(manifest, registry, documents = new Map(), stora
       errors,
     );
     const approved = new Set();
+    const ownerApproved = new Set();
     const usable = new Set();
     const refs = new Map();
     for (const artifact of source.referenceArtifacts) {
@@ -329,14 +368,26 @@ export function validateDataset(manifest, registry, documents = new Map(), stora
           evidence.reviewedContentSha256 !== contentSha256(doc)
         )
           errors.push(`${artifact.id}: review evidence differs from content/decision`);
-        if (doc.createdBy !== "human")
+        const generatedAccepted = generatedApprovalAllowed(doc, source, manifest.ownerDecision);
+        if (doc.createdBy !== "human" && !generatedAccepted)
           errors.push(`${artifact.id}: machine-only content cannot be human gold`);
+        if (
+          doc.createdBy === "human" &&
+          (evidence.approvalBasis === "owner_accepted_generated" || evidence.deviationId)
+        )
+          errors.push(`${artifact.id}: generated approval basis cannot claim human creation`);
         if (
           doc.review.status === "approved" &&
           doc.createdBy === "human" &&
           errors.length === errorStart
         )
           approved.add(artifact.type);
+        if (
+          doc.review.status === "approved" &&
+          (doc.createdBy === "human" || generatedAccepted) &&
+          errors.length === errorStart
+        )
+          ownerApproved.add(artifact.type);
       }
       if (errors.length === errorStart) usable.add(artifact.id);
     }
@@ -380,6 +431,10 @@ export function validateDataset(manifest, registry, documents = new Map(), stora
       counts.APPROVED_SILENCE_LABEL_COUNT++;
     if (approved.has("word_alignment") && refs.get("word_alignment").words.length)
       counts.APPROVED_WORD_ALIGNMENT_COUNT++;
+    if (ownerApproved.has("silence_labels") && refs.get("silence_labels").intervals.length)
+      counts.OWNER_APPROVED_SILENCE_LABEL_COUNT++;
+    if (ownerApproved.has("word_alignment") && refs.get("word_alignment").words.length)
+      counts.OWNER_APPROVED_WORD_ALIGNMENT_COUNT++;
   }
   counts.LICENSED_SOURCE_COUNT = manifest.sources.length;
   counts.CATEGORY_COUNT = new Set(manifest.sources.map((s) => s.category)).size;
@@ -393,15 +448,24 @@ export function validateDataset(manifest, registry, documents = new Map(), stora
     counts.APPROVED_HUMAN_REFERENCE_COUNT >= 6 &&
     counts.APPROVED_SILENCE_LABEL_COUNT >= 3 &&
     counts.APPROVED_WORD_ALIGNMENT_COUNT >= 3;
-  if (manifest.release.status === "published" && (!durable || !quotas))
-    errors.push("Published dataset requires complete human gold and verified durable storage");
+  const ownerQuotas =
+    counts.APPROVED_HUMAN_REFERENCE_COUNT >= 6 &&
+    counts.OWNER_APPROVED_SILENCE_LABEL_COUNT >= 3 &&
+    counts.OWNER_APPROVED_WORD_ALIGNMENT_COUNT >= 3;
+  if (manifest.release.status === "published" && (!durable || !ownerQuotas))
+    errors.push("Published dataset requires complete approved gold and verified durable storage");
   const valid = errors.length === 0;
   return {
     DATASET_SHA256: datasetSha256(manifest, registry),
     DATASET_STRUCTURALLY_VALID: valid,
     HUMAN_GOLD_COMPLETE: valid && quotas,
     GOLD_STORAGE_DURABLE: durable,
-    US110_GOLD_COMPLETE: valid && quotas && durable,
+    HUMAN_CREATED_GOLD: valid && quotas,
+    OWNER_APPROVED_GOLD: valid && ownerQuotas,
+    OWNER_ACCEPTED_ANNOTATION_GOLD: valid && ownerQuotas,
+    US110_GOLD_COMPLETE:
+      valid && ownerQuotas && (durable || validOwnerDecision(manifest.ownerDecision)),
+    US110_RELEASE_COMPLETE: valid && ownerQuotas && durable,
     ...counts,
     errors,
   };
@@ -434,7 +498,13 @@ export function loadDataset(root = repositoryRoot) {
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
-    if (process.argv.slice(2).some((arg) => arg !== "--require-gold"))
+    if (
+      process.argv
+        .slice(2)
+        .some(
+          (arg) => !["--require-gold", "--require-human-gold", "--require-release"].includes(arg),
+        )
+    )
       throw new Error("Unknown validation flag");
     const { manifest, registry, documents, storageEvidence } = loadDataset();
     const report = validateDataset(manifest, registry, documents, storageEvidence);
@@ -442,7 +512,9 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     console.log(JSON.stringify(report, null, 2));
     process.exitCode =
       !report.DATASET_STRUCTURALLY_VALID ||
-      (process.argv.includes("--require-gold") && !report.US110_GOLD_COMPLETE)
+      (process.argv.includes("--require-gold") && !report.US110_GOLD_COMPLETE) ||
+      (process.argv.includes("--require-human-gold") && !report.HUMAN_CREATED_GOLD) ||
+      (process.argv.includes("--require-release") && !report.US110_RELEASE_COMPLETE)
         ? 1
         : 0;
   } catch (error) {
