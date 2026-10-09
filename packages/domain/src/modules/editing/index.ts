@@ -2,3 +2,5 @@
 export const editingModule = "editing" as const;
 
 export * from "./timeline.js";
+
+export * from "./commands.js";
