@@ -17,6 +17,19 @@ test("uuidV7 rejects other versions and malformed strings", () => {
   assert.throws(() => userId("018f6b6e-7c3a-7b2a-8d3e-9c0b1a2d3e4f".slice(0, -1)), DomainError);
 });
 
+test("uuidV7 rejects non-string inputs without invoking coercion", () => {
+  let coerced = false;
+  const disguised = {
+    toString: () => {
+      coerced = true;
+      return SAMPLE;
+    },
+  };
+  for (const value of [null, undefined, 123, disguised, Object(SAMPLE)])
+    assert.throws(() => uuidV7(value as unknown as string), DomainError);
+  assert.equal(coerced, false);
+});
+
 test("createUuidV7 sets the version and variant bits", () => {
   const entropy = new Uint8Array(10).fill(0xab);
   const id = createUuidV7(1_700_000_000_000, entropy);

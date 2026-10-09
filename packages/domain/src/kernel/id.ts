@@ -44,7 +44,7 @@ export type BrandKitId = UuidV7 & { readonly [brandKitIdBrand]: "BrandKitId" };
 export type CreativeMemoryId = UuidV7 & { readonly [creativeMemoryIdBrand]: "CreativeMemoryId" };
 
 export function uuidV7(value: string): UuidV7 {
-  if (!UUID_V7.test(value)) {
+  if (typeof value !== "string" || !UUID_V7.test(value)) {
     throw new DomainError("Identifier must be a canonical UUIDv7.");
   }
   return value as UuidV7;

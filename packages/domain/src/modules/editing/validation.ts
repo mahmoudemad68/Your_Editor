@@ -30,7 +30,7 @@ export function text(value: unknown): string {
   if (!wellFormedUnicode(value)) throw new DomainError("Text must be well-formed Unicode.");
   return value;
 }
-// Equivalent to String.isWellFormed, without raising the package's ES2022 library target.
+// Equivalent to String.prototype.isWellFormed, retaining the package's ES2022 library target.
 function wellFormedUnicode(value: string): boolean {
   for (let i = 0; i < value.length; i++) {
     const unit = value.charCodeAt(i);
