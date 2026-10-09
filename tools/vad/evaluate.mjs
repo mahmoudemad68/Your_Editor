@@ -29,15 +29,15 @@ export function aggregate(scores) {
     f1: 2n * tp + fp + fn ? Number(2n * tp) / Number(2n * tp + fp + fn) : 1,
   };
 }
-export async function evaluate(mediaRoot, allowGenerated = false) {
-  const dataset = loadDataset(repositoryRoot);
+export function selectEvaluationClips(dataset, requireHumanGold = false) {
   const report = validateDataset(
     dataset.manifest,
     dataset.registry,
     dataset.documents,
     dataset.storageEvidence,
   );
-  if (!report.DATASET_STRUCTURALLY_VALID) throw new Error("Evaluation dataset is invalid");
+  if (!report.DATASET_STRUCTURALLY_VALID)
+    throw new Error("Evaluation dataset/provenance policy is invalid");
   const selected = [];
   for (const source of dataset.manifest.sources) {
     const artifact = source.referenceArtifacts.find((a) => a.type === "silence_labels");
@@ -54,8 +54,11 @@ export async function evaluate(mediaRoot, allowGenerated = false) {
     selected.push({ source, artifact, gold, inputs });
   }
   const human = selected.filter((s) => s.inputs.provenance === "human_created");
-  if (human.length < 3 && !allowGenerated)
+  if (human.length < 3 && requireHumanGold)
     return {
+      PROJECT_GOLD_GATE: report.OWNER_ACCEPTED_GOLD_COMPLETE ? "PASS" : "NOT_AVAILABLE",
+      HUMAN_GOLD_GATE: "NOT_AVAILABLE",
+      INDEPENDENT_HUMAN_ACCURACY: "NOT_PROVEN",
       AC1: "NOT_PROVEN",
       BLOCKER: "EVALUATION_GOLD_UNAVAILABLE",
       datasetVersion: dataset.manifest.datasetVersion,
@@ -65,8 +68,39 @@ export async function evaluate(mediaRoot, allowGenerated = false) {
         .filter((s) => s.inputs.provenance !== "human_created")
         .map((s) => s.artifact.id),
     };
-  const clips = allowGenerated ? selected : human;
+  const clips = requireHumanGold ? human : selected;
   if (clips.length < 3) throw new Error("At least three approved scoped clips are required");
+  return { clips, report };
+}
+export function acceptance(speech, silence, independent, ownerDecisionId) {
+  const passed = speech.f1 >= 0.9;
+  const status = passed
+    ? independent
+      ? "PASS"
+      : "PASS_UNDER_OWNER_APPROVED_PROJECT_GOLD"
+    : "FAIL";
+  return {
+    OWNER_DECISION_ID: ownerDecisionId,
+    PROJECT_GOLD_GATE: "PASS",
+    HUMAN_GOLD_GATE: independent ? "PASS" : "NOT_AVAILABLE",
+    HUMAN_CREATED_GOLD: independent,
+    HUMAN_GOLD_COMPLETE: independent,
+    HUMAN_GOLD_CONFIRMED: independent,
+    INDEPENDENT_HUMAN_ACCURACY: independent ? "MEASURED" : "NOT_PROVEN",
+    US202_AC1_THRESHOLD: 0.9,
+    US202_AC1_ACTUAL: speech.f1,
+    US202_AC1: status,
+    AC1: status,
+    CP2_SILENCE_THRESHOLD: 0.9,
+    CP2_SILENCE_ACTUAL: silence.f1,
+    CP2_STATUS: silence.f1 < 0.9 ? "NOT_MET" : "NOT_PROVEN",
+  };
+}
+export async function evaluate(mediaRoot, requireHumanGold = false) {
+  const dataset = loadDataset(repositoryRoot);
+  const selection = selectEvaluationClips(dataset, requireHumanGold);
+  if (!selection.clips) return selection;
+  const { clips } = selection;
   if (!mediaRoot)
     throw new Error("Evaluation requires --root with verified local source/scoped WAV files");
   const results = [];
@@ -143,12 +177,10 @@ export async function evaluate(mediaRoot, allowGenerated = false) {
     return {
       schemaVersion: 1,
       datasetVersion: dataset.manifest.datasetVersion,
-      HUMAN_GOLD_CONFIRMED: independent,
-      AC1: independent ? (speech.f1 >= 0.9 ? "PASS" : "FAIL") : "NOT_PROVEN",
-      BLOCKER: independent ? null : "EVALUATION_GOLD_UNAVAILABLE",
+      ...acceptance(speech, silence, independent, dataset.manifest.ownerDecision?.id ?? null),
       interpretation: independent
         ? "Independent duration-overlap evaluation"
-        : "Agreement only with Owner-approved Silero-generated baseline; circular, no independent quality or CP2 pass",
+        : "Project acceptance against validated Owner-approved generated baseline; circular, no independent human quality or CP2 pass",
       metricPolicy:
         "Half-open [start,end), integer-us intersections/unions inside approved scope; no collar; pool TP/FP/FN before ratios",
       speech,
@@ -162,14 +194,20 @@ export async function evaluate(mediaRoot, allowGenerated = false) {
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
     const args = process.argv.slice(2);
-    const allowGenerated = args.includes("--allow-generated-baseline");
-    const rest = args.filter((a) => a !== "--allow-generated-baseline");
+    const requireHumanGold = args.includes("--require-human-gold");
+    // Retain the old diagnostic flag as an alias for the default validated project policy.
+    const rest = args.filter(
+      (a) => !["--require-human-gold", "--allow-generated-baseline"].includes(a),
+    );
     if (rest.length && (rest.length !== 2 || rest[0] !== "--root"))
-      throw new Error("Usage: evaluate [--root DIRECTORY] [--allow-generated-baseline]");
-    const result = await evaluate(rest[1], allowGenerated);
+      throw new Error(
+        "Usage: evaluate [--root DIRECTORY] [--require-human-gold] [--allow-generated-baseline]",
+      );
+    const result = await evaluate(rest[1], requireHumanGold);
     console.log(JSON.stringify(result, null, 2));
-    process.exitCode =
-      result.AC1 === "PASS" || (allowGenerated && result.clips?.length >= 3) ? 0 : 2;
+    process.exitCode = ["PASS", "PASS_UNDER_OWNER_APPROVED_PROJECT_GOLD"].includes(result.AC1)
+      ? 0
+      : 2;
   } catch (error) {
     console.error(error.message);
     process.exitCode = 1;

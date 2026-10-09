@@ -116,10 +116,10 @@ stderr, local path, arbitrary code or URL enters analysis output.
 ## Evaluation and acceptance
 
 ```sh
-# Official independent gold gate; currently exits 2 with EVALUATION_GOLD_UNAVAILABLE.
-pnpm vad:evaluate
-# Explicitly opt into agreement diagnostics against the approved generated baseline:
-pnpm vad:evaluate --root .local/evaluation --allow-generated-baseline
+# Project gold: validates the pinned Owner decision before using generated labels.
+pnpm vad:evaluate --root .local/evaluation
+# Separate strict human-gold mode; currently exits 2 with EVALUATION_GOLD_UNAVAILABLE.
+pnpm vad:evaluate --root .local/evaluation --require-human-gold
 ```
 
 The harness validates the exact US-110 dataset/provenance policy, approval/fingerprints and
@@ -150,12 +150,24 @@ A 60-second English clip took 581.098 ms including model initialization/normaliz
 79527936 bytes. Producer: this environment's CPU, ORT 1.31.0, NumPy 2.4.6, one inference thread.
 These are observations, not reference-machine guarantees or an SRS performance gate.
 
-**AC1: NOT_PROVEN. BLOCKER: EVALUATION_GOLD_UNAVAILABLE. AC2: PASS.**
-Independent human-created/approved silence labels for at least three useful scoped clips are
-needed to establish US-202's speech F1 >=0.9 and independent CP2 silence F1 >=0.9. The Owner's
-US-110 waiver does not authorize relabelling these generated references as human gold or
-inferring a Sprint 3 quality pass. Durable team storage remains the existing US-110 finding.
-Engineering may be reviewed in Draft; **READY_FOR_INDEPENDENT_QA=NO** for official acceptance.
+**PROJECT_GOLD_GATE: PASS. US202_AC1: PASS_UNDER_OWNER_APPROVED_PROJECT_GOLD. AC2: PASS.**
+The existing [Owner decision](../../docs/evaluation/OWNER_DECISION.md) authorizes this exact
+validated generated v1 baseline for project acceptance. Speech F1 **0.9803508856** exceeds
+US-202's **0.9** threshold, subject to Independent QA reproducing the calculation and verifying
+provenance. Missing/invalid Owner authority fails closed; the old `--allow-generated-baseline`
+flag is only an alias for the same default project policy and cannot bypass validation or the
+strict human-gold flag. A below-threshold speech result exits nonzero in either mode.
+
+**HUMAN_GOLD_GATE: NOT_AVAILABLE. HUMAN_CREATED_GOLD: false. HUMAN_GOLD_COMPLETE: false.
+INDEPENDENT_HUMAN_ACCURACY: NOT_PROVEN.** No manual annotation occurred. Generated agreement is
+circular and does not prove independent boundary accuracy. That limitation does not add a new
+human-gold prerequisite to the Owner-approved US-202 project acceptance policy.
+
+**CP2_SILENCE_THRESHOLD: 0.9. CP2_SILENCE_ACTUAL: 0.742598. CP2_STATUS: NOT_MET.**
+US-202 speech AC1 and CP2 silence F1 are different measurements. Even a generated-baseline
+silence score above threshold would not establish the full CP2 quality gate.
+Durable team storage remains the existing US-110 finding; no release completion is claimed.
+**READY_FOR_INDEPENDENT_QA=YES** for this project acceptance result, pending exact-head QA.
 
 Real-model tests synthesize a local English flite utterance through FFmpeg (supplemental,
 never gold), exercise silence/mixed/low-volume/multi-window input, byte-repeatability,

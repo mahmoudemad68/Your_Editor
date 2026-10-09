@@ -333,6 +333,12 @@ as human gold. No signature infrastructure is introduced.
 
 See [VOICE_ACTIVITY.md](../../workers/ai-worker/VOICE_ACTIVITY.md) for the production Silero
 port, pinned model/setup, configurable thresholds and scoped evaluation command. The default
-command fails with `EVALUATION_GOLD_UNAVAILABLE`: the three approved silence artifacts are
-generated, not human-created. Explicit generated-baseline diagnostics report speech and silence
-F1 separately; they do not establish independent quality or a CP2 pass. No gold is modified.
+`pnpm vad:evaluate --root .local/evaluation` honors the exact validated v1
+[Owner decision](OWNER_DECISION.md): project gold is accepted without claiming human creation.
+Speech F1 0.9803508856 meets US-202 AC1's 0.9 threshold under that deviation, subject to QA.
+`--require-human-gold` retains a separate strict gate and currently fails with
+`EVALUATION_GOLD_UNAVAILABLE`. Human-created gold remains unavailable; independent human
+accuracy remains NOT_PROVEN. Canonical silence F1 0.742598 is below CP2's 0.9 threshold:
+CP2 is NOT_MET. Neither the decision, pinned provenance, approved gold nor producer evidence
+is modified by the evaluator. Invalid authority fails closed; circular baseline agreement
+must not be presented as independent accuracy or a CP2 pass.
