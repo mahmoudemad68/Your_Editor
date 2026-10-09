@@ -1,9 +1,11 @@
 # Evaluation baseline operator guide
 
-US-110 provides 12 licensed sources, six **machine-created viewing candidates**, empty annotation
+US-110 provides 12 licensed sources, six **Owner-selected references awaiting rendered-reel review**, empty annotation
 templates and eight metric definitions. It currently reports `BLOCKED_ON_OWNER_GOLD`; it is not a
-completed gold dataset. No reviewed assets were supplied. Follow the Owner steps below to complete
-six actual human edits and at least three hand-labelled silence/word clips.
+completed gold dataset. The Owner personally watched the six prepared sources and intentionally
+retained each 00:00–00:30 reference interval. Those editorial decisions are recorded as human edits;
+the exact newly rendered reels still require final Owner review. Follow the Owner steps below to
+approve the six rendered references and complete at least three hand-labelled silence/word clips.
 
 ## Offline validation
 
@@ -74,7 +76,11 @@ included. The manifest also checks the full metadata-file SHA.
 
 The active `evaluation-dataset-v1` is **unreleased**. Complete its first genuine human edits,
 annotations and approvals in v1; uploading machine candidates did not publish/freeze the dataset.
-No v2 fork is required for this first Owner work. Within unreleased v1, the Owner should:
+No v2 fork is required for this first Owner work. The six current human edit specifications record
+the Owner's explicit decision to retain 00:00–00:30 after personally watching the sources. All six
+reels have been rerendered with current edit fingerprints; their status remains
+`awaiting_human_review`, with no approval evidence. The next Owner action is to watch each exact
+newly rendered reel, then approve or reject it. For future revisions within unreleased v1:
 
 1. Watch each full source and its candidate; source files are in the obtain directory and candidate
    reels are `<source-id>-reference-reel.mp4`. Use an ordinary local video player.

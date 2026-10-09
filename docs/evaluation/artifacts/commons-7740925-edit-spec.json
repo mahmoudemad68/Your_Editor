@@ -3,9 +3,9 @@
   "datasetVersion": "evaluation-dataset-v1",
   "sourceId": "commons-7740925",
   "sourceSha256": "f4c5496f7c04c41092b77d182ebef85ffb0e81e1cb1fc86736905113ca93e270",
-  "createdBy": "machine_candidate",
+  "createdBy": "human",
   "review": { "status": "awaiting_human_review" },
   "segments": [{ "sourceStartUs": "0", "sourceEndUs": "30000000", "outputStartUs": "0" }],
-  "decisionNotes": "Machine-created first-30-second viewing candidate only. No human editorial decision or review has occurred; Owner must choose meaningful retained segments and record their decisions.",
+  "decisionNotes": "The Project Owner personally watched the source and intentionally selected the 00:00–00:30 interval as the reference edit. The existing machine-suggested interval was retained because the Owner judged it suitable. This records the Owner's editorial selection only; final approval of the newly rendered reference reel is still awaiting the Owner's review.",
   "id": "commons-7740925-edit-spec"
 }
