@@ -18,6 +18,7 @@ import {
   repositoryRoot,
   datasetSha256,
   durableStorageVerified,
+  datasetObjects,
 } from "./validate.mjs";
 
 export function storageConfig(env, bucket) {
@@ -96,9 +97,11 @@ export async function syncItem(client, bucket, item, path) {
           ? "application/json"
           : item.extension === "mp4"
             ? "video/mp4"
-            : item.extension === "webm"
-              ? "video/webm"
-              : "video/ogg",
+            : item.extension === "wav"
+              ? "audio/wav"
+              : item.extension === "webm"
+                ? "video/webm"
+                : "video/ogg",
       IfNoneMatch: "*",
       Metadata: { sha256: item.sha256, dataset: item.datasetVersion || "source" },
     }),
@@ -111,7 +114,7 @@ export async function runStorage(command, { root, dryRun = false, env = process.
   const report = validateDataset(manifest, registry, documents, storageEvidence);
   if (!report.DATASET_STRUCTURALLY_VALID) throw new Error(report.errors.join("; "));
   const config = storageConfig(env, manifest.storage.bucket);
-  const items = manifest.sources.flatMap((source) => [source, ...source.referenceArtifacts]);
+  const items = datasetObjects(manifest);
   if (!["sync", "deep", "certify"].includes(command))
     throw new Error("Expected sync, deep or certify");
   if (command === "certify") {

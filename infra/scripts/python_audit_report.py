@@ -200,7 +200,7 @@ def classify(report):
     return critical, high, other, unknown, unparseable
 
 
-def main(path, raw_status):
+def main(path, raw_status, reject_high=False):
     try:
         with open(path, encoding="utf-8") as handle:
             report = json.load(handle)
@@ -225,7 +225,7 @@ def main(path, raw_status):
         print("Python vulnerabilities with no severity:")
         for item in unknown:
             print(f"- {item}")
-    if critical or unparseable or unknown:
+    if critical or unparseable or unknown or (reject_high and high):
         raise SystemExit(1)
     if raw_status not in (0, 1):
         raise SystemExit(f"pip-audit failed with status {raw_status}.")
@@ -238,8 +238,10 @@ def main(path, raw_status):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 3:
+    if len(sys.argv) not in (3, 4) or (
+        len(sys.argv) == 4 and sys.argv[3] != "--reject-high"
+    ):
         raise SystemExit(
-            "usage: python_audit_report.py <report.json> <pip-audit-status>"
+            "usage: python_audit_report.py <report.json> <pip-audit-status> [--reject-high]"
         )
-    main(sys.argv[1], int(sys.argv[2]))
+    main(sys.argv[1], int(sys.argv[2]), len(sys.argv) == 4)

@@ -40,7 +40,7 @@ remain unchanged. Reference and annotation quotas remain six/three/three.
 Word alignment uses the US-105 benchmark-compatible Faster-Whisper 1.2.1 path, multilingual
 `Systran/faster-whisper-small` revision `536b0662742c02347bc0e980a01041f333bce120`.
 CPU int8, two threads, beam size five, temperature zero, word timestamps enabled,
-ASR VAD filtering disabled. This selects a reproducible CPU recipe for these three clips,
+ASR VAD filtering disabled. This records the producer's CPU recipe for these three clips,
 not a production ASR backend or a benchmark-winning model claim.
 
 Silence labels are the complement of a separate Silero VAD v6 ONNX speech pass bundled
@@ -58,7 +58,13 @@ quantization), complemented inside the scope and offset into source coordinates.
 
 The importer independently replays both conversions against raw model results, verifies
 source/audio/raw-result/generator identities, and validates all six artifacts before writing.
-The repeated inference check compares actual labels and raw-output identities. Schema,
+Two producer-machine implementation passes matched labels and raw-output identities. That
+observation does not guarantee bit-exact regeneration. Independent QA observed approximately
+1% English differences and 17% Arabic differences across hardware, plus substantial degeneration
+in one Arabic same-machine pass. CTranslate2, CPU/ISA, threading and numerical execution may
+affect output despite fixed weights, temperature and settings. The committed gold is frozen by
+its content identity, not by an assumption that running the model again reproduces it. Generated
+word gold is not independently reproducible ground truth. Schema,
 timestamp bounds/order/overlap, nonempty annotations, Arabic Unicode, manifest identity,
 and approval fingerprints are checked offline afterward. Technical validity does not prove
 semantic transcription accuracy or human boundary agreement.
@@ -69,6 +75,30 @@ recorded decision, accepted source/scope and reviewer `project-owner`. Review ev
 records `approvalBasis=owner_accepted_generated` and this deviation ID. It never claims
 `createdBy=human` for these generated annotations. Empty templates and unapproved model
 results cannot count.
+
+## Post-QA provenance integrity and producer evidence
+
+QA36-F3 is repaired without changing approved annotation or reference bytes. Every approved
+artifact requires the exact reviewer ID `project-owner`, including human edits and human labels.
+The manifest's decision now declares its dataset identity and six `acceptedArtifacts` bindings:
+artifact/source/type, expected `createdBy=machine_generated`, canonical content SHA-256 and
+generation SHA-256. These reviewed manifest bindings sit outside the mutable annotation body.
+Deleting generation/basis/deviation fields and recomputing an unsigned body fingerprint cannot
+turn these current artifacts into human-created gold. The input adapter requires explicit
+manifest decision context; it never infers authority from an annotation's claimed producer.
+These are integrity bindings backed by the reviewed git snapshot, not digital signatures against
+an attacker replacing the entire manifest. A later version fork clears this decision, so genuinely
+human-created replacements remain possible without a permanent source-ID prohibition.
+
+The exact original scoped PCM, joint raw word/Silero output and producer conversion record for
+each clip remain available and match the approved generation identities. Nine unchanged files
+are archived privately under the versioned `producer-evidence` prefix outside git. Manifest
+`producerEvidence` records bind source SHA, scope, annotation IDs, dataset version, object key,
+size and SHA. Joint raw JSON preserves Faster-Whisper words (including omitted zero-duration
+outputs) and Silero speech-sample ranges; the exact PCM is both models' input. The conversion
+record preserves settings and exact output arrays. No substitute was regenerated. Full GET/SHA,
+size and native-version checks verify archive identity. This local archive remains subject to
+the accepted durable-storage finding below.
 
 ## Gate interpretation
 
@@ -100,3 +130,7 @@ tools. Comparing the same model/recipe to its own output is circular and cannot 
 independent quality. Reports must identify the generation provenance, language and deviation.
 This decision does not change CP2 thresholds or establish that Sprint 3 perception gates pass.
 Independent QA should inspect technical provenance, scope, artifacts and these limitations.
+QA36-F4 remains explicit Sprint 3 evaluation debt. QA36-F2 (durable team storage), F6 (stale
+approved editorial notes), F7 (representativeness/short source) and F8 (local timing/environment)
+are accepted findings, not opportunistically repaired here. Approved notes and all gold content
+remain unchanged; no new Owner review or approval is claimed by the post-QA repair.

@@ -144,6 +144,13 @@ uv pip install --python .local/evaluation-tools/.venv/bin/python \
   -r tools/evaluation/requirements-generation.txt
 ```
 
+The existing Supply Chain Python audit also audits this optional requirements file and retains
+`python-evaluation-audit.json` separately. Its HIGH/CRITICAL findings, unknown severity or scanner
+failure fail closed. These exact-version optional packages do not enter production images or
+worker dependency graphs. Package hashes are not pinned in this repair: generating a complete
+cross-platform wheel/source hash lock would add disproportionate churn to the existing 23-package
+optional pin set. Known-vulnerability auditing is mandatory and now runs in CI/Supply Chain.
+
 Download the immutable multilingual model (public MIT weights; keep them outside git):
 
 ```sh
@@ -166,8 +173,32 @@ FFmpeg argument arrays, and makes real model calls. No network media URLs reach 
 Word times are decimal half-up microseconds; VAD sample times use integer floor conversion.
 Scope offsets produce SOURCE coordinates. Empty/zero-duration model words are omitted with raw
 provenance, never assigned invented durations; overlaps fail rather than get silently repaired.
-Raw inference, PCM and model weights remain ignored local files. Artifact generation fields retain
-exact model/tool/recipe/audio/raw-result identities and settings.
+Raw inference, PCM and model weights remain outside git. Artifact generation fields retain
+exact model/tool/recipe/audio/raw-result identities and settings. Two producer-machine passes
+matched during implementation, but bit-exact regeneration is not guaranteed across hardware or
+even every same-machine run. QA measured approximately 1% English / 17% Arabic cross-hardware
+differences and one substantially degenerated Arabic pass. CTranslate2, CPU/ISA and threading may
+affect output. Committed word gold is frozen by content identity and must not be treated as
+independently reproducible ground truth. Do not overwrite approved labels to chase regeneration.
+
+Preserve the exact original producer bytes, without inference or re-approval:
+
+```sh
+pnpm evaluation:archive-evidence --root .local/evaluation-generated \\
+  --media-root .local/evaluation --dry-run
+pnpm evaluation:archive-evidence --root .local/evaluation-generated \\
+  --media-root .local/evaluation
+pnpm evaluation:sync --root .local/evaluation
+pnpm evaluation:deep
+```
+
+This verifies the hashes already recorded in the approved annotations, independently checks
+raw-to-label conversions and stages nine existing files: three scoped WAVs, three joint raw JSON
+word/Silero outputs, and three original conversion records. `producerEvidence` in the manifest
+binds their source SHA, scope, annotation IDs, dataset version, SHA, size and content-addressed
+private object keys. Sync/deep include this evidence, require enabled native bucket versioning
+and verify exact bytes. A missing/mismatched original fails; regenerating a substitute is not
+archival. Model weights are identified by hash and are not included in these nine evidence objects.
 
 For a _new unapproved_ annotation snapshot, import and technically validate before approval:
 
@@ -175,6 +206,10 @@ For a _new unapproved_ annotation snapshot, import and technically validate befo
 pnpm evaluation:import-generated --root .local/evaluation --output .local/evaluation-generated
 pnpm evaluation:validate
 ```
+
+These generation/import examples describe new, unapproved snapshots; the current approved gold
+must not be regenerated or overwritten. Its original bytes, not another inference pass, are the
+archival source of truth.
 
 The importer replays conversions against raw inference and verifies every source/input/result before
 writing any annotation. It refuses approved artifacts; preserve provenance and explicitly invalidate
@@ -195,6 +230,13 @@ pnpm evaluation:review commons-82236797-word-alignment \
 
 Approval records `approvalBasis=owner_accepted_generated` and the deviation ID. Machine candidates,
 missing generation identity, empty labels, wrong scope/source or stale fingerprints cannot count.
+All approved artifacts require the exact `project-owner` reviewer. The reviewed manifest's
+`ownerDecision.acceptedArtifacts` freezes the expected producer and content/generation hashes
+for these six generated artifacts. Their provenance cannot be removed by recomputing an unsigned
+annotation fingerprint. Scoped metric consumers must pass `manifest.ownerDecision` (or explicit
+`null` from a validated version with no deviation); never choose authority from annotation fields.
+Later version forks clear the decision and keep the original producer archive tied to its old
+snapshot, allowing genuine human replacements in the new version.
 Generated gold requires the recorded Owner decision when calling `scopedMetricInputs`; returned
 provenance distinguishes it from human-created gold. Metrics retain their formulas and CP2 thresholds.
 

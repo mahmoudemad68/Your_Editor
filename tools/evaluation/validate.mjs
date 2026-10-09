@@ -73,6 +73,13 @@ export function contentSha256(document) {
 export function objectKey(version, group, item) {
   return `evaluation/${version}/${group}/${item.id}/${item.sha256}.${item.extension}`;
 }
+export function datasetObjects(manifest) {
+  return manifest.sources.flatMap((source) => [
+    source,
+    ...source.referenceArtifacts,
+    ...(source.producerEvidence || []),
+  ]);
+}
 function roadmapStories(path) {
   const ids = new Set();
   for (const entry of readdirSync(path, { withFileTypes: true })) {
@@ -162,10 +169,62 @@ export function validOwnerDecision(decision) {
   return Boolean(
     decision &&
     validators.owner_decision(decision) &&
-    !Number.isNaN(Date.parse(decision.decidedAt)),
+    !Number.isNaN(Date.parse(decision.decidedAt)) &&
+    new Set(decision.acceptedArtifacts.map((a) => a.artifactId)).size === 6 &&
+    decision.acceptedSourceIds.every((id) =>
+      ["word_alignment", "silence_labels"].every(
+        (type) =>
+          decision.acceptedArtifacts.filter((a) => a.sourceId === id && a.type === type).length ===
+          1,
+      ),
+    ),
   );
 }
+// This authority lives in the reviewed manifest, outside the annotation body/fingerprint.
+// A later dataset fork clears the decision, allowing genuinely human-created replacements.
+export function assertOwnerBinding(type, document, source, version, decision) {
+  if (!decision) return;
+  if (!validOwnerDecision(decision) || decision.datasetVersion !== version)
+    throw new Error("Owner decision dataset identity differs");
+  if (
+    !decision.acceptedSourceIds.includes(source.id) ||
+    !["word_alignment", "silence_labels"].includes(type)
+  )
+    return;
+  const expected = decision.acceptedArtifacts.find(
+    (a) => a.sourceId === source.id && a.type === type,
+  );
+  if (
+    document.id !== expected.artifactId ||
+    document.datasetVersion !== decision.datasetVersion ||
+    document.createdBy !== expected.createdBy ||
+    !document.generation ||
+    document.scope?.startUs !== decision.scope.startUs ||
+    document.scope?.endUs !== decision.scope.endUs ||
+    contentSha256(document) !== expected.contentSha256 ||
+    contentSha256(document.generation) !== expected.generationSha256
+  )
+    throw new Error("Annotation differs from manifest-bound generated provenance");
+  if (
+    document.review.status === "approved" &&
+    (document.review.evidence?.approvalBasis !== "owner_accepted_generated" ||
+      document.review.evidence.deviationId !== decision.id ||
+      document.review.evidence.reviewerId !== "project-owner")
+  )
+    throw new Error("Manifest-bound annotation requires explicit Owner-generated approval");
+}
 export function generatedApprovalAllowed(document, source, decision) {
+  try {
+    assertOwnerBinding(
+      document.words ? "word_alignment" : "silence_labels",
+      document,
+      source,
+      document.datasetVersion,
+      decision,
+    );
+  } catch {
+    return false;
+  }
   return Boolean(
     validOwnerDecision(decision) &&
     document.createdBy === "machine_generated" &&
@@ -202,7 +261,7 @@ export function durableStorageVerified(manifest, registry, evidence) {
       Date.parse(evidence.syncCompletedAt) > Date.parse(evidence.deepVerifiedAt)
     )
       return false;
-    const items = manifest.sources.flatMap((source) => [source, ...source.referenceArtifacts]);
+    const items = datasetObjects(manifest);
     if (
       items.length !== evidence.objects.length ||
       new Set(evidence.objects.map((item) => item.id)).size !== items.length
@@ -244,6 +303,7 @@ export function validateDataset(manifest, registry, documents = new Map(), stora
       HUMAN_CREATED_GOLD: false,
       OWNER_APPROVED_GOLD: false,
       OWNER_ACCEPTED_ANNOTATION_GOLD: false,
+      OWNER_ACCEPTED_GOLD_COMPLETE: false,
       US110_RELEASE_COMPLETE: false,
       ...counts,
       errors,
@@ -252,6 +312,13 @@ export function validateDataset(manifest, registry, documents = new Map(), stora
     errors.push("Metric registry dataset version differs");
   if (manifest.ownerDecision && !validOwnerDecision(manifest.ownerDecision))
     errors.push("Invalid Owner deviation evidence");
+  if (manifest.ownerDecision && manifest.ownerDecision.datasetVersion !== manifest.datasetVersion)
+    errors.push("Owner decision dataset identity differs");
+  for (const bound of manifest.ownerDecision?.acceptedArtifacts || []) {
+    const source = manifest.sources.find((s) => s.id === bound.sourceId);
+    if (!source?.referenceArtifacts.some((a) => a.id === bound.artifactId && a.type === bound.type))
+      errors.push(`${bound.artifactId}: missing manifest-bound generated artifact`);
+  }
   if (
     manifest.ownerDecision?.acceptedSourceIds.some(
       (id) => !manifest.sources.some((s) => s.id === id),
@@ -287,6 +354,16 @@ export function validateDataset(manifest, registry, documents = new Map(), stora
   if (manifest.storage.prefix !== prefix)
     errors.push("Storage prefix differs from dataset version");
   const allArtifacts = manifest.sources.flatMap((s) => s.referenceArtifacts);
+  unique(
+    datasetObjects(manifest).map((a) => a.id),
+    "dataset object ID",
+    errors,
+  );
+  unique(
+    datasetObjects(manifest).map((a) => a.objectKey),
+    "dataset object key",
+    errors,
+  );
   unique(
     allArtifacts.map((a) => a.id),
     "artifact ID",
@@ -357,11 +434,20 @@ export function validateDataset(manifest, registry, documents = new Map(), stora
         errors.push(`${artifact.id}: metadata identity differs`);
       try {
         validateDocument(artifact.type, doc, source, manifest.datasetVersion);
+        assertOwnerBinding(
+          artifact.type,
+          doc,
+          source,
+          manifest.datasetVersion,
+          manifest.ownerDecision,
+        );
       } catch (error) {
         errors.push(`${artifact.id}: ${error.message}`);
       }
       if (doc.review?.evidence) {
         const evidence = doc.review.evidence;
+        if (doc.review.status === "approved" && evidence.reviewerId !== "project-owner")
+          errors.push(`${artifact.id}: approved artifact requires project-owner reviewer`);
         if (
           evidence.decision !== doc.review.status ||
           Number.isNaN(Date.parse(evidence.reviewedAt)) ||
@@ -435,6 +521,39 @@ export function validateDataset(manifest, registry, documents = new Map(), stora
       counts.OWNER_APPROVED_SILENCE_LABEL_COUNT++;
     if (ownerApproved.has("word_alignment") && refs.get("word_alignment").words.length)
       counts.OWNER_APPROVED_WORD_ALIGNMENT_COUNT++;
+    if (source.producerEvidence) {
+      unique(
+        source.producerEvidence.map((e) => e.type),
+        "producer evidence type",
+        errors,
+      );
+      for (const evidence of source.producerEvidence) {
+        const annotations = [refs.get("word_alignment"), refs.get("silence_labels")];
+        if (
+          evidence.sourceId !== source.id ||
+          evidence.sourceSha256 !== source.sha256 ||
+          evidence.datasetVersion !== manifest.datasetVersion ||
+          evidence.objectKey !==
+            objectKey(manifest.datasetVersion, "producer-evidence", evidence) ||
+          annotations.some(
+            (a) =>
+              !a?.generation ||
+              a.scope.startUs !== evidence.scope.startUs ||
+              a.scope.endUs !== evidence.scope.endUs,
+          ) ||
+          evidence.annotationIds.some((id) => !annotations.some((a) => a?.id === id))
+        )
+          errors.push(`${evidence.id}: producer evidence source/scope/annotation relation differs`);
+        const field =
+          evidence.type === "scoped_pcm"
+            ? "inputAudioSha256"
+            : evidence.type === "inference_raw"
+              ? "rawOutputSha256"
+              : null;
+        if (field && annotations.some((a) => a?.generation?.[field] !== evidence.sha256))
+          errors.push(`${evidence.id}: producer evidence hash differs from approved generation`);
+      }
+    }
   }
   counts.LICENSED_SOURCE_COUNT = manifest.sources.length;
   counts.CATEGORY_COUNT = new Set(manifest.sources.map((s) => s.category)).size;
@@ -463,6 +582,7 @@ export function validateDataset(manifest, registry, documents = new Map(), stora
     HUMAN_CREATED_GOLD: valid && quotas,
     OWNER_APPROVED_GOLD: valid && ownerQuotas,
     OWNER_ACCEPTED_ANNOTATION_GOLD: valid && ownerQuotas,
+    OWNER_ACCEPTED_GOLD_COMPLETE: valid && ownerQuotas,
     US110_GOLD_COMPLETE:
       valid && ownerQuotas && (durable || validOwnerDecision(manifest.ownerDecision)),
     US110_RELEASE_COMPLETE: valid && ownerQuotas && durable,

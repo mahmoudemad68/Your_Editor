@@ -1,10 +1,20 @@
-import { contentSha256, validateDocument, generatedApprovalAllowed } from "./validate.mjs";
+import {
+  contentSha256,
+  validateDocument,
+  generatedApprovalAllowed,
+  assertOwnerBinding,
+} from "./validate.mjs";
 
 // Input adapter only: no ASR, VAD, token normalization or fabricated gold.
-export function scopedMetricInputs(type, gold, source, predictions, ownerDecision = null) {
+export function scopedMetricInputs(type, gold, source, predictions, ownerDecision) {
+  // Pass the decision from the validated manifest, or explicit null for a version without it.
+  // Never infer acceptance authority from a mutable annotation's own fields.
+  if (ownerDecision === undefined)
+    throw new Error("Scoped metrics require explicit Owner-decision context from the manifest");
   if (!["word_alignment", "silence_labels"].includes(type))
     throw new Error("Unsupported scoped metric");
   validateDocument(type, gold, source, gold.datasetVersion);
+  assertOwnerBinding(type, gold, source, gold.datasetVersion, ownerDecision);
   if (
     (gold.createdBy !== "human" && !generatedApprovalAllowed(gold, source, ownerDecision)) ||
     gold.review.status !== "approved" ||

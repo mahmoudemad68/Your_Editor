@@ -113,7 +113,15 @@ speech; those cannot measure WER. Short viewing candidates are not representativ
 Generated references measure agreement with their producing models; using the same model against
 its own output is circular and does not independently establish Sprint 3 quality. Generation uses
 Faster-Whisper small CPU int8 word timestamps and separate Silero v6 ONNX non-speech complements.
-Actual word/silence outputs and raw-result hashes matched across two inference passes. Content-retention required spans, blinded
+Two producer-machine implementation passes matched word/silence outputs and raw-result hashes.
+This is an observation about those passes, not universal determinism. Independent QA found about
+1% English and 17% Arabic cross-hardware differences and a degenerated Arabic same-machine pass.
+CTranslate2, CPU/ISA and threading may affect inference. Cross-hardware bit-exact word regeneration
+is not guaranteed; the committed artifacts are frozen by content identity. Generated word gold
+must not be treated as independently reproducible ground truth. Exact original scoped PCM and
+raw word/Silero evidence are stored outside git with versioned, manifest-bound identities; no
+substitute regeneration is used as producer evidence. Circular perception-quality claims remain
+Sprint 3 evaluation debt. Content-retention required spans, blinded
 acceptance ratings and correction/time observations remain future human evaluation inputs.
 
 ## Privacy, intended and prohibited use

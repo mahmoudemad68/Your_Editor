@@ -63,6 +63,8 @@ export async function forkVersion(version, root = repositoryRoot) {
   manifest.storage.prefix = `evaluation/${version}/`;
   registry.datasetVersion = version;
   for (const source of manifest.sources) {
+    // Exact producer evidence belongs to the archived gold snapshot, not future replacements.
+    delete source.producerEvidence;
     source.objectKey = objectKey(version, "sources", source);
     const specs = new Map();
     for (const artifact of source.referenceArtifacts) {

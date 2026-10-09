@@ -28,6 +28,7 @@ import {
   silenceComplement,
   wordMicroseconds,
 } from "../../tools/evaluation/annotations.mjs";
+import { verifyProducerBytes } from "../../tools/evaluation/evidence.mjs";
 
 const clone = (value) => JSON.parse(JSON.stringify(value));
 function fixture(actual = false) {
@@ -40,6 +41,7 @@ function fixture(actual = false) {
   if (!actual) {
     // Legacy synthetic fixtures continue exercising the original human-created contract.
     delete data.manifest.ownerDecision;
+    for (const source of data.manifest.sources) delete source.producerEvidence;
     for (const value of data.documents.values()) {
       const doc = value.data;
       if (doc.createdBy !== "machine_generated") continue;
@@ -87,7 +89,7 @@ function approve(doc, renderSha256) {
   doc.review = {
     status: "approved",
     evidence: {
-      reviewerId: "synthetic-test-owner",
+      reviewerId: "project-owner",
       reviewerRole: "project_owner",
       reviewedAt: "2026-10-08T00:00:00Z",
       decision: "approved",
@@ -644,13 +646,19 @@ test("three distinct scoped gold clips cover two English and one Arabic, without
 });
 test("word metric inputs use only approved scope, midpoint inclusion and clipped source bounds", () => {
   const { doc, source } = entry(goldFixture(), "word_alignment");
-  const result = scopedMetricInputs("word_alignment", doc, source, [
-    { text: "outside", startUs: "0", endUs: "20000000" },
-    { text: "lower", startUs: "29000000", endUs: "32000000" },
-    { text: "inside", startUs: "50000000", endUs: "51000000" },
-    { text: "upper", startUs: "88000000", endUs: "91000000" },
-    { text: "outside", startUs: "92000000", endUs: "94000000" },
-  ]);
+  const result = scopedMetricInputs(
+    "word_alignment",
+    doc,
+    source,
+    [
+      { text: "outside", startUs: "0", endUs: "20000000" },
+      { text: "lower", startUs: "29000000", endUs: "32000000" },
+      { text: "inside", startUs: "50000000", endUs: "51000000" },
+      { text: "upper", startUs: "88000000", endUs: "91000000" },
+      { text: "outside", startUs: "92000000", endUs: "94000000" },
+    ],
+    null,
+  );
   assert.deepEqual(
     result.predictions.map((p) => [p.text, p.startUs, p.endUs]),
     [
@@ -661,25 +669,31 @@ test("word metric inputs use only approved scope, midpoint inclusion and clipped
   );
   assert.equal(result.durationUs, "60000000");
   doc.review = { status: "awaiting_human_review" };
-  assert.throws(() => scopedMetricInputs("word_alignment", doc, source, []), /approved/);
+  assert.throws(() => scopedMetricInputs("word_alignment", doc, source, [], null), /approved/);
 });
 test("silence metric inputs intersect predictions with scope and use clip duration", () => {
   const { doc, source } = entry(goldFixture(), "silence_labels");
-  const result = scopedMetricInputs("silence_labels", doc, source, [
-    { startUs: "0", endUs: "31000000" },
-    { startUs: "88000000", endUs: "100000000" },
-  ]);
+  const result = scopedMetricInputs(
+    "silence_labels",
+    doc,
+    source,
+    [
+      { startUs: "0", endUs: "31000000" },
+      { startUs: "88000000", endUs: "100000000" },
+    ],
+    null,
+  );
   assert.deepEqual(result.predictions, [
     { startUs: "30000000", endUs: "31000000" },
     { startUs: "88000000", endUs: "90000000" },
   ]);
   assert.equal(result.durationUs, "60000000");
   assert.throws(
-    () => scopedMetricInputs("silence_labels", doc, source, [{ startUs: "2.3", endUs: "5" }]),
+    () => scopedMetricInputs("silence_labels", doc, source, [{ startUs: "2.3", endUs: "5" }], null),
     /decimal/,
   );
   assert.throws(
-    () => scopedMetricInputs("silence_labels", doc, source, [{ startUs: "5", endUs: "4" }]),
+    () => scopedMetricInputs("silence_labels", doc, source, [{ startUs: "5", endUs: "4" }], null),
     /ordered/,
   );
 });
@@ -903,10 +917,7 @@ test("generated scoped metrics require the exact Owner decision and report prove
   assert.equal(result.durationUs, "60000000");
   const different = clone(data.manifest.ownerDecision);
   different.scope.endUs = "91000000";
-  assert.throws(
-    () => scopedMetricInputs("word_alignment", doc, source, [], different),
-    /explicit Owner/,
-  );
+  assert.throws(() => scopedMetricInputs("word_alignment", doc, source, [], different), /Owner/);
 });
 test("word conversion keeps Arabic Unicode, source offsets and real positive model timing", () => {
   const scope = { startUs: "30000000", endUs: "90000000" };
@@ -951,3 +962,203 @@ test("optional Python generation conversions are tested without inference depend
   );
   assert.equal(result.status, 0, result.stderr);
 });
+
+test("QA36-F3 wrong_reviewer_human_edit_spec rejects a recomputed metadata identity", () => {
+  const data = fixture(true),
+    { doc } = entry(data, "edit_spec");
+  doc.review.evidence.reviewerId = "another-owner";
+  doc.review.evidence.reviewedContentSha256 = contentSha256(doc);
+  reindex(data);
+  const r = report(data);
+  assert.equal(r.DATASET_STRUCTURALLY_VALID, false);
+  assert.equal(r.APPROVED_HUMAN_REFERENCE_COUNT, 5);
+  assert.match(r.errors.join("; "), /reviewerId|project-owner/);
+});
+test("QA36-F3 approved human annotations also require the exact Owner reviewer", () => {
+  const data = goldFixture(),
+    { doc } = entry(data, "silence_labels");
+  doc.review.evidence.reviewerId = "another-owner";
+  reindex(data);
+  assert.equal(report(data).DATASET_STRUCTURALLY_VALID, false);
+});
+const qa36Mutations = {
+  generated_marked_human_keep_generation: (d) => {
+    d.createdBy = "human";
+  },
+  generated_marked_human_drop_generation: (d) => {
+    d.createdBy = "human";
+    delete d.generation;
+  },
+  generated_marked_human_drop_basis: (d) => {
+    d.createdBy = "human";
+    delete d.generation;
+    delete d.review.evidence.approvalBasis;
+    delete d.review.evidence.deviationId;
+  },
+  generated_missing_approval_basis: (d) => {
+    delete d.review.evidence.approvalBasis;
+  },
+  generated_missing_deviation_id: (d) => {
+    delete d.review.evidence.deviationId;
+  },
+  generated_wrong_reviewer: (d) => {
+    d.review.evidence.reviewerId = "another-owner";
+  },
+};
+for (const [name, mutate] of Object.entries(qa36Mutations))
+  for (const type of ["word_alignment", "silence_labels"])
+    test(`QA36-F3 rejects ${name} for ${type}, even after unsigned fingerprints are recomputed`, () => {
+      const data = fixture(true),
+        { doc, source } = entry(data, type);
+      mutate(doc);
+      doc.review.evidence.reviewedContentSha256 = contentSha256(doc);
+      reindex(data);
+      const r = report(data);
+      assert.equal(r.DATASET_STRUCTURALLY_VALID, false);
+      assert.equal(r.HUMAN_CREATED_GOLD, false);
+      assert.equal(r.OWNER_ACCEPTED_GOLD_COMPLETE, false);
+      assert.throws(() => scopedMetricInputs(type, doc, source, [], data.manifest.ownerDecision));
+      assert.throws(() => scopedMetricInputs(type, doc, source, []), /context/);
+    });
+test("QA36-F3 rejects a mismatched manifest-bound generation identity", () => {
+  const data = fixture(true);
+  data.manifest.ownerDecision.acceptedArtifacts[0].generationSha256 = "0".repeat(64);
+  assert.equal(report(data).DATASET_STRUCTURALLY_VALID, false);
+});
+test("QA36-F3 rejects a missing or duplicate accepted artifact binding", () => {
+  for (const mutation of ["missing", "duplicate"]) {
+    const data = fixture(true);
+    if (mutation === "missing") data.manifest.ownerDecision.acceptedArtifacts.pop();
+    else
+      data.manifest.ownerDecision.acceptedArtifacts[0] = clone(
+        data.manifest.ownerDecision.acceptedArtifacts[1],
+      );
+    assert.equal(report(data).DATASET_STRUCTURALLY_VALID, false);
+  }
+});
+test("QA36-F3 rejects applying the v1 decision to another dataset identity", () => {
+  const data = fixture(true);
+  data.manifest.ownerDecision.datasetVersion = "evaluation-dataset-v2";
+  assert.equal(report(data).DATASET_STRUCTURALLY_VALID, false);
+});
+test("a later dataset without this decision may contain genuine human-created replacements", () => {
+  const data = goldFixture();
+  data.manifest.datasetVersion = data.registry.datasetVersion = "evaluation-dataset-v2";
+  data.manifest.storage.prefix = "evaluation/evaluation-dataset-v2/";
+  for (const source of data.manifest.sources) {
+    source.objectKey = objectKey(data.manifest.datasetVersion, "sources", source);
+    for (const a of source.referenceArtifacts) {
+      a.datasetVersion = data.manifest.datasetVersion;
+      const doc = data.documents.get(a.metadataPath)?.data;
+      if (doc) {
+        doc.datasetVersion = data.manifest.datasetVersion;
+        if (doc.review?.evidence) doc.review.evidence.reviewedContentSha256 = contentSha256(doc);
+      } else a.objectKey = objectKey(data.manifest.datasetVersion, "references", a);
+    }
+    const edit = source.referenceArtifacts.find((a) => a.type === "edit_spec");
+    if (edit)
+      data.documents.get(
+        source.referenceArtifacts.find((a) => a.type === "render_receipt").metadataPath,
+      ).data.editContentSha256 = contentSha256(data.documents.get(edit.metadataPath).data);
+  }
+  reindex(data);
+  const r = report(data);
+  assert.equal(r.DATASET_STRUCTURALLY_VALID, true, r.errors.join("; "));
+  assert.equal(r.HUMAN_CREATED_GOLD, true);
+});
+test("producer evidence verifies exact bytes and conversions without inference", () => {
+  const source = { id: "synthetic-source", sha256: "a".repeat(64), language: "ar" };
+  const scope = { startUs: "30000000", endUs: "90000000" };
+  const pcm = Buffer.from("synthetic test bytes; not a real dataset asset");
+  const raw = {
+    words: [{ text: " مرحباً،", start: 1, end: 2 }],
+    speechSamples: [{ start: 16000, end: 32000 }],
+    omittedWords: [],
+  };
+  const rawBytes = Buffer.from(JSON.stringify(raw));
+  const generation = { inputAudioSha256: sha256(pcm), rawOutputSha256: sha256(rawBytes) };
+  const words = {
+    sourceId: source.id,
+    sourceSha256: source.sha256,
+    scope,
+    generation,
+    words: normalizedModelWords(raw.words, scope),
+  };
+  const silence = {
+    sourceId: source.id,
+    sourceSha256: source.sha256,
+    scope,
+    generation,
+    intervals: silenceComplement(raw.speechSamples, scope),
+  };
+  const generated = {
+    sourceId: source.id,
+    sourceSha256: source.sha256,
+    language: source.language,
+    scope,
+    wordGeneration: generation,
+    silenceGeneration: generation,
+    words: words.words,
+    intervals: silence.intervals,
+  };
+  const generatedBytes = Buffer.from(JSON.stringify(generated));
+  assert.doesNotThrow(() =>
+    verifyProducerBytes(source, words, silence, { pcm, rawBytes, generatedBytes }),
+  );
+  assert.throws(() =>
+    verifyProducerBytes(source, words, silence, {
+      pcm: Buffer.from("substitute"),
+      rawBytes,
+      generatedBytes,
+    }),
+  );
+  assert.throws(() =>
+    verifyProducerBytes(source, words, silence, {
+      pcm,
+      rawBytes: Buffer.from(JSON.stringify({ ...raw, omittedWords: ["changed"] })),
+      generatedBytes,
+    }),
+  );
+  assert.throws(() =>
+    verifyProducerBytes(source, words, silence, {
+      pcm,
+      rawBytes,
+      generatedBytes: Buffer.from(JSON.stringify({ ...generated, language: "en" })),
+    }),
+  );
+});
+
+test("actual producer archive metadata covers all three original inputs/results and stays outside git", () => {
+  const data = fixture(true),
+    evidence = data.manifest.sources.flatMap((s) => s.producerEvidence || []);
+  assert.equal(evidence.length, 9);
+  assert.deepEqual([...new Set(evidence.map((e) => e.type))].sort(), [
+    "generation_output",
+    "inference_raw",
+    "scoped_pcm",
+  ]);
+  assert.ok(
+    evidence.every(
+      (e) =>
+        e.datasetVersion === data.manifest.datasetVersion &&
+        e.annotationIds.length === 2 &&
+        e.objectKey.startsWith(`evaluation/${data.manifest.datasetVersion}/producer-evidence/`),
+    ),
+  );
+  assert.equal(report(data).DATASET_STRUCTURALLY_VALID, true);
+});
+for (const mutation of ["hash", "source", "scope", "annotation", "key", "type"])
+  test(`producer archive rejects an invalid ${mutation} binding`, () => {
+    const data = fixture(true),
+      evidence = data.manifest.sources.find((s) => s.producerEvidence).producerEvidence[0];
+    if (mutation === "hash") {
+      evidence.sha256 = "0".repeat(64);
+      evidence.objectKey = objectKey(data.manifest.datasetVersion, "producer-evidence", evidence);
+    }
+    if (mutation === "source") evidence.sourceSha256 = "0".repeat(64);
+    if (mutation === "scope") evidence.scope.endUs = "91000000";
+    if (mutation === "annotation") evidence.annotationIds[0] = "nonexistent-annotation";
+    if (mutation === "key") evidence.objectKey = "another-prefix/raw.wav";
+    if (mutation === "type") evidence.type = "unknown";
+    assert.equal(report(data).DATASET_STRUCTURALLY_VALID, false);
+  });

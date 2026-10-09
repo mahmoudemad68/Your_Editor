@@ -18,6 +18,7 @@ import {
   assertDatasetMutable,
   assertArtifactMutable,
   validOwnerDecision,
+  assertOwnerBinding,
 } from "./validate.mjs";
 import { hashStream } from "./storage.mjs";
 import { createReadStream } from "node:fs";
@@ -204,7 +205,7 @@ export async function reviewArtifact(
 ) {
   if (
     !attestHuman ||
-    !/^[a-zA-Z0-9][a-zA-Z0-9._-]{2,79}$/.test(reviewerId || "") ||
+    reviewerId !== "project-owner" ||
     !notes?.trim() ||
     !["approved", "rejected"].includes(decision)
   )
@@ -245,6 +246,7 @@ export async function reviewArtifact(
       "Owner must record their editorial decisions/hand labels and set createdBy=human before review",
     );
   validateDocument(artifact.type, doc, source, manifest.datasetVersion);
+  assertOwnerBinding(artifact.type, doc, source, manifest.datasetVersion, manifest.ownerDecision);
   if (
     decision === "approved" &&
     ((artifact.type === "silence_labels" && !doc.intervals.length) ||
