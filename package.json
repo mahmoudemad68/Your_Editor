@@ -33,7 +33,9 @@
     "evaluation:annotation-clip": "node tools/evaluation/annotation-clip.mjs",
     "evaluation:certify": "node tools/evaluation/storage.mjs certify",
     "evaluation:import-generated": "node tools/evaluation/annotations.mjs",
-    "evaluation:archive-evidence": "node tools/evaluation/evidence.mjs"
+    "evaluation:archive-evidence": "node tools/evaluation/evidence.mjs",
+    "vad:evaluate": "node tools/vad/evaluate.mjs",
+    "vad:setup": "uv run --project workers/ai-worker python -m editagent_ai_worker.infrastructure.vad_model"
   },
   "devDependencies": {
     "@aws-sdk/client-s3": "3.1018.0",

@@ -328,3 +328,11 @@ provenance policy and human approval records. A newly forged human artifact carr
 `project-owner`-looking unsigned metadata cannot be independently authenticated by this tooling
 (QA36R-F3). This trust boundary does not permit rewriting the six code-pinned v1 generated artifacts
 as human gold. No signature infrastructure is introduced.
+
+## US-202 production detector evaluation
+
+See [VOICE_ACTIVITY.md](../../workers/ai-worker/VOICE_ACTIVITY.md) for the production Silero
+port, pinned model/setup, configurable thresholds and scoped evaluation command. The default
+command fails with `EVALUATION_GOLD_UNAVAILABLE`: the three approved silence artifacts are
+generated, not human-created. Explicit generated-baseline diagnostics report speech and silence
+F1 separately; they do not establish independent quality or a CP2 pass. No gold is modified.

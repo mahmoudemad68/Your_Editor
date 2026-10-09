@@ -1,9 +1,11 @@
 [project]
 name = "editagent-ai-worker"
 version = "0.0.0"
-description = "EditAgent AI worker scaffold. Perception models are later stories."
+description = "EditAgent AI worker and offline CPU speech perception."
 requires-python = ">=3.11,<3.12"
 dependencies = [
+  "numpy==2.4.6",
+  "onnxruntime==1.31.0",
   "bullmq>=3.3,<4",
   "jsonschema>=4.23,<5",
   "opentelemetry-api>=1.27,<2",
@@ -115,6 +117,8 @@ forbidden_modules = [
   "psycopg",
   "boto3",
   "torch",
+  "numpy",
+  "onnxruntime",
   "transformers",
   "faster_whisper",
 ]
