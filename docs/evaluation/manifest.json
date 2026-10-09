@@ -1,0 +1,814 @@
+{
+  "schemaVersion": "1.0",
+  "datasetVersion": "evaluation-dataset-v1",
+  "storage": {
+    "bucket": "your-editor-evaluation",
+    "prefix": "evaluation/evaluation-dataset-v1/",
+    "versioningRequired": true
+  },
+  "sources": [
+    {
+      "id": "commons-148215183",
+      "category": "technical_tutorial",
+      "language": "en",
+      "source": {
+        "url": "https://commons.wikimedia.org/wiki/File:WikiSalon_Wikidata_Adding_References.webm",
+        "title": "WikiSalon Wikidata Adding References.webm",
+        "author": "Doreva Belfiore and the Philadelphia WikiSalon",
+        "accessedAt": "2026-10-08",
+        "downloadUrl": "https://upload.wikimedia.org/wikipedia/commons/transcoded/d/da/WikiSalon_Wikidata_Adding_References.webm/WikiSalon_Wikidata_Adding_References.webm.480p.vp9.webm",
+        "representation": "480p.vp9.webm",
+        "pageRevisionId": "1134023890"
+      },
+      "license": {
+        "id": "CC-BY-SA-4.0",
+        "name": "CC BY-SA 4.0",
+        "url": "https://creativecommons.org/licenses/by-sa/4.0",
+        "attribution": "WikiSalon Wikidata Adding References.webm — Doreva Belfiore and the Philadelphia WikiSalon; https://commons.wikimedia.org/wiki/File:WikiSalon_Wikidata_Adding_References.webm; CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0). Acquired Wikimedia transcode; candidate reel is an excerpt/format adaptation.",
+        "allowedUseRationale": "Redistribution and adapted evaluation reels permitted with attribution and indication of changes. Adapted reels must retain this compatible ShareAlike license; attribution travels with every distributed reel.",
+        "rightsAssertion": "File page revision 1134023890 declares CC BY-SA 4.0; credited creator: Doreva Belfiore and the Philadelphia WikiSalon. Source credit: Vimeo : WikiSalon Wikidata Adding References ( view archived source ).",
+        "evidenceUrl": "https://commons.wikimedia.org/w/index.php?oldid=1134023890"
+      },
+      "durationUs": "615428000",
+      "sha256": "793bade8dea8492b56d266f1d6fb2997f1c936cb01c0ff5c65fe449bbe59f0f1",
+      "sizeBytes": "13241514",
+      "extension": "webm",
+      "objectKey": "evaluation/evaluation-dataset-v1/sources/commons-148215183/793bade8dea8492b56d266f1d6fb2997f1c936cb01c0ff5c65fe449bbe59f0f1.webm",
+      "referenceArtifacts": [
+        {
+          "id": "commons-148215183-edit-spec",
+          "type": "edit_spec",
+          "sourceId": "commons-148215183",
+          "datasetVersion": "evaluation-dataset-v1",
+          "sha256": "09ae262ac13d45ea8144474bd38a62a5ea1a3a7786f75659f5aad2c44e7dd9d6",
+          "sizeBytes": "1328",
+          "extension": "json",
+          "metadataPath": "docs/evaluation/artifacts/commons-148215183-edit-spec.json",
+          "objectKey": "evaluation/evaluation-dataset-v1/references/commons-148215183-edit-spec/09ae262ac13d45ea8144474bd38a62a5ea1a3a7786f75659f5aad2c44e7dd9d6.json"
+        },
+        {
+          "id": "commons-148215183-reference-reel",
+          "type": "reference_reel",
+          "sourceId": "commons-148215183",
+          "datasetVersion": "evaluation-dataset-v1",
+          "sha256": "2993316646702edbbb7ea84e4328b54377b23f344b82fd4db7e0343007d1c491",
+          "sizeBytes": "670478",
+          "extension": "mp4",
+          "objectKey": "evaluation/evaluation-dataset-v1/references/commons-148215183-reference-reel/2993316646702edbbb7ea84e4328b54377b23f344b82fd4db7e0343007d1c491.mp4",
+          "durationUs": "30000000"
+        },
+        {
+          "id": "commons-148215183-render-receipt",
+          "type": "render_receipt",
+          "sourceId": "commons-148215183",
+          "datasetVersion": "evaluation-dataset-v1",
+          "sha256": "e68605cd256d853931eccba99209798653ec45e997bade90e669a15ab2cca220",
+          "sizeBytes": "756",
+          "extension": "json",
+          "metadataPath": "docs/evaluation/artifacts/commons-148215183-render-receipt.json",
+          "objectKey": "evaluation/evaluation-dataset-v1/references/commons-148215183-render-receipt/e68605cd256d853931eccba99209798653ec45e997bade90e669a15ab2cca220.json"
+        }
+      ]
+    },
+    {
+      "id": "commons-161311468",
+      "category": "technical_tutorial",
+      "language": "en",
+      "source": {
+        "url": "https://commons.wikimedia.org/wiki/File:WikiSalon_Wikidata_IPA_Pronunciation.webm",
+        "title": "WikiSalon Wikidata IPA Pronunciation.webm",
+        "author": "Doreva Belfiore and the Philadelphia WikiSalon",
+        "accessedAt": "2026-10-08",
+        "downloadUrl": "https://upload.wikimedia.org/wikipedia/commons/transcoded/0/0b/WikiSalon_Wikidata_IPA_Pronunciation.webm/WikiSalon_Wikidata_IPA_Pronunciation.webm.480p.vp9.webm",
+        "representation": "480p.vp9.webm",
+        "pageRevisionId": "1134023295"
+      },
+      "license": {
+        "id": "CC-BY-SA-4.0",
+        "name": "CC BY-SA 4.0",
+        "url": "https://creativecommons.org/licenses/by-sa/4.0",
+        "attribution": "WikiSalon Wikidata IPA Pronunciation.webm — Doreva Belfiore and the Philadelphia WikiSalon; https://commons.wikimedia.org/wiki/File:WikiSalon_Wikidata_IPA_Pronunciation.webm; CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0). Acquired Wikimedia transcode; candidate reel is an excerpt/format adaptation.",
+        "allowedUseRationale": "Redistribution and adapted evaluation reels permitted with attribution and indication of changes. Adapted reels must retain this compatible ShareAlike license; attribution travels with every distributed reel.",
+        "rightsAssertion": "File page revision 1134023295 declares CC BY-SA 4.0; credited creator: Doreva Belfiore and the Philadelphia WikiSalon. Source credit: Doreva Belfiore and the Philadelphia WikiSalon.",
+        "evidenceUrl": "https://commons.wikimedia.org/w/index.php?oldid=1134023295"
+      },
+      "durationUs": "597409000",
+      "sha256": "bb16d2d0c74bfaeda36722e926baa76104c207c8ed4b2bfa1406e49a1dab7bdb",
+      "sizeBytes": "12688974",
+      "extension": "webm",
+      "objectKey": "evaluation/evaluation-dataset-v1/sources/commons-161311468/bb16d2d0c74bfaeda36722e926baa76104c207c8ed4b2bfa1406e49a1dab7bdb.webm",
+      "referenceArtifacts": []
+    },
+    {
+      "id": "commons-165959826",
+      "category": "podcast",
+      "language": "en",
+      "source": {
+        "url": "https://commons.wikimedia.org/wiki/File:Spring_Podcast_(23823513649).webm",
+        "title": "Spring Podcast (23823513649).webm",
+        "author": "ShenandoahNPS",
+        "accessedAt": "2026-10-08",
+        "downloadUrl": "https://upload.wikimedia.org/wikipedia/commons/transcoded/0/05/Spring_Podcast_%2823823513649%29.webm/Spring_Podcast_%2823823513649%29.webm.480p.vp9.webm",
+        "representation": "480p.vp9.webm",
+        "pageRevisionId": "1036404071"
+      },
+      "license": {
+        "id": "LicenseRef-PD-US-NPS",
+        "name": "Public domain",
+        "url": "https://www.nps.gov/aboutus/disclaimer.htm",
+        "attribution": "Spring Podcast (23823513649).webm — ShenandoahNPS; https://commons.wikimedia.org/wiki/File:Spring_Podcast_(23823513649).webm; Public domain (https://www.nps.gov/aboutus/disclaimer.htm). Acquired Wikimedia transcode; candidate reel is an excerpt/format adaptation.",
+        "allowedUseRationale": "Official source marks this video public domain, corroborating PD-USGov-NPS on Commons. Copy/adapt government work for evaluation; do not imply endorsement or reuse protected marks as branding.",
+        "rightsAssertion": "File page revision 1036404071 declares Public domain; credited creator: ShenandoahNPS. Source credit: Spring Podcast. Independently accessed official Shenandoah National Park Flickr video https://www.flickr.com/photos/snpphotos/23823513649 on 2026-10-08: JSON-LD license=https://creativecommons.org/publicdomain/mark/1.0/; author=Shenandoah National Park. NPS disclaimer permits distribution of government works; third-party and trademark exceptions remain.",
+        "evidenceUrl": "https://commons.wikimedia.org/w/index.php?oldid=1036404071"
+      },
+      "durationUs": "180046000",
+      "sha256": "05c3e2cd1ba2d93458d5efcc93437edbdaea871486fa25a4699677667f599b40",
+      "sizeBytes": "15609543",
+      "extension": "webm",
+      "objectKey": "evaluation/evaluation-dataset-v1/sources/commons-165959826/05c3e2cd1ba2d93458d5efcc93437edbdaea871486fa25a4699677667f599b40.webm",
+      "referenceArtifacts": [
+        {
+          "id": "commons-165959826-edit-spec",
+          "type": "edit_spec",
+          "sourceId": "commons-165959826",
+          "datasetVersion": "evaluation-dataset-v1",
+          "sha256": "5b43388b8572baebd56f7df0ab28d30707dbbed8c59deb94012e6ad51d3dbd2b",
+          "sizeBytes": "1328",
+          "extension": "json",
+          "metadataPath": "docs/evaluation/artifacts/commons-165959826-edit-spec.json",
+          "objectKey": "evaluation/evaluation-dataset-v1/references/commons-165959826-edit-spec/5b43388b8572baebd56f7df0ab28d30707dbbed8c59deb94012e6ad51d3dbd2b.json"
+        },
+        {
+          "id": "commons-165959826-reference-reel",
+          "type": "reference_reel",
+          "sourceId": "commons-165959826",
+          "datasetVersion": "evaluation-dataset-v1",
+          "sha256": "dd284e723e31d58359a2212876fbf15307b777a014c07bcebd70cb67486307fd",
+          "sizeBytes": "2081427",
+          "extension": "mp4",
+          "objectKey": "evaluation/evaluation-dataset-v1/references/commons-165959826-reference-reel/dd284e723e31d58359a2212876fbf15307b777a014c07bcebd70cb67486307fd.mp4",
+          "durationUs": "29993000"
+        },
+        {
+          "id": "commons-165959826-render-receipt",
+          "type": "render_receipt",
+          "sourceId": "commons-165959826",
+          "datasetVersion": "evaluation-dataset-v1",
+          "sha256": "002bd4efd51e76ba2064fb967a268968460991877a3c1d3c0d0c554ee23119f2",
+          "sizeBytes": "756",
+          "extension": "json",
+          "metadataPath": "docs/evaluation/artifacts/commons-165959826-render-receipt.json",
+          "objectKey": "evaluation/evaluation-dataset-v1/references/commons-165959826-render-receipt/002bd4efd51e76ba2064fb967a268968460991877a3c1d3c0d0c554ee23119f2.json"
+        }
+      ]
+    },
+    {
+      "id": "commons-195436491",
+      "category": "podcast",
+      "language": "en",
+      "source": {
+        "url": "https://commons.wikimedia.org/wiki/File:Wikimania_Village_Pump_Closing_Podcast_%E2%80%94_Wikimania_2025_in_Nairobi,_Kenya.webm",
+        "title": "Wikimania Village Pump Closing Podcast — Wikimania 2025 in Nairobi, Kenya.webm",
+        "author": "Wikimania 2025 East African Organising Team",
+        "accessedAt": "2026-10-08",
+        "downloadUrl": "https://upload.wikimedia.org/wikipedia/commons/transcoded/a/a6/Wikimania_Village_Pump_Closing_Podcast_%E2%80%94_Wikimania_2025_in_Nairobi%2C_Kenya.webm/Wikimania_Village_Pump_Closing_Podcast_%E2%80%94_Wikimania_2025_in_Nairobi%2C_Kenya.webm.480p.vp9.webm",
+        "representation": "480p.vp9.webm",
+        "pageRevisionId": "1245989526"
+      },
+      "license": {
+        "id": "CC-BY-SA-4.0",
+        "name": "CC BY-SA 4.0",
+        "url": "https://creativecommons.org/licenses/by-sa/4.0",
+        "attribution": "Wikimania Village Pump Closing Podcast — Wikimania 2025 in Nairobi, Kenya.webm — Wikimania 2025 East African Organising Team; https://commons.wikimedia.org/wiki/File:Wikimania_Village_Pump_Closing_Podcast_%E2%80%94_Wikimania_2025_in_Nairobi,_Kenya.webm; CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0). Acquired Wikimedia transcode; candidate reel is an excerpt/format adaptation.",
+        "allowedUseRationale": "Redistribution and adapted evaluation reels permitted with attribution and indication of changes. Adapted reels must retain this compatible ShareAlike license; attribution travels with every distributed reel.",
+        "rightsAssertion": "File page revision 1245989526 declares CC BY-SA 4.0; credited creator: Wikimania 2025 East African Organising Team. Source credit: Wikimania 2025.",
+        "evidenceUrl": "https://commons.wikimedia.org/w/index.php?oldid=1245989526"
+      },
+      "durationUs": "2070007000",
+      "sha256": "f7734312eaabc6726f3a39f3a39b153e0a8812d03a6eb1d347c3f91733bbc001",
+      "sizeBytes": "192663617",
+      "extension": "webm",
+      "objectKey": "evaluation/evaluation-dataset-v1/sources/commons-195436491/f7734312eaabc6726f3a39f3a39b153e0a8812d03a6eb1d347c3f91733bbc001.webm",
+      "referenceArtifacts": []
+    },
+    {
+      "id": "commons-28956463",
+      "category": "educational",
+      "language": "en",
+      "source": {
+        "url": "https://commons.wikimedia.org/wiki/File:What_is_a_web_science_unMooc%3F.webm",
+        "title": "What is a web science unMooc?.webm",
+        "author": "Renepick",
+        "accessedAt": "2026-10-08",
+        "downloadUrl": "https://upload.wikimedia.org/wikipedia/commons/transcoded/1/10/What_is_a_web_science_unMooc%3F.webm/What_is_a_web_science_unMooc%3F.webm.480p.vp9.webm",
+        "representation": "480p.vp9.webm",
+        "pageRevisionId": "1120319766"
+      },
+      "license": {
+        "id": "CC-BY-SA-3.0",
+        "name": "CC BY-SA 3.0",
+        "url": "https://creativecommons.org/licenses/by-sa/3.0",
+        "attribution": "What is a web science unMooc?.webm — Renepick; https://commons.wikimedia.org/wiki/File:What_is_a_web_science_unMooc%3F.webm; CC BY-SA 3.0 (https://creativecommons.org/licenses/by-sa/3.0). Acquired Wikimedia transcode; candidate reel is an excerpt/format adaptation.",
+        "allowedUseRationale": "Redistribution and adapted evaluation reels permitted with attribution and indication of changes. Adapted reels must retain this compatible ShareAlike license; attribution travels with every distributed reel.",
+        "rightsAssertion": "File page revision 1120319766 declares CC BY-SA 3.0; credited creator: Renepick. Source credit: Own work.",
+        "evidenceUrl": "https://commons.wikimedia.org/w/index.php?oldid=1120319766"
+      },
+      "durationUs": "125382000",
+      "sha256": "843d6c653030056f26018be17b933fd6c739ef59ce0e128152f385bf2b38d1f6",
+      "sizeBytes": "7147263",
+      "extension": "webm",
+      "objectKey": "evaluation/evaluation-dataset-v1/sources/commons-28956463/843d6c653030056f26018be17b933fd6c739ef59ce0e128152f385bf2b38d1f6.webm",
+      "referenceArtifacts": [
+        {
+          "id": "commons-28956463-edit-spec",
+          "type": "edit_spec",
+          "sourceId": "commons-28956463",
+          "datasetVersion": "evaluation-dataset-v1",
+          "sha256": "8b128f9cfd491d31d8ac03a28ba935b12019e37138c37c1d41f7c8ec1634518c",
+          "sizeBytes": "1326",
+          "extension": "json",
+          "metadataPath": "docs/evaluation/artifacts/commons-28956463-edit-spec.json",
+          "objectKey": "evaluation/evaluation-dataset-v1/references/commons-28956463-edit-spec/8b128f9cfd491d31d8ac03a28ba935b12019e37138c37c1d41f7c8ec1634518c.json"
+        },
+        {
+          "id": "commons-28956463-reference-reel",
+          "type": "reference_reel",
+          "sourceId": "commons-28956463",
+          "datasetVersion": "evaluation-dataset-v1",
+          "sha256": "75af35ba5a168e2e26415329d700109260ba7ae18d48e7c554f5228db780388c",
+          "sizeBytes": "1429228",
+          "extension": "mp4",
+          "objectKey": "evaluation/evaluation-dataset-v1/references/commons-28956463-reference-reel/75af35ba5a168e2e26415329d700109260ba7ae18d48e7c554f5228db780388c.mp4",
+          "durationUs": "30000000"
+        },
+        {
+          "id": "commons-28956463-render-receipt",
+          "type": "render_receipt",
+          "sourceId": "commons-28956463",
+          "datasetVersion": "evaluation-dataset-v1",
+          "sha256": "661a31bc314eff347d873914214c56fbf54528fe9160fcc3f8381ec37b6d760f",
+          "sizeBytes": "753",
+          "extension": "json",
+          "metadataPath": "docs/evaluation/artifacts/commons-28956463-render-receipt.json",
+          "objectKey": "evaluation/evaluation-dataset-v1/references/commons-28956463-render-receipt/661a31bc314eff347d873914214c56fbf54528fe9160fcc3f8381ec37b6d760f.json"
+        },
+        {
+          "id": "commons-28956463-silence-labels",
+          "type": "silence_labels",
+          "sourceId": "commons-28956463",
+          "datasetVersion": "evaluation-dataset-v1",
+          "sha256": "7f990d09069e66a9cb444cee5d082fa0d17a749f87abd7321d099ae45dd9e3c0",
+          "sizeBytes": "3444",
+          "extension": "json",
+          "metadataPath": "docs/evaluation/artifacts/commons-28956463-silence-labels.json",
+          "objectKey": "evaluation/evaluation-dataset-v1/annotations/commons-28956463-silence-labels/7f990d09069e66a9cb444cee5d082fa0d17a749f87abd7321d099ae45dd9e3c0.json"
+        },
+        {
+          "id": "commons-28956463-word-alignment",
+          "type": "word_alignment",
+          "sourceId": "commons-28956463",
+          "datasetVersion": "evaluation-dataset-v1",
+          "sha256": "4a42f08f7eab4538c745ad01c2a32d42ada28a733b7d847fb691c0937b49fe0f",
+          "sizeBytes": "15894",
+          "extension": "json",
+          "metadataPath": "docs/evaluation/artifacts/commons-28956463-word-alignment.json",
+          "objectKey": "evaluation/evaluation-dataset-v1/annotations/commons-28956463-word-alignment/4a42f08f7eab4538c745ad01c2a32d42ada28a733b7d847fb691c0937b49fe0f.json"
+        }
+      ],
+      "producerEvidence": [
+        {
+          "id": "commons-28956463-scoped-pcm",
+          "type": "scoped_pcm",
+          "sourceId": "commons-28956463",
+          "sourceSha256": "843d6c653030056f26018be17b933fd6c739ef59ce0e128152f385bf2b38d1f6",
+          "datasetVersion": "evaluation-dataset-v1",
+          "scope": { "startUs": "30000000", "endUs": "90000000" },
+          "annotationIds": ["commons-28956463-word-alignment", "commons-28956463-silence-labels"],
+          "sha256": "397ea603aede161467fb085f8b178c670752ce5e5f3c72c6ad2cdf744c3e58a1",
+          "sizeBytes": "1920078",
+          "extension": "wav",
+          "objectKey": "evaluation/evaluation-dataset-v1/producer-evidence/commons-28956463-scoped-pcm/397ea603aede161467fb085f8b178c670752ce5e5f3c72c6ad2cdf744c3e58a1.wav"
+        },
+        {
+          "id": "commons-28956463-inference-raw",
+          "type": "inference_raw",
+          "sourceId": "commons-28956463",
+          "sourceSha256": "843d6c653030056f26018be17b933fd6c739ef59ce0e128152f385bf2b38d1f6",
+          "datasetVersion": "evaluation-dataset-v1",
+          "scope": { "startUs": "30000000", "endUs": "90000000" },
+          "annotationIds": ["commons-28956463-word-alignment", "commons-28956463-silence-labels"],
+          "sha256": "2747eaea81958638e54b28cbb47b01fd8347316810f8ba8d847c4c3ac46d0854",
+          "sizeBytes": "16497",
+          "extension": "json",
+          "objectKey": "evaluation/evaluation-dataset-v1/producer-evidence/commons-28956463-inference-raw/2747eaea81958638e54b28cbb47b01fd8347316810f8ba8d847c4c3ac46d0854.json"
+        },
+        {
+          "id": "commons-28956463-generation-output",
+          "type": "generation_output",
+          "sourceId": "commons-28956463",
+          "sourceSha256": "843d6c653030056f26018be17b933fd6c739ef59ce0e128152f385bf2b38d1f6",
+          "datasetVersion": "evaluation-dataset-v1",
+          "scope": { "startUs": "30000000", "endUs": "90000000" },
+          "annotationIds": ["commons-28956463-word-alignment", "commons-28956463-silence-labels"],
+          "sha256": "91a95dd37272ddb65aabe09ce5e703aeadb8192396474a78087dbd8e7f5897af",
+          "sizeBytes": "21135",
+          "extension": "json",
+          "objectKey": "evaluation/evaluation-dataset-v1/producer-evidence/commons-28956463-generation-output/91a95dd37272ddb65aabe09ce5e703aeadb8192396474a78087dbd8e7f5897af.json"
+        }
+      ]
+    },
+    {
+      "id": "commons-44797864",
+      "category": "educational",
+      "language": "zxx",
+      "source": {
+        "url": "https://commons.wikimedia.org/wiki/File:Cytoplasmic_streaming.webm",
+        "title": "Cytoplasmic streaming.webm",
+        "author": "Heiti Paves",
+        "accessedAt": "2026-10-08",
+        "downloadUrl": "https://upload.wikimedia.org/wikipedia/commons/transcoded/a/af/Cytoplasmic_streaming.webm/Cytoplasmic_streaming.webm.480p.vp9.webm",
+        "representation": "480p.vp9.webm",
+        "pageRevisionId": "1101708571"
+      },
+      "license": {
+        "id": "CC-BY-SA-4.0",
+        "name": "CC BY-SA 4.0",
+        "url": "https://creativecommons.org/licenses/by-sa/4.0",
+        "attribution": "Cytoplasmic streaming.webm — Heiti Paves; https://commons.wikimedia.org/wiki/File:Cytoplasmic_streaming.webm; CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0). Acquired Wikimedia transcode; candidate reel is an excerpt/format adaptation.",
+        "allowedUseRationale": "Redistribution and adapted evaluation reels permitted with attribution and indication of changes. Adapted reels must retain this compatible ShareAlike license; attribution travels with every distributed reel.",
+        "rightsAssertion": "File page revision 1101708571 declares CC BY-SA 4.0; credited creator: Heiti Paves. Source credit: Own work.",
+        "evidenceUrl": "https://commons.wikimedia.org/w/index.php?oldid=1101708571"
+      },
+      "durationUs": "49292000",
+      "sha256": "4722fb2e3df25fd7ab15096632866310fc1204f789526cc6bccfe7380c20624e",
+      "sizeBytes": "1962460",
+      "extension": "webm",
+      "objectKey": "evaluation/evaluation-dataset-v1/sources/commons-44797864/4722fb2e3df25fd7ab15096632866310fc1204f789526cc6bccfe7380c20624e.webm",
+      "referenceArtifacts": []
+    },
+    {
+      "id": "commons-52145789",
+      "category": "gaming",
+      "language": "zxx",
+      "source": {
+        "url": "https://commons.wikimedia.org/wiki/File:0_A_D_Alpha_20_Timosthenes_Trailer.webm",
+        "title": "0 A D Alpha 20 Timosthenes Trailer.webm",
+        "author": "Wildfire Games",
+        "accessedAt": "2026-10-08",
+        "downloadUrl": "https://upload.wikimedia.org/wikipedia/commons/transcoded/5/5a/0_A_D_Alpha_20_Timosthenes_Trailer.webm/0_A_D_Alpha_20_Timosthenes_Trailer.webm.480p.vp9.webm",
+        "representation": "480p.vp9.webm",
+        "pageRevisionId": "1227023198"
+      },
+      "license": {
+        "id": "CC-BY-SA-3.0",
+        "name": "CC BY-SA 3.0",
+        "url": "https://creativecommons.org/licenses/by-sa/3.0",
+        "attribution": "0 A D Alpha 20 Timosthenes Trailer.webm — Wildfire Games; https://commons.wikimedia.org/wiki/File:0_A_D_Alpha_20_Timosthenes_Trailer.webm; CC BY-SA 3.0 (https://creativecommons.org/licenses/by-sa/3.0). Acquired Wikimedia transcode; candidate reel is an excerpt/format adaptation.",
+        "allowedUseRationale": "Redistribution and adapted evaluation reels permitted with attribution and indication of changes. Adapted reels must retain this compatible ShareAlike license; attribution travels with every distributed reel.",
+        "rightsAssertion": "File page revision 1227023198 declares CC BY-SA 3.0; credited creator: Wildfire Games. Source credit: Youtube. Wildfire Games project overview https://play0ad.com/game-info/project-overview/ accessed 2026-10-08 explicitly permits art and sound reuse under CC BY-SA 3.0; game code is GPL and is not redistributed here.",
+        "evidenceUrl": "https://commons.wikimedia.org/w/index.php?oldid=1227023198"
+      },
+      "durationUs": "157966000",
+      "sha256": "c2f7711b2035c86b5fd0b9e03443d9cb79aabd7839e74cc56b17530201c211f3",
+      "sizeBytes": "26744098",
+      "extension": "webm",
+      "objectKey": "evaluation/evaluation-dataset-v1/sources/commons-52145789/c2f7711b2035c86b5fd0b9e03443d9cb79aabd7839e74cc56b17530201c211f3.webm",
+      "referenceArtifacts": []
+    },
+    {
+      "id": "commons-7740925",
+      "category": "gaming",
+      "language": "zxx",
+      "source": {
+        "url": "https://commons.wikimedia.org/wiki/File:0_A.D._-_Gameplay_Preview_-_Winter_2007.ogv",
+        "title": "0 A.D. - Gameplay Preview - Winter 2007.ogv",
+        "author": "Wildfire Games",
+        "accessedAt": "2026-10-08",
+        "downloadUrl": "https://upload.wikimedia.org/wikipedia/commons/transcoded/5/5d/0_A.D._-_Gameplay_Preview_-_Winter_2007.ogv/0_A.D._-_Gameplay_Preview_-_Winter_2007.ogv.480p.vp9.webm",
+        "representation": "480p.vp9.webm",
+        "pageRevisionId": "927903987"
+      },
+      "license": {
+        "id": "CC-BY-SA-3.0",
+        "name": "CC BY-SA 3.0",
+        "url": "https://creativecommons.org/licenses/by-sa/3.0",
+        "attribution": "0 A.D. - Gameplay Preview - Winter 2007.ogv — Wildfire Games; https://commons.wikimedia.org/wiki/File:0_A.D._-_Gameplay_Preview_-_Winter_2007.ogv; CC BY-SA 3.0 (https://creativecommons.org/licenses/by-sa/3.0). Acquired Wikimedia transcode; candidate reel is an excerpt/format adaptation.",
+        "allowedUseRationale": "Redistribution and adapted evaluation reels permitted with attribution and indication of changes. Adapted reels must retain this compatible ShareAlike license; attribution travels with every distributed reel.",
+        "rightsAssertion": "File page revision 927903987 declares CC BY-SA 3.0; credited creator: Wildfire Games. Source credit: http://wildfiregames.com/0ad/page.php?p=1494. Wildfire Games project overview https://play0ad.com/game-info/project-overview/ accessed 2026-10-08 explicitly permits art and sound reuse under CC BY-SA 3.0; game code is GPL and is not redistributed here.",
+        "evidenceUrl": "https://commons.wikimedia.org/w/index.php?oldid=927903987"
+      },
+      "durationUs": "59593000",
+      "sha256": "f4c5496f7c04c41092b77d182ebef85ffb0e81e1cb1fc86736905113ca93e270",
+      "sizeBytes": "10046258",
+      "extension": "webm",
+      "objectKey": "evaluation/evaluation-dataset-v1/sources/commons-7740925/f4c5496f7c04c41092b77d182ebef85ffb0e81e1cb1fc86736905113ca93e270.webm",
+      "referenceArtifacts": [
+        {
+          "id": "commons-7740925-edit-spec",
+          "type": "edit_spec",
+          "sourceId": "commons-7740925",
+          "datasetVersion": "evaluation-dataset-v1",
+          "sha256": "56a98d56395691e591df2ae3e65163478ac400e1216eac100a382950a875edef",
+          "sizeBytes": "1324",
+          "extension": "json",
+          "metadataPath": "docs/evaluation/artifacts/commons-7740925-edit-spec.json",
+          "objectKey": "evaluation/evaluation-dataset-v1/references/commons-7740925-edit-spec/56a98d56395691e591df2ae3e65163478ac400e1216eac100a382950a875edef.json"
+        },
+        {
+          "id": "commons-7740925-reference-reel",
+          "type": "reference_reel",
+          "sourceId": "commons-7740925",
+          "datasetVersion": "evaluation-dataset-v1",
+          "sha256": "6490481a36cf53b5568bce6000517c64a7a37548b58a41dd8807a020e91f5c0d",
+          "sizeBytes": "4272625",
+          "extension": "mp4",
+          "objectKey": "evaluation/evaluation-dataset-v1/references/commons-7740925-reference-reel/6490481a36cf53b5568bce6000517c64a7a37548b58a41dd8807a020e91f5c0d.mp4",
+          "durationUs": "30000000"
+        },
+        {
+          "id": "commons-7740925-render-receipt",
+          "type": "render_receipt",
+          "sourceId": "commons-7740925",
+          "datasetVersion": "evaluation-dataset-v1",
+          "sha256": "b16380b5f3e3156c41c81b175cf436539eb2bd75ecd431e0887f0c10d4164603",
+          "sizeBytes": "750",
+          "extension": "json",
+          "metadataPath": "docs/evaluation/artifacts/commons-7740925-render-receipt.json",
+          "objectKey": "evaluation/evaluation-dataset-v1/references/commons-7740925-render-receipt/b16380b5f3e3156c41c81b175cf436539eb2bd75ecd431e0887f0c10d4164603.json"
+        }
+      ]
+    },
+    {
+      "id": "commons-81899687",
+      "category": "interview",
+      "language": "ar",
+      "source": {
+        "url": "https://commons.wikimedia.org/wiki/File:Wikimedia_Strategy_2030_-_Roles_%26_Responsibilities_-_Interview_Zeinab_Takouti_(AR)_-_%D8%B2%D9%8A%D9%86%D8%A8_%D8%AA%D8%A7%D9%83%D9%88%D8%AA%D9%8A.webm",
+        "title": "Wikimedia Strategy 2030 - Roles & Responsibilities - Interview Zeinab Takouti (AR) - زينب تاكوتي.webm",
+        "author": "Anass (WMF)",
+        "accessedAt": "2026-10-08",
+        "downloadUrl": "https://upload.wikimedia.org/wikipedia/commons/transcoded/d/d3/Wikimedia_Strategy_2030_-_Roles_%26_Responsibilities_-_Interview_Zeinab_Takouti_%28AR%29_-_%D8%B2%D9%8A%D9%86%D8%A8_%D8%AA%D8%A7%D9%83%D9%88%D8%AA%D9%8A.webm/Wikimedia_Strategy_2030_-_Roles_%26_Responsibilities_-_Interview_Zeinab_Takouti_%28AR%29_-_%D8%B2%D9%8A%D9%86%D8%A8_%D8%AA%D8%A7%D9%83%D9%88%D8%AA%D9%8A.webm.480p.vp9.webm",
+        "representation": "480p.vp9.webm",
+        "pageRevisionId": "1222813714"
+      },
+      "license": {
+        "id": "CC-BY-3.0",
+        "name": "CC BY 3.0",
+        "url": "https://creativecommons.org/licenses/by/3.0",
+        "attribution": "Wikimedia Strategy 2030 - Roles & Responsibilities - Interview Zeinab Takouti (AR) - زينب تاكوتي.webm — Anass (WMF); https://commons.wikimedia.org/wiki/File:Wikimedia_Strategy_2030_-_Roles_%26_Responsibilities_-_Interview_Zeinab_Takouti_(AR)_-_%D8%B2%D9%8A%D9%86%D8%A8_%D8%AA%D8%A7%D9%83%D9%88%D8%AA%D9%8A.webm; CC BY 3.0 (https://creativecommons.org/licenses/by/3.0). Acquired Wikimedia transcode; candidate reel is an excerpt/format adaptation.",
+        "allowedUseRationale": "Redistribution and adapted evaluation reels permitted with attribution and indication of changes.",
+        "rightsAssertion": "File page revision 1222813714 declares CC BY 3.0; credited creator: Anass (WMF). Source credit: YouTube : Wikimedia Strategy 2030 - Roles & Responsibilities - Interview Zeinab Takouti (AR) - زينب تاكوتي – View/save archived versions on archive.org.",
+        "evidenceUrl": "https://commons.wikimedia.org/w/index.php?oldid=1222813714"
+      },
+      "durationUs": "331293000",
+      "sha256": "52a3783c84ac1306a77460e5533e81eb1cc0548d9878945896b76e6f74f01eac",
+      "sizeBytes": "45974367",
+      "extension": "webm",
+      "objectKey": "evaluation/evaluation-dataset-v1/sources/commons-81899687/52a3783c84ac1306a77460e5533e81eb1cc0548d9878945896b76e6f74f01eac.webm",
+      "referenceArtifacts": []
+    },
+    {
+      "id": "commons-82236797",
+      "category": "interview",
+      "language": "ar",
+      "source": {
+        "url": "https://commons.wikimedia.org/wiki/File:Wikimedia_Strategy_2030_-_Diversity_-_Interview_Walaa_Abdelmanaem_(AR)_-_%D9%84%D9%82%D8%A7%D8%A1_%D9%85%D8%B9_%D9%88%D9%84%D8%A7%D8%A1_%D8%B9%D8%A8%D8%AF_%D8%A7%D9%84%D9%85%D9%86%D8%B9%D9%85.webm",
+        "title": "Wikimedia Strategy 2030 - Diversity - Interview Walaa Abdelmanaem (AR) - لقاء مع ولاء عبد المنعم.webm",
+        "author": "Anass (WMF)",
+        "accessedAt": "2026-10-08",
+        "downloadUrl": "https://upload.wikimedia.org/wikipedia/commons/transcoded/6/65/Wikimedia_Strategy_2030_-_Diversity_-_Interview_Walaa_Abdelmanaem_%28AR%29_-_%D9%84%D9%82%D8%A7%D8%A1_%D9%85%D8%B9_%D9%88%D9%84%D8%A7%D8%A1_%D8%B9%D8%A8%D8%AF_%D8%A7%D9%84%D9%85%D9%86%D8%B9%D9%85.webm/Wikimedia_Strategy_2030_-_Diversity_-_Interview_Walaa_Abdelmanaem_%28AR%29_-_%D9%84%D9%82%D8%A7%D8%A1_%D9%85%D8%B9_%D9%88%D9%84%D8%A7%D8%A1_%D8%B9%D8%A8%D8%AF_%D8%A7%D9%84%D9%85%D9%86%D8%B9%D9%85.webm.480p.vp9.webm",
+        "representation": "480p.vp9.webm",
+        "pageRevisionId": "1024089284"
+      },
+      "license": {
+        "id": "CC-BY-3.0",
+        "name": "CC BY 3.0",
+        "url": "https://creativecommons.org/licenses/by/3.0",
+        "attribution": "Wikimedia Strategy 2030 - Diversity - Interview Walaa Abdelmanaem (AR) - لقاء مع ولاء عبد المنعم.webm — Anass (WMF); https://commons.wikimedia.org/wiki/File:Wikimedia_Strategy_2030_-_Diversity_-_Interview_Walaa_Abdelmanaem_(AR)_-_%D9%84%D9%82%D8%A7%D8%A1_%D9%85%D8%B9_%D9%88%D9%84%D8%A7%D8%A1_%D8%B9%D8%A8%D8%AF_%D8%A7%D9%84%D9%85%D9%86%D8%B9%D9%85.webm; CC BY 3.0 (https://creativecommons.org/licenses/by/3.0). Acquired Wikimedia transcode; candidate reel is an excerpt/format adaptation.",
+        "allowedUseRationale": "Redistribution and adapted evaluation reels permitted with attribution and indication of changes.",
+        "rightsAssertion": "File page revision 1024089284 declares CC BY 3.0; credited creator: Anass (WMF). Source credit: YouTube : Wikimedia Strategy 2030 - Diversity - Interview Walaa Abdelmanaem (AR) - لقاء مع ولاء عبد المنعم – View/save archived versions on archive.org.",
+        "evidenceUrl": "https://commons.wikimedia.org/w/index.php?oldid=1024089284"
+      },
+      "durationUs": "626744000",
+      "sha256": "5f3eff8e19d9ea508f875082f177bd7dfdad70f56c03e0a33b6c8e5a7a2c0426",
+      "sizeBytes": "93057148",
+      "extension": "webm",
+      "objectKey": "evaluation/evaluation-dataset-v1/sources/commons-82236797/5f3eff8e19d9ea508f875082f177bd7dfdad70f56c03e0a33b6c8e5a7a2c0426.webm",
+      "referenceArtifacts": [
+        {
+          "id": "commons-82236797-edit-spec",
+          "type": "edit_spec",
+          "sourceId": "commons-82236797",
+          "datasetVersion": "evaluation-dataset-v1",
+          "sha256": "5c05081eda054ac4a3ff8659b60d24c5ff3b3be62865ed3a28e35e35ac6018fe",
+          "sizeBytes": "1326",
+          "extension": "json",
+          "metadataPath": "docs/evaluation/artifacts/commons-82236797-edit-spec.json",
+          "objectKey": "evaluation/evaluation-dataset-v1/references/commons-82236797-edit-spec/5c05081eda054ac4a3ff8659b60d24c5ff3b3be62865ed3a28e35e35ac6018fe.json"
+        },
+        {
+          "id": "commons-82236797-reference-reel",
+          "type": "reference_reel",
+          "sourceId": "commons-82236797",
+          "datasetVersion": "evaluation-dataset-v1",
+          "sha256": "d69668664fbfec23dc9ae9d73e36f26bec68111feea799819fab76ef898cf7b2",
+          "sizeBytes": "2702693",
+          "extension": "mp4",
+          "objectKey": "evaluation/evaluation-dataset-v1/references/commons-82236797-reference-reel/d69668664fbfec23dc9ae9d73e36f26bec68111feea799819fab76ef898cf7b2.mp4",
+          "durationUs": "30000000"
+        },
+        {
+          "id": "commons-82236797-render-receipt",
+          "type": "render_receipt",
+          "sourceId": "commons-82236797",
+          "datasetVersion": "evaluation-dataset-v1",
+          "sha256": "33bc1de312f41552c0b4173b4e53e5927cb9bd10b55a6a05e061428fa6869b4c",
+          "sizeBytes": "753",
+          "extension": "json",
+          "metadataPath": "docs/evaluation/artifacts/commons-82236797-render-receipt.json",
+          "objectKey": "evaluation/evaluation-dataset-v1/references/commons-82236797-render-receipt/33bc1de312f41552c0b4173b4e53e5927cb9bd10b55a6a05e061428fa6869b4c.json"
+        },
+        {
+          "id": "commons-82236797-silence-labels",
+          "type": "silence_labels",
+          "sourceId": "commons-82236797",
+          "datasetVersion": "evaluation-dataset-v1",
+          "sha256": "11f5bd5144ff391e9cd408058b5dda41c5f36dbbe7c727bcdbdb740baac38733",
+          "sizeBytes": "3652",
+          "extension": "json",
+          "metadataPath": "docs/evaluation/artifacts/commons-82236797-silence-labels.json",
+          "objectKey": "evaluation/evaluation-dataset-v1/annotations/commons-82236797-silence-labels/11f5bd5144ff391e9cd408058b5dda41c5f36dbbe7c727bcdbdb740baac38733.json"
+        },
+        {
+          "id": "commons-82236797-word-alignment",
+          "type": "word_alignment",
+          "sourceId": "commons-82236797",
+          "datasetVersion": "evaluation-dataset-v1",
+          "sha256": "342aa5a4d71c9ec0dac6263bfbe9139c58ab559c23245fb95093689d26f46f82",
+          "sizeBytes": "9836",
+          "extension": "json",
+          "metadataPath": "docs/evaluation/artifacts/commons-82236797-word-alignment.json",
+          "objectKey": "evaluation/evaluation-dataset-v1/annotations/commons-82236797-word-alignment/342aa5a4d71c9ec0dac6263bfbe9139c58ab559c23245fb95093689d26f46f82.json"
+        }
+      ],
+      "producerEvidence": [
+        {
+          "id": "commons-82236797-scoped-pcm",
+          "type": "scoped_pcm",
+          "sourceId": "commons-82236797",
+          "sourceSha256": "5f3eff8e19d9ea508f875082f177bd7dfdad70f56c03e0a33b6c8e5a7a2c0426",
+          "datasetVersion": "evaluation-dataset-v1",
+          "scope": { "startUs": "30000000", "endUs": "90000000" },
+          "annotationIds": ["commons-82236797-word-alignment", "commons-82236797-silence-labels"],
+          "sha256": "f00e74d3b739b32e8cc20d1cceee06968aa40c1f5a7f001c244ff0ad47a1c5f4",
+          "sizeBytes": "1920078",
+          "extension": "wav",
+          "objectKey": "evaluation/evaluation-dataset-v1/producer-evidence/commons-82236797-scoped-pcm/f00e74d3b739b32e8cc20d1cceee06968aa40c1f5a7f001c244ff0ad47a1c5f4.wav"
+        },
+        {
+          "id": "commons-82236797-inference-raw",
+          "type": "inference_raw",
+          "sourceId": "commons-82236797",
+          "sourceSha256": "5f3eff8e19d9ea508f875082f177bd7dfdad70f56c03e0a33b6c8e5a7a2c0426",
+          "datasetVersion": "evaluation-dataset-v1",
+          "scope": { "startUs": "30000000", "endUs": "90000000" },
+          "annotationIds": ["commons-82236797-word-alignment", "commons-82236797-silence-labels"],
+          "sha256": "40e6c700e6df18c10a0e1c8f81c9e268b3262116a695a1c183844527fd0f6bf2",
+          "sizeBytes": "9314",
+          "extension": "json",
+          "objectKey": "evaluation/evaluation-dataset-v1/producer-evidence/commons-82236797-inference-raw/40e6c700e6df18c10a0e1c8f81c9e268b3262116a695a1c183844527fd0f6bf2.json"
+        },
+        {
+          "id": "commons-82236797-generation-output",
+          "type": "generation_output",
+          "sourceId": "commons-82236797",
+          "sourceSha256": "5f3eff8e19d9ea508f875082f177bd7dfdad70f56c03e0a33b6c8e5a7a2c0426",
+          "datasetVersion": "evaluation-dataset-v1",
+          "scope": { "startUs": "30000000", "endUs": "90000000" },
+          "annotationIds": ["commons-82236797-word-alignment", "commons-82236797-silence-labels"],
+          "sha256": "8150bbb29cd9ab59a66c88a1078023ac7f01696ece080e228624cfbca374c328",
+          "sizeBytes": "13259",
+          "extension": "json",
+          "objectKey": "evaluation/evaluation-dataset-v1/producer-evidence/commons-82236797-generation-output/8150bbb29cd9ab59a66c88a1078023ac7f01696ece080e228624cfbca374c328.json"
+        }
+      ]
+    },
+    {
+      "id": "commons-98579899",
+      "category": "talking_head",
+      "language": "ar",
+      "source": {
+        "url": "https://commons.wikimedia.org/wiki/File:KM_WP20_bday_message_Arabic.webm",
+        "title": "KM WP20 bday message Arabic.webm",
+        "author": "Wikimedia Foundation",
+        "accessedAt": "2026-10-08",
+        "downloadUrl": "https://upload.wikimedia.org/wikipedia/commons/transcoded/6/60/KM_WP20_bday_message_Arabic.webm/KM_WP20_bday_message_Arabic.webm.480p.vp9.webm",
+        "representation": "480p.vp9.webm",
+        "pageRevisionId": "1107817084"
+      },
+      "license": {
+        "id": "CC0-1.0",
+        "name": "CC0",
+        "url": "https://creativecommons.org/publicdomain/zero/1.0/deed.en",
+        "attribution": "KM WP20 bday message Arabic.webm — Wikimedia Foundation; https://commons.wikimedia.org/wiki/File:KM_WP20_bday_message_Arabic.webm; CC0 (https://creativecommons.org/publicdomain/zero/1.0/deed.en). Acquired Wikimedia transcode; candidate reel is an excerpt/format adaptation.",
+        "allowedUseRationale": "CC0 permits copying and adaptation without copyright permission; source attribution retained for provenance.",
+        "rightsAssertion": "File page revision 1107817084 declares CC0; credited creator: Wikimedia Foundation. Source credit: Wikimedia Foundation.",
+        "evidenceUrl": "https://commons.wikimedia.org/w/index.php?oldid=1107817084"
+      },
+      "durationUs": "3255000",
+      "sha256": "d2b633473e0f8afd28397ba5b91a08806780710f7cfd663413dee07173ff48c1",
+      "sizeBytes": "212800",
+      "extension": "webm",
+      "objectKey": "evaluation/evaluation-dataset-v1/sources/commons-98579899/d2b633473e0f8afd28397ba5b91a08806780710f7cfd663413dee07173ff48c1.webm",
+      "referenceArtifacts": []
+    },
+    {
+      "id": "commons-98650286",
+      "category": "talking_head",
+      "language": "en",
+      "source": {
+        "url": "https://commons.wikimedia.org/wiki/File:Katherine_Maher%27s_message_on_the_occasion_of_Wikipedia_20.webm",
+        "title": "Katherine Maher's message on the occasion of Wikipedia 20.webm",
+        "author": "Wikimedia Foundation",
+        "accessedAt": "2026-10-08",
+        "downloadUrl": "https://upload.wikimedia.org/wikipedia/commons/transcoded/e/e6/Katherine_Maher%27s_message_on_the_occasion_of_Wikipedia_20.webm/Katherine_Maher%27s_message_on_the_occasion_of_Wikipedia_20.webm.480p.vp9.webm",
+        "representation": "480p.vp9.webm",
+        "pageRevisionId": "606502845"
+      },
+      "license": {
+        "id": "CC0-1.0",
+        "name": "CC0",
+        "url": "https://creativecommons.org/publicdomain/zero/1.0/deed.en",
+        "attribution": "Katherine Maher's message on the occasion of Wikipedia 20.webm — Wikimedia Foundation; https://commons.wikimedia.org/wiki/File:Katherine_Maher%27s_message_on_the_occasion_of_Wikipedia_20.webm; CC0 (https://creativecommons.org/publicdomain/zero/1.0/deed.en). Acquired Wikimedia transcode; candidate reel is an excerpt/format adaptation.",
+        "allowedUseRationale": "CC0 permits copying and adaptation without copyright permission; source attribution retained for provenance.",
+        "rightsAssertion": "File page revision 606502845 declares CC0; credited creator: Wikimedia Foundation. Source credit: Wikimedia Foundation.",
+        "evidenceUrl": "https://commons.wikimedia.org/w/index.php?oldid=606502845"
+      },
+      "durationUs": "350434000",
+      "sha256": "86cf8af3ceb93561358aebe34c7a5ad39fc522660f695c8b8c667d453d6f7117",
+      "sizeBytes": "13469161",
+      "extension": "webm",
+      "objectKey": "evaluation/evaluation-dataset-v1/sources/commons-98650286/86cf8af3ceb93561358aebe34c7a5ad39fc522660f695c8b8c667d453d6f7117.webm",
+      "referenceArtifacts": [
+        {
+          "id": "commons-98650286-edit-spec",
+          "type": "edit_spec",
+          "sourceId": "commons-98650286",
+          "datasetVersion": "evaluation-dataset-v1",
+          "sha256": "0adbad04faeb9eeeda788bf4f5bf95a000f5f3db8435ff50c4fd58c134788fdb",
+          "sizeBytes": "1326",
+          "extension": "json",
+          "metadataPath": "docs/evaluation/artifacts/commons-98650286-edit-spec.json",
+          "objectKey": "evaluation/evaluation-dataset-v1/references/commons-98650286-edit-spec/0adbad04faeb9eeeda788bf4f5bf95a000f5f3db8435ff50c4fd58c134788fdb.json"
+        },
+        {
+          "id": "commons-98650286-reference-reel",
+          "type": "reference_reel",
+          "sourceId": "commons-98650286",
+          "datasetVersion": "evaluation-dataset-v1",
+          "sha256": "c9bcf7923f672f9c09f7a3d809a711c1c822355620f1220117cbd009fc93cf5c",
+          "sizeBytes": "1282118",
+          "extension": "mp4",
+          "objectKey": "evaluation/evaluation-dataset-v1/references/commons-98650286-reference-reel/c9bcf7923f672f9c09f7a3d809a711c1c822355620f1220117cbd009fc93cf5c.mp4",
+          "durationUs": "30000000"
+        },
+        {
+          "id": "commons-98650286-render-receipt",
+          "type": "render_receipt",
+          "sourceId": "commons-98650286",
+          "datasetVersion": "evaluation-dataset-v1",
+          "sha256": "708d4a886b1d1aa154521d730834080e5e28dc4238e16799a04070f204009f25",
+          "sizeBytes": "753",
+          "extension": "json",
+          "metadataPath": "docs/evaluation/artifacts/commons-98650286-render-receipt.json",
+          "objectKey": "evaluation/evaluation-dataset-v1/references/commons-98650286-render-receipt/708d4a886b1d1aa154521d730834080e5e28dc4238e16799a04070f204009f25.json"
+        },
+        {
+          "id": "commons-98650286-silence-labels",
+          "type": "silence_labels",
+          "sourceId": "commons-98650286",
+          "datasetVersion": "evaluation-dataset-v1",
+          "sha256": "5ef12f76d5897f724d7d616c9d3b5488c6ee5fa786093b274c3147930583f36d",
+          "sizeBytes": "2872",
+          "extension": "json",
+          "metadataPath": "docs/evaluation/artifacts/commons-98650286-silence-labels.json",
+          "objectKey": "evaluation/evaluation-dataset-v1/annotations/commons-98650286-silence-labels/5ef12f76d5897f724d7d616c9d3b5488c6ee5fa786093b274c3147930583f36d.json"
+        },
+        {
+          "id": "commons-98650286-word-alignment",
+          "type": "word_alignment",
+          "sourceId": "commons-98650286",
+          "datasetVersion": "evaluation-dataset-v1",
+          "sha256": "89b0d1ece0f2353594342416fd4f3131d6bb30a069bc75b1b9e7a1e3e52a6494",
+          "sizeBytes": "13340",
+          "extension": "json",
+          "metadataPath": "docs/evaluation/artifacts/commons-98650286-word-alignment.json",
+          "objectKey": "evaluation/evaluation-dataset-v1/annotations/commons-98650286-word-alignment/89b0d1ece0f2353594342416fd4f3131d6bb30a069bc75b1b9e7a1e3e52a6494.json"
+        }
+      ],
+      "producerEvidence": [
+        {
+          "id": "commons-98650286-scoped-pcm",
+          "type": "scoped_pcm",
+          "sourceId": "commons-98650286",
+          "sourceSha256": "86cf8af3ceb93561358aebe34c7a5ad39fc522660f695c8b8c667d453d6f7117",
+          "datasetVersion": "evaluation-dataset-v1",
+          "scope": { "startUs": "30000000", "endUs": "90000000" },
+          "annotationIds": ["commons-98650286-word-alignment", "commons-98650286-silence-labels"],
+          "sha256": "e9d7e1f6bc82c09896540f068c08581e07dcddf6af893e486c7413247ce74d5c",
+          "sizeBytes": "1920078",
+          "extension": "wav",
+          "objectKey": "evaluation/evaluation-dataset-v1/producer-evidence/commons-98650286-scoped-pcm/e9d7e1f6bc82c09896540f068c08581e07dcddf6af893e486c7413247ce74d5c.wav"
+        },
+        {
+          "id": "commons-98650286-inference-raw",
+          "type": "inference_raw",
+          "sourceId": "commons-98650286",
+          "sourceSha256": "86cf8af3ceb93561358aebe34c7a5ad39fc522660f695c8b8c667d453d6f7117",
+          "datasetVersion": "evaluation-dataset-v1",
+          "scope": { "startUs": "30000000", "endUs": "90000000" },
+          "annotationIds": ["commons-98650286-word-alignment", "commons-98650286-silence-labels"],
+          "sha256": "3eda73bd468e6c1ada9b6f1e0033dd5c5185390043d8534446bf67887b757154",
+          "sizeBytes": "12282",
+          "extension": "json",
+          "objectKey": "evaluation/evaluation-dataset-v1/producer-evidence/commons-98650286-inference-raw/3eda73bd468e6c1ada9b6f1e0033dd5c5185390043d8534446bf67887b757154.json"
+        },
+        {
+          "id": "commons-98650286-generation-output",
+          "type": "generation_output",
+          "sourceId": "commons-98650286",
+          "sourceSha256": "86cf8af3ceb93561358aebe34c7a5ad39fc522660f695c8b8c667d453d6f7117",
+          "datasetVersion": "evaluation-dataset-v1",
+          "scope": { "startUs": "30000000", "endUs": "90000000" },
+          "annotationIds": ["commons-98650286-word-alignment", "commons-98650286-silence-labels"],
+          "sha256": "15d9e968f57ce991d7f61bb1ac28504544fe47aaf4f029dc8203546e79b714cb",
+          "sizeBytes": "16997",
+          "extension": "json",
+          "objectKey": "evaluation/evaluation-dataset-v1/producer-evidence/commons-98650286-generation-output/15d9e968f57ce991d7f61bb1ac28504544fe47aaf4f029dc8203546e79b714cb.json"
+        }
+      ]
+    }
+  ],
+  "release": { "status": "unreleased" },
+  "ownerDecision": {
+    "id": "us110-owner-generated-annotation-gold-v1",
+    "reviewerId": "project-owner",
+    "decidedAt": "2026-10-09T06:34:13Z",
+    "documentationPath": "docs/evaluation/OWNER_DECISION.md",
+    "originalRequirement": "hand-labelled silence ranges and word alignments for 3 clips",
+    "acceptedSourceIds": ["commons-28956463", "commons-98650286", "commons-82236797"],
+    "scope": { "startUs": "30000000", "endUs": "90000000" },
+    "storageForQa": "report_separately",
+    "datasetVersion": "evaluation-dataset-v1",
+    "acceptedArtifacts": [
+      {
+        "artifactId": "commons-28956463-silence-labels",
+        "sourceId": "commons-28956463",
+        "type": "silence_labels",
+        "createdBy": "machine_generated",
+        "contentSha256": "f559b9ea5ec22a623b99bbc1326ff9cdb4e26c9b54bec08599c7d57341333e91",
+        "generationSha256": "6f35b26f375559ae17e2c027c99665c75c772d9384090d987227f14ab3aeaad4"
+      },
+      {
+        "artifactId": "commons-28956463-word-alignment",
+        "sourceId": "commons-28956463",
+        "type": "word_alignment",
+        "createdBy": "machine_generated",
+        "contentSha256": "f35212ce8c8cc19db7635a945e14c69092e1344c5312e96f3be7ea1fbf0af720",
+        "generationSha256": "fae6b9f88442619f70601c1244939411572b791a416dfce216995307b8962a79"
+      },
+      {
+        "artifactId": "commons-82236797-silence-labels",
+        "sourceId": "commons-82236797",
+        "type": "silence_labels",
+        "createdBy": "machine_generated",
+        "contentSha256": "96ad0bbba495de06714e20b9da2adcf24c95ef54eedf6b1163c308da4b36f4f8",
+        "generationSha256": "c1916146ed8c4970a4c8a06688de34ae0ba78f6410ff39a9dd5dde1595bb795d"
+      },
+      {
+        "artifactId": "commons-82236797-word-alignment",
+        "sourceId": "commons-82236797",
+        "type": "word_alignment",
+        "createdBy": "machine_generated",
+        "contentSha256": "b7c7c89d24a647ac44f188da5b0aceb18021becee198e1fe4710edf9f758830b",
+        "generationSha256": "b3c00f14d800f9de00d39d016bdaae9126a0eee3b546c3f5800845a586371ea4"
+      },
+      {
+        "artifactId": "commons-98650286-silence-labels",
+        "sourceId": "commons-98650286",
+        "type": "silence_labels",
+        "createdBy": "machine_generated",
+        "contentSha256": "df568a0ac6878dedd7504c0e007a9baeac013b3886d2794b3228abc83577efac",
+        "generationSha256": "a0871520e84a315b6464790ee5df563314af09be2505e920a6fc324776e9dbcf"
+      },
+      {
+        "artifactId": "commons-98650286-word-alignment",
+        "sourceId": "commons-98650286",
+        "type": "word_alignment",
+        "createdBy": "machine_generated",
+        "contentSha256": "1b4a2733d83df6bafee80c45f3ad91843f2a99851e3f6fefcb637ef130e13090",
+        "generationSha256": "9a0381926178443edb6918afe5a43c814d2bb5e422eebd0b5895c73fd7b9d678"
+      }
+    ]
+  }
+}

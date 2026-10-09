@@ -1,0 +1,23 @@
+{
+  "schemaVersion": "1.0",
+  "datasetVersion": "evaluation-dataset-v1",
+  "sourceId": "commons-98650286",
+  "sourceSha256": "86cf8af3ceb93561358aebe34c7a5ad39fc522660f695c8b8c667d453d6f7117",
+  "createdBy": "human",
+  "review": {
+    "status": "approved",
+    "evidence": {
+      "reviewerId": "project-owner",
+      "reviewerRole": "project_owner",
+      "reviewedAt": "2026-10-09T05:56:46Z",
+      "decision": "approved",
+      "humanAttestation": true,
+      "notes": "The Project Owner personally watched the exact rendered reference reel for this source and approved the selected 00:00–00:30 reference edit.",
+      "reviewedContentSha256": "fff8ce2993cedb863374d8bfaabbba50528ac940bb6380101c7822c672a4483a",
+      "renderSha256": "c9bcf7923f672f9c09f7a3d809a711c1c822355620f1220117cbd009fc93cf5c"
+    }
+  },
+  "segments": [{ "sourceStartUs": "0", "sourceEndUs": "30000000", "outputStartUs": "0" }],
+  "decisionNotes": "The Project Owner personally watched the source and intentionally selected the 00:00–00:30 interval as the reference edit. The existing machine-suggested interval was retained because the Owner judged it suitable. This records the Owner's editorial selection only; final approval of the newly rendered reference reel is still awaiting the Owner's review.",
+  "id": "commons-98650286-edit-spec"
+}

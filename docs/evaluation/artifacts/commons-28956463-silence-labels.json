@@ -1,0 +1,69 @@
+{
+  "schemaVersion": "1.0",
+  "datasetVersion": "evaluation-dataset-v1",
+  "sourceId": "commons-28956463",
+  "sourceSha256": "843d6c653030056f26018be17b933fd6c739ef59ce0e128152f385bf2b38d1f6",
+  "createdBy": "machine_generated",
+  "review": {
+    "status": "approved",
+    "evidence": {
+      "reviewerId": "project-owner",
+      "reviewerRole": "project_owner",
+      "reviewedAt": "2026-10-09T06:38:59Z",
+      "decision": "approved",
+      "humanAttestation": true,
+      "notes": "The Project Owner explicitly reviewed the evaluation approach and accepts this generated annotation artifact as the project gold baseline. The Owner waived additional manual hand-labelling for US-110.",
+      "reviewedContentSha256": "f559b9ea5ec22a623b99bbc1326ff9cdb4e26c9b54bec08599c7d57341333e91",
+      "approvalBasis": "owner_accepted_generated",
+      "deviationId": "us110-owner-generated-annotation-gold-v1"
+    }
+  },
+  "intervals": [
+    { "endUs": "33522000", "startUs": "33358000" },
+    { "endUs": "38002000", "startUs": "37870000" },
+    { "endUs": "39218000", "startUs": "38734000" },
+    { "endUs": "40274000", "startUs": "39982000" },
+    { "endUs": "41618000", "startUs": "41038000" },
+    { "endUs": "42962000", "startUs": "42254000" },
+    { "endUs": "55282000", "startUs": "54926000" },
+    { "endUs": "57810000", "startUs": "57454000" },
+    { "endUs": "59922000", "startUs": "59182000" },
+    { "endUs": "61138000", "startUs": "60878000" },
+    { "endUs": "61842000", "startUs": "61678000" },
+    { "endUs": "66066000", "startUs": "65486000" },
+    { "endUs": "74898000", "startUs": "74670000" },
+    { "endUs": "76242000", "startUs": "76142000" },
+    { "endUs": "79154000", "startUs": "78382000" }
+  ],
+  "annotationNotes": "Generated tool output, not manually hand-labelled. Scope accepted by the Owner's explicit US-110 deviation. Word timestamps use decimal half-up microseconds; VAD silence is the complement of speech sample ranges, floored to integer microseconds. Empty/zero-duration model words are omitted; raw inference identity is recorded. Final Owner acceptance is recorded separately in review evidence.",
+  "id": "commons-28956463-silence-labels",
+  "scope": { "startUs": "30000000", "endUs": "90000000", "selection": "owner_confirmed" },
+  "generation": {
+    "ffmpegVersion": "ffmpeg version 7.1.5-0+deb13u1 Copyright (c) 2000-2026 the FFmpeg developers",
+    "generatorSha256": "4e557c2d3839b10a5c3163a7a311739510691dc56e40970ea09735b7e4123cb4",
+    "inputAudioSha256": "397ea603aede161467fb085f8b178c670752ce5e5f3c72c6ad2cdf744c3e58a1",
+    "method": "silero_vad_silence_complement",
+    "modelId": "silero_vad_v6.onnx",
+    "modelRevision": "4cbf549b8326f60f80f2536d9eefeb450a9abe83365a098031c89719f1be17d2",
+    "modelSha256": "4cbf549b8326f60f80f2536d9eefeb450a9abe83365a098031c89719f1be17d2",
+    "parameters": {
+      "min_silence_duration_ms": 100,
+      "min_speech_duration_ms": 250,
+      "neg_threshold": 0.35,
+      "speech_pad_ms": 30,
+      "threshold": 0.5
+    },
+    "rawOutputSha256": "2747eaea81958638e54b28cbb47b01fd8347316810f8ba8d847c4c3ac46d0854",
+    "recipeVersion": "eval-generated-annotations-v1",
+    "sampleRateHz": 16000,
+    "timestampPolicy": "source_us_round_half_up_bounded_v1",
+    "toolVersions": {
+      "av": "18.1.0",
+      "ctranslate2": "4.8.2",
+      "faster-whisper": "1.2.1",
+      "numpy": "2.4.6",
+      "onnxruntime": "1.31.0",
+      "tokenizers": "0.23.2"
+    }
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": "1.0",
+  "datasetVersion": "evaluation-dataset-v1",
+  "id": "commons-98650286-render-receipt",
+  "sourceId": "commons-98650286",
+  "sourceSha256": "86cf8af3ceb93561358aebe34c7a5ad39fc522660f695c8b8c667d453d6f7117",
+  "editId": "commons-98650286-edit-spec",
+  "editContentSha256": "fff8ce2993cedb863374d8bfaabbba50528ac940bb6380101c7822c672a4483a",
+  "artifactSha256": "c9bcf7923f672f9c09f7a3d809a711c1c822355620f1220117cbd009fc93cf5c",
+  "durationUs": "30000000",
+  "tool": {
+    "ffmpegVersion": "ffmpeg version 7.1.5-0+deb13u1 Copyright (c) 2000-2026 the FFmpeg developers",
+    "ffprobeVersion": "ffprobe version 7.1.5-0+deb13u1 Copyright (c) 2007-2026 the FFmpeg developers",
+    "recipeVersion": "eval-reference-h264-v1"
+  }
+}

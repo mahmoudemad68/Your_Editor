@@ -1,0 +1,1453 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://your-editor.example/schemas/evaluation-manifest.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "datasetVersion", "storage", "sources", "release"],
+  "properties": {
+    "schemaVersion": {
+      "const": "1.0"
+    },
+    "datasetVersion": {
+      "type": "string",
+      "pattern": "^evaluation-dataset-v[1-9][0-9]*$"
+    },
+    "storage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bucket", "prefix", "versioningRequired"],
+      "properties": {
+        "bucket": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]{2,62}$"
+        },
+        "prefix": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "versioningRequired": {
+          "const": true
+        },
+        "durableTarget": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["endpoint", "approvedBy", "approvedAt", "notes"],
+          "properties": {
+            "endpoint": {
+              "type": "string",
+              "pattern": "^https://[^?#]+$"
+            },
+            "approvedBy": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{2,79}$"
+            },
+            "approvedAt": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+            },
+            "notes": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S"
+            }
+          }
+        }
+      }
+    },
+    "sources": {
+      "type": "array",
+      "minItems": 12,
+      "items": {
+        "$ref": "#/$defs/source"
+      }
+    },
+    "release": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {
+        "status": {
+          "enum": ["unreleased", "published"]
+        },
+        "frozenDatasetSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "published"
+              }
+            }
+          },
+          "then": {
+            "required": ["frozenDatasetSha256"]
+          },
+          "else": {
+            "not": {
+              "required": ["frozenDatasetSha256"]
+            }
+          }
+        }
+      ]
+    },
+    "ownerDecision": {
+      "$ref": "#/$defs/owner_decision"
+    }
+  },
+  "$defs": {
+    "review": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {
+        "status": {
+          "enum": ["draft", "awaiting_human_review", "approved", "rejected"]
+        },
+        "evidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "reviewerId",
+            "reviewerRole",
+            "reviewedAt",
+            "decision",
+            "humanAttestation",
+            "notes",
+            "reviewedContentSha256"
+          ],
+          "properties": {
+            "reviewerId": {
+              "const": "project-owner"
+            },
+            "reviewerRole": {
+              "const": "project_owner"
+            },
+            "reviewedAt": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+            },
+            "decision": {
+              "enum": ["approved", "rejected"]
+            },
+            "humanAttestation": {
+              "const": true
+            },
+            "notes": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S"
+            },
+            "reviewedContentSha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "renderSha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "approvalBasis": {
+              "enum": ["human_created", "owner_accepted_generated"]
+            },
+            "deviationId": {
+              "const": "us110-owner-generated-annotation-gold-v1"
+            }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "enum": ["approved", "rejected"]
+              }
+            }
+          },
+          "then": {
+            "required": ["evidence"]
+          },
+          "else": {
+            "not": {
+              "required": ["evidence"]
+            }
+          }
+        }
+      ]
+    },
+    "license": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "url",
+        "attribution",
+        "allowedUseRationale",
+        "rightsAssertion",
+        "evidenceUrl"
+      ],
+      "properties": {
+        "id": {
+          "enum": [
+            "CC0-1.0",
+            "CC-BY-3.0",
+            "CC-BY-4.0",
+            "CC-BY-SA-3.0",
+            "CC-BY-SA-4.0",
+            "LicenseRef-PD-US-NPS",
+            "LicenseRef-Private-Consent"
+          ]
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "url": {
+          "type": "string",
+          "pattern": "^https://[^\\s?#]+(?:\\?[^\\s#]*)?(?:#[^\\s]*)?$"
+        },
+        "attribution": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "allowedUseRationale": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "rightsAssertion": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "evidenceUrl": {
+          "type": "string",
+          "pattern": "^https://[^\\s?#]+(?:\\?[^\\s#]*)?(?:#[^\\s]*)?$"
+        },
+        "consentRef": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "id": {
+                "const": "LicenseRef-Private-Consent"
+              }
+            }
+          },
+          "then": {
+            "required": ["consentRef"]
+          },
+          "else": {
+            "not": {
+              "required": ["consentRef"]
+            }
+          }
+        }
+      ]
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "type",
+        "sourceId",
+        "datasetVersion",
+        "sha256",
+        "sizeBytes",
+        "objectKey",
+        "extension"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{2,79}$"
+        },
+        "type": {
+          "enum": [
+            "edit_spec",
+            "reference_reel",
+            "render_receipt",
+            "silence_labels",
+            "word_alignment"
+          ]
+        },
+        "sourceId": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{2,79}$"
+        },
+        "datasetVersion": {
+          "type": "string",
+          "pattern": "^evaluation-dataset-v[1-9][0-9]*$"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "sizeBytes": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]*$"
+        },
+        "objectKey": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "extension": {
+          "enum": ["json", "mp4"]
+        },
+        "metadataPath": {
+          "type": "string",
+          "pattern": "^docs/evaluation/artifacts/[a-z0-9-]+\\.json$"
+        },
+        "durationUs": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]*$"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "reference_reel"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "extension": {
+                "const": "mp4"
+              }
+            },
+            "not": {
+              "required": ["metadataPath"]
+            },
+            "required": ["durationUs"]
+          },
+          "else": {
+            "required": ["metadataPath"],
+            "properties": {
+              "extension": {
+                "const": "json"
+              }
+            },
+            "not": {
+              "required": ["durationUs"]
+            }
+          }
+        }
+      ]
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "category",
+        "language",
+        "source",
+        "license",
+        "durationUs",
+        "sha256",
+        "sizeBytes",
+        "extension",
+        "objectKey",
+        "referenceArtifacts"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{2,79}$"
+        },
+        "category": {
+          "enum": [
+            "podcast",
+            "educational",
+            "talking_head",
+            "interview",
+            "gaming",
+            "technical_tutorial"
+          ]
+        },
+        "language": {
+          "type": "string",
+          "pattern": "^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$"
+        },
+        "source": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "url",
+            "title",
+            "author",
+            "accessedAt",
+            "downloadUrl",
+            "representation",
+            "pageRevisionId"
+          ],
+          "properties": {
+            "url": {
+              "type": "string",
+              "pattern": "^https://[^\\s?#]+(?:\\?[^\\s#]*)?(?:#[^\\s]*)?$"
+            },
+            "title": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S"
+            },
+            "author": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S"
+            },
+            "accessedAt": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+            },
+            "downloadUrl": {
+              "type": "string",
+              "pattern": "^https://[^\\s?#]+(?:\\?[^\\s#]*)?(?:#[^\\s]*)?$"
+            },
+            "representation": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S"
+            },
+            "pageRevisionId": {
+              "type": "string",
+              "pattern": "^[1-9][0-9]*$"
+            }
+          }
+        },
+        "license": {
+          "$ref": "#/$defs/license"
+        },
+        "durationUs": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]*$"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "sizeBytes": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]*$"
+        },
+        "extension": {
+          "enum": ["webm", "ogv", "mp4"]
+        },
+        "objectKey": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "referenceArtifacts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/artifact"
+          }
+        },
+        "producerEvidence": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "items": {
+            "$ref": "#/$defs/producer_evidence"
+          }
+        }
+      }
+    },
+    "edit_spec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "datasetVersion",
+        "id",
+        "sourceId",
+        "sourceSha256",
+        "createdBy",
+        "review",
+        "segments",
+        "decisionNotes"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "1.0"
+        },
+        "datasetVersion": {
+          "type": "string",
+          "pattern": "^evaluation-dataset-v[1-9][0-9]*$"
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{2,79}$"
+        },
+        "sourceId": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{2,79}$"
+        },
+        "sourceSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "createdBy": {
+          "enum": ["machine_candidate", "human"]
+        },
+        "review": {
+          "$ref": "#/$defs/review"
+        },
+        "segments": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["sourceStartUs", "sourceEndUs", "outputStartUs"],
+            "properties": {
+              "sourceStartUs": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)$"
+              },
+              "sourceEndUs": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)$"
+              },
+              "outputStartUs": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)$"
+              }
+            }
+          }
+        },
+        "decisionNotes": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        }
+      }
+    },
+    "silence_labels": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "datasetVersion",
+        "id",
+        "sourceId",
+        "sourceSha256",
+        "createdBy",
+        "review",
+        "intervals",
+        "annotationNotes",
+        "scope"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "1.0"
+        },
+        "datasetVersion": {
+          "type": "string",
+          "pattern": "^evaluation-dataset-v[1-9][0-9]*$"
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{2,79}$"
+        },
+        "sourceId": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{2,79}$"
+        },
+        "sourceSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "createdBy": {
+          "enum": ["machine_candidate", "human", "machine_generated"]
+        },
+        "review": {
+          "$ref": "#/$defs/review"
+        },
+        "intervals": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["startUs", "endUs"],
+            "properties": {
+              "startUs": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)$"
+              },
+              "endUs": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)$"
+              }
+            }
+          }
+        },
+        "annotationNotes": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "scope": {
+          "$ref": "#/$defs/scope"
+        },
+        "generation": {
+          "$ref": "#/$defs/generation"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "createdBy": {
+                "const": "machine_generated"
+              }
+            }
+          },
+          "then": {
+            "required": ["generation"],
+            "properties": {
+              "generation": {
+                "properties": {
+                  "method": {
+                    "const": "silero_vad_silence_complement"
+                  }
+                },
+                "type": "object"
+              }
+            }
+          },
+          "else": {
+            "not": {
+              "required": ["generation"]
+            }
+          }
+        }
+      ]
+    },
+    "word_alignment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "datasetVersion",
+        "id",
+        "sourceId",
+        "sourceSha256",
+        "createdBy",
+        "review",
+        "language",
+        "words",
+        "annotationNotes",
+        "scope"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "1.0"
+        },
+        "datasetVersion": {
+          "type": "string",
+          "pattern": "^evaluation-dataset-v[1-9][0-9]*$"
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{2,79}$"
+        },
+        "sourceId": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{2,79}$"
+        },
+        "sourceSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "createdBy": {
+          "enum": ["machine_candidate", "human", "machine_generated"]
+        },
+        "review": {
+          "$ref": "#/$defs/review"
+        },
+        "language": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "words": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["text", "startUs", "endUs"],
+            "properties": {
+              "text": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S"
+              },
+              "startUs": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)$"
+              },
+              "endUs": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)$"
+              },
+              "speaker": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S"
+              },
+              "normalizedText": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S"
+              },
+              "notes": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S"
+              }
+            }
+          }
+        },
+        "annotationNotes": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "scope": {
+          "$ref": "#/$defs/scope"
+        },
+        "generation": {
+          "$ref": "#/$defs/generation"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "createdBy": {
+                "const": "machine_generated"
+              }
+            }
+          },
+          "then": {
+            "required": ["generation"],
+            "properties": {
+              "generation": {
+                "properties": {
+                  "method": {
+                    "const": "faster_whisper_word_timestamps"
+                  }
+                },
+                "type": "object"
+              }
+            }
+          },
+          "else": {
+            "not": {
+              "required": ["generation"]
+            }
+          }
+        }
+      ]
+    },
+    "render_receipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "datasetVersion",
+        "id",
+        "sourceId",
+        "sourceSha256",
+        "editId",
+        "editContentSha256",
+        "artifactSha256",
+        "durationUs",
+        "tool"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "1.0"
+        },
+        "datasetVersion": {
+          "type": "string",
+          "pattern": "^evaluation-dataset-v[1-9][0-9]*$"
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{2,79}$"
+        },
+        "sourceId": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{2,79}$"
+        },
+        "sourceSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "editId": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{2,79}$"
+        },
+        "editContentSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "artifactSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "durationUs": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]*$"
+        },
+        "tool": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["ffmpegVersion", "ffprobeVersion", "recipeVersion"],
+          "properties": {
+            "ffmpegVersion": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S"
+            },
+            "ffprobeVersion": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S"
+            },
+            "recipeVersion": {
+              "const": "eval-reference-h264-v1"
+            }
+          }
+        }
+      }
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["startUs", "endUs", "selection"],
+      "properties": {
+        "startUs": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)$"
+        },
+        "endUs": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)$"
+        },
+        "selection": {
+          "enum": ["machine_candidate", "owner_confirmed"]
+        }
+      }
+    },
+    "storage_evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "datasetVersion",
+        "datasetSha256",
+        "endpoint",
+        "bucket",
+        "versioning",
+        "syncCompletedAt",
+        "deepVerifiedAt",
+        "objects"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "1.0"
+        },
+        "datasetVersion": {
+          "type": "string",
+          "pattern": "^evaluation-dataset-v[1-9][0-9]*$"
+        },
+        "datasetSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "endpoint": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "bucket": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "versioning": {
+          "const": "Enabled"
+        },
+        "syncCompletedAt": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+        },
+        "deepVerifiedAt": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+        },
+        "objects": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "objectKey", "sha256", "sizeBytes", "versionId"],
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S"
+              },
+              "objectKey": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S"
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "sizeBytes": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)$"
+              },
+              "versionId": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S"
+              }
+            }
+          }
+        }
+      }
+    },
+    "owner_decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "reviewerId",
+        "decidedAt",
+        "documentationPath",
+        "originalRequirement",
+        "acceptedSourceIds",
+        "storageForQa",
+        "scope",
+        "datasetVersion",
+        "acceptedArtifacts"
+      ],
+      "properties": {
+        "id": {
+          "const": "us110-owner-generated-annotation-gold-v1"
+        },
+        "reviewerId": {
+          "const": "project-owner"
+        },
+        "decidedAt": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+        },
+        "documentationPath": {
+          "const": "docs/evaluation/OWNER_DECISION.md"
+        },
+        "originalRequirement": {
+          "const": "hand-labelled silence ranges and word alignments for 3 clips"
+        },
+        "acceptedSourceIds": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "uniqueItems": true,
+          "items": {
+            "enum": ["commons-28956463", "commons-98650286", "commons-82236797"]
+          }
+        },
+        "storageForQa": {
+          "const": "report_separately"
+        },
+        "scope": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["startUs", "endUs"],
+          "properties": {
+            "startUs": {
+              "const": "30000000"
+            },
+            "endUs": {
+              "const": "90000000"
+            }
+          }
+        },
+        "datasetVersion": {
+          "const": "evaluation-dataset-v1"
+        },
+        "acceptedArtifacts": {
+          "type": "array",
+          "minItems": 6,
+          "maxItems": 6,
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "artifactId",
+              "sourceId",
+              "type",
+              "createdBy",
+              "contentSha256",
+              "generationSha256"
+            ],
+            "properties": {
+              "artifactId": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9-]{2,79}$"
+              },
+              "sourceId": {
+                "enum": ["commons-28956463", "commons-98650286", "commons-82236797"]
+              },
+              "type": {
+                "enum": ["word_alignment", "silence_labels"]
+              },
+              "createdBy": {
+                "const": "machine_generated"
+              },
+              "contentSha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "generationSha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              }
+            }
+          }
+        }
+      }
+    },
+    "generation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "recipeVersion",
+        "generatorSha256",
+        "inputAudioSha256",
+        "rawOutputSha256",
+        "sampleRateHz",
+        "toolVersions",
+        "ffmpegVersion",
+        "timestampPolicy",
+        "method",
+        "modelId",
+        "modelRevision",
+        "modelSha256",
+        "parameters"
+      ],
+      "properties": {
+        "recipeVersion": {
+          "const": "eval-generated-annotations-v1"
+        },
+        "generatorSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "inputAudioSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "rawOutputSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "sampleRateHz": {
+          "const": 16000
+        },
+        "toolVersions": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["faster-whisper", "ctranslate2", "onnxruntime", "numpy", "av", "tokenizers"],
+          "properties": {
+            "faster-whisper": {
+              "const": "1.2.1"
+            },
+            "ctranslate2": {
+              "const": "4.8.2"
+            },
+            "onnxruntime": {
+              "const": "1.31.0"
+            },
+            "numpy": {
+              "const": "2.4.6"
+            },
+            "av": {
+              "const": "18.1.0"
+            },
+            "tokenizers": {
+              "const": "0.23.2"
+            }
+          }
+        },
+        "ffmpegVersion": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "timestampPolicy": {
+          "const": "source_us_round_half_up_bounded_v1"
+        },
+        "method": {
+          "enum": ["faster_whisper_word_timestamps", "silero_vad_silence_complement"]
+        },
+        "modelId": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "modelRevision": {
+          "type": "string",
+          "pattern": "^(?:[a-f0-9]{40}|[a-f0-9]{64})$"
+        },
+        "modelSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "parameters": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "device",
+                "computeType",
+                "cpuThreads",
+                "beamSize",
+                "temperature",
+                "vadFilter"
+              ],
+              "properties": {
+                "device": {
+                  "const": "cpu"
+                },
+                "computeType": {
+                  "const": "int8"
+                },
+                "cpuThreads": {
+                  "const": 2
+                },
+                "beamSize": {
+                  "const": 5
+                },
+                "temperature": {
+                  "const": 0
+                },
+                "vadFilter": {
+                  "const": false
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "threshold",
+                "neg_threshold",
+                "min_speech_duration_ms",
+                "min_silence_duration_ms",
+                "speech_pad_ms"
+              ],
+              "properties": {
+                "threshold": {
+                  "const": 0.5
+                },
+                "neg_threshold": {
+                  "const": 0.35
+                },
+                "min_speech_duration_ms": {
+                  "const": 250
+                },
+                "min_silence_duration_ms": {
+                  "const": 100
+                },
+                "speech_pad_ms": {
+                  "const": 30
+                }
+              }
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "method": {
+                "const": "faster_whisper_word_timestamps"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "parameters": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "device",
+                  "computeType",
+                  "cpuThreads",
+                  "beamSize",
+                  "temperature",
+                  "vadFilter"
+                ],
+                "properties": {
+                  "device": {
+                    "const": "cpu"
+                  },
+                  "computeType": {
+                    "const": "int8"
+                  },
+                  "cpuThreads": {
+                    "const": 2
+                  },
+                  "beamSize": {
+                    "const": 5
+                  },
+                  "temperature": {
+                    "const": 0
+                  },
+                  "vadFilter": {
+                    "const": false
+                  }
+                }
+              },
+              "modelId": {
+                "const": "Systran/faster-whisper-small"
+              },
+              "modelRevision": {
+                "const": "536b0662742c02347bc0e980a01041f333bce120"
+              },
+              "modelSha256": {
+                "const": "3e305921506d8872816023e4c273e75d2419fb89b24da97b4fe7bce14170d671"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "method": {
+                "const": "silero_vad_silence_complement"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "parameters": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "threshold",
+                  "neg_threshold",
+                  "min_speech_duration_ms",
+                  "min_silence_duration_ms",
+                  "speech_pad_ms"
+                ],
+                "properties": {
+                  "threshold": {
+                    "const": 0.5
+                  },
+                  "neg_threshold": {
+                    "const": 0.35
+                  },
+                  "min_speech_duration_ms": {
+                    "const": 250
+                  },
+                  "min_silence_duration_ms": {
+                    "const": 100
+                  },
+                  "speech_pad_ms": {
+                    "const": 30
+                  }
+                }
+              },
+              "modelId": {
+                "const": "silero_vad_v6.onnx"
+              },
+              "modelRevision": {
+                "const": "4cbf549b8326f60f80f2536d9eefeb450a9abe83365a098031c89719f1be17d2"
+              },
+              "modelSha256": {
+                "const": "4cbf549b8326f60f80f2536d9eefeb450a9abe83365a098031c89719f1be17d2"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "producer_evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "type",
+        "sourceId",
+        "sourceSha256",
+        "datasetVersion",
+        "scope",
+        "annotationIds",
+        "sha256",
+        "sizeBytes",
+        "extension",
+        "objectKey"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{2,79}$"
+        },
+        "type": {
+          "enum": ["scoped_pcm", "inference_raw", "generation_output"]
+        },
+        "sourceId": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{2,79}$"
+        },
+        "sourceSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "datasetVersion": {
+          "type": "string",
+          "pattern": "^evaluation-dataset-v[1-9][0-9]*$"
+        },
+        "scope": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["startUs", "endUs"],
+          "properties": {
+            "startUs": {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]*)$"
+            },
+            "endUs": {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]*)$"
+            }
+          }
+        },
+        "annotationIds": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]{2,79}$"
+          }
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "sizeBytes": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]*$"
+        },
+        "extension": {
+          "enum": ["wav", "json"]
+        },
+        "objectKey": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "scoped_pcm"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "extension": {
+                "const": "wav"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "extension": {
+                "const": "json"
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "datasetVersion": {
+            "const": "evaluation-dataset-v1"
+          }
+        },
+        "required": ["datasetVersion"]
+      },
+      "then": {
+        "required": ["ownerDecision"],
+        "properties": {
+          "sources": {
+            "items": {
+              "if": {
+                "properties": {
+                  "id": {
+                    "enum": ["commons-28956463", "commons-98650286", "commons-82236797"]
+                  }
+                },
+                "required": ["id"]
+              },
+              "then": {
+                "required": ["producerEvidence"],
+                "properties": {
+                  "producerEvidence": {
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "type": "array"
+                  }
+                }
+              },
+              "type": "object"
+            },
+            "type": "array"
+          }
+        }
+      }
+    }
+  ]
+}
