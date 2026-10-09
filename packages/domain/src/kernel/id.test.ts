@@ -7,13 +7,27 @@ const SAMPLE = "018f6b6e-7c3a-7b2a-8d3e-9c0b1a2d3e4f";
 
 test("uuidV7 accepts a canonical version-7 UUID", () => {
   assert.equal(uuidV7(SAMPLE), SAMPLE);
-  assert.equal(uuidV7(SAMPLE.toUpperCase()), SAMPLE);
+  assert.throws(() => uuidV7(SAMPLE.toUpperCase()));
+  assert.throws(() => uuidV7(SAMPLE.replace("a", "A")));
 });
 
 test("uuidV7 rejects other versions and malformed strings", () => {
   assert.throws(() => uuidV7("018f6b6e-7c3a-4b2a-8d3e-9c0b1a2d3e4f"), DomainError);
   assert.throws(() => uuidV7("not-a-uuid"), DomainError);
   assert.throws(() => userId("018f6b6e-7c3a-7b2a-8d3e-9c0b1a2d3e4f".slice(0, -1)), DomainError);
+});
+
+test("uuidV7 rejects non-string inputs without invoking coercion", () => {
+  let coerced = false;
+  const disguised = {
+    toString: () => {
+      coerced = true;
+      return SAMPLE;
+    },
+  };
+  for (const value of [null, undefined, 123, disguised, Object(SAMPLE)])
+    assert.throws(() => uuidV7(value as unknown as string), DomainError);
+  assert.equal(coerced, false);
 });
 
 test("createUuidV7 sets the version and variant bits", () => {
