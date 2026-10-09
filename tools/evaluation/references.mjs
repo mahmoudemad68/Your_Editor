@@ -1,12 +1,13 @@
 import { Buffer } from "node:buffer";
 import { spawnSync } from "node:child_process";
-import { readFileSync, writeFileSync, renameSync, mkdirSync, rmSync } from "node:fs";
+import { readFileSync, renameSync, mkdirSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import process from "node:process";
 import console from "node:console";
-import prettier from "prettier";
+import { writeJson } from "./json.mjs";
+export { writeJson, jsonBytes } from "./json.mjs";
 import {
   loadDataset,
   repositoryRoot,
@@ -14,6 +15,8 @@ import {
   contentSha256,
   objectKey,
   validateDocument,
+  assertDatasetMutable,
+  assertArtifactMutable,
 } from "./validate.mjs";
 import { hashStream } from "./storage.mjs";
 import { createReadStream } from "node:fs";
@@ -22,7 +25,7 @@ export function seconds(us) {
   const n = BigInt(us);
   return `${n / 1000000n}.${String(n % 1000000n).padStart(6, "0")}`;
 }
-function execute(executable, args) {
+export function execute(executable, args) {
   const result = spawnSync(executable, args, {
     encoding: "utf8",
     timeout: 180000,
@@ -92,16 +95,6 @@ export function renderArguments(sourcePath, outputPath, edit, hasAudio) {
     outputPath,
   ];
 }
-export async function jsonBytes(value) {
-  return await prettier.format(JSON.stringify(value), { parser: "json", printWidth: 100 });
-}
-export async function writeJson(path, value) {
-  const bytes = await jsonBytes(value);
-  const temporary = `${path}.${randomUUID()}.tmp`;
-  writeFileSync(temporary, bytes, { flag: "wx" });
-  renameSync(temporary, path);
-  return bytes;
-}
 export async function refreshArtifact(manifest, artifact, data, root = repositoryRoot) {
   const bytes = await writeJson(resolve(root, artifact.metadataPath), data);
   artifact.sha256 = sha256(bytes);
@@ -114,6 +107,7 @@ export async function refreshArtifact(manifest, artifact, data, root = repositor
 }
 export async function renderReference(sourceId, root) {
   const { manifest } = loadDataset();
+  assertDatasetMutable(manifest);
   const source = manifest.sources.find((s) => s.id === sourceId);
   if (!source || !root) throw new Error("Known source ID and --root media-directory required");
   const editArtifact = source.referenceArtifacts.find((a) => a.type === "edit_spec");
@@ -121,10 +115,7 @@ export async function renderReference(sourceId, root) {
   const edit = JSON.parse(readFileSync(resolve(repositoryRoot, editArtifact.metadataPath), "utf8"));
   if (edit.id !== editArtifact.id) throw new Error("Edit ID differs from manifest");
   validateDocument("edit_spec", edit, source, manifest.datasetVersion);
-  if (edit.review.status === "approved")
-    throw new Error(
-      "Approved references are frozen; fork a dataset version before changing/rendering them",
-    );
+  assertArtifactMutable(manifest, edit);
   const sourcePath = resolve(root, `${source.id}.${source.extension}`);
   const identity = await hashStream(createReadStream(sourcePath));
   if (identity.sha256 !== source.sha256 || identity.sizeBytes !== source.sizeBytes)
@@ -210,11 +201,17 @@ export async function reviewArtifact(
   artifactId,
   { decision, reviewerId, notes, attestHuman, root, now = new Date() },
 ) {
-  if (!attestHuman || !reviewerId || !notes || !["approved", "rejected"].includes(decision))
+  if (
+    !attestHuman ||
+    !/^[a-zA-Z0-9][a-zA-Z0-9._-]{2,79}$/.test(reviewerId || "") ||
+    !notes?.trim() ||
+    !["approved", "rejected"].includes(decision)
+  )
     throw new Error(
       "Review requires explicit human attestation, reviewer ID, notes and approved/rejected decision",
     );
   const { manifest } = loadDataset();
+  assertDatasetMutable(manifest);
   const source = manifest.sources.find((s) =>
     s.referenceArtifacts.some((a) => a.id === artifactId),
   );
@@ -222,8 +219,7 @@ export async function reviewArtifact(
   if (!artifact || !["edit_spec", "silence_labels", "word_alignment"].includes(artifact.type))
     throw new Error("Unknown reviewable artifact");
   const doc = JSON.parse(readFileSync(resolve(repositoryRoot, artifact.metadataPath), "utf8"));
-  if (doc.review.status === "approved")
-    throw new Error("Approved artifacts are frozen; fork a dataset version");
+  assertArtifactMutable(manifest, doc);
   if (doc.id !== artifact.id) throw new Error("Annotation/edit ID differs from manifest");
   if (doc.createdBy !== "human")
     throw new Error(
@@ -236,6 +232,8 @@ export async function reviewArtifact(
       (artifact.type === "word_alignment" && !doc.words.length))
   )
     throw new Error("Empty annotation templates cannot be approved as labelled clips");
+  if (decision === "approved" && doc.scope && doc.scope.selection !== "owner_confirmed")
+    throw new Error("Owner must confirm or change the annotation scope before approval");
   const evidence = {
     reviewerId,
     reviewerRole: "project_owner",

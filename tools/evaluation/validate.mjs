@@ -1,5 +1,5 @@
 import { createRequire } from "node:module";
-import { readFileSync, realpathSync, readdirSync } from "node:fs";
+import { readFileSync, realpathSync, readdirSync, existsSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { resolve, dirname, sep } from "node:path";
 import { fileURLToPath, URL } from "node:url";
@@ -27,10 +27,9 @@ const metricValidator = ajv.compile(
   ),
 );
 const validators = Object.fromEntries(
-  ["edit_spec", "silence_labels", "word_alignment", "render_receipt"].map((type) => [
-    type,
-    ajv.compile({ $ref: `${schema.$id}#/$defs/${type}` }),
-  ]),
+  ["edit_spec", "silence_labels", "word_alignment", "render_receipt", "storage_evidence"].map(
+    (type) => [type, ajv.compile({ $ref: `${schema.$id}#/$defs/${type}` })],
+  ),
 );
 export const categories = [
   "podcast",
@@ -90,12 +89,13 @@ function checkSchema(validate, value, label, errors) {
 function unique(values, label, errors) {
   if (new Set(values).size !== values.length) errors.push(`Duplicate ${label}`);
 }
-function intervals(entries, duration, start, end, label, errors) {
+function intervals(entries, duration, start, end, label, errors, minimum = 0n) {
   let previousEnd = 0n;
   for (const entry of entries) {
     const a = BigInt(entry[start]),
       b = BigInt(entry[end]);
-    if (a >= b || b > duration) errors.push(`${label}: timestamp outside duration or empty range`);
+    if (a < minimum || a >= b || b > duration)
+      errors.push(`${label}: timestamp outside duration or empty range`);
     if (a < previousEnd) errors.push(`${label}: overlapping or out-of-order ranges`);
     previousEnd = b;
   }
@@ -120,15 +120,85 @@ export function validateDocument(type, doc, source, version) {
       output += BigInt(segment.sourceEndUs) - BigInt(segment.sourceStartUs);
     }
   }
-  if (type === "silence_labels")
-    intervals(doc.intervals, duration, "startUs", "endUs", type, errors);
-  if (type === "word_alignment") {
-    intervals(doc.words, duration, "startUs", "endUs", type, errors);
-    if (doc.language !== source.language) errors.push("Annotation language differs");
+  if (type === "silence_labels" || type === "word_alignment") {
+    const start = BigInt(doc.scope.startUs),
+      end = BigInt(doc.scope.endUs);
+    if (start >= end || end > duration) errors.push("Scope outside source duration or empty");
+    const labels = type === "silence_labels" ? doc.intervals : doc.words;
+    intervals(labels, end, "startUs", "endUs", `${type} scope`, errors, start);
+    if (type === "word_alignment" && doc.language !== source.language)
+      errors.push("Annotation language differs");
+    if (doc.review.status === "approved") {
+      if (!labels.length) errors.push("Approved annotation must contain nonempty labels");
+      if (doc.scope.selection !== "owner_confirmed")
+        errors.push("Approved scope requires Owner confirmation");
+    }
   }
   if (errors.length) throw new Error(errors.join("; "));
 }
-export function validateDataset(manifest, registry, documents = new Map()) {
+// The frozen identity covers media identities, annotation bytes, metrics and storage target.
+// Release bookkeeping is excluded so freezing does not change the identity being frozen.
+export function datasetSha256(manifest, registry) {
+  const { release: _release, ...inventory } = manifest;
+  return contentSha256({ inventory, registry });
+}
+export function assertDatasetMutable(manifest) {
+  if (manifest.release.status !== "unreleased")
+    throw new Error("Published dataset is frozen; fork a later dataset version before changes");
+}
+export function assertArtifactMutable(manifest, document) {
+  assertDatasetMutable(manifest);
+  if (document.review.status === "approved")
+    throw new Error(
+      "Preserve the approval in git, then explicitly reset review to awaiting_human_review before revising this unreleased artifact",
+    );
+}
+export function durableStorageVerified(manifest, registry, evidence) {
+  const target = manifest.storage.durableTarget;
+  if (!target || !evidence || !validators.storage_evidence(evidence)) return false;
+  try {
+    const endpoint = new URL(target.endpoint);
+    if (
+      endpoint.protocol !== "https:" ||
+      endpoint.username ||
+      endpoint.password ||
+      endpoint.search ||
+      endpoint.hash ||
+      ["localhost", "127.0.0.1", "[::1]"].includes(endpoint.hostname) ||
+      Number.isNaN(Date.parse(target.approvedAt))
+    )
+      return false;
+    if (
+      evidence.datasetVersion !== manifest.datasetVersion ||
+      evidence.datasetSha256 !== datasetSha256(manifest, registry) ||
+      evidence.endpoint !== endpoint.toString() ||
+      evidence.bucket !== manifest.storage.bucket ||
+      Number.isNaN(Date.parse(evidence.syncCompletedAt)) ||
+      Number.isNaN(Date.parse(evidence.deepVerifiedAt)) ||
+      Date.parse(evidence.syncCompletedAt) > Date.parse(evidence.deepVerifiedAt)
+    )
+      return false;
+    const items = manifest.sources.flatMap((source) => [source, ...source.referenceArtifacts]);
+    if (
+      items.length !== evidence.objects.length ||
+      new Set(evidence.objects.map((item) => item.id)).size !== items.length
+    )
+      return false;
+    return items.every((item) =>
+      evidence.objects.some(
+        (verified) =>
+          verified.id === item.id &&
+          verified.objectKey === item.objectKey &&
+          verified.sha256 === item.sha256 &&
+          verified.sizeBytes === item.sizeBytes &&
+          verified.versionId !== "null",
+      ),
+    );
+  } catch {
+    return false;
+  }
+}
+export function validateDataset(manifest, registry, documents = new Map(), storageEvidence = null) {
   const errors = [];
   const counts = {
     LICENSED_SOURCE_COUNT: 0,
@@ -140,7 +210,14 @@ export function validateDataset(manifest, registry, documents = new Map()) {
   const manifestOk = checkSchema(manifestValidator, manifest, "manifest", errors);
   const registryOk = checkSchema(metricValidator, registry, "metrics", errors);
   if (!manifestOk || !registryOk)
-    return { DATASET_STRUCTURALLY_VALID: false, US110_GOLD_COMPLETE: false, ...counts, errors };
+    return {
+      DATASET_STRUCTURALLY_VALID: false,
+      US110_GOLD_COMPLETE: false,
+      HUMAN_GOLD_COMPLETE: false,
+      GOLD_STORAGE_DURABLE: false,
+      ...counts,
+      errors,
+    };
   if (manifest.datasetVersion !== registry.datasetVersion)
     errors.push("Metric registry dataset version differs");
   for (const metric of registry.metrics)
@@ -186,7 +263,6 @@ export function validateDataset(manifest, registry, documents = new Map()) {
     if (!manifest.sources.some((s) => s.category === category))
       errors.push(`Missing category ${category}`);
   for (const source of manifest.sources) {
-    const duration = BigInt(source.durationUs);
     if (source.objectKey !== objectKey(manifest.datasetVersion, "sources", source))
       errors.push(`${source.id}: unsafe/noncanonical object key`);
     for (const uri of [
@@ -207,8 +283,10 @@ export function validateDataset(manifest, registry, documents = new Map()) {
       errors,
     );
     const approved = new Set();
+    const usable = new Set();
     const refs = new Map();
     for (const artifact of source.referenceArtifacts) {
+      const errorStart = errors.length;
       if (artifact.sourceId !== source.id || artifact.datasetVersion !== manifest.datasetVersion)
         errors.push(`${artifact.id}: invalid source/reference relation`);
       const group =
@@ -217,7 +295,10 @@ export function validateDataset(manifest, registry, documents = new Map()) {
           : "references";
       if (artifact.objectKey !== objectKey(manifest.datasetVersion, group, artifact))
         errors.push(`${artifact.id}: unsafe/noncanonical object key`);
-      if (artifact.type === "reference_reel") continue;
+      if (artifact.type === "reference_reel") {
+        if (errors.length === errorStart) usable.add(artifact.id);
+        continue;
+      }
       const entry = documents.get(artifact.metadataPath);
       if (!entry) {
         errors.push(`${artifact.id}: metadata missing`);
@@ -235,21 +316,10 @@ export function validateDataset(manifest, registry, documents = new Map()) {
         doc.datasetVersion !== manifest.datasetVersion
       )
         errors.push(`${artifact.id}: metadata identity differs`);
-      if (artifact.type === "edit_spec") {
-        intervals(doc.segments, duration, "sourceStartUs", "sourceEndUs", artifact.id, errors);
-        let output = 0n;
-        for (const segment of doc.segments) {
-          if (BigInt(segment.outputStartUs) !== output)
-            errors.push(`${artifact.id}: output segments must be contiguous from zero`);
-          output += BigInt(segment.sourceEndUs) - BigInt(segment.sourceStartUs);
-        }
-      }
-      if (artifact.type === "silence_labels")
-        intervals(doc.intervals, duration, "startUs", "endUs", artifact.id, errors);
-      if (artifact.type === "word_alignment") {
-        intervals(doc.words, duration, "startUs", "endUs", artifact.id, errors);
-        if (doc.language !== source.language)
-          errors.push(`${artifact.id}: annotation language differs`);
+      try {
+        validateDocument(artifact.type, doc, source, manifest.datasetVersion);
+      } catch (error) {
+        errors.push(`${artifact.id}: ${error.message}`);
       }
       if (doc.review?.evidence) {
         const evidence = doc.review.evidence;
@@ -261,14 +331,20 @@ export function validateDataset(manifest, registry, documents = new Map()) {
           errors.push(`${artifact.id}: review evidence differs from content/decision`);
         if (doc.createdBy !== "human")
           errors.push(`${artifact.id}: machine-only content cannot be human gold`);
-        if (doc.review.status === "approved" && doc.createdBy === "human")
+        if (
+          doc.review.status === "approved" &&
+          doc.createdBy === "human" &&
+          errors.length === errorStart
+        )
           approved.add(artifact.type);
       }
+      if (errors.length === errorStart) usable.add(artifact.id);
     }
     const edit = refs.get("edit_spec"),
       receipt = refs.get("render_receipt");
     const reels = source.referenceArtifacts.filter((a) => a.type === "reference_reel");
     if (edit || receipt || reels.length) {
+      const renderErrorStart = errors.length;
       if (!edit || !receipt || reels.length !== 1)
         errors.push(`${source.id}: reference requires one edit, receipt and reel`);
       else {
@@ -290,7 +366,13 @@ export function validateDataset(manifest, registry, documents = new Map()) {
         if (approved.has("edit_spec")) {
           if (edit.review.evidence.renderSha256 !== receipt.artifactSha256)
             errors.push(`${source.id}: reviewed render differs`);
-          else counts.APPROVED_HUMAN_REFERENCE_COUNT++;
+          else if (
+            errors.length === renderErrorStart &&
+            usable.has(edit.id) &&
+            usable.has(receipt.id) &&
+            usable.has(reels[0].id)
+          )
+            counts.APPROVED_HUMAN_REFERENCE_COUNT++;
         }
       }
     }
@@ -301,18 +383,30 @@ export function validateDataset(manifest, registry, documents = new Map()) {
   }
   counts.LICENSED_SOURCE_COUNT = manifest.sources.length;
   counts.CATEGORY_COUNT = new Set(manifest.sources.map((s) => s.category)).size;
+  const durable = durableStorageVerified(manifest, registry, storageEvidence);
+  if (
+    manifest.release.status === "published" &&
+    manifest.release.frozenDatasetSha256 !== datasetSha256(manifest, registry)
+  )
+    errors.push("Published dataset identity changed; fork a later version");
+  const quotas =
+    counts.APPROVED_HUMAN_REFERENCE_COUNT >= 6 &&
+    counts.APPROVED_SILENCE_LABEL_COUNT >= 3 &&
+    counts.APPROVED_WORD_ALIGNMENT_COUNT >= 3;
+  if (manifest.release.status === "published" && (!durable || !quotas))
+    errors.push("Published dataset requires complete human gold and verified durable storage");
   const valid = errors.length === 0;
   return {
+    DATASET_SHA256: datasetSha256(manifest, registry),
     DATASET_STRUCTURALLY_VALID: valid,
-    US110_GOLD_COMPLETE:
-      valid &&
-      counts.APPROVED_HUMAN_REFERENCE_COUNT >= 6 &&
-      counts.APPROVED_SILENCE_LABEL_COUNT >= 3 &&
-      counts.APPROVED_WORD_ALIGNMENT_COUNT >= 3,
+    HUMAN_GOLD_COMPLETE: valid && quotas,
+    GOLD_STORAGE_DURABLE: durable,
+    US110_GOLD_COMPLETE: valid && quotas && durable,
     ...counts,
     errors,
   };
 }
+
 export function loadDataset(root = repositoryRoot) {
   const manifest = JSON.parse(readFileSync(resolve(root, "docs/evaluation/manifest.json"), "utf8"));
   const registry = JSON.parse(readFileSync(resolve(root, "docs/evaluation/metrics.json"), "utf8"));
@@ -332,14 +426,18 @@ export function loadDataset(root = repositoryRoot) {
       sizeBytes: String(bytes.length),
     });
   }
-  return { manifest, registry, documents };
+  const evidencePath = resolve(root, "docs/evaluation/storage-verification.json");
+  const storageEvidence = existsSync(evidencePath)
+    ? JSON.parse(readFileSync(evidencePath, "utf8"))
+    : null;
+  return { manifest, registry, documents, storageEvidence };
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
     if (process.argv.slice(2).some((arg) => arg !== "--require-gold"))
       throw new Error("Unknown validation flag");
-    const { manifest, registry, documents } = loadDataset();
-    const report = validateDataset(manifest, registry, documents);
+    const { manifest, registry, documents, storageEvidence } = loadDataset();
+    const report = validateDataset(manifest, registry, documents, storageEvidence);
     if (report.DATASET_STRUCTURALLY_VALID) await (await import("./docs.mjs")).generateDocs(true);
     console.log(JSON.stringify(report, null, 2));
     process.exitCode =

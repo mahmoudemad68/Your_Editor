@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import process from "node:process";
@@ -14,8 +14,8 @@ import { refreshArtifact, writeJson } from "./references.mjs";
 import { generateDocs } from "./docs.mjs";
 
 export async function forkVersion(version, root = repositoryRoot) {
-  const { manifest, registry, documents } = loadDataset(root);
-  const report = validateDataset(manifest, registry, documents);
+  const { manifest, registry, documents, storageEvidence } = loadDataset(root);
+  const report = validateDataset(manifest, registry, documents, storageEvidence);
   if (!report.DATASET_STRUCTURALLY_VALID)
     throw new Error("Validate the current dataset before forking");
   if (
@@ -37,6 +37,7 @@ export async function forkVersion(version, root = repositoryRoot) {
     "METRICS.md",
     "DATASET_CARD.md",
     "README.md",
+    "SECURITY_BASELINE.md",
     "artifacts",
   ])
     cpSync(resolve(root, "docs/evaluation", name), resolve(archive, name), {
@@ -44,6 +45,15 @@ export async function forkVersion(version, root = repositoryRoot) {
       errorOnExist: true,
       force: false,
     });
+  const evidencePath = resolve(root, "docs/evaluation/storage-verification.json");
+  if (existsSync(evidencePath)) {
+    cpSync(evidencePath, resolve(archive, "storage-verification.json"), {
+      errorOnExist: true,
+      force: false,
+    });
+    rmSync(evidencePath);
+  }
+  manifest.release = { status: "unreleased" };
   manifest.datasetVersion = version;
   manifest.storage.prefix = `evaluation/${version}/`;
   registry.datasetVersion = version;

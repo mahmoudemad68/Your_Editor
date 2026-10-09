@@ -3,7 +3,7 @@
   "$id": "https://your-editor.example/schemas/evaluation-manifest.schema.json",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "datasetVersion", "storage", "sources"],
+  "required": ["schemaVersion", "datasetVersion", "storage", "sources", "release"],
   "properties": {
     "schemaVersion": {
       "const": "1.0"
@@ -28,6 +28,30 @@
         },
         "versioningRequired": {
           "const": true
+        },
+        "durableTarget": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["endpoint", "approvedBy", "approvedAt", "notes"],
+          "properties": {
+            "endpoint": {
+              "type": "string",
+              "pattern": "^https://[^?#]+$"
+            },
+            "approvedBy": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{2,79}$"
+            },
+            "approvedAt": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+            },
+            "notes": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S"
+            }
+          }
         }
       }
     },
@@ -37,6 +61,39 @@
       "items": {
         "$ref": "#/$defs/source"
       }
+    },
+    "release": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {
+        "status": {
+          "enum": ["unreleased", "published"]
+        },
+        "frozenDatasetSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "published"
+              }
+            }
+          },
+          "then": {
+            "required": ["frozenDatasetSha256"]
+          },
+          "else": {
+            "not": {
+              "required": ["frozenDatasetSha256"]
+            }
+          }
+        }
+      ]
     }
   },
   "$defs": {
@@ -63,8 +120,7 @@
           "properties": {
             "reviewerId": {
               "type": "string",
-              "minLength": 1,
-              "pattern": "\\S"
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{2,79}$"
             },
             "reviewerRole": {
               "const": "project_owner"
@@ -481,7 +537,8 @@
         "createdBy",
         "review",
         "intervals",
-        "annotationNotes"
+        "annotationNotes",
+        "scope"
       ],
       "properties": {
         "schemaVersion": {
@@ -531,6 +588,9 @@
           "type": "string",
           "minLength": 1,
           "pattern": "\\S"
+        },
+        "scope": {
+          "$ref": "#/$defs/scope"
         }
       }
     },
@@ -547,7 +607,8 @@
         "review",
         "language",
         "words",
-        "annotationNotes"
+        "annotationNotes",
+        "scope"
       ],
       "properties": {
         "schemaVersion": {
@@ -622,6 +683,9 @@
           "type": "string",
           "minLength": 1,
           "pattern": "\\S"
+        },
+        "scope": {
+          "$ref": "#/$defs/scope"
         }
       }
     },
@@ -693,6 +757,107 @@
             },
             "recipeVersion": {
               "const": "eval-reference-h264-v1"
+            }
+          }
+        }
+      }
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["startUs", "endUs", "selection"],
+      "properties": {
+        "startUs": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)$"
+        },
+        "endUs": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)$"
+        },
+        "selection": {
+          "enum": ["machine_candidate", "owner_confirmed"]
+        }
+      }
+    },
+    "storage_evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "datasetVersion",
+        "datasetSha256",
+        "endpoint",
+        "bucket",
+        "versioning",
+        "syncCompletedAt",
+        "deepVerifiedAt",
+        "objects"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "1.0"
+        },
+        "datasetVersion": {
+          "type": "string",
+          "pattern": "^evaluation-dataset-v[1-9][0-9]*$"
+        },
+        "datasetSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "endpoint": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "bucket": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "versioning": {
+          "const": "Enabled"
+        },
+        "syncCompletedAt": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+        },
+        "deepVerifiedAt": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+        },
+        "objects": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "objectKey", "sha256", "sizeBytes", "versionId"],
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S"
+              },
+              "objectKey": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S"
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "sizeBytes": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)$"
+              },
+              "versionId": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S"
+              }
             }
           }
         }

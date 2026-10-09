@@ -7,11 +7,18 @@ import {
 } from "@aws-sdk/client-s3";
 import { createReadStream, statSync } from "node:fs";
 import { createHash } from "node:crypto";
+import { writeJson } from "./json.mjs";
 import { resolve } from "node:path";
 import { fileURLToPath, URL } from "node:url";
 import process from "node:process";
 import console from "node:console";
-import { loadDataset, validateDataset, repositoryRoot } from "./validate.mjs";
+import {
+  loadDataset,
+  validateDataset,
+  repositoryRoot,
+  datasetSha256,
+  durableStorageVerified,
+} from "./validate.mjs";
 
 export function storageConfig(env, bucket) {
   for (const key of [
@@ -100,13 +107,25 @@ export async function syncItem(client, bucket, item, path) {
   return "UPLOADED";
 }
 export async function runStorage(command, { root, dryRun = false, env = process.env } = {}) {
-  const { manifest, registry, documents } = loadDataset();
-  const report = validateDataset(manifest, registry, documents);
+  const { manifest, registry, documents, storageEvidence } = loadDataset();
+  const report = validateDataset(manifest, registry, documents, storageEvidence);
   if (!report.DATASET_STRUCTURALLY_VALID) throw new Error(report.errors.join("; "));
   const config = storageConfig(env, manifest.storage.bucket);
   const items = manifest.sources.flatMap((source) => [source, ...source.referenceArtifacts]);
-  if (command !== "sync" && command !== "deep") throw new Error("Expected sync or deep");
-  if (command === "sync" && !root) throw new Error("sync requires --root media-directory");
+  if (!["sync", "deep", "certify"].includes(command))
+    throw new Error("Expected sync, deep or certify");
+  if (command === "certify") {
+    const target = manifest.storage.durableTarget;
+    if (
+      !target ||
+      new URL(target.endpoint).toString() !== config.endpoint ||
+      new URL(config.endpoint).protocol !== "https:"
+    )
+      throw new Error(
+        "certify requires an Owner-approved durable target matching configured HTTPS endpoint",
+      );
+  }
+  if (command !== "deep" && !root) throw new Error("sync requires --root media-directory");
   const files = items.map((item) => ({
     item,
     path: item.metadataPath
@@ -115,7 +134,7 @@ export async function runStorage(command, { root, dryRun = false, env = process.
   }));
   if (dryRun) {
     for (const { item, path } of files) {
-      if (command === "sync") verifyIdentity(await hashStream(createReadStream(path)), item);
+      if (command !== "deep") verifyIdentity(await hashStream(createReadStream(path)), item);
       console.log(`${command.toUpperCase()} ${item.id} ${item.objectKey}`);
     }
     return { inspected: items.length, uploaded: 0, reused: 0 };
@@ -140,6 +159,36 @@ export async function runStorage(command, { root, dryRun = false, env = process.
       if (action === "REUSED") result.reused++;
       console.log(`${action} ${item.id}`);
     }
+    if (command === "certify") {
+      const syncCompletedAt = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+      const objects = [];
+      // A distinct full GET pass after sync verifies exact bytes and native object versions.
+      for (const item of items)
+        objects.push({
+          id: item.id,
+          objectKey: item.objectKey,
+          sha256: item.sha256,
+          sizeBytes: item.sizeBytes,
+          versionId: await verifyRemote(client, manifest.storage.bucket, item),
+        });
+      const evidence = {
+        schemaVersion: "1.0",
+        datasetVersion: manifest.datasetVersion,
+        datasetSha256: datasetSha256(manifest, registry),
+        endpoint: config.endpoint,
+        bucket: manifest.storage.bucket,
+        versioning: "Enabled",
+        syncCompletedAt,
+        deepVerifiedAt: new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),
+        objects,
+      };
+      if (!durableStorageVerified(manifest, registry, evidence))
+        throw new Error("Durable target approval or verification evidence invalid");
+      await writeJson(
+        resolve(repositoryRoot, "docs/evaluation/storage-verification.json"),
+        evidence,
+      );
+    }
     return result;
   } finally {
     client.destroy();
@@ -156,7 +205,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
         ? args.some((a) => a !== "--dry-run")
         : !args[index + 1] || allowed.some((a) => a !== "--dry-run")
     )
-      throw new Error("Usage: storage.mjs sync --root DIR [--dry-run] | deep [--dry-run]");
+      throw new Error("Usage: storage.mjs sync|certify --root DIR [--dry-run] | deep [--dry-run]");
     console.log(
       JSON.stringify(
         await runStorage(command, {

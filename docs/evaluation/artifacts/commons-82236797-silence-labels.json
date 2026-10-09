@@ -4,10 +4,9 @@
   "sourceId": "commons-82236797",
   "sourceSha256": "5f3eff8e19d9ea508f875082f177bd7dfdad70f56c03e0a33b6c8e5a7a2c0426",
   "createdBy": "machine_candidate",
-  "review": {
-    "status": "awaiting_human_review"
-  },
+  "review": { "status": "awaiting_human_review" },
   "intervals": [],
-  "annotationNotes": "Empty template awaiting actual human-labelled silence ranges; not completed labels and not model predictions.",
-  "id": "commons-82236797-silence-labels"
+  "annotationNotes": "Empty template. Provisional 30–90s viewing window only, AWAITING_OWNER_SELECTION: Owner must listen, confirm/change the scope, and hand label it. No human selection or annotation has occurred.",
+  "id": "commons-82236797-silence-labels",
+  "scope": { "startUs": "30000000", "endUs": "90000000", "selection": "machine_candidate" }
 }

@@ -11,12 +11,12 @@ There are 12 distinct downloaded source representations, two in each category: p
 talking head, interview, gaming and technical tutorial. Six first-30-second excerpts are rendered
 viewing candidates, all `awaiting_human_review`. Three silence templates and three word-alignment
 templates are empty and awaiting hand labelling; neither templates nor candidates satisfy T2.
-Validation reports structural validity separately from the unchanged six/three/three gold quotas.
+Validation reports structural validity, human-gold quotas and durable-storage completion separately. The six/three/three quotas are unchanged.
 
 ## Scope and languages
 
 Six sources are English, three Arabic and three `zxx` (no linguistic content). The word/silence
-review subset includes two English sources and one Arabic interview. Language metadata follows the
+review subset includes two English sources and one Arabic interview. Their annotation templates have explicit provisional 30–90s machine-candidate scopes (60 seconds each), awaiting Owner selection. Full source durations are distinct from gold clip duration; no whole-source labelling is required. Language metadata follows the
 published source descriptions/context; speech quality and full language coverage still need Owner
 review. Arabic Unicode is preserved in source titles and future gold words.
 
@@ -60,7 +60,7 @@ an untouched machine suggestion. Approval evidence records the Owner identifier,
 decision, notes, explicit human attestation, content fingerprint and reviewed reel hash.
 
 Gold word/silence artifacts require listening and hand timing by a human. Empty templates, model
-predictions and unapproved artifacts never count. Silence uses sorted, nonoverlapping half-open
+predictions and unapproved artifacts never count. Each annotation declares a bounded scope in SOURCE coordinates, with every label inside that window. The Owner must confirm/change the provisional scope before approval; scope and selection are included in the reviewed fingerprint. WER/sync use only approved word scope; silence F1 uses only approved silence scope. Prediction inclusion/intersection rules are explicit in METRICS.md. Silence uses sorted, nonoverlapping half-open
 intervals; words use ordered, nonoverlapping spans. The v1 word contract is intended for a single
 sequential speech stream; overlapping dialogue needs a documented future schema extension rather
 than silently discarding speakers. Preserve case, punctuation and Arabic text in raw gold; scorer
@@ -83,7 +83,7 @@ fields. Small edit/annotation/receipt JSON is reviewable in git and mirrored to 
 Implementation evidence uses a private, versioning-enabled SeaweedFS bucket on workspace loopback,
 backed by the Docker named volume `us110-evaluation-data`. It survives container restarts/removal but
 is **not a remotely hosted or team-accessible archive** and will not survive destruction of this
-workspace/volume. Owner-selected durable team storage and migration are still required. No endpoint
+workspace/volume. Owner-selected durable team storage and migration are still required. `GOLD_STORAGE_DURABLE` is currently false. Human quota completion alone cannot make release `US110_GOLD_COMPLETE` true; exact sync/deep verification, enabled native versioning and a current receipt for an actually Owner-approved durable target are required before Independent QA. No endpoint
 or credentials are assumed by offline CI. Acquisition, sync and deep verification are documented in
 [README.md](README.md); sync requires matching configuration and existing enabled bucket versioning.
 
@@ -115,10 +115,16 @@ Do not train production models on this collection without a separate purpose/lic
 
 ## Updates and release policy
 
-Before approving changes to this already-uploaded candidate snapshot, fork a new dataset version;
-never replace a historical release's meaning. The version tool archives the current metadata,
-changes prefix/version, clears approvals and updates dependent fingerprints. Bucket objects are
-immutable, content-addressed and versioned. Rerender changed human edits, review exact hashes,
-validate strictly, sync, deep-verify, and publish a version/tag only when genuine quotas pass.
-Historical source/reel objects are never deleted by these tools. Retain the archived manifest and git
-commit alongside reports so prior measurements remain interpretable.
+The uploaded v1 is still **unreleased**. First genuine human edits, scoped labels and reviews may
+complete in v1 without a version fork. Uploading machine candidates does not freeze semantic meaning.
+Lifecycle: candidates → human decisions/labels → approvals → strict validation → durable storage
+sync/deep verification → Independent QA → merge/release. No human work, release or freeze has occurred.
+Approved gold cannot be silently revised. Within unreleased v1, the Owner may preserve the prior
+approval in git, explicitly invalidate current review, revise and rerender, then genuinely review
+again without a version fork. Changed or reopened artifacts do not count until new approval; other
+unapproved v1 artifacts can still receive their first gold. At release, manifest `release.status=published` and a frozen canonical
+dataset fingerprint protect the approved snapshot. Published render/review and semantic mutation
+fail closed. Only later changes to frozen meaning require a later dataset version. The version tool
+archives metadata/evidence, changes prefix/version, clears reviews/verification and leaves the new
+snapshot unreleased. Bucket objects are immutable, content-addressed and versioned. Historical
+source/reel objects are never deleted. Retain archived manifest and git commit with evaluation reports.

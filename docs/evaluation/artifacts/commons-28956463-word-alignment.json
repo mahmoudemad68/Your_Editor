@@ -4,11 +4,10 @@
   "sourceId": "commons-28956463",
   "sourceSha256": "843d6c653030056f26018be17b933fd6c739ef59ce0e128152f385bf2b38d1f6",
   "createdBy": "machine_candidate",
-  "review": {
-    "status": "awaiting_human_review"
-  },
+  "review": { "status": "awaiting_human_review" },
   "language": "en",
   "words": [],
-  "annotationNotes": "Empty template awaiting actual human word-by-word transcription and timing; preserve original Unicode/case/punctuation. No invented transcript.",
-  "id": "commons-28956463-word-alignment"
+  "annotationNotes": "Empty template. Provisional 30–90s viewing window only, AWAITING_OWNER_SELECTION: Owner must listen, confirm/change the scope, and hand label it. No human selection or annotation has occurred.",
+  "id": "commons-28956463-word-alignment",
+  "scope": { "startUs": "30000000", "endUs": "90000000", "selection": "machine_candidate" }
 }

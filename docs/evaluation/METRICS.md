@@ -18,13 +18,13 @@ Schema 1.0; dataset evaluation-dataset-v1. Machine outputs use ratios, milliseco
 
 **Edge cases:** N=0 and zero hypothesis tokens: null (no reference); N=0 and nonempty hypothesis: null plus insertion count. Never divide by zero or report a perfect score for an unlabelled clip.
 
-**Normalization / protocol:** NFC Unicode, then Unicode casefold; remove Arabic U+064B..U+065F, U+0670 and tatweel U+0640; no Arabic letter folding (alef/hamza/ya/ta marbuta remain distinct). Replace every Unicode P* punctuation character with a space. Map Unicode Nd decimal digits to ASCII digits; never expand number words or regroup numbers. Collapse Unicode whitespace and split on spaces. Preserve original gold text unchanged. Pin the scorer Unicode database/version in each report.
+**Normalization / protocol:** NFC Unicode, then Unicode casefold; remove Arabic U+064B..U+065F, U+0670 and tatweel U+0640; no Arabic letter folding (alef/hamza/ya/ta marbuta remain distinct). Replace every Unicode P* punctuation character with a space. Map Unicode Nd decimal digits to ASCII digits; never expand number words or regroup numbers. Collapse Unicode whitespace and split on spaces. Preserve original gold text unchanged. Pin the scorer Unicode database/version in each report. Evaluate only the approved word-gold scope. Include predicted words whose midpoint lies in [scope.startUs,scope.endUs); clip included start/end bounds to the scope before WER alignment and sync scoring. Words outside the window never become insertions. Raw text without timed scope attribution is insufficient for a scoped score. tools/evaluation/scoped-inputs.mjs implements this input rule.
 
 **First reporting story:** US-201
 
 **Roadmap rationale:** US-201-T3 compares WER on hand-aligned fixtures; AC1 requires English <=12% and records Arabic. CP2 repeats this gate.
 
-**Required inputs:** approved word alignment; predicted caption text; language.
+**Required inputs:** approved scoped word alignment; predicted words with source-coordinate timestamps; language.
 
 ## Caption synchronization error (`caption_sync_error`)
 
@@ -40,7 +40,7 @@ Schema 1.0; dataset evaluation-dataset-v1. Machine outputs use ratios, milliseco
 
 **Edge cases:** No matched words: null, coverage=0; N=0: null coverage. Substitutions/deletions are not treated as accurate timestamps. Report coverage alongside the CP2 <=100ms gate so omissions cannot improve a score silently.
 
-**Normalization / protocol:** Use the caption WER text normalization only for lexical matching; raw integer microsecond start/end values are never rounded before subtraction.
+**Normalization / protocol:** Use the caption WER text normalization only for lexical matching; raw integer microsecond start/end values are never rounded before subtraction. Use exactly the same approved word scope, midpoint inclusion and clipped predicted bounds as WER. All compared timestamps remain in SOURCE coordinates; never rebase just one side.
 
 **First reporting story:** US-201
 
@@ -62,13 +62,13 @@ Schema 1.0; dataset evaluation-dataset-v1. Machine outputs use ratios, milliseco
 
 **Edge cases:** Use half-open intervals [start,end), merged unions, no tolerance collar. Both P and G empty: precision=recall=F1=1 with no_silence=true; empty P/nonempty G: precision=1, recall=0, F1=0; nonempty P/empty G: precision=0, recall=1, F1=0. Empty speech denominator: null. Never label detector output as actual removal.
 
-**Normalization / protocol:** Union sorted intervals in source time; integer microseconds for all overlap arithmetic. Do not expand gold boundaries or forgive speech removal.
+**Normalization / protocol:** Union sorted intervals in source time; integer microseconds for all overlap arithmetic. Do not expand gold boundaries or forgive speech removal. Intersect P with the approved silence-gold scope before overlap scoring. Gold lies wholly inside that scope; speech is the scope minus G, not the entire source minus G. tools/evaluation/scoped-inputs.mjs applies the intersection. CP2 F1 >=0.9 is unchanged.
 
 **First reporting story:** US-202
 
 **Roadmap rationale:** US-202-T3 benchmarks precision/recall against labelled silence; CP2 requires silence detection F1 >=0.9. US-204 consumes intervals; US-223 later reports the same primitive on actual cuts.
 
-**Required inputs:** approved silence intervals G; predicted or actually removed intervals P; source duration.
+**Required inputs:** approved scoped silence intervals G; predicted or actually removed intervals P; approved scope duration.
 
 ## Content retention (`content_retention`)
 

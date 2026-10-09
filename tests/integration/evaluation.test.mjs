@@ -13,10 +13,15 @@ import {
   objectKey,
   sha256,
   repositoryRoot,
+  datasetSha256,
+  assertDatasetMutable,
+  assertArtifactMutable,
 } from "../../tools/evaluation/validate.mjs";
 import { storageConfig, syncItem, verifyRemote } from "../../tools/evaluation/storage.mjs";
 import { renderArguments, seconds } from "../../tools/evaluation/references.mjs";
 import { forkVersion } from "../../tools/evaluation/version.mjs";
+import { scopedMetricInputs } from "../../tools/evaluation/scoped-inputs.mjs";
+import { annotationEdit } from "../../tools/evaluation/annotation-clip.mjs";
 import { metricsMarkdown } from "../../tools/evaluation/docs.mjs";
 
 const clone = (value) => JSON.parse(JSON.stringify(value));
@@ -29,7 +34,7 @@ function fixture() {
   };
 }
 function report(data) {
-  return validateDataset(data.manifest, data.registry, data.documents);
+  return validateDataset(data.manifest, data.registry, data.documents, data.storageEvidence);
 }
 function entry(data, type, index = 0) {
   const source = data.manifest.sources.filter((s) =>
@@ -56,6 +61,7 @@ function reindex(data) {
 function approve(doc, renderSha256) {
   // Synthetic test evidence ONLY; never applied to the real dataset.
   doc.createdBy = "human";
+  if (doc.scope) doc.scope.selection = "owner_confirmed";
   doc.review = {
     status: "approved",
     evidence: {
@@ -83,15 +89,17 @@ function goldFixture() {
     for (const artifact of source.referenceArtifacts) {
       const doc = data.documents.get(artifact.metadataPath)?.data;
       if (artifact.type === "silence_labels") {
-        doc.intervals = [{ startUs: "0", endUs: "1000000" }];
+        doc.intervals = [
+          { startUs: doc.scope.startUs, endUs: String(BigInt(doc.scope.startUs) + 1000000n) },
+        ];
         approve(doc);
       }
       if (artifact.type === "word_alignment") {
         doc.words = [
           {
             text: source.language === "ar" ? "مرحباً،" : "Hello,",
-            startUs: "1000000",
-            endUs: "2000000",
+            startUs: String(BigInt(doc.scope.startUs) + 1000000n),
+            endUs: String(BigInt(doc.scope.startUs) + 2000000n),
           },
         ];
         approve(doc);
@@ -114,7 +122,9 @@ test("actual manifest is structurally valid but honestly incomplete gold", () =>
 test("synthetic genuine-human-shaped evidence satisfies unchanged 6/3/3 quota", () => {
   const r = report(goldFixture());
   assert.equal(r.DATASET_STRUCTURALLY_VALID, true, r.errors.join(";"));
-  assert.equal(r.US110_GOLD_COMPLETE, true);
+  assert.equal(r.HUMAN_GOLD_COMPLETE, true);
+  assert.equal(r.US110_GOLD_COMPLETE, false);
+  assert.equal(r.GOLD_STORAGE_DURABLE, false);
   assert.equal(r.APPROVED_HUMAN_REFERENCE_COUNT, 6);
   assert.equal(r.APPROVED_SILENCE_LABEL_COUNT, 3);
   assert.equal(r.APPROVED_WORD_ALIGNMENT_COUNT, 3);
@@ -492,4 +502,273 @@ test("reference reel duration must match its render receipt", () => {
   const data = fixture();
   entry(data, "reference_reel").artifact.durationUs = "1";
   assert.equal(report(data).DATASET_STRUCTURALLY_VALID, false);
+});
+
+for (const type of ["silence_labels", "word_alignment"]) {
+  test(`valid scoped ${type} counts only current human-approved gold`, () => {
+    const data = goldFixture();
+    const { source, doc } = entry(data, type);
+    assert.doesNotThrow(() => validateDocument(type, doc, source, data.manifest.datasetVersion));
+    assert.equal(report(data).DATASET_STRUCTURALLY_VALID, true);
+    doc.review = { status: "awaiting_human_review" };
+    reindex(data);
+    assert.equal(
+      report(data)[
+        type === "silence_labels" ? "APPROVED_SILENCE_LABEL_COUNT" : "APPROVED_WORD_ALIGNMENT_COUNT"
+      ],
+      2,
+    );
+    doc.createdBy = "machine_candidate";
+    doc.scope.selection = "machine_candidate";
+    reindex(data);
+    assert.equal(report(data).DATASET_STRUCTURALLY_VALID, true);
+  });
+  test(`empty approved ${type} fails and cannot count`, () => {
+    const data = goldFixture();
+    const { doc } = entry(data, type);
+    doc[type === "silence_labels" ? "intervals" : "words"] = [];
+    approve(doc);
+    reindex(data);
+    assert.equal(report(data).DATASET_STRUCTURALLY_VALID, false);
+    assert.equal(
+      report(data)[
+        type === "silence_labels" ? "APPROVED_SILENCE_LABEL_COUNT" : "APPROVED_WORD_ALIGNMENT_COUNT"
+      ],
+      2,
+    );
+  });
+  test(`machine or unconfirmed ${type} cannot become approved gold`, () => {
+    const data = goldFixture();
+    const { doc } = entry(data, type);
+    doc.scope.selection = "machine_candidate";
+    doc.review.evidence.reviewedContentSha256 = contentSha256(doc);
+    reindex(data);
+    assert.equal(report(data).DATASET_STRUCTURALLY_VALID, false);
+    assert.equal(
+      report(data)[
+        type === "silence_labels" ? "APPROVED_SILENCE_LABEL_COUNT" : "APPROVED_WORD_ALIGNMENT_COUNT"
+      ],
+      2,
+    );
+    doc.createdBy = "machine_candidate";
+    doc.review.evidence.reviewedContentSha256 = contentSha256(doc);
+    reindex(data);
+    assert.equal(report(data).DATASET_STRUCTURALLY_VALID, false);
+  });
+}
+const scopeMutations = {
+  "scope outside source": (doc, source) => {
+    doc.scope.endUs = String(BigInt(source.durationUs) + 1n);
+  },
+  "empty scope": (doc) => {
+    doc.scope.endUs = doc.scope.startUs;
+  },
+  "word before scope": (doc) => {
+    doc.words[0].startUs = String(BigInt(doc.scope.startUs) - 1n);
+  },
+  "word after scope": (doc) => {
+    doc.words[0].endUs = String(BigInt(doc.scope.endUs) + 1n);
+  },
+  "silence crossing lower scope boundary": (doc) => {
+    doc.intervals[0].startUs = String(BigInt(doc.scope.startUs) - 1n);
+  },
+  "silence crossing upper scope boundary": (doc) => {
+    doc.intervals[0].endUs = String(BigInt(doc.scope.endUs) + 1n);
+  },
+};
+for (const [name, mutate] of Object.entries(scopeMutations))
+  test(`rejects ${name}`, () => {
+    const data = goldFixture();
+    const type = name.startsWith("silence") ? "silence_labels" : "word_alignment";
+    const { doc, source } = entry(data, type);
+    mutate(doc, source);
+    doc.review.evidence.reviewedContentSha256 = contentSha256(doc);
+    reindex(data);
+    assert.equal(report(data).DATASET_STRUCTURALLY_VALID, false);
+    assert.equal(
+      report(data)[
+        type === "silence_labels" ? "APPROVED_SILENCE_LABEL_COUNT" : "APPROVED_WORD_ALIGNMENT_COUNT"
+      ],
+      2,
+    );
+  });
+test("three distinct scoped gold clips cover two English and one Arabic, without whole-source annotation", () => {
+  const data = goldFixture();
+  const gold = data.manifest.sources.filter((s) =>
+    s.referenceArtifacts.some((a) => a.type === "word_alignment"),
+  );
+  assert.equal(gold.filter((s) => s.language === "en").length, 2);
+  assert.equal(gold.filter((s) => s.language === "ar").length, 1);
+  for (const s of gold) {
+    const a = s.referenceArtifacts.find((a) => a.type === "word_alignment");
+    const scope = data.documents.get(a.metadataPath).data.scope;
+    assert.equal(BigInt(scope.endUs) - BigInt(scope.startUs), 60000000n);
+    assert.ok(BigInt(scope.endUs) < BigInt(s.durationUs));
+  }
+  assert.equal(report(data).APPROVED_WORD_ALIGNMENT_COUNT, 3);
+  assert.equal(report(data).APPROVED_SILENCE_LABEL_COUNT, 3);
+});
+test("word metric inputs use only approved scope, midpoint inclusion and clipped source bounds", () => {
+  const { doc, source } = entry(goldFixture(), "word_alignment");
+  const result = scopedMetricInputs("word_alignment", doc, source, [
+    { text: "outside", startUs: "0", endUs: "20000000" },
+    { text: "lower", startUs: "29000000", endUs: "32000000" },
+    { text: "inside", startUs: "50000000", endUs: "51000000" },
+    { text: "upper", startUs: "88000000", endUs: "91000000" },
+    { text: "outside", startUs: "92000000", endUs: "94000000" },
+  ]);
+  assert.deepEqual(
+    result.predictions.map((p) => [p.text, p.startUs, p.endUs]),
+    [
+      ["lower", "30000000", "32000000"],
+      ["inside", "50000000", "51000000"],
+      ["upper", "88000000", "90000000"],
+    ],
+  );
+  assert.equal(result.durationUs, "60000000");
+  doc.review = { status: "awaiting_human_review" };
+  assert.throws(() => scopedMetricInputs("word_alignment", doc, source, []), /approved/);
+});
+test("silence metric inputs intersect predictions with scope and use clip duration", () => {
+  const { doc, source } = entry(goldFixture(), "silence_labels");
+  const result = scopedMetricInputs("silence_labels", doc, source, [
+    { startUs: "0", endUs: "31000000" },
+    { startUs: "88000000", endUs: "100000000" },
+  ]);
+  assert.deepEqual(result.predictions, [
+    { startUs: "30000000", endUs: "31000000" },
+    { startUs: "88000000", endUs: "90000000" },
+  ]);
+  assert.equal(result.durationUs, "60000000");
+  assert.throws(
+    () => scopedMetricInputs("silence_labels", doc, source, [{ startUs: "2.3", endUs: "5" }]),
+    /decimal/,
+  );
+  assert.throws(
+    () => scopedMetricInputs("silence_labels", doc, source, [{ startUs: "5", endUs: "4" }]),
+    /ordered/,
+  );
+});
+test("local viewing helper extracts the explicit scope via existing safe argument arrays", () => {
+  const edit = annotationEdit({ startUs: "30000000", endUs: "90000000" });
+  const args = renderArguments("/local/source.webm", "/local/window.mp4", edit, true);
+  assert.ok(args.includes("file"));
+  assert.match(args[args.indexOf("-filter_complex") + 1], /trim=start=30\.000000:end=90\.000000/);
+  assert.equal(args[args.indexOf("-t") + 1], "60.000000");
+});
+function withSyntheticDurableEvidence(data) {
+  data.manifest.storage.durableTarget = {
+    endpoint: "https://synthetic-test.example/",
+    approvedBy: "synthetic-test-owner",
+    approvedAt: "2026-10-09T00:00:00Z",
+    notes: "Synthetic test target approval, never a real storage destination",
+  };
+  data.storageEvidence = {
+    schemaVersion: "1.0",
+    datasetVersion: data.manifest.datasetVersion,
+    datasetSha256: datasetSha256(data.manifest, data.registry),
+    endpoint: data.manifest.storage.durableTarget.endpoint,
+    bucket: data.manifest.storage.bucket,
+    versioning: "Enabled",
+    syncCompletedAt: "2026-10-09T00:00:00Z",
+    deepVerifiedAt: "2026-10-09T00:01:00Z",
+    objects: data.manifest.sources
+      .flatMap((s) => [s, ...s.referenceArtifacts])
+      .map((a) => ({
+        id: a.id,
+        objectKey: a.objectKey,
+        sha256: a.sha256,
+        sizeBytes: a.sizeBytes,
+        versionId: "synthetic-test-version",
+      })),
+  };
+  return data;
+}
+test("unreleased v1 can receive its first human gold without a fork; release completion also needs durable exact verification", () => {
+  const data = goldFixture();
+  assert.equal(data.manifest.datasetVersion, "evaluation-dataset-v1");
+  assert.doesNotThrow(() => assertDatasetMutable(data.manifest));
+  assert.equal(report(data).HUMAN_GOLD_COMPLETE, true);
+  assert.equal(report(data).US110_GOLD_COMPLETE, false);
+  withSyntheticDurableEvidence(data);
+  assert.equal(report(data).US110_GOLD_COMPLETE, true);
+});
+test("published snapshot is frozen; semantic mutation requires a later version", () => {
+  const data = withSyntheticDurableEvidence(goldFixture());
+  data.manifest.release = {
+    status: "published",
+    frozenDatasetSha256: datasetSha256(data.manifest, data.registry),
+  };
+  assert.equal(report(data).US110_GOLD_COMPLETE, true);
+  assert.throws(() => assertDatasetMutable(data.manifest), /fork a later/);
+  data.registry.metrics[0].definition += " Changed semantic meaning.";
+  assert.equal(report(data).DATASET_STRUCTURALLY_VALID, false);
+  assert.equal(report(data).US110_GOLD_COMPLETE, false);
+});
+for (const mutation of ["missing", "local", "hash", "version", "object", "duplicate", "timestamp"])
+  test(`durable release gate rejects ${mutation} verification evidence`, () => {
+    const data = withSyntheticDurableEvidence(goldFixture());
+    if (mutation === "missing") data.storageEvidence = null;
+    if (mutation === "local") data.manifest.storage.durableTarget.endpoint = "https://localhost/";
+    if (mutation === "hash") data.storageEvidence.datasetSha256 = "0".repeat(64);
+    if (mutation === "version") data.storageEvidence.objects[0].versionId = "null";
+    if (mutation === "object") data.storageEvidence.objects[0].sha256 = "0".repeat(64);
+    if (mutation === "duplicate") data.storageEvidence.objects[1] = data.storageEvidence.objects[0];
+    if (mutation === "timestamp") data.storageEvidence.syncCompletedAt = "2026-10-10T00:00:00Z";
+    assert.equal(report(data).HUMAN_GOLD_COMPLETE, true);
+    assert.equal(report(data).GOLD_STORAGE_DURABLE, false);
+    assert.equal(report(data).US110_GOLD_COMPLETE, false);
+  });
+
+test("forking a published snapshot archives frozen gold/evidence and makes the later version mutable", async () => {
+  const root = mkdtempSync(resolve(tmpdir(), "us110-published-fork-test-"));
+  mkdirSync(resolve(root, "docs"));
+  cpSync(resolve(repositoryRoot, "docs/evaluation"), resolve(root, "docs/evaluation"), {
+    recursive: true,
+  });
+  const data = withSyntheticDurableEvidence(goldFixture());
+  data.manifest.release = {
+    status: "published",
+    frozenDatasetSha256: datasetSha256(data.manifest, data.registry),
+  };
+  for (const [path, document] of data.documents)
+    writeFileSync(resolve(root, path), JSON.stringify(document.data));
+  writeFileSync(resolve(root, "docs/evaluation/manifest.json"), JSON.stringify(data.manifest));
+  writeFileSync(
+    resolve(root, "docs/evaluation/storage-verification.json"),
+    JSON.stringify(data.storageEvidence),
+  );
+  try {
+    await forkVersion("evaluation-dataset-v2", root);
+    const current = loadDataset(root);
+    assert.doesNotThrow(() => assertDatasetMutable(current.manifest));
+    assert.equal(current.storageEvidence, null);
+    assert.equal(report(current).US110_GOLD_COMPLETE, false);
+    const archive = loadDataset(resolve(root, "docs/evaluation/releases/evaluation-dataset-v1"));
+    assert.equal(report(archive).US110_GOLD_COMPLETE, true);
+    assert.throws(() => assertDatasetMutable(archive.manifest), /fork a later/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("unreleased approved artifact requires explicit review invalidation, not a version fork", () => {
+  const data = goldFixture();
+  const { doc } = entry(data, "word_alignment");
+  assert.throws(() => assertArtifactMutable(data.manifest, doc), /explicitly reset review/);
+  doc.review = { status: "awaiting_human_review" };
+  doc.words[0].text = "Synthetic changed word";
+  reindex(data);
+  assert.doesNotThrow(() => assertArtifactMutable(data.manifest, doc));
+  assert.equal(report(data).APPROVED_WORD_ALIGNMENT_COUNT, 2);
+  approve(doc);
+  reindex(data);
+  assert.equal(report(data).APPROVED_WORD_ALIGNMENT_COUNT, 3);
+  assert.equal(data.manifest.datasetVersion, "evaluation-dataset-v1");
+  data.manifest.release = {
+    status: "published",
+    frozenDatasetSha256: datasetSha256(data.manifest, data.registry),
+  };
+  doc.review = { status: "awaiting_human_review" };
+  assert.throws(() => assertArtifactMutable(data.manifest, doc), /fork a later/);
 });
