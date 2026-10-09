@@ -344,8 +344,11 @@ test("replay rejects malformed, unknown, mismatched and impossible entries with 
     /command index 1: malformed command/,
   );
   assert.throws(() => parseCommandLog({ ...log, schemaVersion: 2 }));
-  assert.throws(() => parseCommandLog({ ...log, commands: [examples[5], examples[5]] }));
-  assert.throws(() => parseCommandLog({ ...log, timelineId: id(99) }));
+  assert.throws(
+    () => parseCommandLog({ ...log, commands: [examples[5], examples[5]] }),
+    /command index 1/,
+  );
+  assert.throws(() => parseCommandLog({ ...log, timelineId: id(99) }), /command index 0/);
   assert.throws(() => parseCommandLog({ ...log, commands: Array(1001).fill(examples[5]) }));
   assert.throws(() => replay(initial(), { schemaVersion: 1, timelineId: id(99), commands: [] }));
 });

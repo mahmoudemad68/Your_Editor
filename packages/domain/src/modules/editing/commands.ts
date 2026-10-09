@@ -430,10 +430,13 @@ export function parseCommandLog(value: unknown): CommandLog {
       throw new DomainError(`Replay failed at command index ${index}: malformed command.`);
     }
   });
-  unique(parsed.map((c) => c.id));
-  const timelineId = id(d.timelineId);
-  if (parsed.some((c) => c.timelineId !== timelineId))
-    throw new DomainError("Log timeline identity differs.");
+  const timelineId = id(d.timelineId),
+    seen = new Set<string>();
+  parsed.forEach((command, index) => {
+    if (seen.has(command.id) || command.timelineId !== timelineId)
+      throw new DomainError(`Replay failed at command index ${index}: command identity differs.`);
+    seen.add(command.id);
+  });
   return freeze({ schemaVersion: 1, timelineId, commands: parsed });
 }
 export function replay(snapshot: Timeline | TimelineSnapshot, log: unknown): Timeline {
@@ -549,13 +552,13 @@ export class CommandBus {
           throw new DomainError("History inverse differs.");
         if (JSON.stringify(canonical(e.inverse)) !== JSON.stringify(canonical(applied.inverse)))
           throw new DomainError("History inverse differs.");
+        unique([...checked.map((entry) => entry.command.id), applied.command.id]);
         checked.push(freeze({ command: applied.command, inverse: applied.inverse }));
         current = applied.timeline;
       } catch {
         throw new DomainError(`History failed at command index ${index}.`);
       }
     }
-    unique(checked.map((e) => e.command.id));
     bus.entries = Object.freeze(checked);
     bus.cursor = cursor;
     bus.current =
