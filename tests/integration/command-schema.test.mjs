@@ -112,3 +112,47 @@ test("schema-valid impossible references still fail domain replay with index", (
     /command index 0/,
   );
 });
+
+for (const text of [
+  "",
+  " ",
+  "\t",
+  "\n",
+  " \t\n\r ",
+  "hello",
+  "hello world",
+  "مرحبا",
+  "مرحبا بالعالم",
+  "  hello  ",
+  "😀",
+  "Hello مرحبا 🌍",
+])
+  test(`text schema/domain agreement: ${JSON.stringify(text)}`, () => {
+    for (const c of [
+      { ...commands[5], payload: { clipId: id(20), key: "text", value: text } },
+      { ...commands[6], payload: { ...commands[6].payload, text } },
+    ]) {
+      const valid = Boolean(text.trim());
+      assert.equal(validate(c), valid, JSON.stringify(validate.errors));
+      if (valid) assert.deepEqual(parseCommand(c), c);
+      else assert.throws(() => parseCommand(c));
+    }
+  });
+for (const transform of [(v) => v.toUpperCase(), (v) => v.replace(/[a-f]/, (c) => c.toUpperCase())])
+  test("all command identity positions reject noncanonical UUID case in both contracts", () => {
+    for (const path of ["id", "timelineId", "clipId", "trackId"]) {
+      const c = JSON.parse(JSON.stringify(commands[2]));
+      if (path === "id" || path === "timelineId") c[path] = transform(c[path]);
+      else c.payload[path] = transform(c.payload[path]);
+      assert.equal(validate(c), false);
+      assert.throws(() => parseCommand(c));
+    }
+  });
+test("malformed UTF-16 is rejected by the authoritative command domain parser", () => {
+  for (const text of ["\uD800", "\uDC00", "\uD800x", "\uDC00\uD800"])
+    for (const c of [
+      { ...commands[5], payload: { clipId: id(20), key: "text", value: text } },
+      { ...commands[6], payload: { ...commands[6].payload, text } },
+    ])
+      assert.throws(() => parseCommand(c), /Unicode/);
+});

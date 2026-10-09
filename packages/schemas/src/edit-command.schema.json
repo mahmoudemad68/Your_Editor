@@ -299,7 +299,8 @@
                     "value": {
                       "type": "string",
                       "minLength": 1,
-                      "maxLength": 10000
+                      "maxLength": 10000,
+                      "pattern": "\\S"
                     }
                   }
                 }
@@ -350,7 +351,8 @@
                 "text": {
                   "type": "string",
                   "minLength": 1,
-                  "maxLength": 10000
+                  "maxLength": 10000,
+                  "pattern": "\\S"
                 }
               }
             }

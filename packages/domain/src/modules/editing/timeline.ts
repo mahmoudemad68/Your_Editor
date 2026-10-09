@@ -403,6 +403,8 @@ export class Track {
       }),
     );
     unique(this.transitions.map((transition) => transition.id));
+    // UUID spellings are canonical, so this ordered join key is unambiguous.
+    unique(this.transitions.map((transition) => `${transition.fromClipId}/${transition.toClipId}`));
     Object.freeze(this);
   }
   static create(

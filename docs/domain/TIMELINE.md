@@ -6,7 +6,7 @@ refers to its Project ID. `serializeProject`/`deserializeProject` compose both v
 The schema is `packages/schemas/src/project.schema.json`. The domain uses no schema library:
 shape checks and domain construction independently reject invalid loaded state. Boundary
 consumers must use both JSON Schema and domain construction, since schema alone cannot
-prove cross-reference or temporal invariants. Offline integration tests check agreement.
+prove cross-reference, temporal or ordered transition-join uniqueness invariants. Offline integration tests check agreement.
 
 All media times are nonnegative bigint microseconds in memory and canonical decimal strings
 in JSON (ADR-008). JSON numbers, fractional/nonfinite/unsafe numbers and noncanonical strings
@@ -33,7 +33,9 @@ are references in separate namespaces. Multiple references to one source are leg
 
 Effects currently carry bounded opacity/gain values without rendering code. A cut transition
 has zero duration; a dissolve has a positive bounded duration and links adjacent touching
-visual clips. It describes the join without allowing overlapping source placements. Commands
+visual clips. Each ordered (fromClipId, toClipId) join has at most one transition, regardless
+of transition ID or kind. This semantic invariant lives in Track construction and is enforced
+by restore/project parsing; JSON Schema validates the transition structure. It describes the join without allowing overlapping source placements. Commands
 must preserve a valid join or reject atomically. Actual transition rendering is outside scope.
 
 Composition dimensions are bounded positive integers; FPS is a positive rational at most 60
@@ -43,7 +45,11 @@ then rounds that frame's absolute microseconds half up. There is no accumulated 
 frame duration. Snapping is explicit; loading or editing does not silently alter source time.
 
 Values, nested entities and collection arrays are frozen. Deserialization accepts only explicit
-plain-data fields, known variants and UUIDv7 IDs; prototype-shaped extra properties reject.
+plain-data fields, known variants and lowercase UUIDv7 IDs (uppercase/mixed case reject,
+without normalization); prototype-shaped extra properties reject.
+All text validated by the editing text boundary must be well-formed Unicode: lone UTF-16
+surrogates reject without replacement; Arabic, emoji and valid surrogate pairs are preserved.
+JSON Schema covers meaningful text shape; the domain parser enforces UTF-16 well-formedness.
 Identity entropy/time is supplied by existing UUIDv7 adapters, never a domain random singleton.
 The pinned fast-check dev dependency is used only by tests for deterministic seeded generation.
 It adds no runtime domain dependency.

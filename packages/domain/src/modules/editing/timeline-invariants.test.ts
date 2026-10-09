@@ -279,3 +279,49 @@ test("global graph IDs cannot collide across separate tracks and references are 
   t.tracks[0]!.clips[0]!.effects.push({ ...t.tracks[0]!.clips[0]!.effects[0]! });
   assert.throws(() => Timeline.restore(t));
 });
+
+test("each ordered join permits one transition only, independent of kind and identity", () => {
+  const clips = [0, 1, 2, 3].map(
+    (n) =>
+      new Clip(id(20 + n), id(10), BigInt(n * 100), BigInt((n + 1) * 100), {
+        timelineStartUs: BigInt(n * 100),
+        sourceId: id(4),
+      }),
+  );
+  const first = new Transition(id(40), id(20), id(21), "dissolve", 50n);
+  const make = (transitions: Transition[]) => new Track(id(10), id(3), "video", clips, transitions);
+  assert.equal(make([first]).transitions.length, 1);
+  for (const kind of ["dissolve", "cut"] as const) {
+    const duplicate = new Transition(id(41), id(20), id(21), kind, kind === "cut" ? 0n : 50n);
+    assert.throws(() => make([first, duplicate]), /Duplicate/);
+    const snapshot = make([first]).toSnapshot();
+    snapshot.transitions.push(duplicate.toSnapshot());
+    assert.throws(() => Track.restore(snapshot), /Duplicate/);
+    const doc = projectDocument(project, fixture());
+    doc.timeline.tracks = [snapshot];
+    assert.throws(() => Timeline.restore(doc.timeline), /Duplicate/);
+    assert.throws(() => deserializeProject(doc), /Duplicate/);
+  }
+  const track = make([
+    first,
+    new Transition(id(41), id(21), id(22), "dissolve", 50n),
+    new Transition(id(42), id(22), id(23), "cut", 0n),
+  ]);
+  assert.equal(track.transitions.length, 3);
+  assert.deepEqual(Track.restore(track.toSnapshot()), track);
+});
+
+for (const value of ["\uD800", "\uDC00", "\uD800x", "x\uDC00", "\uD800\uD800", "\uDC00\uD800"])
+  test("caption construction and restore reject malformed UTF-16", () => {
+    assert.throws(() => new Caption(id(20), id(10), 0n, 1n, value), /Unicode/);
+    const doc = projectDocument(project, fixture("caption"));
+    doc.timeline.tracks[0]!.clips[0]!.text = value;
+    assert.throws(() => deserializeProject(doc), /Unicode/);
+  });
+for (const value of ["hello", "مرحبا", "😀", "\uD83D\uDE00", "Hello مرحبا 🌍", "  hello  "])
+  test("caption Unicode text survives exact round-trip", () => {
+    const doc = projectDocument(project, fixture("caption"));
+    doc.timeline.tracks[0]!.clips[0]!.text = value;
+    const restored = deserializeProject(doc);
+    assert.equal(serializeProject(restored.project, restored.timeline), JSON.stringify(doc));
+  });

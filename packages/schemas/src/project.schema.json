@@ -300,6 +300,7 @@
           }
         },
         "transitions": {
+          "description": "Structural validation only; Track construction enforces at most one transition per ordered fromClipId/toClipId join.",
           "type": "array",
           "items": {
             "$ref": "#/$defs/transition"

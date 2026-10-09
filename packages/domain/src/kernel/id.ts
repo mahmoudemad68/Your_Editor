@@ -44,11 +44,10 @@ export type BrandKitId = UuidV7 & { readonly [brandKitIdBrand]: "BrandKitId" };
 export type CreativeMemoryId = UuidV7 & { readonly [creativeMemoryIdBrand]: "CreativeMemoryId" };
 
 export function uuidV7(value: string): UuidV7 {
-  const normalized = value.toLowerCase();
-  if (!UUID_V7.test(normalized)) {
+  if (!UUID_V7.test(value)) {
     throw new DomainError("Identifier must be a canonical UUIDv7.");
   }
-  return normalized as UuidV7;
+  return value as UuidV7;
 }
 
 /** 48-bit Unix millisecond timestamp plus 10 entropy bytes. Version nibble is 7. */

@@ -76,3 +76,64 @@ test("schema-valid but impossible references/ranges require canonical domain val
     assert.throws(() => deserializeProject(d));
   }
 });
+
+for (const transform of [(v) => v.toUpperCase(), (v) => v.replace(/[a-f]/, (c) => c.toUpperCase())])
+  test("project schema/parser reject noncanonical identity spelling", () => {
+    for (const mutate of [
+      (d) => (d.project.id = transform(d.project.id)),
+      (d) => (d.project.memberships[0].userId = transform(d.project.memberships[0].userId)),
+      (d) => (d.timeline.id = transform(d.timeline.id)),
+      (d) => (d.timeline.sources[0].id = transform(d.timeline.sources[0].id)),
+      (d) => (d.timeline.tracks[0].id = transform(d.timeline.tracks[0].id)),
+      (d) => (d.timeline.tracks[0].clips[0].id = transform(d.timeline.tracks[0].clips[0].id)),
+    ]) {
+      const d = document();
+      mutate(d);
+      assert.equal(validate(d), false);
+      assert.throws(() => deserializeProject(d));
+    }
+  });
+test("structural schema permits join records; authoritative Track/parser reject conflicting joins", () => {
+  const d = document(),
+    track = d.timeline.tracks[0];
+  track.clips.push({
+    ...track.clips[0],
+    id: id(7),
+    inPoint: "1000",
+    outPoint: "2000",
+    timelineStartUs: "1000",
+  });
+  const first = { id: id(10), fromClipId: id(6), toClipId: id(7), kind: "cut", durationUs: "0" };
+  track.transitions = [first];
+  assert.equal(validate(d), true);
+  assert.doesNotThrow(() => deserializeProject(d));
+  for (const kind of ["cut", "dissolve"]) {
+    track.transitions = [
+      first,
+      { ...first, id: id(11), kind, durationUs: kind === "cut" ? "0" : "100" },
+    ];
+    assert.equal(validate(d), true); // Cross-record projected uniqueness is a domain invariant.
+    assert.throws(() => deserializeProject(d), /Duplicate/);
+  }
+});
+test("project parser rejects malformed UTF-16 while preserving valid multilingual text exactly", () => {
+  for (const text of [
+    "\uD800",
+    "\uDC00",
+    "\uD800x",
+    "\uDC00\uD800",
+    "hello",
+    "مرحبا",
+    "😀",
+    "Hello مرحبا 🌍",
+  ]) {
+    const d = document("caption");
+    d.timeline.tracks[0].clips[0].text = text;
+    assert.equal(validate(d), true); // Domain adds JS UTF-16 validity, beyond structural schema.
+    if (!text.isWellFormed()) assert.throws(() => deserializeProject(d), /Unicode/);
+    else {
+      const restored = deserializeProject(d);
+      assert.equal(serializeProject(restored.project, restored.timeline), JSON.stringify(d));
+    }
+  }
+});

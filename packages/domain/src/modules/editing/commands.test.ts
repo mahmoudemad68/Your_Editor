@@ -479,3 +479,68 @@ for (const seed of [215214, 215215, 215216])
       { seed, numRuns: 50 },
     );
   }, 30000);
+
+test("command inverses/history cannot introduce duplicate transition joins; rejection is atomic", () => {
+  const s = initial().toSnapshot();
+  s.tracks = [s.tracks[0]!];
+  s.tracks[0]!.clips[0]!.outPoint = "5000000";
+  s.tracks[0]!.clips.push(
+    new Clip(id(20), id(4), 5000000n, 10000000n, {
+      sourceId: id(3),
+      timelineStartUs: 5000000n,
+    }).toSnapshot(),
+  );
+  s.tracks[0]!.transitions = [new Transition(id(30), id(10), id(20), "cut", 0n).toSnapshot()];
+  const t = Timeline.restore(s),
+    bus = new CommandBus(t);
+  const command = SetProperty(id(100), t.id, { clipId: id(10), key: "opacity", value: 0.5 });
+  bus.apply(command);
+  const post = bus.timeline,
+    history = bus.serializeHistory();
+  const forged = JSON.parse(history);
+  forged.entries[0].inverse.restore.tracks[0].transitions.push(
+    new Transition(id(31), id(10), id(20), "dissolve", 100n).toSnapshot(),
+  );
+  assert.throws(() => applyInverse(post, forged.entries[0].inverse), /Duplicate/);
+  assert.throws(() => CommandBus.restoreHistory(forged), /command index 0/);
+  assert.equal(bus.timeline, post);
+  assert.equal(bus.serializeHistory(), history);
+  // Normal command execution still retains one join through portable undo/redo/replay.
+  assert.deepEqual(bus.undo(), t);
+  assert.deepEqual(bus.redo(), post);
+  assert.deepEqual(replay(t, bus.commandLog()), post);
+  assert.deepEqual(CommandBus.restoreHistory(history).timeline, post);
+});
+
+for (const value of ["\uD800", "\uDC00", "\uD800x", "\uD800\uD800"])
+  test("editable text commands reject malformed Unicode without changing state/history", () => {
+    const bus = new CommandBus(initial()),
+      before = bus.serializeHistory(),
+      current = bus.timeline;
+    for (const raw of [
+      {
+        schemaVersion: 1,
+        id: id(100),
+        timelineId: id(1),
+        type: "SetProperty",
+        payload: { clipId: id(13), key: "text", value },
+      },
+      {
+        schemaVersion: 1,
+        id: id(101),
+        timelineId: id(1),
+        type: "AddCaption",
+        payload: {
+          captionId: id(20),
+          trackId: id(6),
+          startUs: "10000000",
+          endUs: "12000000",
+          text: value,
+        },
+      },
+    ]) {
+      assert.throws(() => bus.apply(raw), /Unicode/);
+      assert.equal(bus.timeline, current);
+      assert.equal(bus.serializeHistory(), before);
+    }
+  });

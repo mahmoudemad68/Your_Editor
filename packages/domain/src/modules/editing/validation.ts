@@ -27,7 +27,19 @@ export function list(value: unknown): readonly unknown[] {
 export function text(value: unknown): string {
   if (typeof value !== "string" || !value.trim() || value.length > 10000)
     throw new DomainError("Expected nonempty bounded text.");
+  if (!wellFormedUnicode(value)) throw new DomainError("Text must be well-formed Unicode.");
   return value;
+}
+// Equivalent to String.isWellFormed, without raising the package's ES2022 library target.
+function wellFormedUnicode(value: string): boolean {
+  for (let i = 0; i < value.length; i++) {
+    const unit = value.charCodeAt(i);
+    if (unit >= 0xd800 && unit <= 0xdbff) {
+      const next = value.charCodeAt(++i);
+      if (!(next >= 0xdc00 && next <= 0xdfff)) return false;
+    } else if (unit >= 0xdc00 && unit <= 0xdfff) return false;
+  }
+  return true;
 }
 export function numeric(value: unknown, min: number, max: number, integer = false): number {
   if (

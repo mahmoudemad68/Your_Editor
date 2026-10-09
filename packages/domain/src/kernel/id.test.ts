@@ -7,7 +7,8 @@ const SAMPLE = "018f6b6e-7c3a-7b2a-8d3e-9c0b1a2d3e4f";
 
 test("uuidV7 accepts a canonical version-7 UUID", () => {
   assert.equal(uuidV7(SAMPLE), SAMPLE);
-  assert.equal(uuidV7(SAMPLE.toUpperCase()), SAMPLE);
+  assert.throws(() => uuidV7(SAMPLE.toUpperCase()));
+  assert.throws(() => uuidV7(SAMPLE.replace("a", "A")));
 });
 
 test("uuidV7 rejects other versions and malformed strings", () => {
