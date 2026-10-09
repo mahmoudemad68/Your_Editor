@@ -5,6 +5,7 @@ import { resolve, dirname, sep } from "node:path";
 import { fileURLToPath, URL } from "node:url";
 import process from "node:process";
 import console from "node:console";
+import { assertV1OwnerDecision, assertV1Provenance } from "./provenance-policy.mjs";
 
 export const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const require = createRequire(new URL("../../packages/job-queue/package.json", import.meta.url));
@@ -180,9 +181,9 @@ export function validOwnerDecision(decision) {
     ),
   );
 }
-// This authority lives in the reviewed manifest, outside the annotation body/fingerprint.
 // A later dataset fork clears the decision, allowing genuinely human-created replacements.
 export function assertOwnerBinding(type, document, source, version, decision) {
+  assertV1OwnerDecision(version, decision);
   if (!decision) return;
   if (!validOwnerDecision(decision) || decision.datasetVersion !== version)
     throw new Error("Owner decision dataset identity differs");
@@ -292,6 +293,11 @@ export function validateDataset(manifest, registry, documents = new Map(), stora
     OWNER_APPROVED_SILENCE_LABEL_COUNT: 0,
     OWNER_APPROVED_WORD_ALIGNMENT_COUNT: 0,
   };
+  try {
+    assertV1Provenance(manifest);
+  } catch (error) {
+    errors.push(error.message);
+  }
   const manifestOk = checkSchema(manifestValidator, manifest, "manifest", errors);
   const registryOk = checkSchema(metricValidator, registry, "metrics", errors);
   if (!manifestOk || !registryOk)
@@ -593,6 +599,7 @@ export function validateDataset(manifest, registry, documents = new Map(), stora
 
 export function loadDataset(root = repositoryRoot) {
   const manifest = JSON.parse(readFileSync(resolve(root, "docs/evaluation/manifest.json"), "utf8"));
+  assertV1Provenance(manifest);
   const registry = JSON.parse(readFileSync(resolve(root, "docs/evaluation/metrics.json"), "utf8"));
   if (!manifestValidator(manifest))
     throw new Error(`Invalid manifest: ${ajv.errorsText(manifestValidator.errors)}`);
@@ -638,7 +645,21 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
         ? 1
         : 0;
   } catch (error) {
-    console.error(error.message);
+    console.log(
+      JSON.stringify(
+        {
+          DATASET_STRUCTURALLY_VALID: false,
+          HUMAN_CREATED_GOLD: false,
+          HUMAN_GOLD_COMPLETE: false,
+          OWNER_ACCEPTED_GOLD_COMPLETE: false,
+          US110_GOLD_COMPLETE: false,
+          US110_RELEASE_COMPLETE: false,
+          errors: [error.message],
+        },
+        null,
+        2,
+      ),
+    );
     process.exitCode = 1;
   }
 }

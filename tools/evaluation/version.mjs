@@ -57,7 +57,9 @@ export async function forkVersion(version, root = repositoryRoot) {
     rmSync(evidencePath);
   }
   manifest.release = { status: "unreleased" };
-  // A version fork must receive its own genuine Owner acceptance, not inherit a waiver silently.
+  // v1's code-pinned generated-gold waiver is never authority for a later version.
+  // Keep the real machine producer below, but clear all current approval evidence.
+  // A new version must establish genuine human provenance or its own reviewed policy.
   delete manifest.ownerDecision;
   manifest.datasetVersion = version;
   manifest.storage.prefix = `evaluation/${version}/`;
@@ -89,7 +91,7 @@ export async function forkVersion(version, root = repositoryRoot) {
   await writeJson(resolve(root, "docs/evaluation/manifest.json"), manifest);
   await generateDocs(false, root);
   console.log(
-    `FORKED ${version}; previous snapshot archived; approvals cleared; sync to the new prefix before release`,
+    `FORKED ${version}; previous snapshot archived; approvals and waiver cleared; sync to the new prefix before release`,
   );
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

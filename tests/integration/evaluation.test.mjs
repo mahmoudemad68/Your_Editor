@@ -1,7 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { Readable } from "node:stream";
-import { mkdtempSync, writeFileSync, rmSync, readFileSync, mkdirSync, cpSync } from "node:fs";
+import {
+  mkdtempSync,
+  writeFileSync,
+  rmSync,
+  readFileSync,
+  mkdirSync,
+  cpSync,
+  symlinkSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -28,7 +36,7 @@ import {
   silenceComplement,
   wordMicroseconds,
 } from "../../tools/evaluation/annotations.mjs";
-import { verifyProducerBytes } from "../../tools/evaluation/evidence.mjs";
+import { verifyProducerBytes, stageEvidence } from "../../tools/evaluation/evidence.mjs";
 
 const clone = (value) => JSON.parse(JSON.stringify(value));
 function fixture(actual = false) {
@@ -39,7 +47,19 @@ function fixture(actual = false) {
     documents: new Map([...real.documents].map(([key, value]) => [key, clone(value)])),
   };
   if (!actual) {
-    // Legacy synthetic fixtures continue exercising the original human-created contract.
+    // Synthetic later-version fixtures exercise genuine human gold without the v1 waiver.
+    data.manifest.datasetVersion = data.registry.datasetVersion = "evaluation-dataset-v2";
+    data.manifest.storage.prefix = "evaluation/evaluation-dataset-v2/";
+    for (const source of data.manifest.sources) {
+      source.objectKey = objectKey(data.manifest.datasetVersion, "sources", source);
+      for (const artifact of source.referenceArtifacts) {
+        artifact.datasetVersion = data.manifest.datasetVersion;
+        if (artifact.type === "reference_reel")
+          artifact.objectKey = objectKey(data.manifest.datasetVersion, "references", artifact);
+      }
+    }
+    for (const value of data.documents.values())
+      value.data.datasetVersion = data.manifest.datasetVersion;
     delete data.manifest.ownerDecision;
     for (const source of data.manifest.sources) delete source.producerEvidence;
     for (const value of data.documents.values()) {
@@ -51,6 +71,17 @@ function fixture(actual = false) {
       doc.scope.selection = "machine_candidate";
       if (doc.words) doc.words = [];
       if (doc.intervals) doc.intervals = [];
+    }
+    for (const value of data.documents.values())
+      if (value.data.review?.evidence)
+        value.data.review.evidence.reviewedContentSha256 = contentSha256(value.data);
+    for (const source of data.manifest.sources) {
+      const edit = source.referenceArtifacts.find((a) => a.type === "edit_spec");
+      const receipt = source.referenceArtifacts.find((a) => a.type === "render_receipt");
+      if (edit && receipt)
+        data.documents.get(receipt.metadataPath).data.editContentSha256 = contentSha256(
+          data.documents.get(edit.metadataPath).data,
+        );
     }
     reindex(data);
   }
@@ -198,7 +229,7 @@ const mutations = {
     entry(d, "edit_spec").artifact.sourceId = d.manifest.sources[1].id;
   },
   "wrong version": (d) => {
-    entry(d, "edit_spec").artifact.datasetVersion = "evaluation-dataset-v2";
+    entry(d, "edit_spec").artifact.datasetVersion = "evaluation-dataset-v3";
   },
   "invalid duration": (d) => {
     d.manifest.sources[0].durationUs = "1.5";
@@ -249,7 +280,7 @@ const mutations = {
     d.registry.metrics[1] = clone(d.registry.metrics[0]);
   },
   "registry version differs": (d) => {
-    d.registry.datasetVersion = "evaluation-dataset-v2";
+    d.registry.datasetVersion = "evaluation-dataset-v3";
   },
 };
 for (const [name, mutate] of Object.entries(mutations))
@@ -399,7 +430,7 @@ test("render/review document validator refuses out-of-bounds edits before decodi
   );
 });
 test("metric prose is generated from the canonical registry without drift", async () => {
-  const data = fixture();
+  const data = fixture(true);
   assert.equal(
     await metricsMarkdown(data.registry),
     readFileSync(resolve(repositoryRoot, "docs/evaluation/METRICS.md"), "utf8"),
@@ -516,6 +547,13 @@ test("version fork archives historical metadata and resets approval bookkeeping"
     const current = loadDataset(root);
     assert.equal(current.manifest.datasetVersion, "evaluation-dataset-v2");
     assert.equal(current.manifest.ownerDecision, undefined);
+    assert.ok(current.manifest.sources.every((source) => !source.producerEvidence));
+    for (const entry of current.documents.values())
+      if (entry.data.createdBy === "machine_generated") {
+        assert.ok(entry.data.generation);
+        assert.equal(entry.data.review.status, "awaiting_human_review");
+        assert.equal(entry.data.review.evidence, undefined);
+      }
     assert.equal(report(current).DATASET_STRUCTURALLY_VALID, true);
     const archive = loadDataset(resolve(root, "docs/evaluation/releases/evaluation-dataset-v1"));
     assert.equal(archive.manifest.datasetVersion, "evaluation-dataset-v1");
@@ -732,9 +770,9 @@ function withSyntheticDurableEvidence(data) {
   };
   return data;
 }
-test("unreleased v1 can receive its first human gold without a fork; release completion also needs durable exact verification", () => {
+test("a later unreleased version can receive genuine human gold; release also needs durable exact verification", () => {
   const data = goldFixture();
-  assert.equal(data.manifest.datasetVersion, "evaluation-dataset-v1");
+  assert.equal(data.manifest.datasetVersion, "evaluation-dataset-v2");
   assert.doesNotThrow(() => assertDatasetMutable(data.manifest));
   assert.equal(report(data).HUMAN_GOLD_COMPLETE, true);
   assert.equal(report(data).US110_GOLD_COMPLETE, false);
@@ -782,17 +820,18 @@ test("forking a published snapshot archives frozen gold/evidence and makes the l
   for (const [path, document] of data.documents)
     writeFileSync(resolve(root, path), JSON.stringify(document.data));
   writeFileSync(resolve(root, "docs/evaluation/manifest.json"), JSON.stringify(data.manifest));
+  writeFileSync(resolve(root, "docs/evaluation/metrics.json"), JSON.stringify(data.registry));
   writeFileSync(
     resolve(root, "docs/evaluation/storage-verification.json"),
     JSON.stringify(data.storageEvidence),
   );
   try {
-    await forkVersion("evaluation-dataset-v2", root);
+    await forkVersion("evaluation-dataset-v3", root);
     const current = loadDataset(root);
     assert.doesNotThrow(() => assertDatasetMutable(current.manifest));
     assert.equal(current.storageEvidence, null);
     assert.equal(report(current).US110_GOLD_COMPLETE, false);
-    const archive = loadDataset(resolve(root, "docs/evaluation/releases/evaluation-dataset-v1"));
+    const archive = loadDataset(resolve(root, "docs/evaluation/releases/evaluation-dataset-v2"));
     assert.equal(report(archive).US110_GOLD_COMPLETE, true);
     assert.throws(() => assertDatasetMutable(archive.manifest), /fork a later/);
   } finally {
@@ -812,7 +851,7 @@ test("unreleased approved artifact requires explicit review invalidation, not a 
   approve(doc);
   reindex(data);
   assert.equal(report(data).APPROVED_WORD_ALIGNMENT_COUNT, 3);
-  assert.equal(data.manifest.datasetVersion, "evaluation-dataset-v1");
+  assert.equal(data.manifest.datasetVersion, "evaluation-dataset-v2");
   data.manifest.release = {
     status: "published",
     frozenDatasetSha256: datasetSha256(data.manifest, data.registry),
@@ -1161,4 +1200,147 @@ for (const mutation of ["hash", "source", "scope", "annotation", "key", "type"])
     if (mutation === "key") evidence.objectKey = "another-prefix/raw.wav";
     if (mutation === "type") evidence.type = "unknown";
     assert.equal(report(data).DATASET_STRUCTURALLY_VALID, false);
+  });
+
+// QA attacks use copies of the real approved dataset and update every mutable checksum.
+// Rejection must come from the code-pinned policy, never a stale metadata checksum.
+test("QA36R-F1 whole_manifest_human_gold_escalation rejects through the real CLI", () => {
+  const data = fixture(true);
+  delete data.manifest.ownerDecision;
+  for (const source of data.manifest.sources) {
+    delete source.producerEvidence;
+    for (const artifact of source.referenceArtifacts) {
+      const doc = data.documents.get(artifact.metadataPath)?.data;
+      if (doc?.createdBy !== "machine_generated") continue;
+      doc.createdBy = "human";
+      delete doc.generation;
+      delete doc.review.evidence.approvalBasis;
+      delete doc.review.evidence.deviationId;
+      doc.review.evidence.reviewedContentSha256 = contentSha256(doc);
+    }
+  }
+  reindex(data);
+  const r = report(data);
+  assert.equal(r.DATASET_STRUCTURALLY_VALID, false);
+  assert.equal(r.HUMAN_CREATED_GOLD, false);
+  assert.equal(r.HUMAN_GOLD_COMPLETE, false);
+  assert.match(r.errors.join("; "), /Authoritative v1 provenance policy/);
+  const root = mkdtempSync(resolve(tmpdir(), "us110-escalation-"));
+  try {
+    mkdirSync(resolve(root, "docs"));
+    mkdirSync(resolve(root, "tools"));
+    cpSync(resolve(repositoryRoot, "docs/evaluation"), resolve(root, "docs/evaluation"), {
+      recursive: true,
+    });
+    cpSync(resolve(repositoryRoot, "tools/evaluation"), resolve(root, "tools/evaluation"), {
+      recursive: true,
+    });
+    symlinkSync(resolve(repositoryRoot, "packages"), resolve(root, "packages"), "dir");
+    symlinkSync(resolve(repositoryRoot, "docs/roadmap"), resolve(root, "docs/roadmap"), "dir");
+    for (const [path, doc] of data.documents)
+      writeFileSync(resolve(root, path), JSON.stringify(doc.data));
+    writeFileSync(resolve(root, "docs/evaluation/manifest.json"), JSON.stringify(data.manifest));
+    const result = spawnSync(
+      process.execPath,
+      [resolve(root, "tools/evaluation/validate.mjs"), "--require-human-gold"],
+      { encoding: "utf8", timeout: 15000 },
+    );
+    assert.equal(result.status, 1, result.stderr);
+    assert.ok(result.stdout.trim(), result.stderr);
+    const cli = JSON.parse(result.stdout);
+    assert.equal(cli.DATASET_STRUCTURALLY_VALID, false);
+    assert.equal(cli.HUMAN_CREATED_GOLD, false);
+    assert.equal(cli.HUMAN_GOLD_COMPLETE, false);
+    assert.match(cli.errors.join("; "), /Authoritative v1 provenance policy/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+for (const mutation of ["content", "generation", "scope", "artifact ID"])
+  test(`QA36R-F2 code-pinned decision rejects consistently rebound ${mutation}`, () => {
+    const data = fixture(true);
+    const { doc, source, artifact } = entry(data, "word_alignment");
+    const binding = data.manifest.ownerDecision.acceptedArtifacts.find(
+      (a) => a.artifactId === doc.id,
+    );
+    if (mutation === "content") doc.words[0].text += " changed";
+    if (mutation === "generation") doc.generation.toolVersions["faster-whisper"] = "changed";
+    if (mutation === "scope") {
+      data.manifest.ownerDecision.scope.startUs = "29000000";
+      for (const s of data.manifest.sources) {
+        for (const a of s.referenceArtifacts) {
+          const d = data.documents.get(a.metadataPath)?.data;
+          if (d?.createdBy === "machine_generated") d.scope.startUs = "29000000";
+        }
+        for (const e of s.producerEvidence || []) e.scope.startUs = "29000000";
+      }
+    }
+    if (mutation === "artifact ID") {
+      const oldId = doc.id;
+      doc.id = artifact.id = binding.artifactId = `${oldId}-replacement`;
+      for (const e of source.producerEvidence)
+        e.annotationIds = e.annotationIds.map((id) => (id === oldId ? doc.id : id));
+    }
+    for (const accepted of data.manifest.ownerDecision.acceptedArtifacts) {
+      const s = data.manifest.sources.find((item) => item.id === accepted.sourceId);
+      const a = s.referenceArtifacts.find((item) => item.id === accepted.artifactId);
+      const d = data.documents.get(a.metadataPath).data;
+      accepted.contentSha256 = contentSha256(d);
+      accepted.generationSha256 = contentSha256(d.generation);
+      d.review.evidence.reviewedContentSha256 = contentSha256(d);
+    }
+    reindex(data);
+    const r = report(data);
+    assert.equal(r.DATASET_STRUCTURALLY_VALID, false);
+    assert.match(r.errors.join("; "), /exact pinned Owner decision/);
+    assert.equal(r.OWNER_ACCEPTED_GOLD_COMPLETE, false);
+  });
+
+for (const mutation of ["missing source evidence", "missing evidence object", "rebound evidence"])
+  test(`QA36R-F1 authoritative v1 policy rejects ${mutation}`, () => {
+    const data = fixture(true);
+    const source = data.manifest.sources.find((s) => s.producerEvidence);
+    if (mutation === "missing source evidence") delete source.producerEvidence;
+    if (mutation === "missing evidence object") source.producerEvidence.pop();
+    if (mutation === "rebound evidence") {
+      const item = source.producerEvidence.find((e) => e.type === "generation_output");
+      item.sha256 = "0".repeat(64);
+      item.objectKey = objectKey(data.manifest.datasetVersion, "producer-evidence", item);
+    }
+    const r = report(data);
+    assert.equal(r.DATASET_STRUCTURALLY_VALID, false);
+    assert.match(r.errors.join("; "), /Authoritative v1 provenance policy/);
+  });
+
+for (const mode of ["new", "existing", "symlink", "directory symlink"])
+  test(`QA36R-F4 evidence destination ${mode}`, () => {
+    const root = mkdtempSync(resolve(tmpdir(), "us110-evidence-destination-"));
+    const real = resolve(root, "real");
+    mkdirSync(real);
+    const directory = mode === "directory symlink" ? resolve(root, "linked") : real;
+    const target = resolve(root, "protected");
+    const bytes = Buffer.from("verified producer bytes");
+    const item = { id: "source-inference-raw", extension: "json", sha256: sha256(bytes) };
+    const to = resolve(directory, `${item.id}.${item.extension}`);
+    writeFileSync(target, "protected existing bytes");
+    try {
+      if (mode === "existing") writeFileSync(to, "existing evidence");
+      if (mode === "symlink") symlinkSync(target, to);
+      if (mode === "directory symlink") symlinkSync(real, directory, "dir");
+      if (mode === "new") {
+        stageEvidence([{ item, bytes, to }], directory);
+        assert.deepEqual(readFileSync(to), bytes);
+        assert.throws(() => stageEvidence([{ item, bytes, to }], directory), /already exists/);
+      } else {
+        assert.throws(
+          () => stageEvidence([{ item, bytes, to }], directory),
+          /already exists|symlinks/,
+        );
+        if (mode === "existing") assert.equal(readFileSync(to, "utf8"), "existing evidence");
+      }
+      assert.equal(readFileSync(target, "utf8"), "protected existing bytes");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });

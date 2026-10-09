@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
-import { readFileSync, copyFileSync, mkdirSync, realpathSync } from "node:fs";
-import { resolve, sep } from "node:path";
+import {
+  readFileSync,
+  writeFileSync,
+  mkdirSync,
+  realpathSync,
+  lstatSync,
+  constants,
+} from "node:fs";
+import { resolve, sep, parse } from "node:path";
 import { fileURLToPath } from "node:url";
 import process from "node:process";
 import console from "node:console";
@@ -14,6 +21,52 @@ import {
 } from "./validate.mjs";
 import { normalizedModelWords, silenceComplement } from "./annotations.mjs";
 import { writeJson } from "./json.mjs";
+
+function missing(path) {
+  try {
+    return lstatSync(path);
+  } catch (error) {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  }
+}
+function safeDirectory(directory, create) {
+  const absolute = resolve(directory);
+  let current = parse(absolute).root;
+  for (const component of absolute.slice(current.length).split(sep).filter(Boolean)) {
+    current = resolve(current, component);
+    let stat = missing(current);
+    if (!stat && create) {
+      mkdirSync(current);
+      stat = lstatSync(current);
+    }
+    if (stat && (stat.isSymbolicLink() || !stat.isDirectory()))
+      throw new Error("Evidence destination directory must not contain symlinks or files");
+  }
+}
+
+// Preflight the entire batch; create only new files with validated in-memory bytes.
+// O_EXCL/O_NOFOLLOW also close the destination-file race after preflight.
+export function stageEvidence(copies, mediaRoot) {
+  const directory = resolve(mediaRoot);
+  safeDirectory(directory, false);
+  for (const copy of copies) {
+    if (copy.to !== resolve(directory, `${copy.item.id}.${copy.item.extension}`))
+      throw new Error("Evidence destination must remain directly inside its staging directory");
+    if (missing(copy.to))
+      throw new Error("Evidence destination already exists; refusing overwrite");
+    assert.equal(sha256(copy.bytes), copy.item.sha256);
+  }
+  safeDirectory(directory, true);
+  for (const copy of copies) {
+    safeDirectory(directory, false);
+    writeFileSync(copy.to, copy.bytes, {
+      flag: constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
+      mode: 0o600,
+    });
+    assert.equal(sha256(readFileSync(copy.to)), copy.item.sha256);
+  }
+}
 
 // Verify existing bytes only. Never invoke inference, decode media or change approved gold.
 export function verifyProducerBytes(source, words, silence, { pcm, rawBytes, generatedBytes }) {
@@ -84,18 +137,14 @@ export async function archiveEvidence({ root, mediaRoot, dryRun = false }) {
         extension: f.extension,
       };
       item.objectKey = objectKey(manifest.datasetVersion, "producer-evidence", item);
-      copies.push({ item, from: f.path, to: resolve(mediaRoot, `${item.id}.${item.extension}`) });
+      copies.push({ item, bytes: f.bytes, to: resolve(mediaRoot, `${item.id}.${item.extension}`) });
       return item;
     });
   }
   report = validateDataset(manifest, registry, documents, loaded.storageEvidence);
   if (!report.DATASET_STRUCTURALLY_VALID) throw new Error(report.errors.join("; "));
   if (!dryRun) {
-    mkdirSync(mediaRoot, { recursive: true });
-    for (const copy of copies) {
-      copyFileSync(copy.from, copy.to);
-      assert.equal(sha256(readFileSync(copy.to)), copy.item.sha256);
-    }
+    stageEvidence(copies, mediaRoot);
     await writeJson(resolve(repositoryRoot, "docs/evaluation/manifest.json"), manifest);
   }
   // This prepares exact files; sync/deep perform versioned object upload/verification separately.

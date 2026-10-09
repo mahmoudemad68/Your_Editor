@@ -134,3 +134,16 @@ QA36-F4 remains explicit Sprint 3 evaluation debt. QA36-F2 (durable team storage
 approved editorial notes), F7 (representativeness/short source) and F8 (local timing/environment)
 are accepted findings, not opportunistically repaired here. Approved notes and all gold content
 remain unchanged; no new Owner review or approval is claimed by the post-QA repair.
+
+## Authoritative v1 policy after re-QA
+
+The v1 decision and nine producer-evidence records are pinned by canonical SHA-256 in
+`tools/evaluation/provenance-policy.mjs`, outside mutable manifest and annotation JSON.
+All v1 validation paths fail closed if the decision/evidence is removed or rebound. This policy
+preserves the existing Owner decision and approved bytes; no new approval is claimed. A later
+version fork clears the waiver, evidence bindings and current approvals and must establish its
+own provenance. It cannot inherit v1 generated acceptance as human provenance.
+
+Approval records are unsigned. Repository review protects policy code and human approval
+records; project-owner-looking metadata alone is not cryptographic identity evidence
+(QA36R-F3). The pins prevent data-only escalation/rebinding of this accepted v1 snapshot.

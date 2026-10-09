@@ -1408,5 +1408,46 @@
         }
       ]
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "datasetVersion": {
+            "const": "evaluation-dataset-v1"
+          }
+        },
+        "required": ["datasetVersion"]
+      },
+      "then": {
+        "required": ["ownerDecision"],
+        "properties": {
+          "sources": {
+            "items": {
+              "if": {
+                "properties": {
+                  "id": {
+                    "enum": ["commons-28956463", "commons-98650286", "commons-82236797"]
+                  }
+                },
+                "required": ["id"]
+              },
+              "then": {
+                "required": ["producerEvidence"],
+                "properties": {
+                  "producerEvidence": {
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "type": "array"
+                  }
+                }
+              },
+              "type": "object"
+            },
+            "type": "array"
+          }
+        }
+      }
+    }
+  ]
 }

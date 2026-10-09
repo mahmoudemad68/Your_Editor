@@ -197,7 +197,11 @@ raw-to-label conversions and stages nine existing files: three scoped WAVs, thre
 word/Silero outputs, and three original conversion records. `producerEvidence` in the manifest
 binds their source SHA, scope, annotation IDs, dataset version, SHA, size and content-addressed
 private object keys. Sync/deep include this evidence, require enabled native bucket versioning
-and verify exact bytes. A missing/mismatched original fails; regenerating a substitute is not
+and verify exact bytes. Archive staging refuses existing files, destination symlinks and symlinked
+directory components; file creation is exclusive. A repeat archive attempt fails closed. Use a
+new empty staging directory for a separate archival attempt, never delete evidence automatically.
+The local sync/deep result is implementation evidence, not a claim of independent remote-byte QA.
+A missing/mismatched original fails; regenerating a substitute is not
 archival. Model weights are identified by hash and are not included in these nine evidence objects.
 
 For a _new unapproved_ annotation snapshot, import and technically validate before approval:
@@ -230,10 +234,14 @@ pnpm evaluation:review commons-82236797-word-alignment \
 
 Approval records `approvalBasis=owner_accepted_generated` and the deviation ID. Machine candidates,
 missing generation identity, empty labels, wrong scope/source or stale fingerprints cannot count.
-All approved artifacts require the exact `project-owner` reviewer. The reviewed manifest's
-`ownerDecision.acceptedArtifacts` freezes the expected producer and content/generation hashes
-for these six generated artifacts. Their provenance cannot be removed by recomputing an unsigned
-annotation fingerprint. Scoped metric consumers must pass `manifest.ownerDecision` (or explicit
+All approved artifacts require the exact `project-owner` reviewer. For `evaluation-dataset-v1`,
+`tools/evaluation/provenance-policy.mjs` authoritatively pins the exact canonical Owner-decision
+fingerprint and the nine producer-evidence identities. The schema requires the decision and three
+evidence bindings on each accepted source. The decision includes the six exact artifact IDs,
+producer, source, dataset version, accepted scope and content/generation hashes. Removing manifest
+fields or changing labels and rebinding mutable hashes cannot bypass this code policy. The six
+generated artifacts never count as human-created gold in v1. Policy changes require repository
+review and a new QA cycle; this repair changes no approved content or Owner evidence. Scoped metric consumers must pass `manifest.ownerDecision` (or explicit
 `null` from a validated version with no deviation); never choose authority from annotation fields.
 Later version forks clear the decision and keep the original producer archive tied to its old
 snapshot, allowing genuine human replacements in the new version.
@@ -281,12 +289,14 @@ This bookkeeping does not alter that fingerprint. A published snapshot cannot va
 changes or approved gold/durable-storage evidence is incomplete. Render/review refuse a published snapshot.
 No publication or freeze is performed by the Coding Agent in this Draft PR. Forking clears the active Owner waiver; a later version needs its own genuine acceptance.
 
-Before publication, the Owner can revise approved v1 gold **without a version fork**: preserve the
+Before publication, the Owner can revise unpinned human reference gold **without a version fork**: preserve the
 approved metadata/receipt in git first, then explicitly replace that artifact's `review` object with
 `{"status":"awaiting_human_review"}` (removing the old current `evidence`). Make the real human changes,
 rerender edits, and run the explicit review CLI again. Never retain an old approval over changed
 content; validation rejects stale fingerprints and the tools refuse implicitly reopening an approved
-artifact. Resetting review makes it count as zero until a fresh genuine review passes. Old git
+artifact. The six pinned generated annotation contents and evidence are an exception: changing
+those requires an intentional reviewed policy change and a new QA cycle, or a legitimate later
+version fork with new provenance and approval. Resetting review makes it count as zero until a fresh genuine review passes. Old git
 records and immutable content-addressed bucket objects preserve the previous provenance.
 
 Only changes to an approved snapshot **after its published freeze** require a later version:
@@ -312,3 +322,9 @@ This story does not implement production ASR/VAD, a timeline, rendering services
 Security scan attribution and the 342 → 343 HIGH-row advisory drift are recorded in
 [SECURITY_BASELINE.md](SECURITY_BASELINE.md); absolute scanner totals and PR-attributable changes
 are reported separately.
+
+The approval metadata is not a signed identity system. Repository review protects validator code,
+provenance policy and human approval records. A newly forged human artifact carrying
+`project-owner`-looking unsigned metadata cannot be independently authenticated by this tooling
+(QA36R-F3). This trust boundary does not permit rewriting the six code-pinned v1 generated artifacts
+as human gold. No signature infrastructure is introduced.
