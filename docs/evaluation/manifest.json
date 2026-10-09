@@ -40,11 +40,11 @@
           "type": "edit_spec",
           "sourceId": "commons-148215183",
           "datasetVersion": "evaluation-dataset-v1",
-          "sha256": "f702298b86cf74a06f531466f51ebe93b3b4eade4754a92ce9d277c510d75414",
-          "sizeBytes": "779",
+          "sha256": "09ae262ac13d45ea8144474bd38a62a5ea1a3a7786f75659f5aad2c44e7dd9d6",
+          "sizeBytes": "1328",
           "extension": "json",
           "metadataPath": "docs/evaluation/artifacts/commons-148215183-edit-spec.json",
-          "objectKey": "evaluation/evaluation-dataset-v1/references/commons-148215183-edit-spec/f702298b86cf74a06f531466f51ebe93b3b4eade4754a92ce9d277c510d75414.json"
+          "objectKey": "evaluation/evaluation-dataset-v1/references/commons-148215183-edit-spec/09ae262ac13d45ea8144474bd38a62a5ea1a3a7786f75659f5aad2c44e7dd9d6.json"
         },
         {
           "id": "commons-148215183-reference-reel",
@@ -132,11 +132,11 @@
           "type": "edit_spec",
           "sourceId": "commons-165959826",
           "datasetVersion": "evaluation-dataset-v1",
-          "sha256": "ebea72320a7a80762edaf32a5425ec6aa777c253cacb8f385d5cab7301d73959",
-          "sizeBytes": "779",
+          "sha256": "5b43388b8572baebd56f7df0ab28d30707dbbed8c59deb94012e6ad51d3dbd2b",
+          "sizeBytes": "1328",
           "extension": "json",
           "metadataPath": "docs/evaluation/artifacts/commons-165959826-edit-spec.json",
-          "objectKey": "evaluation/evaluation-dataset-v1/references/commons-165959826-edit-spec/ebea72320a7a80762edaf32a5425ec6aa777c253cacb8f385d5cab7301d73959.json"
+          "objectKey": "evaluation/evaluation-dataset-v1/references/commons-165959826-edit-spec/5b43388b8572baebd56f7df0ab28d30707dbbed8c59deb94012e6ad51d3dbd2b.json"
         },
         {
           "id": "commons-165959826-reference-reel",
@@ -224,11 +224,11 @@
           "type": "edit_spec",
           "sourceId": "commons-28956463",
           "datasetVersion": "evaluation-dataset-v1",
-          "sha256": "fd5d02f46c23180204ca3868a55bb466aedd7d167c089ce7291ab4daa5a48602",
-          "sizeBytes": "777",
+          "sha256": "8b128f9cfd491d31d8ac03a28ba935b12019e37138c37c1d41f7c8ec1634518c",
+          "sizeBytes": "1326",
           "extension": "json",
           "metadataPath": "docs/evaluation/artifacts/commons-28956463-edit-spec.json",
-          "objectKey": "evaluation/evaluation-dataset-v1/references/commons-28956463-edit-spec/fd5d02f46c23180204ca3868a55bb466aedd7d167c089ce7291ab4daa5a48602.json"
+          "objectKey": "evaluation/evaluation-dataset-v1/references/commons-28956463-edit-spec/8b128f9cfd491d31d8ac03a28ba935b12019e37138c37c1d41f7c8ec1634518c.json"
         },
         {
           "id": "commons-28956463-reference-reel",
@@ -367,11 +367,11 @@
           "type": "edit_spec",
           "sourceId": "commons-7740925",
           "datasetVersion": "evaluation-dataset-v1",
-          "sha256": "3c5d20128e441eb1949d567dea5c6e99f13476211db0a48437991a42d04d1dab",
-          "sizeBytes": "775",
+          "sha256": "56a98d56395691e591df2ae3e65163478ac400e1216eac100a382950a875edef",
+          "sizeBytes": "1324",
           "extension": "json",
           "metadataPath": "docs/evaluation/artifacts/commons-7740925-edit-spec.json",
-          "objectKey": "evaluation/evaluation-dataset-v1/references/commons-7740925-edit-spec/3c5d20128e441eb1949d567dea5c6e99f13476211db0a48437991a42d04d1dab.json"
+          "objectKey": "evaluation/evaluation-dataset-v1/references/commons-7740925-edit-spec/56a98d56395691e591df2ae3e65163478ac400e1216eac100a382950a875edef.json"
         },
         {
           "id": "commons-7740925-reference-reel",
@@ -459,11 +459,11 @@
           "type": "edit_spec",
           "sourceId": "commons-82236797",
           "datasetVersion": "evaluation-dataset-v1",
-          "sha256": "49cbf2d9d5493e9e67883f6a44299695e0d1d5823db3aa63658d1fd49409eda4",
-          "sizeBytes": "777",
+          "sha256": "5c05081eda054ac4a3ff8659b60d24c5ff3b3be62865ed3a28e35e35ac6018fe",
+          "sizeBytes": "1326",
           "extension": "json",
           "metadataPath": "docs/evaluation/artifacts/commons-82236797-edit-spec.json",
-          "objectKey": "evaluation/evaluation-dataset-v1/references/commons-82236797-edit-spec/49cbf2d9d5493e9e67883f6a44299695e0d1d5823db3aa63658d1fd49409eda4.json"
+          "objectKey": "evaluation/evaluation-dataset-v1/references/commons-82236797-edit-spec/5c05081eda054ac4a3ff8659b60d24c5ff3b3be62865ed3a28e35e35ac6018fe.json"
         },
         {
           "id": "commons-82236797-reference-reel",
@@ -573,11 +573,11 @@
           "type": "edit_spec",
           "sourceId": "commons-98650286",
           "datasetVersion": "evaluation-dataset-v1",
-          "sha256": "98435425ab88200aed66c112c3a7d7cbf59a3fc9210c6055e1a77c8ebcfbc4c0",
-          "sizeBytes": "777",
+          "sha256": "0adbad04faeb9eeeda788bf4f5bf95a000f5f3db8435ff50c4fd58c134788fdb",
+          "sizeBytes": "1326",
           "extension": "json",
           "metadataPath": "docs/evaluation/artifacts/commons-98650286-edit-spec.json",
-          "objectKey": "evaluation/evaluation-dataset-v1/references/commons-98650286-edit-spec/98435425ab88200aed66c112c3a7d7cbf59a3fc9210c6055e1a77c8ebcfbc4c0.json"
+          "objectKey": "evaluation/evaluation-dataset-v1/references/commons-98650286-edit-spec/0adbad04faeb9eeeda788bf4f5bf95a000f5f3db8435ff50c4fd58c134788fdb.json"
         },
         {
           "id": "commons-98650286-reference-reel",

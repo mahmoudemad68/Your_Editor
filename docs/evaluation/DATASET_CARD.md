@@ -4,15 +4,18 @@
 
 `evaluation-dataset-v1` establishes the licensed source inventory and stable gold/metric contracts
 for US-110 and later perception/editing evaluation. It is an **unreleased candidate baseline**, not a
-completed human-gold benchmark. The Owner confirmed that no existing reviewed assets are available.
+completed human-gold benchmark. At collection, the Owner confirmed that no existing reviewed assets were available.
 The Owner has now personally watched the six prepared sources and intentionally retained each
-00:00–00:30 interval as a human editorial selection. No human annotation, consent or final
-rendered-artifact approval is claimed in this release.
+00:00–00:30 interval as a human editorial selection. The Owner has subsequently personally watched
+and explicitly approved all six exact rendered reference reels. Approval evidence records
+`project-owner`, the current edit fingerprint and each verified rendered SHA-256. No human
+word/silence annotation or consent is claimed in this release.
 
 There are 12 distinct downloaded source representations, two in each category: podcast, educational,
 talking head, interview, gaming and technical tutorial. Six first-30-second excerpts are rendered
-Owner-selected references, all `awaiting_human_review`. Three silence templates and three word-alignment
-templates are empty and awaiting hand labelling; neither templates nor candidates satisfy T2.
+Owner-selected references, all `approved`. Three silence templates and three word-alignment
+templates are empty and awaiting hand labelling. The six-reference quota is met; the annotation
+quotas and durable archive are still incomplete, so T2 and release completeness are not satisfied.
 Validation reports structural validity, human-gold quotas and durable-storage completion separately. The six/three/three quotas are unchanged.
 
 ## Scope and languages
@@ -57,8 +60,9 @@ not permission to misrepresent speakers or use their identities in advertising.
 A machine selected the initial first 30 seconds solely to make review possible. The Owner has since
 personally watched all six prepared sources and explicitly chosen to retain the same intervals.
 The human edit specifications record that genuine editorial decision, and have been rerendered
-without changing the recipe. They are not yet approved human-gold references: the Owner must watch
-the exact newly rendered reels, then approve or reject their hashes. Recording `createdBy=human`
+without changing the recipe. The Owner then personally watched those exact reels and explicitly
+approved all six; the existing review tool verified each current receipt and local reel identity
+before recording the Owner's approval. Recording `createdBy=human`
 requires an actual human decision; retaining a suggestion qualifies only when the Owner intentionally
 selects it after watching the source. Approval evidence records the Owner identifier, role, UTC time,
 decision, notes, explicit human attestation, content fingerprint and reviewed reel hash.

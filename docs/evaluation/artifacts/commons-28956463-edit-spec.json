@@ -4,7 +4,19 @@
   "sourceId": "commons-28956463",
   "sourceSha256": "843d6c653030056f26018be17b933fd6c739ef59ce0e128152f385bf2b38d1f6",
   "createdBy": "human",
-  "review": { "status": "awaiting_human_review" },
+  "review": {
+    "status": "approved",
+    "evidence": {
+      "reviewerId": "project-owner",
+      "reviewerRole": "project_owner",
+      "reviewedAt": "2026-10-09T05:56:42Z",
+      "decision": "approved",
+      "humanAttestation": true,
+      "notes": "The Project Owner personally watched the exact rendered reference reel for this source and approved the selected 00:00–00:30 reference edit.",
+      "reviewedContentSha256": "ef5153884f7db280a8a45b01256ebd4881eb442f62c7bb22cbecd040f39f0a3c",
+      "renderSha256": "75af35ba5a168e2e26415329d700109260ba7ae18d48e7c554f5228db780388c"
+    }
+  },
   "segments": [{ "sourceStartUs": "0", "sourceEndUs": "30000000", "outputStartUs": "0" }],
   "decisionNotes": "The Project Owner personally watched the source and intentionally selected the 00:00–00:30 interval as the reference edit. The existing machine-suggested interval was retained because the Owner judged it suitable. This records the Owner's editorial selection only; final approval of the newly rendered reference reel is still awaiting the Owner's review.",
   "id": "commons-28956463-edit-spec"

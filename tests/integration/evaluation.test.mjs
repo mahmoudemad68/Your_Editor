@@ -109,15 +109,17 @@ function goldFixture() {
   reindex(data);
   return data;
 }
-test("actual manifest is structurally valid but honestly incomplete gold", () => {
+test("actual manifest has six approved references but incomplete annotation and storage gold", () => {
   const r = report(fixture());
   assert.equal(r.DATASET_STRUCTURALLY_VALID, true, r.errors.join(";"));
   assert.equal(r.US110_GOLD_COMPLETE, false);
   assert.equal(r.LICENSED_SOURCE_COUNT, 12);
   assert.equal(r.CATEGORY_COUNT, 6);
-  assert.equal(r.APPROVED_HUMAN_REFERENCE_COUNT, 0);
+  assert.equal(r.APPROVED_HUMAN_REFERENCE_COUNT, 6);
   assert.equal(r.APPROVED_SILENCE_LABEL_COUNT, 0);
   assert.equal(r.APPROVED_WORD_ALIGNMENT_COUNT, 0);
+  assert.equal(r.HUMAN_GOLD_COMPLETE, false);
+  assert.equal(r.GOLD_STORAGE_DURABLE, false);
 });
 test("synthetic genuine-human-shaped evidence satisfies unchanged 6/3/3 quota", () => {
   const r = report(goldFixture());

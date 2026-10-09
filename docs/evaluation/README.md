@@ -1,11 +1,13 @@
 # Evaluation baseline operator guide
 
-US-110 provides 12 licensed sources, six **Owner-selected references awaiting rendered-reel review**, empty annotation
+US-110 provides 12 licensed sources, six **Owner-approved human reference reels**, empty annotation
 templates and eight metric definitions. It currently reports `BLOCKED_ON_OWNER_GOLD`; it is not a
 completed gold dataset. The Owner personally watched the six prepared sources and intentionally
 retained each 00:00–00:30 reference interval. Those editorial decisions are recorded as human edits;
-the exact newly rendered reels still require final Owner review. Follow the Owner steps below to
-approve the six rendered references and complete at least three hand-labelled silence/word clips.
+the Owner has also personally watched and explicitly approved all six exact rendered reels.
+Approval evidence uses the stable reviewer ID `project-owner` and each verified reel SHA-256.
+Follow the Owner steps below to complete at least three hand-labelled silence/word clips and
+configure approved durable storage. Human-gold and release completeness remain false.
 
 ## Offline validation
 
@@ -78,9 +80,10 @@ The active `evaluation-dataset-v1` is **unreleased**. Complete its first genuine
 annotations and approvals in v1; uploading machine candidates did not publish/freeze the dataset.
 No v2 fork is required for this first Owner work. The six current human edit specifications record
 the Owner's explicit decision to retain 00:00–00:30 after personally watching the sources. All six
-reels have been rerendered with current edit fingerprints; their status remains
-`awaiting_human_review`, with no approval evidence. The next Owner action is to watch each exact
-newly rendered reel, then approve or reject it. For future revisions within unreleased v1:
+reels have been rerendered with current edit fingerprints and personally watched and approved by
+the Owner. Their status is `approved`, with explicit Owner attestation, review notes, the current
+edit fingerprint and exact rendered-reel hash recorded through the existing review tool.
+The next Owner work is annotation gold and approved durable storage. For future revisions within unreleased v1:
 
 1. Watch each full source and its candidate; source files are in the obtain directory and candidate
    reels are `<source-id>-reference-reel.mp4`. Use an ordinary local video player.
@@ -93,7 +96,8 @@ newly rendered reel, then approve or reject it. For future revisions within unre
 pnpm evaluation:render commons-82236797 --root .local/evaluation
 ```
 
-4. Record your own review (these commands are examples; the Coding Agent has not run approval):
+4. Record your own review (these commands are examples; the six current approvals were recorded
+   by the Coding Agent only after the Owner explicitly supplied genuine review and authorization):
 
 ```sh
 pnpm evaluation:review commons-82236797-edit-spec \
