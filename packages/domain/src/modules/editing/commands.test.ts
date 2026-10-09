@@ -437,41 +437,42 @@ function generatedCommand(t: Timeline, kind: number, n: number, amount: number):
     }).toSnapshot(),
   });
 }
-test("generated mixed sequences: undo all, serialized replay, redo, redo invalidation and failure atomicity", () => {
-  fc.assert(
-    fc.property(
-      fc.array(
-        fc.record({
-          kind: fc.integer({ min: 0, max: 6 }),
-          amount: fc.integer({ min: 0, max: 100 }),
-        }),
-        { minLength: 1, maxLength: 24 },
+for (const seed of [215214, 215215, 215216])
+  test(`generated mixed sequences (seed ${seed}): undo all, replay, redo, invalidation and atomicity`, () => {
+    fc.assert(
+      fc.property(
+        fc.array(
+          fc.record({
+            kind: fc.integer({ min: 0, max: 6 }),
+            amount: fc.integer({ min: 0, max: 100 }),
+          }),
+          { minLength: 1, maxLength: 24 },
+        ),
+        (steps) => {
+          const t = initial(),
+            bus = new CommandBus(t);
+          const states: Timeline[] = [];
+          for (const [n, step] of steps.entries()) {
+            states.push(bus.timeline);
+            bus.apply(generatedCommand(bus.timeline, step.kind, n, step.amount));
+          }
+          const final = bus.timeline;
+          assert.deepEqual(replay(t, JSON.stringify(bus.commandLog())), final);
+          const persisted = CommandBus.restoreHistory(bus.serializeHistory());
+          for (let n = steps.length - 1; n >= 0; n--) {
+            assert.deepEqual(persisted.undo(), states[n]);
+            const before = persisted.serializeHistory();
+            assert.throws(() => persisted.apply({ type: "Invalid" }));
+            assert.equal(persisted.serializeHistory(), before);
+          }
+          assert.deepEqual(persisted.timeline, t);
+          for (let n = 0; n < steps.length; n++) persisted.redo();
+          assert.deepEqual(persisted.timeline, final);
+          persisted.undo();
+          persisted.apply(generatedCommand(persisted.timeline, 0, 50, 10));
+          assert.equal(persisted.canRedo, false);
+        },
       ),
-      (steps) => {
-        const t = initial(),
-          bus = new CommandBus(t);
-        const states: Timeline[] = [];
-        for (const [n, step] of steps.entries()) {
-          states.push(bus.timeline);
-          bus.apply(generatedCommand(bus.timeline, step.kind, n, step.amount));
-        }
-        const final = bus.timeline;
-        assert.deepEqual(replay(t, JSON.stringify(bus.commandLog())), final);
-        const persisted = CommandBus.restoreHistory(bus.serializeHistory());
-        for (let n = steps.length - 1; n >= 0; n--) {
-          assert.deepEqual(persisted.undo(), states[n]);
-          const before = persisted.serializeHistory();
-          assert.throws(() => persisted.apply({ type: "Invalid" }));
-          assert.equal(persisted.serializeHistory(), before);
-        }
-        assert.deepEqual(persisted.timeline, t);
-        for (let n = 0; n < steps.length; n++) persisted.redo();
-        assert.deepEqual(persisted.timeline, final);
-        persisted.undo();
-        persisted.apply(generatedCommand(persisted.timeline, 0, 50, 10));
-        assert.equal(persisted.canRedo, false);
-      },
-    ),
-    { seed: 215214, numRuns: 150 },
-  );
-}, 30000);
+      { seed, numRuns: 50 },
+    );
+  }, 30000);
