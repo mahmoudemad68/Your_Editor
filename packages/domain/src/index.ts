@@ -38,13 +38,14 @@ export type {
   UserId,
   UuidV7,
 } from "./kernel/id.js";
-export { frameIndex, frameRate, microseconds } from "./kernel/time.js";
+export { frameIndex, frameRate, microseconds, frameTime, snapToFrame } from "./kernel/time.js";
 export type { FrameIndex, FrameRate, Microseconds } from "./kernel/time.js";
 
 export { AgentRun, CreativeMemory } from "./modules/agent/index.js";
 export { Component } from "./modules/components/index.js";
 export { Critique } from "./modules/critic/index.js";
-export { Clip, Effect, Timeline, Track } from "./modules/editing/index.js";
+export * from "./modules/editing/index.js";
+export * from "./project-document.js";
 export {
   AccountEmailConflict,
   normalizeEmail,

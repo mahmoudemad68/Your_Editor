@@ -17,7 +17,11 @@ export default defineConfig({
       reporter: ["text", "lcov", "json-summary"],
       reportsDirectory: "coverage",
       // The sole authoritative domain percentage gate (also used by the proof).
-      thresholds: { lines: 80 },
+      thresholds: {
+        lines: 80,
+        "src/modules/editing/**/*.ts": { lines: 90, statements: 90, functions: 90, branches: 90 },
+        "src/project-document.ts": { lines: 90, statements: 90, functions: 90, branches: 90 },
+      },
     },
   },
 });

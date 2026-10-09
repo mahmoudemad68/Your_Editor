@@ -22,22 +22,43 @@ export function microseconds(value: bigint | string): Microseconds {
 }
 
 export function frameIndex(value: bigint): FrameIndex {
-  if (value < 0n) {
+  if (typeof value !== "bigint" || value < 0n) {
     throw new RangeError("Frame index must be a non-negative integer.");
   }
   return value;
 }
 
 export function frameRate(numerator: bigint, denominator: bigint): FrameRate {
-  if (numerator <= 0n || denominator <= 0n) {
+  if (
+    typeof numerator !== "bigint" ||
+    typeof denominator !== "bigint" ||
+    numerator <= 0n ||
+    denominator <= 0n
+  ) {
     throw new RangeError("Frame rate numerator and denominator must be positive integers.");
   }
-  return { numerator, denominator };
+  return Object.freeze({ numerator, denominator });
 }
 
 function parseCanonicalInteger(value: string): bigint {
-  if (!CANONICAL_INTEGER.test(value)) {
+  if (typeof value !== "string" || !CANONICAL_INTEGER.test(value)) {
     throw new RangeError("Media time must be a canonical decimal integer string.");
   }
   return BigInt(value);
+}
+
+/** Round nonnegative rationals half up. Compute from the absolute frame index, never accumulated durations. */
+function rounded(numerator: bigint, denominator: bigint): bigint {
+  return (2n * numerator + denominator) / (2n * denominator);
+}
+
+export function frameTime(index: FrameIndex, rate: FrameRate): Microseconds {
+  const fps = frameRate(rate.numerator, rate.denominator);
+  return rounded(frameIndex(index) * 1000000n * fps.denominator, fps.numerator);
+}
+
+export function snapToFrame(time: Microseconds | string, rate: FrameRate): Microseconds {
+  const fps = frameRate(rate.numerator, rate.denominator);
+  const index = rounded(microseconds(time) * fps.numerator, 1000000n * fps.denominator);
+  return frameTime(index, fps);
 }
