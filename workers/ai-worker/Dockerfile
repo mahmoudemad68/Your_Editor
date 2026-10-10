@@ -11,12 +11,17 @@ WORKDIR /app
 COPY workers/ai-worker/pyproject.toml workers/ai-worker/uv.lock ./
 COPY workers/ai-worker/src ./src
 COPY packages/schemas/src/job-envelope.schema.json ./src/editagent_ai_worker/infrastructure/job-envelope.schema.json
-RUN uv sync --frozen --no-dev --no-editable
+COPY packages/schemas/src/speech-analysis.schema.json ./src/editagent_ai_worker/infrastructure/speech-analysis.schema.json
+RUN --mount=type=secret,id=proxy_ca \
+    if [ -f /run/secrets/proxy_ca ]; then export SSL_CERT_FILE=/run/secrets/proxy_ca; fi; \
+    uv sync --frozen --no-dev --no-editable \
+    && /app/.venv/bin/python -m editagent_ai_worker.infrastructure.vad_model
 
 FROM python:3.11-slim-trixie@sha256:45037981b62b34b44602584fccbc4d884d5f7dc92c7ee86bb38a698a79fe1e51 AS runtime
 RUN groupadd --system --gid 10001 editagent \
     && useradd --system --uid 10001 --gid 10001 --home-dir /home/editagent --create-home --shell /usr/sbin/nologin editagent
 WORKDIR /app
+COPY workers/ai-worker/licenses /usr/share/doc/editagent-vad/
 COPY --from=build --chown=10001:10001 /app/.venv /app/.venv
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \

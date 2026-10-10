@@ -1,0 +1,205 @@
+{
+  "$id": "https://editagent.local/schemas/speech-analysis.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SpeechAnalysis",
+  "description": "US-202 speech section for future MediaAnalysis composition (US-208). Canonical parser also validates range bounds, ordering, hysteresis and configured duration limits.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "source", "speechRegions", "provenance"],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sourceId",
+        "sourceSha256",
+        "artifactId",
+        "audioSha256",
+        "sourceDurationUs",
+        "scopeStartUs",
+        "scopeEndUs"
+      ],
+      "properties": {
+        "sourceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*$"
+        },
+        "sourceSha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "artifactId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*$"
+        },
+        "audioSha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "sourceDurationUs": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)$",
+          "maxLength": 10
+        },
+        "scopeStartUs": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)$",
+          "maxLength": 10
+        },
+        "scopeEndUs": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)$",
+          "maxLength": 10
+        }
+      }
+    },
+    "speechRegions": {
+      "type": "array",
+      "maxItems": 56250,
+      "items": {
+        "$ref": "#/$defs/speechRegion"
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "adapterVersion",
+        "modelName",
+        "modelVersion",
+        "modelSha256",
+        "runtime",
+        "runtimeVersion",
+        "numpyVersion",
+        "normalizedPcmSha256",
+        "configuration",
+        "sampleRate",
+        "windowSamples",
+        "contextSamples",
+        "threads",
+        "device",
+        "confidenceAggregation"
+      ],
+      "properties": {
+        "adapterVersion": {
+          "const": "silero-onnx-stream-v1"
+        },
+        "modelName": {
+          "const": "silero-vad"
+        },
+        "modelVersion": {
+          "const": "v6-faster-whisper-1.2.1"
+        },
+        "modelSha256": {
+          "const": "4cbf549b8326f60f80f2536d9eefeb450a9abe83365a098031c89719f1be17d2"
+        },
+        "runtime": {
+          "const": "onnxruntime"
+        },
+        "runtimeVersion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*$"
+        },
+        "numpyVersion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*$"
+        },
+        "normalizedPcmSha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "configuration": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "speechThreshold",
+            "negativeThreshold",
+            "minSpeechUs",
+            "minSilenceUs",
+            "paddingUs"
+          ],
+          "properties": {
+            "speechThreshold": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "exclusiveMaximum": 1
+            },
+            "negativeThreshold": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "exclusiveMaximum": 1
+            },
+            "minSpeechUs": {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]*)$",
+              "maxLength": 10
+            },
+            "minSilenceUs": {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]*)$",
+              "maxLength": 10
+            },
+            "paddingUs": {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]*)$",
+              "maxLength": 10
+            }
+          }
+        },
+        "sampleRate": {
+          "const": 16000
+        },
+        "windowSamples": {
+          "const": 512
+        },
+        "contextSamples": {
+          "const": 64
+        },
+        "threads": {
+          "const": 1
+        },
+        "device": {
+          "const": "cpu"
+        },
+        "confidenceAggregation": {
+          "const": "sample_weighted_mean_in_padded_region"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "speechRegion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["startUs", "endUs", "confidence"],
+      "properties": {
+        "startUs": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)$",
+          "maxLength": 10
+        },
+        "endUs": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)$",
+          "maxLength": 10
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      }
+    }
+  }
+}
