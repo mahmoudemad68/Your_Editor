@@ -2,7 +2,7 @@
 
 `packages/media-core` owns production FFmpeg argv construction and execution. Application
 code uses the framework-free `IAudioAnalyzer<TSection>` domain port. The adapter returns
-the generated MediaAnalysis `AudioCompleted` section, including schema-validated data and
+the generated MediaAnalysis **1.1.0** `AudioCompleted` section, including schema-validated data and
 section provenance. There is no analyzer scheduler, database persistence or API here.
 
 ## Execution boundary
@@ -97,9 +97,12 @@ source coordinates and checked against `sourceDurationUs`.
 
 EBU R128 integrated LUFS, LRA and true peak come from its final summary. Short-term
 3-second EBU loudness is sampled at the first FFmpeg measurement in each 1-second
-bucket. `shortTermLoudness` is an optional additive AudioAnalysis field; existing 1.0.0
-sections remain valid, both generated bindings are regenerated, and unknown fields remain
-rejected. Digital-silence true peak (-infinity mathematically) uses the documented -200 dBTP
+bucket. `shortTermLoudness` is an optional additive AudioAnalysis field introduced in
+**MediaAnalysis 1.1.0**. The published 1.0.0 graph and readers are preserved byte-for-byte
+and reject this field. Exact-version readers, dispatch and pure 1.0.0 → 1.1.0 migration
+are documented in [the contract](../contracts/media-analysis.md). The analyzer exports
+`AUDIO_ANALYSIS_SCHEMA_VERSION = "1.1.0"` for producers assembling its section into a root
+document. Unknown versions and fields fail closed. Digital-silence true peak (-infinity mathematically) uses the documented -200 dBTP
 floor. Other nonfinite/missing measurements fail.
 
 PCM is streamed as mono float32 at the configured rate (FFmpeg's deterministic downmix
@@ -116,6 +119,7 @@ most 18,000 buckets for a 30-minute input with the minimum 100 ms window.
 pnpm build
 pnpm --filter @editagent/media-core test
 pnpm schemas:test
+pnpm audio:acceptance
 pnpm audio:evaluate --root .local/evaluation
 node tools/test/with-services.mjs pnpm --filter @editagent/media-worker test
 ```
@@ -126,7 +130,23 @@ Its reference is computed before inference from the ITU BS.1770 K-weighting coef
 Reference: -23.00359556055 LUFS; measured: -23.0 LUFS; absolute error: 0.00359556055 LU.
 The test enforces the roadmap's 0.5 LU tolerance, not a reference fitted to FFmpeg output.
 
-The evaluation command validates the full US-110 provenance policy first, then verifies
+`pnpm audio:acceptance` exercises the production analyzer with seven deterministic mono
+48 kHz PCM16 WAV fixtures. Fixed sample blocks define the gold before inference: square-wave
+non-silence, exact digital-zero gaps and a quiet nonzero signal above -60 dB. Cases cover
+no silence, an internal gap, multiple gaps, trailing silence, touching boundaries, a
+100 ms subminimum gap excluded from detectable-gold expectations, and quiet non-silence.
+No labels come from detector output; no randomness or threshold tuning is used. Exact
+sample counts define integer-us half-open boundaries, with no tolerance collar. Pooled
+TP = 5,750,000 us, FP = 0, FN = 0; precision = recall = F1 = **1.0**. Every individual
+case also passes, including the empty-prediction negative controls. **US-204 AC1 passes
+on these known acoustic-silence fixtures** (threshold 0.90); this is implementation
+acceptance evidence, not independent natural-speech accuracy. The root integration suite
+runs the real FFmpeg fixture test. The machine-readable command reports gold, predictions,
+fixture hashes and the same canonical duration-overlap metric used below.
+
+`pnpm audio:evaluate --root .local/evaluation` is separately a
+**PROJECT_GOLD_DIAGNOSTIC**, not the acoustic fixture acceptance score. It validates the
+full US-110 provenance policy first, then verifies
 licensed source and scoped PCM identities. It runs the production analyzer and compares
 only approved scopes using the existing metric registry: half-open integer-us overlap,
 no collar, and pooled TP/FP/FN before precision/recall/F1. Missing/invalid assets fail,
@@ -138,12 +158,14 @@ For the unchanged three Owner-approved v1 clips, final defaults measured:
 | ------ | ------ | -------- | --------- | -------- | -------- |
 | 934876 | 178687 | 15117124 | 0.839536  | 0.058240 | 0.108925 |
 
-**US-204 AC1 is FAIL: 0.108925 < 0.90.** The physical amplitude detector and Silero-based
-non-speech baseline disagree substantially. Engineering implementation is reviewable,
-but the batch is not ready for Independent QA acceptance. The v1 labels remain
-`machine_generated` under the unchanged Owner decision. Independent human accuracy is
-NOT_PROVEN; this result does not clear CP2 and must not be represented as scientific
-validation. US-202's accepted result and historical CP2 NOT_MET status are unchanged.
+**PROJECT_GOLD_DIAGNOSTIC_F1 = 0.10892459513270844**. The approved generated labels
+are the complement of Silero VAD speech and represent **non-speech**, whereas
+silencedetect measures **acoustic amplitude silence**. Their disagreement must remain
+visible; these labels are not independently verified acoustic-silence truth. The v1
+labels remain `machine_generated` under the unchanged Owner decision. No gold or
+threshold was changed to improve this score. **CP2 remains NOT_MET**, and **independent
+human accuracy remains NOT_PROVEN**. US-202's accepted result is unchanged. The diagnostic
+command reports these statuses separately and never uses this score as fixture AC1.
 
 There is no production rendering, VAD replacement, silence-removal editing or analysis
 orchestration in this batch. US-216 remains BLOCKED_ON_CHROMIUM_SANDBOX.

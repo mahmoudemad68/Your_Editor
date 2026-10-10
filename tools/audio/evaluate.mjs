@@ -1,4 +1,4 @@
-/** Production FFmpeg analysis against unchanged, policy-validated US-110 project gold. */
+/** Diagnostic only: acoustic silence vs unchanged Silero-derived non-speech project gold. */
 import { resolve } from "node:path";
 import { createReadStream } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -91,7 +91,12 @@ export async function evaluateAudio(root) {
       bucketUs: String(analyzer.configuration.bucketUs),
     },
     ...score,
-    AC1: score.f1 >= 0.9 ? "PASS_UNDER_OWNER_APPROVED_PROJECT_GOLD" : "FAIL",
+    role: "PROJECT_GOLD_DIAGNOSTIC",
+    projectGoldSemantics: "Owner-approved generated complement of Silero speech: NON_SPEECH",
+    mediaAnalysisSchemaVersion: "1.1.0",
+    PROJECT_GOLD_DIAGNOSTIC_F1: score.f1,
+    CP2_STATUS: "NOT_MET",
+    INDEPENDENT_HUMAN_ACCURACY: "NOT_PROVEN",
     INDEPENDENT_EVALUATION_STATUS:
       "NOT_PROVEN: Owner-approved generated Silero baseline, not human labels",
     clips: results,

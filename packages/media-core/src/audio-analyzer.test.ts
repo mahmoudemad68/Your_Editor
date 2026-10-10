@@ -15,7 +15,7 @@ import {
   parseLoudness,
   PcmBuckets,
 } from "./audio-analysis-parsers.js";
-import { MediaAnalysisSchema } from "@editagent/schemas";
+import { MediaAnalysisV1_1Schema as MediaAnalysisSchema } from "@editagent/schemas";
 
 function wav(
   seconds: number,
@@ -156,7 +156,7 @@ test("real FFmpeg calibrated loudness, schema integration, repeatability and kno
     assert.equal(first.data.energyCurve?.length, 100);
     assert.ok(first.data.shortTermLoudness!.length > 0);
     MediaAnalysisSchema.parse({
-      schemaVersion: "1.0.0",
+      schemaVersion: "1.1.0",
       mediaAssetId: "01900000-0000-7000-8000-000000000001",
       source: { sha256: input.sourceSha256, durationUs: input.durationUs.toString() },
       provenance: { producer: "audio-test", producerVersion: "1" },

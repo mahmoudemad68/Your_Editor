@@ -9,7 +9,7 @@ import prettier from "prettier";
 import { preflight } from "./media-analysis-preflight.mjs";
 
 export const GENERATOR_VERSION = "1.0.0";
-export const sourceFiles = [
+export const sourceFilesV1 = [
   "media-time",
   "analysis-common",
   "analysis-provenance",
@@ -22,9 +22,15 @@ export const sourceFiles = [
   "analysis-objects",
   "media-analysis",
 ].map((n) => `packages/schemas/src/${n}.schema.json`);
+export const sourceFilesV1_1 = sourceFilesV1.map((path) =>
+  path.replace(/(analysis-audio|media-analysis)\.schema\.json$/, "$1-v1_1.schema.json"),
+);
+export const sourceFiles = [...new Set([...sourceFilesV1, ...sourceFilesV1_1])];
 export const targets = [
   "packages/schemas/src/media-analysis.generated.ts",
   "workers/ai-worker/src/editagent_ai_worker/contracts/media_analysis_generated.py",
+  "packages/schemas/src/media-analysis-v1_1.generated.ts",
+  "workers/ai-worker/src/editagent_ai_worker/contracts/media_analysis_v1_1_generated.py",
 ];
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const allowed = new Set([
@@ -89,9 +95,9 @@ const pythonLiteral = (value) =>
         ? "None"
         : q(value);
 
-export async function generate(root = repositoryRoot) {
+async function generateGraph(root, graphSources, graphTargets) {
   const schemas = await Promise.all(
-    sourceFiles.map(async (path) => JSON.parse(await readFile(resolve(root, path), "utf8"))),
+    graphSources.map(async (path) => JSON.parse(await readFile(resolve(root, path), "utf8"))),
   );
   const registry = new Map(schemas.map((s) => [s.$id, s]));
   if (registry.size !== schemas.length) throw new Error("Schema ID collision");
@@ -289,9 +295,17 @@ export async function generate(root = repositoryRoot) {
   );
   const pyOutput = `"""${header}"""\n\n# fmt: off\n# ruff: noqa: E501\nfrom __future__ import annotations\n\nfrom functools import partial\nfrom typing import Annotated, Literal, Self, TypeAlias\n\nfrom pydantic import AfterValidator, BeforeValidator, Field, model_validator\n\nfrom .validation import ContractModel, check_rules, json_integer, text_rules\n\n${py.join("\n\n").trimEnd()}\n`;
   return new Map([
-    [targets[0], tsOutput],
-    [targets[1], pyOutput],
+    [graphTargets[0], tsOutput],
+    [graphTargets[1], pyOutput],
   ]);
+}
+export async function generate(root = repositoryRoot) {
+  // Both complete graphs pass the same fail-closed compiler before any target is written.
+  const graphs = await Promise.all([
+    generateGraph(root, sourceFilesV1, targets.slice(0, 2)),
+    generateGraph(root, sourceFilesV1_1, targets.slice(2)),
+  ]);
+  return new Map(graphs.flatMap((graph) => [...graph]));
 }
 export async function run(root = repositoryRoot, check = false) {
   const output = await generate(root);

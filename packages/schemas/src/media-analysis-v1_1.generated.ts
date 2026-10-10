@@ -1,7 +1,7 @@
 /** GENERATED FILE — DO NOT EDIT.
  * Canonical sources: packages/schemas/src/{media,analysis,speech}*.schema.json
  * Generator: tools/schema/generate-media-analysis.mjs v1.0.0; pnpm schemas:generate
- * Source SHA-256: a1da9b144fe882c7a068c34991fae36c74c2ac27d3769435e9b265348527291b */
+ * Source SHA-256: 8b1aa69bccd257767a034eb796776e4afa55568de6b41f15a093a0111bfd89ba */
 import { z } from "zod";
 import { checkRules, codePointLength, wellFormed } from "./analysis-validation.js";
 export const MediaTimeSchema = z
@@ -521,6 +521,12 @@ export const WaveformPeakSchema = z
   );
 export type WaveformPeak = z.infer<typeof WaveformPeakSchema>;
 
+export const ShortTermLoudnessPointSchema = z.strictObject({
+  atUs: TimeSchema,
+  lufs: z.number().finite().min(-200).max(100),
+});
+export type ShortTermLoudnessPoint = z.infer<typeof ShortTermLoudnessPointSchema>;
+
 export const AudioAnalysisSchema = z
   .strictObject({
     speech: SpeechAnalysisSchema.optional(),
@@ -528,6 +534,7 @@ export const AudioAnalysisSchema = z
     loudness: LoudnessSchema.optional(),
     energyCurve: z.array(EnergyPointSchema).min(0).max(108000).optional(),
     waveformPeaks: z.array(WaveformPeakSchema).min(0).max(108000).optional(),
+    shortTermLoudness: z.array(ShortTermLoudnessPointSchema).min(0).max(1800).optional(),
   })
   .refine((value) => Object.keys(value).length >= 1)
   .refine(
@@ -536,6 +543,7 @@ export const AudioAnalysisSchema = z
         { kind: "orderedRanges", field: "silence", start: "startUs", end: "endUs" },
         { kind: "orderedPoints", field: "energyCurve", time: "atUs" },
         { kind: "orderedPoints", field: "waveformPeaks", time: "atUs" },
+        { kind: "orderedPoints", field: "shortTermLoudness", time: "atUs" },
       ]),
     "Canonical schema relational constraint failed",
   );
@@ -841,7 +849,7 @@ export type MediaAnalysisSections = z.infer<typeof MediaAnalysisSectionsSchema>;
 
 export const MediaAnalysisSchema = z
   .strictObject({
-    schemaVersion: z.literal("1.0.0"),
+    schemaVersion: z.literal("1.1.0"),
     mediaAssetId: UuidV7Schema,
     source: MediaAnalysisSourceSchema,
     provenance: MediaAnalysisDocumentProvenanceSchema,

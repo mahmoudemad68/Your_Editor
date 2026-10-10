@@ -7,9 +7,9 @@ import type {
   AudioAnalysisConfiguration,
 } from "@editagent/domain";
 import {
-  AudioAnalysisSchema,
+  AudioAnalysisV1_1Schema as AudioAnalysisSchema,
   AnalyzerProvenanceSchema,
-  type MediaAnalysis,
+  type MediaAnalysisV1_1 as MediaAnalysis,
 } from "@editagent/schemas";
 import { buildFfmpegArgs, boundedNumber, localMediaPath } from "./ffmpeg-builder.js";
 import { FfmpegExecutor } from "./ffmpeg-executor.js";
@@ -19,6 +19,8 @@ export type CompletedAudioSection = Extract<
   MediaAnalysis["sections"]["audio"],
   { status: "completed" }
 >;
+/** Consumers enclosing the produced section use this exact persisted document version. */
+export const AUDIO_ANALYSIS_SCHEMA_VERSION = "1.1.0" as const;
 export const DEFAULT_AUDIO_ANALYSIS_CONFIG: AudioAnalysisConfiguration = Object.freeze({
   silenceNoiseDb: -60,
   minimumSilenceUs: 200000n,
