@@ -6,6 +6,7 @@ import { createHash } from "node:crypto";
 import process from "node:process";
 import console from "node:console";
 import prettier from "prettier";
+import { preflight } from "./media-analysis-preflight.mjs";
 
 export const GENERATOR_VERSION = "1.0.0";
 export const sourceFiles = [
@@ -125,6 +126,8 @@ export async function generate(root = repositoryRoot) {
     if (!node || !nodes.has(node)) throw new Error(`Unregistered schema reference: ${ref}`);
     return node;
   }
+  // Validate the entire offline graph once, before either target emitter runs.
+  preflight(schemas, nodes, referenced);
   function scalar(node, owner) {
     for (const key of Object.keys(node))
       if (!allowed.has(key)) throw new Error(`Unsupported schema keyword: ${key}`);

@@ -121,6 +121,25 @@ members; assertion siblings and unsupported nested keywords fail generation. No 
 coercion, schema downloads or executable payloads. Unsupported features fail generation; adding
 one requires compiler implementation and differential tests first.
 
+The shared preflight in `tools/schema/media-analysis-preflight.mjs` validates the entire offline
+schema graph before either target is emitted. Its explicit keyword/type matrix rejects ignored
+or ambiguous assertions. Numeric bounds must be finite JSON numbers within JavaScript's safe
+numeric range; counts must be nonnegative safe integers, with consistent lower/upper bounds.
+Literal forms cannot carry ignored type/assertion siblings. Inline object array items are not
+supported: use a registered `$ref` instead. Generated identifiers must be portable to both
+languages, including Python reserved words and imported binding names.
+
+`x-editagent-checks` is permitted only on registered strict object nodes. Each of the 15 rule
+kinds has exact required parameters, typed operands and resolvable owner/item field paths;
+unknown parameters and misplaced rules fail generation. Paths through section unions may name
+fields present in a completed branch, preserving the existing optional-section rule semantics.
+Patterns use a conservative ASCII grammar (classes, groups, alternatives and bounded repetition),
+with the existing absolute-end guard and surrogate exclusion explicitly supported. Engine-specific
+Unicode properties, shorthand digit/word/whitespace classes, wildcard dots, lookarounds and unsafe
+repetition bounds are rejected. The existing legacy MediaTime pattern remains unchanged.
+Preflight or emission failures leave both committed outputs untouched. These compiler restrictions
+do not change the accepted MediaAnalysis documents or the generated runtime validators.
+
 ```ts
 import { MediaAnalysisSchema, type MediaAnalysis } from "@editagent/schemas";
 const analysis: MediaAnalysis = MediaAnalysisSchema.parse(JSON.parse(input));
