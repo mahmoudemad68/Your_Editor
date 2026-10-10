@@ -116,7 +116,8 @@ helpers are fully Ruff-formatted. Existing job-event generators remain unchanged
 
 Supported codegen subset: strict objects, required/optional fields, finite bounded numbers and
 integers, primitive literals/enums, bounded arrays/strings, offline `$ref`, scalar string `allOf`,
-and `oneOf` with disjoint required literal status. No recursion, arbitrary defaults, formats,
+and `oneOf` with disjoint required literal status. Scalar `allOf` constraints belong in its
+members; assertion siblings and unsupported nested keywords fail generation. No recursion, arbitrary defaults, formats,
 coercion, schema downloads or executable payloads. Unsupported features fail generation; adding
 one requires compiler implementation and differential tests first.
 

@@ -122,6 +122,17 @@ test("US-208 drift fails on a meaningful source mutation, regeneration fixes it,
   schema.properties.language.default = "en"; // Unsupported features cannot disappear silently.
   writeFileSync(path, JSON.stringify(schema));
   await assert.rejects(generate(directory), /Unsupported schema keyword: default/);
+  delete schema.properties.language.default;
+  writeFileSync(path, JSON.stringify(schema));
+  const commonPath = resolve(directory, "packages/schemas/src/analysis-common.schema.json");
+  const common = JSON.parse(readFileSync(commonPath, "utf8"));
+  common.$defs.Time.allOf[1].default = "0";
+  writeFileSync(commonPath, JSON.stringify(common));
+  await assert.rejects(generate(directory), /Unsupported schema keyword: default/);
+  delete common.$defs.Time.allOf[1].default;
+  common.$defs.Time.maxLength = 10; // Sibling constraints must not disappear during intersection flattening.
+  writeFileSync(commonPath, JSON.stringify(common));
+  await assert.rejects(generate(directory), /Unsupported scalar intersection constraint/);
 });
 
 test("US-208 invalid differential matrix rejects identically in both languages", (t) => {

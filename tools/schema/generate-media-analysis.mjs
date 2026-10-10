@@ -126,8 +126,19 @@ export async function generate(root = repositoryRoot) {
     return node;
   }
   function scalar(node, owner) {
-    if (node.$ref)
+    for (const key of Object.keys(node))
+      if (!allowed.has(key)) throw new Error(`Unsupported schema keyword: ${key}`);
+    if (node.$ref) {
+      if (Object.keys(node).some((k) => k !== "$ref" && k !== "description"))
+        throw new Error("Use supported scalar allOf for reference constraints");
       return scalar(referenced(node.$ref, owner), nodes.get(referenced(node.$ref, owner)).owner);
+    }
+    const annotations = ["$schema", "$id", "title", "description"];
+    const permitted = node.allOf
+      ? [...annotations, "allOf"]
+      : [...annotations, "type", "minLength", "maxLength", "pattern"];
+    if (Object.keys(node).some((key) => !permitted.includes(key)))
+      throw new Error("Unsupported scalar intersection constraint");
     if (!node.allOf) return node;
     const parts = node.allOf.map((p) => scalar(p, owner));
     if (parts.some((p) => p.type !== "string"))
