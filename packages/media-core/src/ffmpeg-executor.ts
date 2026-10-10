@@ -110,7 +110,11 @@ export class FfmpegExecutor {
           shell: false,
           detached: process.platform !== "win32" && options.processGroup !== "supervised",
           stdio: ["ignore", "pipe", "pipe", ...(options.onProgress ? ["pipe" as const] : [])],
-          env: options.sandbox?.env ?? { PATH: process.env["PATH"], LANG: "C", LC_ALL: "C" },
+          env: options.sandbox?.env ?? {
+            PATH: "/usr/local/bin:/usr/bin:/bin",
+            LANG: "C",
+            LC_ALL: "C",
+          },
         },
       );
       let failure: FfmpegFailure | undefined,

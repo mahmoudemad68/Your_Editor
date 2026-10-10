@@ -75,7 +75,7 @@ def normalize_wav(
         stderr=subprocess.DEVNULL,
         start_new_session=True,
         env={
-            "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+            "PATH": "/usr/local/bin:/usr/bin:/bin",
             "LANG": "C",
             "LC_ALL": "C",
         },
