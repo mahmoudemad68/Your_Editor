@@ -8,7 +8,7 @@ FROM golang:1.25-alpine@sha256:1ae0735f00daffa3aaf1363a5184c0d2dc55c78e3db4ec702
 ENV CGO_ENABLED=0
 RUN go install github.com/tianon/gosu@v0.0.0-20260606051551-40506998e34a
 
-FROM postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
+FROM postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
 USER root
 COPY --from=gosu /go/bin/gosu /usr/local/bin/gosu
 RUN gosu nobody true && gosu --version
