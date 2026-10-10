@@ -1,0 +1,145 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://editagent.local/schemas/analysis-transcript/1.0.0.schema.json",
+  "title": "Transcript",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "language": {
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 35,
+      "pattern": "^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$(?![\\s\\S])"
+    },
+    "languageConfidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "segments": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/TranscriptSegment"
+      },
+      "maxItems": 54000,
+      "minItems": 0
+    }
+  },
+  "required": ["language", "segments"],
+  "x-editagent-checks": [
+    {
+      "kind": "orderedRanges",
+      "field": "segments",
+      "start": "startUs",
+      "end": "endUs"
+    },
+    {
+      "kind": "unique",
+      "field": "segments",
+      "key": "id"
+    },
+    {
+      "kind": "nestedCount",
+      "field": "segments",
+      "child": "words",
+      "maximum": 54000
+    }
+  ],
+  "$defs": {
+    "TranscriptWord": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^[^\\ud800-\\udfff]*$(?![\\s\\S])"
+        },
+        "startUs": {
+          "$ref": "https://editagent.local/schemas/analysis-common/1.0.0.schema.json#/$defs/Time"
+        },
+        "endUs": {
+          "$ref": "https://editagent.local/schemas/analysis-common/1.0.0.schema.json#/$defs/Time"
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "speaker": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._+-]*$(?![\\s\\S])"
+        }
+      },
+      "required": ["text", "startUs", "endUs"],
+      "x-editagent-checks": [
+        {
+          "kind": "less",
+          "left": "startUs",
+          "right": "endUs",
+          "decimal": true
+        }
+      ]
+    },
+    "TranscriptSegment": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "https://editagent.local/schemas/analysis-common/1.0.0.schema.json#/$defs/LogicalId"
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16384,
+          "pattern": "^[^\\ud800-\\udfff]*$(?![\\s\\S])"
+        },
+        "startUs": {
+          "$ref": "https://editagent.local/schemas/analysis-common/1.0.0.schema.json#/$defs/Time"
+        },
+        "endUs": {
+          "$ref": "https://editagent.local/schemas/analysis-common/1.0.0.schema.json#/$defs/Time"
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "words": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TranscriptWord"
+          },
+          "maxItems": 54000,
+          "minItems": 0
+        }
+      },
+      "required": ["id", "text", "startUs", "endUs", "words"],
+      "x-editagent-checks": [
+        {
+          "kind": "less",
+          "left": "startUs",
+          "right": "endUs",
+          "decimal": true
+        },
+        {
+          "kind": "orderedRanges",
+          "field": "words",
+          "start": "startUs",
+          "end": "endUs"
+        },
+        {
+          "kind": "rangesWithin",
+          "field": "words",
+          "lower": "startUs",
+          "upper": "endUs",
+          "start": "startUs",
+          "end": "endUs"
+        }
+      ]
+    }
+  }
+}

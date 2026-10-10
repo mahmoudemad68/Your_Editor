@@ -27,38 +27,63 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 128,
-          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*$"
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*$(?![\\s\\S])"
         },
         "sourceSha256": {
           "type": "string",
-          "pattern": "^[0-9a-f]{64}$"
+          "pattern": "^[0-9a-f]{64}$(?![\\s\\S])"
         },
         "artifactId": {
           "type": "string",
           "minLength": 1,
           "maxLength": 128,
-          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*$"
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*$(?![\\s\\S])"
         },
         "audioSha256": {
           "type": "string",
-          "pattern": "^[0-9a-f]{64}$"
+          "pattern": "^[0-9a-f]{64}$(?![\\s\\S])"
         },
         "sourceDurationUs": {
           "type": "string",
-          "pattern": "^(0|[1-9][0-9]*)$",
+          "pattern": "^(0|[1-9][0-9]*)$(?![\\s\\S])",
           "maxLength": 10
         },
         "scopeStartUs": {
           "type": "string",
-          "pattern": "^(0|[1-9][0-9]*)$",
+          "pattern": "^(0|[1-9][0-9]*)$(?![\\s\\S])",
           "maxLength": 10
         },
         "scopeEndUs": {
           "type": "string",
-          "pattern": "^(0|[1-9][0-9]*)$",
+          "pattern": "^(0|[1-9][0-9]*)$(?![\\s\\S])",
           "maxLength": 10
         }
-      }
+      },
+      "x-editagent-checks": [
+        {
+          "kind": "positive",
+          "field": "sourceDurationUs",
+          "decimal": true
+        },
+        {
+          "kind": "maximum",
+          "field": "sourceDurationUs",
+          "value": "1800000000",
+          "decimal": true
+        },
+        {
+          "kind": "less",
+          "left": "scopeStartUs",
+          "right": "scopeEndUs",
+          "decimal": true
+        },
+        {
+          "kind": "lessEqual",
+          "left": "scopeEndUs",
+          "right": "sourceDurationUs",
+          "decimal": true
+        }
+      ]
     },
     "speechRegions": {
       "type": "array",
@@ -107,17 +132,17 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 32,
-          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*$"
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*$(?![\\s\\S])"
         },
         "numpyVersion": {
           "type": "string",
           "minLength": 1,
           "maxLength": 32,
-          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*$"
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*$(?![\\s\\S])"
         },
         "normalizedPcmSha256": {
           "type": "string",
-          "pattern": "^[0-9a-f]{64}$"
+          "pattern": "^[0-9a-f]{64}$(?![\\s\\S])"
         },
         "configuration": {
           "type": "object",
@@ -142,20 +167,56 @@
             },
             "minSpeechUs": {
               "type": "string",
-              "pattern": "^(0|[1-9][0-9]*)$",
+              "pattern": "^(0|[1-9][0-9]*)$(?![\\s\\S])",
               "maxLength": 10
             },
             "minSilenceUs": {
               "type": "string",
-              "pattern": "^(0|[1-9][0-9]*)$",
+              "pattern": "^(0|[1-9][0-9]*)$(?![\\s\\S])",
               "maxLength": 10
             },
             "paddingUs": {
               "type": "string",
-              "pattern": "^(0|[1-9][0-9]*)$",
+              "pattern": "^(0|[1-9][0-9]*)$(?![\\s\\S])",
               "maxLength": 10
             }
-          }
+          },
+          "x-editagent-checks": [
+            {
+              "kind": "less",
+              "left": "negativeThreshold",
+              "right": "speechThreshold",
+              "decimal": false
+            },
+            {
+              "kind": "positive",
+              "field": "minSpeechUs",
+              "decimal": true
+            },
+            {
+              "kind": "positive",
+              "field": "minSilenceUs",
+              "decimal": true
+            },
+            {
+              "kind": "maximum",
+              "field": "minSpeechUs",
+              "value": "1800000000",
+              "decimal": true
+            },
+            {
+              "kind": "maximum",
+              "field": "minSilenceUs",
+              "value": "1800000000",
+              "decimal": true
+            },
+            {
+              "kind": "maximum",
+              "field": "paddingUs",
+              "value": "1000000",
+              "decimal": true
+            }
+          ]
         },
         "sampleRate": {
           "const": 16000
@@ -186,12 +247,12 @@
       "properties": {
         "startUs": {
           "type": "string",
-          "pattern": "^(0|[1-9][0-9]*)$",
+          "pattern": "^(0|[1-9][0-9]*)$(?![\\s\\S])",
           "maxLength": 10
         },
         "endUs": {
           "type": "string",
-          "pattern": "^(0|[1-9][0-9]*)$",
+          "pattern": "^(0|[1-9][0-9]*)$(?![\\s\\S])",
           "maxLength": 10
         },
         "confidence": {
@@ -199,7 +260,31 @@
           "minimum": 0,
           "maximum": 1
         }
-      }
+      },
+      "x-editagent-checks": [
+        {
+          "kind": "less",
+          "left": "startUs",
+          "right": "endUs",
+          "decimal": true
+        }
+      ]
     }
-  }
+  },
+  "x-editagent-checks": [
+    {
+      "kind": "orderedRanges",
+      "field": "speechRegions",
+      "start": "startUs",
+      "end": "endUs"
+    },
+    {
+      "kind": "rangesWithin",
+      "field": "speechRegions",
+      "lower": "source.scopeStartUs",
+      "upper": "source.scopeEndUs",
+      "start": "startUs",
+      "end": "endUs"
+    }
+  ]
 }

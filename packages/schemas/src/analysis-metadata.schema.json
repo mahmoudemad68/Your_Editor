@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://editagent.local/schemas/analysis-metadata/1.0.0.schema.json",
+  "title": "MediaMetadata",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "kind": {
+      "enum": ["video", "audio", "image"]
+    },
+    "durationUs": {
+      "$ref": "https://editagent.local/schemas/analysis-common/1.0.0.schema.json#/$defs/Time"
+    },
+    "container": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]*$(?![\\s\\S])"
+    },
+    "videoCodec": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]*$(?![\\s\\S])"
+    },
+    "audioCodec": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]*$(?![\\s\\S])"
+    },
+    "width": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2147483647
+    },
+    "height": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2147483647
+    },
+    "displayWidth": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2147483647
+    },
+    "displayHeight": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2147483647
+    },
+    "rotation": {
+      "enum": [0, 90, 180, 270]
+    },
+    "frameRate": {
+      "$ref": "#/$defs/FrameRate"
+    },
+    "frameRateMode": {
+      "enum": ["constant", "variable", "unknown"]
+    },
+    "colorSpace": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]*$(?![\\s\\S])"
+    },
+    "audioChannels": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 64
+    },
+    "sampleRate": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1000000
+    }
+  },
+  "required": ["kind"],
+  "x-editagent-checks": [
+    {
+      "kind": "together",
+      "fields": ["width", "height", "displayWidth", "displayHeight"]
+    },
+    {
+      "kind": "rotatedDimensions",
+      "width": "width",
+      "height": "height",
+      "displayWidth": "displayWidth",
+      "displayHeight": "displayHeight",
+      "rotation": "rotation"
+    }
+  ],
+  "$defs": {
+    "FrameRate": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "numerator": {
+          "$ref": "https://editagent.local/schemas/analysis-common/1.0.0.schema.json#/$defs/Time"
+        },
+        "denominator": {
+          "$ref": "https://editagent.local/schemas/analysis-common/1.0.0.schema.json#/$defs/Time"
+        }
+      },
+      "required": ["numerator", "denominator"],
+      "x-editagent-checks": [
+        {
+          "kind": "positive",
+          "field": "numerator",
+          "decimal": true
+        },
+        {
+          "kind": "positive",
+          "field": "denominator",
+          "decimal": true
+        },
+        {
+          "kind": "maximum",
+          "field": "numerator",
+          "value": "9223372036854775807",
+          "decimal": true
+        },
+        {
+          "kind": "maximum",
+          "field": "denominator",
+          "value": "9223372036854775807",
+          "decimal": true
+        }
+      ]
+    }
+  }
+}

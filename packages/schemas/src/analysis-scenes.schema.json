@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://editagent.local/schemas/analysis-scenes/1.0.0.schema.json",
+  "title": "SceneAnalysis",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "scenes": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Scene"
+      },
+      "maxItems": 108000,
+      "minItems": 0
+    }
+  },
+  "required": ["scenes"],
+  "x-editagent-checks": [
+    {
+      "kind": "orderedRanges",
+      "field": "scenes",
+      "start": "startUs",
+      "end": "endUs"
+    },
+    {
+      "kind": "unique",
+      "field": "scenes",
+      "key": "id"
+    }
+  ],
+  "$defs": {
+    "Scene": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "https://editagent.local/schemas/analysis-common/1.0.0.schema.json#/$defs/LogicalId"
+        },
+        "startUs": {
+          "$ref": "https://editagent.local/schemas/analysis-common/1.0.0.schema.json#/$defs/Time"
+        },
+        "endUs": {
+          "$ref": "https://editagent.local/schemas/analysis-common/1.0.0.schema.json#/$defs/Time"
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      },
+      "required": ["id", "startUs", "endUs", "confidence"],
+      "x-editagent-checks": [
+        {
+          "kind": "less",
+          "left": "startUs",
+          "right": "endUs",
+          "decimal": true
+        }
+      ]
+    }
+  }
+}

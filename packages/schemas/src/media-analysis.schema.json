@@ -1,0 +1,462 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://editagent.local/schemas/media-analysis/1.0.0.schema.json",
+  "title": "MediaAnalysis",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": {
+      "const": "1.0.0"
+    },
+    "mediaAssetId": {
+      "$ref": "https://editagent.local/schemas/analysis-common/1.0.0.schema.json#/$defs/UuidV7"
+    },
+    "source": {
+      "$ref": "#/$defs/MediaAnalysisSource"
+    },
+    "provenance": {
+      "$ref": "#/$defs/MediaAnalysisDocumentProvenance"
+    },
+    "sections": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "metadata": {
+          "$ref": "#/$defs/MetadataSection"
+        },
+        "transcript": {
+          "$ref": "#/$defs/TranscriptSection"
+        },
+        "audio": {
+          "$ref": "#/$defs/AudioSection"
+        },
+        "scenes": {
+          "$ref": "#/$defs/ScenesSection"
+        },
+        "faces": {
+          "$ref": "#/$defs/FacesSection"
+        },
+        "objects": {
+          "$ref": "#/$defs/ObjectsSection"
+        }
+      },
+      "required": ["metadata", "transcript", "audio", "scenes", "faces", "objects"]
+    }
+  },
+  "required": ["schemaVersion", "mediaAssetId", "source", "provenance", "sections"],
+  "x-editagent-checks": [
+    {
+      "kind": "sameWhenPresent",
+      "left": "source.sha256",
+      "right": "sections.metadata.provenance.sourceSha256"
+    },
+    {
+      "kind": "sameWhenPresent",
+      "left": "source.sha256",
+      "right": "sections.transcript.provenance.sourceSha256"
+    },
+    {
+      "kind": "sameWhenPresent",
+      "left": "source.sha256",
+      "right": "sections.audio.provenance.sourceSha256"
+    },
+    {
+      "kind": "sameWhenPresent",
+      "left": "source.sha256",
+      "right": "sections.scenes.provenance.sourceSha256"
+    },
+    {
+      "kind": "sameWhenPresent",
+      "left": "source.sha256",
+      "right": "sections.faces.provenance.sourceSha256"
+    },
+    {
+      "kind": "sameWhenPresent",
+      "left": "source.sha256",
+      "right": "sections.objects.provenance.sourceSha256"
+    },
+    {
+      "kind": "sameWhenPresent",
+      "left": "source.durationUs",
+      "right": "sections.metadata.data.durationUs"
+    },
+    {
+      "kind": "sameWhenPresent",
+      "left": "source.sha256",
+      "right": "sections.audio.data.speech.source.sourceSha256"
+    },
+    {
+      "kind": "sameWhenPresent",
+      "left": "source.durationUs",
+      "right": "sections.audio.data.speech.source.sourceDurationUs"
+    },
+    {
+      "kind": "timesWithin",
+      "fields": [
+        "sections.transcript.data",
+        "sections.audio.data",
+        "sections.scenes.data",
+        "sections.faces.data",
+        "sections.objects.data"
+      ],
+      "duration": "source.durationUs",
+      "timeKeys": ["startUs", "endUs", "atUs", "scopeStartUs", "scopeEndUs"]
+    }
+  ],
+  "$defs": {
+    "MetadataNotAvailable": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "const": "not_available"
+        }
+      },
+      "required": ["status"]
+    },
+    "MetadataCompleted": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "const": "completed"
+        },
+        "data": {
+          "$ref": "https://editagent.local/schemas/analysis-metadata/1.0.0.schema.json"
+        },
+        "provenance": {
+          "$ref": "https://editagent.local/schemas/analysis-provenance/1.0.0.schema.json"
+        }
+      },
+      "required": ["status", "data", "provenance"]
+    },
+    "MetadataFailed": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "const": "failed"
+        },
+        "failure": {
+          "$ref": "https://editagent.local/schemas/analysis-common/1.0.0.schema.json#/$defs/Failure"
+        }
+      },
+      "required": ["status", "failure"]
+    },
+    "MetadataSection": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/MetadataNotAvailable"
+        },
+        {
+          "$ref": "#/$defs/MetadataCompleted"
+        },
+        {
+          "$ref": "#/$defs/MetadataFailed"
+        }
+      ]
+    },
+    "TranscriptNotAvailable": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "const": "not_available"
+        }
+      },
+      "required": ["status"]
+    },
+    "TranscriptCompleted": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "const": "completed"
+        },
+        "data": {
+          "$ref": "https://editagent.local/schemas/analysis-transcript/1.0.0.schema.json"
+        },
+        "provenance": {
+          "$ref": "https://editagent.local/schemas/analysis-provenance/1.0.0.schema.json"
+        }
+      },
+      "required": ["status", "data", "provenance"]
+    },
+    "TranscriptFailed": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "const": "failed"
+        },
+        "failure": {
+          "$ref": "https://editagent.local/schemas/analysis-common/1.0.0.schema.json#/$defs/Failure"
+        }
+      },
+      "required": ["status", "failure"]
+    },
+    "TranscriptSection": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/TranscriptNotAvailable"
+        },
+        {
+          "$ref": "#/$defs/TranscriptCompleted"
+        },
+        {
+          "$ref": "#/$defs/TranscriptFailed"
+        }
+      ]
+    },
+    "AudioNotAvailable": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "const": "not_available"
+        }
+      },
+      "required": ["status"]
+    },
+    "AudioCompleted": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "const": "completed"
+        },
+        "data": {
+          "$ref": "https://editagent.local/schemas/analysis-audio/1.0.0.schema.json"
+        },
+        "provenance": {
+          "$ref": "https://editagent.local/schemas/analysis-provenance/1.0.0.schema.json"
+        }
+      },
+      "required": ["status", "data", "provenance"]
+    },
+    "AudioFailed": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "const": "failed"
+        },
+        "failure": {
+          "$ref": "https://editagent.local/schemas/analysis-common/1.0.0.schema.json#/$defs/Failure"
+        }
+      },
+      "required": ["status", "failure"]
+    },
+    "AudioSection": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/AudioNotAvailable"
+        },
+        {
+          "$ref": "#/$defs/AudioCompleted"
+        },
+        {
+          "$ref": "#/$defs/AudioFailed"
+        }
+      ]
+    },
+    "ScenesNotAvailable": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "const": "not_available"
+        }
+      },
+      "required": ["status"]
+    },
+    "ScenesCompleted": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "const": "completed"
+        },
+        "data": {
+          "$ref": "https://editagent.local/schemas/analysis-scenes/1.0.0.schema.json"
+        },
+        "provenance": {
+          "$ref": "https://editagent.local/schemas/analysis-provenance/1.0.0.schema.json"
+        }
+      },
+      "required": ["status", "data", "provenance"]
+    },
+    "ScenesFailed": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "const": "failed"
+        },
+        "failure": {
+          "$ref": "https://editagent.local/schemas/analysis-common/1.0.0.schema.json#/$defs/Failure"
+        }
+      },
+      "required": ["status", "failure"]
+    },
+    "ScenesSection": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/ScenesNotAvailable"
+        },
+        {
+          "$ref": "#/$defs/ScenesCompleted"
+        },
+        {
+          "$ref": "#/$defs/ScenesFailed"
+        }
+      ]
+    },
+    "FacesNotAvailable": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "const": "not_available"
+        }
+      },
+      "required": ["status"]
+    },
+    "FacesCompleted": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "const": "completed"
+        },
+        "data": {
+          "$ref": "https://editagent.local/schemas/analysis-faces/1.0.0.schema.json"
+        },
+        "provenance": {
+          "$ref": "https://editagent.local/schemas/analysis-provenance/1.0.0.schema.json"
+        }
+      },
+      "required": ["status", "data", "provenance"]
+    },
+    "FacesFailed": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "const": "failed"
+        },
+        "failure": {
+          "$ref": "https://editagent.local/schemas/analysis-common/1.0.0.schema.json#/$defs/Failure"
+        }
+      },
+      "required": ["status", "failure"]
+    },
+    "FacesSection": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/FacesNotAvailable"
+        },
+        {
+          "$ref": "#/$defs/FacesCompleted"
+        },
+        {
+          "$ref": "#/$defs/FacesFailed"
+        }
+      ]
+    },
+    "ObjectsNotAvailable": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "const": "not_available"
+        }
+      },
+      "required": ["status"]
+    },
+    "ObjectsCompleted": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "const": "completed"
+        },
+        "data": {
+          "$ref": "https://editagent.local/schemas/analysis-objects/1.0.0.schema.json"
+        },
+        "provenance": {
+          "$ref": "https://editagent.local/schemas/analysis-provenance/1.0.0.schema.json"
+        }
+      },
+      "required": ["status", "data", "provenance"]
+    },
+    "ObjectsFailed": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "const": "failed"
+        },
+        "failure": {
+          "$ref": "https://editagent.local/schemas/analysis-common/1.0.0.schema.json#/$defs/Failure"
+        }
+      },
+      "required": ["status", "failure"]
+    },
+    "ObjectsSection": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/ObjectsNotAvailable"
+        },
+        {
+          "$ref": "#/$defs/ObjectsCompleted"
+        },
+        {
+          "$ref": "#/$defs/ObjectsFailed"
+        }
+      ]
+    },
+    "MediaAnalysisSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sha256": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 64,
+          "pattern": "^[0-9a-f]{64}$(?![\\s\\S])"
+        },
+        "durationUs": {
+          "$ref": "https://editagent.local/schemas/analysis-common/1.0.0.schema.json#/$defs/Time"
+        }
+      },
+      "required": ["sha256"],
+      "x-editagent-checks": [
+        {
+          "kind": "positive",
+          "field": "durationUs",
+          "decimal": true
+        }
+      ]
+    },
+    "MediaAnalysisDocumentProvenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "producer": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._+-]*$(?![\\s\\S])"
+        },
+        "producerVersion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._+-]*$(?![\\s\\S])"
+        }
+      },
+      "required": ["producer", "producerVersion"]
+    }
+  }
+}

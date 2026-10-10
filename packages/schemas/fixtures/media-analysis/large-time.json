@@ -1,0 +1,57 @@
+{
+  "schemaVersion": "1.0.0",
+  "mediaAssetId": "01900000-0000-7000-8000-000000000001",
+  "source": {
+    "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "durationUs": "9007199254740993"
+  },
+  "provenance": {
+    "producer": "contract-fixture",
+    "producerVersion": "1.0.0"
+  },
+  "sections": {
+    "metadata": {
+      "status": "not_available"
+    },
+    "transcript": {
+      "status": "not_available"
+    },
+    "audio": {
+      "status": "not_available"
+    },
+    "scenes": {
+      "status": "completed",
+      "data": {
+        "scenes": [
+          {
+            "id": "precision-test",
+            "startUs": "9007199254740991",
+            "endUs": "9007199254740993",
+            "confidence": 1
+          }
+        ]
+      },
+      "provenance": {
+        "analyzer": "fixture",
+        "analyzerVersion": "1.0.0",
+        "sourceSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "configurationSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "inputArtifactId": "fixture-input",
+        "inputSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "runtime": "fixture",
+        "runtimeVersion": "1.0.0",
+        "model": {
+          "name": "fixture-model",
+          "version": "1.0.0",
+          "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        }
+      }
+    },
+    "faces": {
+      "status": "not_available"
+    },
+    "objects": {
+      "status": "not_available"
+    }
+  }
+}

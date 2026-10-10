@@ -1,0 +1,91 @@
+{
+  "schemaVersion": "1.0.0",
+  "mediaAssetId": "01900000-0000-7000-8000-000000000001",
+  "source": {
+    "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "durationUs": "120000000"
+  },
+  "provenance": {
+    "producer": "contract-fixture",
+    "producerVersion": "1.0.0"
+  },
+  "sections": {
+    "metadata": {
+      "status": "not_available"
+    },
+    "transcript": {
+      "status": "not_available"
+    },
+    "audio": {
+      "status": "completed",
+      "data": {
+        "speech": {
+          "schemaVersion": 1,
+          "source": {
+            "sourceId": "01900000-0000-7000-8000-000000000001",
+            "sourceSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "artifactId": "fixture-asr",
+            "audioSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "sourceDurationUs": "120000000",
+            "scopeStartUs": "30000000",
+            "scopeEndUs": "90000000"
+          },
+          "speechRegions": [
+            {
+              "startUs": "31000000",
+              "endUs": "32000000",
+              "confidence": 0.9
+            }
+          ],
+          "provenance": {
+            "adapterVersion": "silero-onnx-stream-v1",
+            "modelName": "silero-vad",
+            "modelVersion": "v6-faster-whisper-1.2.1",
+            "modelSha256": "4cbf549b8326f60f80f2536d9eefeb450a9abe83365a098031c89719f1be17d2",
+            "runtime": "onnxruntime",
+            "runtimeVersion": "1.31.0",
+            "numpyVersion": "2.4.6",
+            "normalizedPcmSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "configuration": {
+              "speechThreshold": 0.5,
+              "negativeThreshold": 0.35,
+              "minSpeechUs": "100000",
+              "minSilenceUs": "200000",
+              "paddingUs": "100000"
+            },
+            "sampleRate": 16000,
+            "windowSamples": 512,
+            "contextSamples": 64,
+            "threads": 1,
+            "device": "cpu",
+            "confidenceAggregation": "sample_weighted_mean_in_padded_region"
+          }
+        }
+      },
+      "provenance": {
+        "analyzer": "fixture",
+        "analyzerVersion": "1.0.0",
+        "sourceSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "configurationSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "inputArtifactId": "fixture-input",
+        "inputSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "runtime": "fixture",
+        "runtimeVersion": "1.0.0",
+        "model": {
+          "name": "fixture-model",
+          "version": "1.0.0",
+          "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        }
+      }
+    },
+    "scenes": {
+      "status": "not_available"
+    },
+    "faces": {
+      "status": "not_available"
+    },
+    "objects": {
+      "status": "not_available"
+    }
+  }
+}

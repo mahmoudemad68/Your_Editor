@@ -1,0 +1,289 @@
+{
+  "schemaVersion": "1.0.0",
+  "mediaAssetId": "01900000-0000-7000-8000-000000000001",
+  "source": {
+    "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "durationUs": "120000000"
+  },
+  "provenance": {
+    "producer": "contract-fixture",
+    "producerVersion": "1.0.0"
+  },
+  "sections": {
+    "metadata": {
+      "status": "completed",
+      "data": {
+        "kind": "video",
+        "durationUs": "120000000",
+        "container": "mp4",
+        "videoCodec": "h264",
+        "audioCodec": "aac",
+        "width": 1920,
+        "height": 1080,
+        "displayWidth": 1920,
+        "displayHeight": 1080,
+        "rotation": 0,
+        "frameRate": {
+          "numerator": "30000",
+          "denominator": "1001"
+        },
+        "frameRateMode": "constant",
+        "sampleRate": 48000,
+        "audioChannels": 2
+      },
+      "provenance": {
+        "analyzer": "fixture",
+        "analyzerVersion": "1.0.0",
+        "sourceSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "configurationSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "inputArtifactId": "fixture-input",
+        "inputSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "runtime": "fixture",
+        "runtimeVersion": "1.0.0",
+        "model": {
+          "name": "fixture-model",
+          "version": "1.0.0",
+          "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        }
+      }
+    },
+    "transcript": {
+      "status": "completed",
+      "data": {
+        "language": "ar",
+        "languageConfidence": 0.9,
+        "segments": [
+          {
+            "id": "segment-1",
+            "text": "مرحبا بالعالم 🌍",
+            "startUs": "31000000",
+            "endUs": "32000000",
+            "words": [
+              {
+                "text": "مرحبا",
+                "startUs": "31000000",
+                "endUs": "31500000",
+                "confidence": 0.9,
+                "speaker": "speaker-1"
+              },
+              {
+                "text": "بالعالم 🌍",
+                "startUs": "31500000",
+                "endUs": "32000000",
+                "confidence": 0.8
+              }
+            ]
+          }
+        ]
+      },
+      "provenance": {
+        "analyzer": "fixture",
+        "analyzerVersion": "1.0.0",
+        "sourceSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "configurationSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "inputArtifactId": "fixture-input",
+        "inputSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "runtime": "fixture",
+        "runtimeVersion": "1.0.0",
+        "model": {
+          "name": "fixture-model",
+          "version": "1.0.0",
+          "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        }
+      }
+    },
+    "audio": {
+      "status": "completed",
+      "data": {
+        "speech": {
+          "schemaVersion": 1,
+          "source": {
+            "sourceId": "01900000-0000-7000-8000-000000000001",
+            "sourceSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "artifactId": "fixture-asr",
+            "audioSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "sourceDurationUs": "120000000",
+            "scopeStartUs": "30000000",
+            "scopeEndUs": "90000000"
+          },
+          "speechRegions": [
+            {
+              "startUs": "31000000",
+              "endUs": "32000000",
+              "confidence": 0.9
+            }
+          ],
+          "provenance": {
+            "adapterVersion": "silero-onnx-stream-v1",
+            "modelName": "silero-vad",
+            "modelVersion": "v6-faster-whisper-1.2.1",
+            "modelSha256": "4cbf549b8326f60f80f2536d9eefeb450a9abe83365a098031c89719f1be17d2",
+            "runtime": "onnxruntime",
+            "runtimeVersion": "1.31.0",
+            "numpyVersion": "2.4.6",
+            "normalizedPcmSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "configuration": {
+              "speechThreshold": 0.5,
+              "negativeThreshold": 0.35,
+              "minSpeechUs": "100000",
+              "minSilenceUs": "200000",
+              "paddingUs": "100000"
+            },
+            "sampleRate": 16000,
+            "windowSamples": 512,
+            "contextSamples": 64,
+            "threads": 1,
+            "device": "cpu",
+            "confidenceAggregation": "sample_weighted_mean_in_padded_region"
+          }
+        },
+        "silence": [
+          {
+            "startUs": "0",
+            "endUs": "1000000"
+          }
+        ],
+        "loudness": {
+          "integratedLufs": -14,
+          "truePeakDbtp": -1.5,
+          "loudnessRangeLu": 4
+        },
+        "energyCurve": [
+          {
+            "atUs": "0",
+            "rmsDbfs": -20
+          }
+        ],
+        "waveformPeaks": [
+          {
+            "atUs": "0",
+            "minimum": -0.5,
+            "maximum": 0.5
+          }
+        ]
+      },
+      "provenance": {
+        "analyzer": "fixture",
+        "analyzerVersion": "1.0.0",
+        "sourceSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "configurationSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "inputArtifactId": "fixture-input",
+        "inputSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "runtime": "fixture",
+        "runtimeVersion": "1.0.0",
+        "model": {
+          "name": "fixture-model",
+          "version": "1.0.0",
+          "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        }
+      }
+    },
+    "scenes": {
+      "status": "completed",
+      "data": {
+        "scenes": [
+          {
+            "id": "scene-1",
+            "startUs": "0",
+            "endUs": "120000000",
+            "confidence": 0.9
+          }
+        ]
+      },
+      "provenance": {
+        "analyzer": "fixture",
+        "analyzerVersion": "1.0.0",
+        "sourceSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "configurationSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "inputArtifactId": "fixture-input",
+        "inputSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "runtime": "fixture",
+        "runtimeVersion": "1.0.0",
+        "model": {
+          "name": "fixture-model",
+          "version": "1.0.0",
+          "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        }
+      }
+    },
+    "faces": {
+      "status": "completed",
+      "data": {
+        "tracks": [
+          {
+            "id": "face-1",
+            "startUs": "0",
+            "endUs": "1000000",
+            "observations": [
+              {
+                "atUs": "0",
+                "confidence": 0.9,
+                "boundingBox": {
+                  "x": 0.1,
+                  "y": 0.1,
+                  "width": 0.2,
+                  "height": 0.2
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "provenance": {
+        "analyzer": "fixture",
+        "analyzerVersion": "1.0.0",
+        "sourceSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "configurationSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "inputArtifactId": "fixture-input",
+        "inputSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "runtime": "fixture",
+        "runtimeVersion": "1.0.0",
+        "model": {
+          "name": "fixture-model",
+          "version": "1.0.0",
+          "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        }
+      }
+    },
+    "objects": {
+      "status": "completed",
+      "data": {
+        "tracks": [
+          {
+            "id": "object-1",
+            "label": "book",
+            "startUs": "0",
+            "endUs": "1000000",
+            "observations": [
+              {
+                "atUs": "0",
+                "confidence": 0.8,
+                "boundingBox": {
+                  "x": 0.2,
+                  "y": 0.2,
+                  "width": 0.2,
+                  "height": 0.2
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "provenance": {
+        "analyzer": "fixture",
+        "analyzerVersion": "1.0.0",
+        "sourceSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "configurationSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "inputArtifactId": "fixture-input",
+        "inputSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "runtime": "fixture",
+        "runtimeVersion": "1.0.0",
+        "model": {
+          "name": "fixture-model",
+          "version": "1.0.0",
+          "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        }
+      }
+    }
+  }
+}

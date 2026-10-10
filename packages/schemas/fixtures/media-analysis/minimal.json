@@ -1,0 +1,31 @@
+{
+  "schemaVersion": "1.0.0",
+  "mediaAssetId": "01900000-0000-7000-8000-000000000001",
+  "source": {
+    "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "provenance": {
+    "producer": "contract-fixture",
+    "producerVersion": "1.0.0"
+  },
+  "sections": {
+    "metadata": {
+      "status": "not_available"
+    },
+    "transcript": {
+      "status": "not_available"
+    },
+    "audio": {
+      "status": "not_available"
+    },
+    "scenes": {
+      "status": "not_available"
+    },
+    "faces": {
+      "status": "not_available"
+    },
+    "objects": {
+      "status": "not_available"
+    }
+  }
+}

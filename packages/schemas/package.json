@@ -5,12 +5,15 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "scripts": {
-    "build": "node ../../tools/schema/generate-job-event-types.mjs --check && node ../../tools/schema/generate-job-event-validator.mjs --check && tsc -p tsconfig.json",
+    "build": "node ../../tools/schema/generate-job-event-types.mjs --check && node ../../tools/schema/generate-job-event-validator.mjs --check && node ../../tools/schema/generate-media-analysis.mjs --check && tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node ../../tools/test/run-node-tests.mjs dist/index.test.js"
   },
   "devDependencies": {
     "@types/node": "catalog:",
     "typescript": "catalog:"
+  },
+  "dependencies": {
+    "zod": "catalog:"
   }
 }

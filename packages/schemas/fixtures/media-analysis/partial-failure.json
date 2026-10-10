@@ -1,0 +1,54 @@
+{
+  "schemaVersion": "1.0.0",
+  "mediaAssetId": "01900000-0000-7000-8000-000000000001",
+  "source": {
+    "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "provenance": {
+    "producer": "contract-fixture",
+    "producerVersion": "1.0.0"
+  },
+  "sections": {
+    "metadata": {
+      "status": "completed",
+      "data": {
+        "kind": "audio"
+      },
+      "provenance": {
+        "analyzer": "fixture",
+        "analyzerVersion": "1.0.0",
+        "sourceSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "configurationSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "inputArtifactId": "fixture-input",
+        "inputSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "runtime": "fixture",
+        "runtimeVersion": "1.0.0",
+        "model": {
+          "name": "fixture-model",
+          "version": "1.0.0",
+          "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        }
+      }
+    },
+    "transcript": {
+      "status": "failed",
+      "failure": {
+        "code": "unavailable",
+        "reason": "Analyzer is unavailable.",
+        "retryable": true
+      }
+    },
+    "audio": {
+      "status": "not_available"
+    },
+    "scenes": {
+      "status": "not_available"
+    },
+    "faces": {
+      "status": "not_available"
+    },
+    "objects": {
+      "status": "not_available"
+    }
+  }
+}

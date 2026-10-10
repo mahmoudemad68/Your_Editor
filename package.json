@@ -35,7 +35,10 @@
     "evaluation:import-generated": "node tools/evaluation/annotations.mjs",
     "evaluation:archive-evidence": "node tools/evaluation/evidence.mjs",
     "vad:evaluate": "node tools/vad/evaluate.mjs",
-    "vad:setup": "uv run --project workers/ai-worker python -m editagent_ai_worker.infrastructure.vad_model"
+    "vad:setup": "uv run --project workers/ai-worker python -m editagent_ai_worker.infrastructure.vad_model",
+    "schemas:generate": "node tools/schema/generate-media-analysis.mjs",
+    "schemas:check": "node tools/schema/generate-media-analysis.mjs --check",
+    "schemas:test": "node --test tests/integration/media-analysis.test.mjs"
   },
   "devDependencies": {
     "@aws-sdk/client-s3": "3.1018.0",
