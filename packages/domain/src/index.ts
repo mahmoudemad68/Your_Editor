@@ -197,3 +197,9 @@ export type {
 export * from "./modules/media/media-validation.js";
 
 export * from "./modules/jobs/job-events.js";
+
+export type {
+  IAudioAnalyzer,
+  AudioAnalysisInput,
+  AudioAnalysisConfiguration,
+} from "./modules/analysis/audio-analyzer.js";

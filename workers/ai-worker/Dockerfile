@@ -10,6 +10,7 @@ ENV UV_COMPILE_BYTECODE=1 \
 WORKDIR /app
 COPY workers/ai-worker/pyproject.toml workers/ai-worker/uv.lock ./
 COPY workers/ai-worker/src ./src
+COPY packages/media-core/python /packages/media-core/python
 COPY packages/schemas/src/job-envelope.schema.json ./src/editagent_ai_worker/infrastructure/job-envelope.schema.json
 COPY packages/schemas/src/speech-analysis.schema.json ./src/editagent_ai_worker/infrastructure/speech-analysis.schema.json
 RUN --mount=type=secret,id=proxy_ca \

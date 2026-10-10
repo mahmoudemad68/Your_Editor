@@ -16,6 +16,21 @@ export { default as editCommandSchema } from "./edit-command.schema.json";
 export { default as speechAnalysisSchema } from "./speech-analysis.schema.json";
 
 export { default as mediaAnalysisSchema } from "./media-analysis.schema.json";
+export { default as mediaAnalysisV1_1Schema } from "./media-analysis-v1_1.schema.json";
+export {
+  MediaAnalysisSchema as MediaAnalysisV1_1Schema,
+  AudioAnalysisSchema as AudioAnalysisV1_1Schema,
+} from "./media-analysis-v1_1.generated.js";
+export type {
+  MediaAnalysis as MediaAnalysisV1_1,
+  AudioAnalysis as AudioAnalysisV1_1,
+} from "./media-analysis-v1_1.generated.js";
+export {
+  validateMediaAnalysisV1,
+  validateMediaAnalysisV1_1,
+  parseMediaAnalysis,
+  migrateMediaAnalysisV1ToV1_1,
+} from "./media-analysis-versions.js";
 export {
   MediaAnalysisSchema,
   SpeechAnalysisSchema,

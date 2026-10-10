@@ -33,6 +33,7 @@ COPY packages/shared packages/shared
 COPY packages/schemas packages/schemas
 # Both language bindings are build inputs for the schema drift gate.
 COPY workers/ai-worker/src/editagent_ai_worker/contracts/media_analysis_generated.py workers/ai-worker/src/editagent_ai_worker/contracts/media_analysis_generated.py
+COPY workers/ai-worker/src/editagent_ai_worker/contracts/media_analysis_v1_1_generated.py workers/ai-worker/src/editagent_ai_worker/contracts/media_analysis_v1_1_generated.py
 COPY packages/domain packages/domain
 COPY tools/schema tools/schema
 RUN pnpm --filter @editagent/web... build

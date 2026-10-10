@@ -3,7 +3,11 @@
 `packages/schemas` owns the canonical JSON Schema graph, draft **2020-12** (ADR-003).
 `src/media-analysis.schema.json` defines **schemaVersion `"1.0.0"`**, the version of the
 complete persisted analysis document. It is separate from dataset, model, runtime and application
-versions. New analysis schema `$id`s include `/1.0.0.schema.json`; `$ref`s resolve through the
+versions. The published graph and generated readers for 1.0.0 remain frozen. MediaAnalysis
+**1.1.0** adds optional audio `shortTermLoudness` (source-coordinate `atUs`, LUFS) in
+`analysis-audio-v1_1.schema.json` and a version-specific root
+`media-analysis-v1_1.schema.json`. Only these two `$id`s use `/1.1.0.schema.json`;
+the remaining unchanged nodes are shared with 1.0.0. `$ref`s resolve through the
 checked-in graph, never an HTTP fetch. US-202's existing SpeechAnalysis retains its own numeric
 `schemaVersion: 1` and original `$id`.
 
@@ -103,12 +107,14 @@ no external generator dependency. Runtime bindings use existing catalog Zod **4.
 Pydantic **2.13.5** (Python 3.11). Zod is newly declared only in the schema package; it was already
 in the workspace lock. No Python dependency graph changes are needed.
 
-Inputs include all new analysis schemas, existing media time and speech analysis. Output is:
+Inputs include each exact-version graph, existing media time and speech analysis. Output is:
 
-- `packages/schemas/src/media-analysis.generated.ts`
-- `workers/ai-worker/src/editagent_ai_worker/contracts/media_analysis_generated.py`
+- `packages/schemas/src/media-analysis.generated.ts` (1.0.0)
+- `workers/ai-worker/src/editagent_ai_worker/contracts/media_analysis_generated.py` (1.0.0)
+- `packages/schemas/src/media-analysis-v1_1.generated.ts` (1.1.0)
+- `workers/ai-worker/src/editagent_ai_worker/contracts/media_analysis_v1_1_generated.py` (1.1.0)
 
-Both carry a generated warning, source digest and generation command, with no date or machine
+All carry a generated warning, source digest and generation command, with no date or machine
 path. Python formatting is deterministic Node-emitted source with an explicit generated-block
 `fmt: off` and only E501 suppression; imports, type checking and all other Python lint checks stay
 active. This keeps Node-only image builds independent of Python/Ruff installation. Human-owned
@@ -122,7 +128,7 @@ coercion, schema downloads or executable payloads. Unsupported features fail gen
 one requires compiler implementation and differential tests first.
 
 The shared preflight in `tools/schema/media-analysis-preflight.mjs` validates the entire offline
-schema graph before either target is emitted. Its explicit keyword/type matrix rejects ignored
+schema graphs before any target is written. Its explicit keyword/type matrix rejects ignored
 or ambiguous assertions. Numeric bounds must be finite JSON numbers within JavaScript's safe
 numeric range; counts must be nonnegative safe integers, with consistent lower/upper bounds.
 Literal forms cannot carry ignored type/assertion siblings. Inline object array items are not
@@ -137,7 +143,7 @@ Patterns use a conservative ASCII grammar (classes, groups, alternatives and bou
 with the existing absolute-end guard and surrogate exclusion explicitly supported. Engine-specific
 Unicode properties, shorthand digit/word/whitespace classes, wildcard dots, lookarounds and unsafe
 repetition bounds are rejected. The existing legacy MediaTime pattern remains unchanged.
-Preflight or emission failures leave both committed outputs untouched. These compiler restrictions
+Preflight or emission failures leave all four committed outputs untouched. These compiler restrictions
 do not change the accepted MediaAnalysis documents or the generated runtime validators.
 
 ```ts
@@ -158,12 +164,12 @@ module. Generator internal paths are not needed by consumers. Models are boundar
 canonical domain aggregates. Use normal validation APIs; Pydantic's explicit unsafe construction
 or unvalidated model-copy APIs are not an ingestion path.
 
-The schemas package build regenerates expected bytes in memory and compares **both outputs**.
+The schemas package build regenerates expected bytes in memory and compares **all four outputs**.
 It fails on missing/stale/hand-edited files without modifying the worktree. Normal build/check/CI
 therefore run drift verification transitively. The root build also checks before Turborepo, so a
 cache hit cannot hide an edited Python binding or compiler outside the schemas package.
 Node image build stages include the generated Python
-file as a drift-check input; it is not included in their final runtime images. The adversarial test copies sources/outputs to a
+files for both versions as drift-check inputs; it is not included in their final runtime images. The adversarial test copies sources/outputs to a
 throwaway directory, changes a meaningful constraint, proves the actual check CLI exits 1,
 regenerates and proves check passes. Two clean generations must be byte-identical.
 Contract tests construct actual Pydantic values, serialize into Zod, and send actual Zod-validated
@@ -191,7 +197,41 @@ version. When a new version is introduced, preserve the published schema graph/v
 versions, add version-specific `$id`s/readers, and implement tested, explicit pure JSON-to-JSON
 migration where needed. Never relabel an incompatible document by changing its version string.
 Downgrades require evidence that meaning is preserved; do not silently discard unknown results.
-This first contract has no predecessor MediaAnalysis and needs no executable migration.
+The public unversioned `MediaAnalysisSchema`/`MediaAnalysis` exports remain 1.0.0 readers.
+Latest producers explicitly use `MediaAnalysisV1_1Schema`/`MediaAnalysisV1_1`. Version
+dispatch inspects an own `schemaVersion` field and validates the exact matching contract;
+unknown versions fail, with no fallback to latest. A 1.0.0 document containing
+`shortTermLoudness` fails its strict reader even if someone relabels a 1.1.0 document.
+
+```ts
+import {
+  parseMediaAnalysis,
+  validateMediaAnalysisV1,
+  validateMediaAnalysisV1_1,
+  migrateMediaAnalysisV1ToV1_1,
+} from "@editagent/schemas";
+const persisted = parseMediaAnalysis(JSON.parse(input)); // exactly 1.0.0 or 1.1.0
+const upgraded = migrateMediaAnalysisV1ToV1_1(oldDocument);
+validateMediaAnalysisV1_1(upgraded);
+validateMediaAnalysisV1(oldDocument);
+```
+
+```py
+from editagent_ai_worker.contracts import (parse_media_analysis,
+    validate_media_analysis_v1, validate_media_analysis_v1_1,
+    migrate_media_analysis_v1_to_v1_1)
+persisted = parse_media_analysis(json.loads(input_json))
+upgraded = migrate_media_analysis_v1_to_v1_1(old_document)
+validate_media_analysis_v1_1(upgraded.model_dump(mode="json"))
+validate_media_analysis_v1(old_document)
+```
+
+Migration is explicit and pure: validate 1.0.0 input, create a new value changing only
+`schemaVersion` to `"1.1.0"`, validate 1.1.0 output. It performs no I/O, does not mutate
+the caller, and never fabricates short-term measurements: absence remains absence.
+Both runtimes test the same minimal, complete, partial-failure, US-202 and large-time
+documents, including Unicode and optional-field preservation. The frozen 1.0.0 graph
+and reader content hashes are regression-tested against merged PR #40.
 
 ## Boundaries and known limitations
 

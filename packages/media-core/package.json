@@ -7,10 +7,11 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node ../../tools/test/run-node-tests.mjs dist/index.test.js dist/ffprobe-json.test.js dist/ffprobe-adapter.test.js"
+    "test": "node ../../tools/test/run-node-tests.mjs dist/*.test.js"
   },
   "dependencies": {
-    "@editagent/domain": "workspace:*"
+    "@editagent/domain": "workspace:*",
+    "@editagent/schemas": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "catalog:",

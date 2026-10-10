@@ -10,6 +10,9 @@ import { createHash } from "node:crypto";
 import process from "node:process";
 import {
   MediaAnalysisSchema,
+  MediaAnalysisV1_1Schema,
+  parseMediaAnalysis,
+  migrateMediaAnalysisV1ToV1_1,
   AnalysisTimeSchema,
   SpeechAnalysisSchema,
 } from "../../packages/schemas/dist/index.js";
@@ -17,6 +20,7 @@ import {
   generate,
   run,
   sourceFiles,
+  sourceFilesV1,
   targets,
 } from "../../tools/schema/generate-media-analysis.mjs";
 
@@ -32,6 +36,9 @@ for (const path of sourceFiles)
   ajv.addSchema(JSON.parse(readFileSync(resolve(root, path), "utf8")));
 const jsonSchema = ajv.getSchema(
   "https://editagent.local/schemas/media-analysis/1.0.0.schema.json",
+);
+const jsonSchemaV1_1 = ajv.getSchema(
+  "https://editagent.local/schemas/media-analysis/1.1.0.schema.json",
 );
 function python(documents, extra = {}) {
   return JSON.parse(
@@ -285,12 +292,20 @@ test("US-208 invalid differential matrix rejects identically in both languages",
   mutate("empty loudness result", (d) => (d.sections.audio.data.loudness = {}));
   mutate("oversized time representation", (d) => (d.source.durationUs = "1".repeat(21)));
   mutate("temporal result without source duration", (d) => delete d.source.durationUs);
-  const outputs = python(cases.map((c) => c.doc));
-  t.diagnostic(`INVALID_DIFFERENTIAL_CASES=${cases.length} SCHEMA_RUNTIME_MISMATCHES=0`);
-  for (const [i, { name, doc }] of cases.entries()) {
-    assert.equal(MediaAnalysisSchema.safeParse(doc).success, false, name);
-    assert.equal(outputs[i].valid, false, `Python: ${name}`);
+  for (const version of ["1.0.0", "1.1.0"]) {
+    const documents = cases.map(({ doc }) => {
+      const copy = JSON.parse(JSON.stringify(doc));
+      if (copy.schemaVersion === "1.0.0") copy.schemaVersion = version;
+      return copy;
+    });
+    const outputs = python(documents, { versionDispatch: true });
+    const schema = version === "1.0.0" ? MediaAnalysisSchema : MediaAnalysisV1_1Schema;
+    for (const [i, { name }] of cases.entries()) {
+      assert.equal(schema.safeParse(documents[i]).success, false, `${version}: ${name}`);
+      assert.equal(outputs[i].valid, false, `Python ${version}: ${name}`);
+    }
   }
+  t.diagnostic(`INVALID_DIFFERENTIAL_CASES=${cases.length * 2} SCHEMA_RUNTIME_MISMATCHES=0`);
   assert.equal(Object.prototype.polluted, undefined);
 });
 
@@ -382,4 +397,102 @@ test("US-208 Zod rejects non-JSON nonfinite numbers at the boundary", () => {
     document.sections.transcript.data.languageConfidence = confidence;
     assert.equal(MediaAnalysisSchema.safeParse(document).success, false);
   }
+});
+
+test("US-204 short-term loudness preserves JSON/Zod/Pydantic parity", () => {
+  const doc = fixture("full");
+  doc.schemaVersion = "1.1.0";
+  doc.sections.audio.data.shortTermLoudness = [
+    { atUs: "0", lufs: -23.1 },
+    { atUs: "1000000", lufs: -24 },
+  ];
+  assert.equal(
+    ajv.getSchema("https://editagent.local/schemas/media-analysis/1.1.0.schema.json")(doc),
+    true,
+  );
+  assert.equal(jsonSchema(doc), false);
+  const falselyRelabelled = { ...doc, schemaVersion: "1.0.0" };
+  assert.equal(jsonSchema(falselyRelabelled), false);
+  assert.equal(MediaAnalysisSchema.safeParse(falselyRelabelled).success, false);
+  assert.equal(python([falselyRelabelled], { versionDispatch: true })[0].valid, false);
+  assert.deepEqual(MediaAnalysisV1_1Schema.parse(doc), doc);
+  const produced = python([doc], { versionDispatch: true });
+  assert.equal(produced[0].valid, true);
+  assert.deepEqual(MediaAnalysisV1_1Schema.parse(produced[0].document), doc);
+  assert.deepEqual(
+    python([MediaAnalysisV1_1Schema.parse(doc)], { versionDispatch: true })[0].document,
+    doc,
+  );
+  for (const points of [
+    null,
+    [{ atUs: "0", lufs: "-23" }],
+    [{ atUs: "1\n", lufs: -23 }],
+    [
+      { atUs: "2", lufs: -23 },
+      { atUs: "1", lufs: -23 },
+    ],
+    [{ atUs: "0", lufs: 101 }],
+  ]) {
+    const invalid = JSON.parse(JSON.stringify(doc));
+    invalid.sections.audio.data.shortTermLoudness = points;
+    assert.equal(MediaAnalysisV1_1Schema.safeParse(invalid).success, false);
+    assert.equal(python([invalid], { versionDispatch: true })[0].valid, false);
+  }
+});
+
+test("exact version dispatch, validated migration and both persisted readers agree in TS/Python", () => {
+  const originals = names.map(fixture);
+  const before = JSON.stringify(originals);
+  const latest = originals.map(migrateMediaAnalysisV1ToV1_1);
+  assert.equal(JSON.stringify(originals), before);
+  for (const [i, migrated] of latest.entries()) {
+    assert.equal(jsonSchemaV1_1(migrated), true, JSON.stringify(jsonSchemaV1_1.errors));
+    assert.deepEqual(migrated, { ...originals[i], schemaVersion: "1.1.0" });
+    assert.deepEqual(migrateMediaAnalysisV1ToV1_1(originals[i]), migrated);
+    assert.equal("shortTermLoudness" in (migrated.sections.audio.data ?? {}), false);
+    assert.equal(MediaAnalysisSchema.safeParse(migrated).success, false);
+    assert.equal(MediaAnalysisV1_1Schema.safeParse(originals[i]).success, false);
+    assert.deepEqual(parseMediaAnalysis(migrated), migrated);
+  }
+  assert.deepEqual(
+    python(originals, { migrate: true }).map((p) => p.document),
+    latest,
+  );
+  assert.deepEqual(
+    python([...originals, ...latest], { versionDispatch: true }).map((p) => p.document),
+    [...originals, ...latest],
+  );
+  assert.ok(python(latest, { validatorVersion: "1.0.0" }).every((p) => !p.valid));
+  assert.ok(python(originals, { validatorVersion: "1.1.0" }).every((p) => !p.valid));
+  for (const schemaVersion of ["1.2.0", "2.0.0", "1.1", 1, null]) {
+    const invalid = { ...originals[0], schemaVersion };
+    assert.throws(() => parseMediaAnalysis(invalid));
+    assert.equal(python([invalid], { versionDispatch: true })[0].valid, false);
+    assert.throws(() => migrateMediaAnalysisV1ToV1_1(invalid));
+    assert.equal(python([invalid], { migrate: true })[0].valid, false);
+  }
+  assert.throws(() => parseMediaAnalysis(Object.create({ schemaVersion: "1.0.0" })));
+  const invalid = fixture("full");
+  invalid.sections.transcript.data.segments[0].endUs = "0";
+  assert.throws(() => migrateMediaAnalysisV1ToV1_1(invalid));
+  assert.equal(python([invalid], { migrate: true })[0].valid, false);
+});
+
+test("published 1.0.0 schema graph and both readers retain their merged US-208 content identities", () => {
+  const graph = sourceFilesV1.map((path) => JSON.parse(readFileSync(resolve(root, path), "utf8")));
+  assert.equal(
+    createHash("sha256").update(JSON.stringify(graph)).digest("hex"),
+    "a1da9b144fe882c7a068c34991fae36c74c2ac27d3769435e9b265348527291b",
+  );
+  // Frozen reader hashes are recorded from merged PR #40, not from this repair's output.
+  for (const [path, sha256] of [
+    [targets[0], "2f161247d8013e0a6ff07e9de1427754dc600f5129ac9748ebbffdb3fa2d49a2"],
+    [targets[1], "e499eec631cc5b23f96510808fca5f0462305e825e94b8cfc2607c868718534b"],
+  ])
+    assert.equal(
+      createHash("sha256")
+        .update(readFileSync(resolve(root, path)))
+        .digest("hex"),
+      sha256,
+    );
 });
