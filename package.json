@@ -7,7 +7,7 @@
     "pnpm": ">=10.33.0 <11"
   },
   "scripts": {
-    "build": "turbo run build",
+    "build": "pnpm schemas:check && turbo run build",
     "test": "turbo run test && pnpm --filter @editagent/web check:api-client && node tools/test/run-node-tests.mjs tests/architecture/*.test.mjs tests/integration/*.test.mjs && node tools/test/require-coverage.mjs && pnpm --filter @editagent/web test:e2e",
     "lint": "eslint . --max-warnings=0 && prettier --check . && depcruise --config .dependency-cruiser.cjs apps packages workers && turbo run lint",
     "typecheck": "turbo run typecheck",

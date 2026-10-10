@@ -141,7 +141,9 @@ or unvalidated model-copy APIs are not an ingestion path.
 
 The schemas package build regenerates expected bytes in memory and compares **both outputs**.
 It fails on missing/stale/hand-edited files without modifying the worktree. Normal build/check/CI
-therefore run drift verification transitively. Node image build stages include the generated Python
+therefore run drift verification transitively. The root build also checks before Turborepo, so a
+cache hit cannot hide an edited Python binding or compiler outside the schemas package.
+Node image build stages include the generated Python
 file as a drift-check input; it is not included in their final runtime images. The adversarial test copies sources/outputs to a
 throwaway directory, changes a meaningful constraint, proves the actual check CLI exits 1,
 regenerates and proves check passes. Two clean generations must be byte-identical.
