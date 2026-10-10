@@ -122,3 +122,10 @@ forbidden_modules = [
   "transformers",
   "faster_whisper",
 ]
+
+# Canonical FFmpeg normalization ownership, shipped as part of the existing worker wheel.
+[tool.hatch.build.targets.wheel.force-include]
+"../../packages/media-core/python/editagent_media_core" = "editagent_media_core"
+
+[tool.uv]
+cache-keys = [{file = "pyproject.toml"}, {file = "src/**/*.py"}, {file = "../../packages/media-core/python/**/*.py"}]

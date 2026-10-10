@@ -34,6 +34,14 @@
       },
       "maxItems": 108000,
       "minItems": 0
+    },
+    "shortTermLoudness": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ShortTermLoudnessPoint"
+      },
+      "minItems": 0,
+      "maxItems": 1800
     }
   },
   "required": [],
@@ -52,6 +60,11 @@
     {
       "kind": "orderedPoints",
       "field": "waveformPeaks",
+      "time": "atUs"
+    },
+    {
+      "kind": "orderedPoints",
+      "field": "shortTermLoudness",
       "time": "atUs"
     }
   ],
@@ -122,6 +135,21 @@
           "decimal": false
         }
       ]
+    },
+    "ShortTermLoudnessPoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "atUs": {
+          "$ref": "https://editagent.local/schemas/analysis-common/1.0.0.schema.json#/$defs/Time"
+        },
+        "lufs": {
+          "type": "number",
+          "minimum": -200,
+          "maximum": 100
+        }
+      },
+      "required": ["atUs", "lufs"]
     }
   }
 }

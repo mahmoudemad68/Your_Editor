@@ -9,10 +9,10 @@
   "scripts": {
     "build": "pnpm schemas:check && turbo run build",
     "test": "turbo run test && pnpm --filter @editagent/web check:api-client && node tools/test/run-node-tests.mjs tests/architecture/*.test.mjs tests/integration/*.test.mjs && node tools/test/require-coverage.mjs && pnpm --filter @editagent/web test:e2e",
-    "lint": "eslint . --max-warnings=0 && prettier --check . && depcruise --config .dependency-cruiser.cjs apps packages workers && turbo run lint",
+    "lint": "node tools/architecture/ffmpeg-boundary.mjs && eslint . --max-warnings=0 && prettier --check . && depcruise --config .dependency-cruiser.cjs apps packages workers && turbo run lint",
     "typecheck": "turbo run typecheck",
     "format": "prettier --write .",
-    "architecture": "depcruise --config .dependency-cruiser.cjs apps packages workers && turbo run lint --filter=@editagent/ai-worker",
+    "architecture": "node tools/architecture/ffmpeg-boundary.mjs && depcruise --config .dependency-cruiser.cjs apps packages workers && turbo run lint --filter=@editagent/ai-worker",
     "check": "python3 tools/roadmap/build_roadmap.py --check && pnpm build && pnpm lint && pnpm typecheck && pnpm test",
     "prepare": "husky",
     "test:unit": "pnpm --filter @editagent/domain test",
@@ -38,7 +38,8 @@
     "vad:setup": "uv run --project workers/ai-worker python -m editagent_ai_worker.infrastructure.vad_model",
     "schemas:generate": "node tools/schema/generate-media-analysis.mjs",
     "schemas:check": "node tools/schema/generate-media-analysis.mjs --check",
-    "schemas:test": "node --test tests/integration/media-analysis.test.mjs"
+    "schemas:test": "node --test tests/integration/media-analysis.test.mjs",
+    "audio:evaluate": "node tools/audio/evaluate.mjs"
   },
   "devDependencies": {
     "@aws-sdk/client-s3": "3.1018.0",

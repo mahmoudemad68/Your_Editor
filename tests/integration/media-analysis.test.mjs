@@ -383,3 +383,32 @@ test("US-208 Zod rejects non-JSON nonfinite numbers at the boundary", () => {
     assert.equal(MediaAnalysisSchema.safeParse(document).success, false);
   }
 });
+
+test("US-204 short-term loudness preserves JSON/Zod/Pydantic parity", () => {
+  const doc = fixture("full");
+  doc.sections.audio.data.shortTermLoudness = [
+    { atUs: "0", lufs: -23.1 },
+    { atUs: "1000000", lufs: -24 },
+  ];
+  assert.equal(jsonSchema(doc), true);
+  assert.deepEqual(MediaAnalysisSchema.parse(doc), doc);
+  const produced = python([doc]);
+  assert.equal(produced[0].valid, true);
+  assert.deepEqual(MediaAnalysisSchema.parse(produced[0].document), doc);
+  assert.deepEqual(python([MediaAnalysisSchema.parse(doc)])[0].document, doc);
+  for (const points of [
+    null,
+    [{ atUs: "0", lufs: "-23" }],
+    [{ atUs: "1\n", lufs: -23 }],
+    [
+      { atUs: "2", lufs: -23 },
+      { atUs: "1", lufs: -23 },
+    ],
+    [{ atUs: "0", lufs: 101 }],
+  ]) {
+    const invalid = JSON.parse(JSON.stringify(doc));
+    invalid.sections.audio.data.shortTermLoudness = points;
+    assert.equal(MediaAnalysisSchema.safeParse(invalid).success, false);
+    assert.equal(python([invalid])[0].valid, false);
+  }
+});

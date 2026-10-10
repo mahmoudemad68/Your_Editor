@@ -1,8 +1,12 @@
-import { spawn } from "node:child_process";
 import { mkdtemp, rm, stat, statfs } from "node:fs/promises";
 import path from "node:path";
 import { type MediaAsset } from "@editagent/domain";
-import { FFprobeMediaProbe } from "@editagent/media-core";
+import {
+  FFprobeMediaProbe,
+  FfmpegExecutor,
+  FfmpegError,
+  buildDerivativePreset,
+} from "@editagent/media-core";
 import {
   type GeneratedDerivative,
   type MediaDerivativeProcessor,
@@ -11,163 +15,22 @@ import {
 import {
   DERIVE_TIMEOUT_MS,
   PROXY_FPS,
-  PROXY_GOP,
-  SPRITE_SAMPLING_FPS,
   type DerivativePlan,
 } from "../application/derivative-plan.js";
 import { PermanentJobError, JobTimeoutError } from "../application/job-errors.js";
 
-const MAX_PROCESS_OUTPUT = 1_048_576;
 const MAX_DERIVATIVE_BYTES = 68_719_476_736n;
-const DIMENSIONS =
-  "scale=w='max(2,trunc(iw*sar*min(1,540/ih)/2)*2)':h='max(2,trunc(ih*min(1,540/ih)/2)*2)',setsar=1";
-const THUMB = (w: number, h: number) =>
-  `scale=w='max(2,trunc(iw*sar/2)*2)':h=ih,setsar=1,scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2`;
-
 export function buildDerivativeArgs(
   input: string,
   output: string,
   plan: DerivativePlan,
 ): readonly string[] {
-  controlledPath(input);
-  controlledPath(output);
-  const p = plan.parameters;
-  const duration = Number(p["sourceDurationUs"]) / 1_000_000;
-  if (!Number.isFinite(duration) || duration <= 0 || duration > 1800)
-    throw new PermanentJobError("Invalid derivation duration.");
-  const args = [
-    "-hide_banner",
-    "-loglevel",
-    "error",
-    "-nostdin",
-    "-y",
-    "-threads",
-    "2",
-    "-filter_threads",
-    "1",
-    "-filter_complex_threads",
-    "1",
-    "-protocol_whitelist",
-    "file",
-    "-i",
-    input,
-    "-map_metadata",
-    "-1",
-    "-map_chapters",
-    "-1",
-  ];
-  switch (plan.variant) {
-    case "proxy":
-      args.push(
-        "-map",
-        "0:v:0",
-        "-an",
-        "-vf",
-        `${DIMENSIONS},tpad=stop_mode=clone:stop_duration=${duration},trim=duration=${duration},setpts=PTS-STARTPTS,fps=${PROXY_FPS}:start_time=0:round=near`,
-        "-frames:v",
-        String(Math.ceil(duration * PROXY_FPS)),
-        "-c:v",
-        "libx264",
-        "-pix_fmt",
-        "yuv420p",
-        "-preset",
-        "veryfast",
-        "-crf",
-        "23",
-        "-maxrate",
-        "4M",
-        "-bufsize",
-        "8M",
-        "-g",
-        String(PROXY_GOP),
-        "-keyint_min",
-        String(PROXY_GOP),
-        "-sc_threshold",
-        "0",
-        "-threads",
-        "2",
-        "-fps_mode",
-        "cfr",
-        "-movflags",
-        "+faststart",
-        "-metadata:s:v:0",
-        "rotate=0",
-        "-f",
-        "mp4",
-      );
-      break;
-    case "asr":
-    case "mix":
-      args.push(
-        "-map",
-        "0:a:0",
-        "-vn",
-        "-af",
-        `aresample=async=1:first_pts=0,apad,atrim=duration=${duration},asetpts=PTS-STARTPTS`,
-        "-c:a",
-        plan.variant === "asr" ? "pcm_s16le" : "pcm_f32le",
-      );
-      if (plan.variant === "asr") args.push("-ar", "16000", "-ac", "1");
-      args.push("-rf64", "auto", "-f", "wav");
-      break;
-    case "poster":
-      args.push(
-        "-map",
-        "0:v:0",
-        "-an",
-        "-vf",
-        `tpad=stop_mode=clone:stop_duration=${duration},trim=start=${Number(p["timestampUs"]) / 1_000_000},setpts=PTS-STARTPTS,${THUMB(320, 180)}`,
-        "-frames:v",
-        "1",
-        "-c:v",
-        "mjpeg",
-        "-q:v",
-        "3",
-        "-threads",
-        "1",
-        "-f",
-        "image2",
-        "-update",
-        "1",
-      );
-      break;
-    case "sprite": {
-      const timestamps = p["timestampsUs"] as readonly number[];
-      const count = timestamps.length;
-      // Pad before setpts: the pinned runtime cannot reliably infer tpad's
-      // frame duration after PTS reset. Cover even an audio-led source timeline,
-      // then explicitly retain each midpoint's
-      // nearest CFR frame index. A low-rate fps filter instead emits the end of
-      // an interval: start_time does not make it select midpoint pixel content.
-      const selected = timestamps
-        .map((at) => `eq(n,${Math.round((at * SPRITE_SAMPLING_FPS) / 1_000_000)})`)
-        .join("+");
-      args.push(
-        "-map",
-        "0:v:0",
-        "-an",
-        "-vf",
-        `tpad=stop_mode=clone:stop_duration=${duration},setpts=PTS-STARTPTS,fps=${SPRITE_SAMPLING_FPS}:start_time=0:round=near,select='${selected}',${THUMB(160, 90)},tile=${p["columns"]}x${p["rows"]}:nb_frames=${count}`,
-        "-frames:v",
-        "1",
-        "-c:v",
-        "mjpeg",
-        "-q:v",
-        "3",
-        "-threads",
-        "1",
-        "-f",
-        "image2",
-        "-update",
-        "1",
-      );
-      break;
-    }
+  try {
+    return buildDerivativePreset(input, output, plan);
+  } catch {
+    throw new PermanentJobError("Invalid derivative configuration.");
   }
-  // Stops oversized output; stat below rejects truncation as well.
-  return [...args, "-fs", MAX_DERIVATIVE_BYTES.toString(), output];
 }
-
 export class FFmpegDerivativeProcessor implements MediaDerivativeProcessor {
   constructor(
     private readonly executable = "ffmpeg",
@@ -279,52 +142,21 @@ function controlledPath(value: string): void {
   if (!path.isAbsolute(value) || /[\0\r\n]/.test(value) || value.includes("://"))
     throw new PermanentJobError("Only controlled local paths are accepted.");
 }
-/** Fixed arg arrays; bounded diagnostic output, deadline and cooperative abort.
- * FFmpeg inherits the supervised job's process group; it cannot survive hard reap.
- */
+/** Compatibility surface for existing derivative regression tools; execution is media-core-owned. */
+const executor = new FfmpegExecutor();
 export async function runControlledProcess(
   executable: string,
   args: readonly string[],
   signal: AbortSignal,
   timeoutMs: number,
 ): Promise<void> {
-  signal.throwIfAborted();
-  await new Promise<void>((resolve, reject) => {
-    const child = spawn(executable, args, { shell: false, stdio: ["ignore", "ignore", "pipe"] });
-    let error: Error | undefined;
-    let hardKill: ReturnType<typeof setTimeout> | undefined;
-    let diagnosticBytes = 0;
-    const stop = (reason: Error) => {
-      if (error !== undefined) return;
-      error = reason;
-      child.kill("SIGTERM");
-      hardKill = setTimeout(() => child.kill("SIGKILL"), 150);
-    };
-    const abort = () =>
-      stop(signal.reason instanceof Error ? signal.reason : new Error("Derivation cancelled."));
-    const deadline = setTimeout(() => stop(new JobTimeoutError()), timeoutMs);
-    const cleanup = () => {
-      clearTimeout(deadline);
-      if (hardKill !== undefined) clearTimeout(hardKill);
-      signal.removeEventListener("abort", abort);
-    };
-    child.stderr?.on("data", (data: Buffer) => {
-      diagnosticBytes += data.length;
-      if (diagnosticBytes > MAX_PROCESS_OUTPUT)
-        stop(new PermanentJobError("FFmpeg diagnostic limit exceeded."));
-    });
-    child.on("error", () => {
-      cleanup();
-      reject(new Error("FFmpeg runtime is unavailable."));
-    });
-    child.on("close", (code) => {
-      cleanup();
-      if (error !== undefined) reject(error);
-      else if (code !== 0)
-        reject(new PermanentJobError("FFmpeg could not generate the derivative."));
-      else resolve();
-    });
-    signal.addEventListener("abort", abort, { once: true });
-    if (signal.aborted) abort();
-  });
+  try {
+    await executor.execute(args, { executable, signal, timeoutMs, processGroup: "supervised" });
+  } catch (error) {
+    if (signal.aborted) throw signal.reason;
+    if (error instanceof FfmpegError && error.code === "timeout") throw new JobTimeoutError();
+    if (error instanceof FfmpegError && (error.code === "exit" || error.code === "output_limit"))
+      throw new PermanentJobError("FFmpeg could not generate the derivative.");
+    throw error;
+  }
 }

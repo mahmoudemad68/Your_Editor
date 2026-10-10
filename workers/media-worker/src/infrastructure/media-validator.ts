@@ -4,7 +4,13 @@ import { open, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { MediaProbeError, type ProbeResult, type JobProgressStage } from "@editagent/domain";
-import { mapFfprobeDocument, FFPROBE_SHOW_ENTRIES } from "@editagent/media-core";
+import {
+  mapFfprobeDocument,
+  FFPROBE_SHOW_ENTRIES,
+  FfmpegExecutor,
+  FfmpegError,
+  buildSandboxDecodeArgs,
+} from "@editagent/media-core";
 import { MediaRejected, type MediaValidator } from "../application/validate-media.js";
 import {
   AUDIO_CODECS,
@@ -110,61 +116,43 @@ export class SandboxedMediaValidator implements MediaValidator {
     const output = path.join(directory, "decode.mp4");
     try {
       await writeFile(output, "", { mode: 0o600, flag: "wx" });
-      const args = [
-        "-hide_banner",
-        "-loglevel",
-        "error",
-        "-nostdin",
-        "-y",
-        "-xerror",
-        "-err_detect",
-        "explode",
-        ...common,
-        "-i",
-        filePath,
-        "-map",
-        "0:v",
-        "-map",
-        "0:a?",
-        "-sn",
-        "-dn",
-        "-t",
-        "1",
-        "-frames:v",
-        "30",
-        "-vf",
-        "scale=320:180:force_original_aspect_ratio=decrease:force_divisible_by=2,pad=320:180:(ow-iw)/2:(oh-ih)/2",
-        "-filter_threads",
-        "1",
-        "-c:v",
-        "libx264",
-        "-threads",
-        "2",
-        "-preset",
-        "ultrafast",
-        "-pix_fmt",
-        "yuv420p",
-        "-c:a",
-        "aac",
-        "-ac",
-        "2",
-        "-ar",
-        "16000",
-        "-b:a",
-        "32k",
-        "-f",
-        "mp4",
-        output,
-      ];
-      await this.run(
-        await executablePath(this.ffmpeg),
-        filePath,
-        output,
-        args,
-        this.policy.decodeTimeoutMs,
-        signal,
-        "decode_validation_failed",
-      );
+      try {
+        await new FfmpegExecutor().execute(buildSandboxDecodeArgs(filePath, output, demuxer), {
+          executable: await executablePath(this.ffmpeg),
+          signal,
+          timeoutMs: this.policy.decodeTimeoutMs,
+          processGroup: "supervised",
+          sandbox: {
+            executable: SANDBOX_PATH,
+            prefix: [
+              String(this.policy.cpuSeconds),
+              String(this.policy.memoryBytes),
+              String(this.policy.decodeOutputBytes),
+              filePath,
+              output,
+            ],
+            env: { LANG: "C", LC_ALL: "C", OMP_NUM_THREADS: "2", MALLOC_ARENA_MAX: "2" },
+          },
+        });
+      } catch (error) {
+        if (signal.aborted) throw signal.reason;
+        if (
+          error instanceof FfmpegError &&
+          (error.code === "unavailable" || error.exitCode === 125)
+        )
+          throw new Error("Media validation infrastructure unavailable.", { cause: error });
+        if (
+          error instanceof FfmpegError &&
+          (error.exitSignal !== null || [137, 152, 153].includes(error.exitCode ?? 0))
+        )
+          throw new MediaRejected("resource_limit_exceeded");
+        if (
+          error instanceof FfmpegError &&
+          (error.code === "timeout" || error.code === "output_limit")
+        )
+          throw new MediaRejected("resource_limit_exceeded");
+        throw new MediaRejected("decode_validation_failed");
+      }
       if ((await stat(output)).size < 32) throw new MediaRejected("decode_validation_failed");
     } finally {
       await rm(directory, { recursive: true, force: true });

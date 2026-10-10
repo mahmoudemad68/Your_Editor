@@ -13,6 +13,24 @@ trap 'rm -rf "$work"' EXIT
 docker run --rm --entrypoint id "$image" | grep -q 'uid=10001'
 # US-127: production kernel capability must fail closed, including file and network isolation.
 docker run --rm --entrypoint /app/dist/native/media-sandbox "$image" --check
+# US-204/220: exercise the real adapter against the exact production FFmpeg build.
+# Fixed trusted infrastructure code; no job-provided shell or media arguments.
+docker run --rm --network none --read-only --entrypoint node \
+  -v "$fixtures:/fixtures:ro" "$image" -e '
+const { readFileSync } = require("node:fs");
+const { createHash } = require("node:crypto");
+const { FFmpegAudioAnalyzer } = require("@editagent/media-core");
+const inputSha256 = createHash("sha256").update(readFileSync("/fixtures/audio.wav")).digest("hex");
+new FFmpegAudioAnalyzer().analyze({filePath: "/fixtures/audio.wav", durationUs: 1000000n,
+  sourceSha256: inputSha256, inputSha256, inputArtifactId: "production-audio-fixture"})
+  .then(result => {
+    if (result.status !== "completed" || !result.data.loudness || result.data.energyCurve.length !== 10 ||
+        result.data.waveformPeaks.length !== 10 || !result.provenance.runtimeVersion.startsWith("7.1.5-editagent1"))
+      throw new Error("Production audio analysis validation failed");
+    console.log(JSON.stringify({productionAudioAnalysis: "PASS", ...result.provenance}));
+  }).catch(() => process.exit(1));
+'
+
 docker run --rm --user root --entrypoint sh "$image" -c 'if dpkg -s libxml2 >/dev/null 2>&1; then exit 1; fi'
 docker run --rm --entrypoint sh "$image" -c 'if ldd /usr/local/bin/ffprobe /usr/local/bin/ffmpeg | grep -i xml; then exit 1; fi'
 docker run --rm --entrypoint sh "$image" -c 'if ffmpeg -hide_banner -demuxers | grep -w dash; then exit 1; fi'

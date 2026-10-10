@@ -14,7 +14,7 @@ execFileSync(
     "-fstack-protector-strong",
     "-D_FORTIFY_SOURCE=2",
     "-Wl,-z,relro,-z,now",
-    path.join(root, "media-sandbox.c"),
+    path.resolve(root, "../../packages/media-core/native/media-sandbox.c"),
     "-o",
     path.join(root, "dist/native/media-sandbox"),
   ],
