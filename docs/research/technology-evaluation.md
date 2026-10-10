@@ -256,3 +256,46 @@ On this VM the median of three measured Remotion runs is 139.644 seconds, which 
 - Remotion 4.0.532 license, checked 2026-10-01: https://github.com/remotion-dev/remotion/blob/v4.0.532/LICENSE.md
 - Remotion 5.0 terms, not yet in effect for 4.0.532: https://www.remotion.dev/docs/terms
 - Raw measurements: `tools/benchmarks/rendering/results/summary.json`
+
+## US-107 LLM tool-calling feasibility (hosted APIs)
+
+This section is only the tool-calling spike. It does not change the US-106 rendering measurements or the rendering CP1 gate above, which stays **NOT_VERIFIED**.
+
+The owner decided EditAgent will call hosted LLM APIs with user-provided keys. The providers in this spike are OpenAI, Anthropic Claude, Google Gemini, Alibaba Qwen, and DeepSeek. Ollama, vLLM, Kaggle, and other local serving are out of scope. The canonical US-107 task text matches that decision. ADR-006 still isolates provider transport from schema validation. This benchmark is not the US-301 port implementation.
+
+### Method
+
+`tools/benchmarks/llm/` defines ten primary scripted edits that expect a tool call, plus two abstention guardrails, over mock tools `trim`, `add_caption`, and `reframe`. Schema-valid tool calls, semantic correctness, and correct abstention are separate measurements. Abstentions do not count toward the CP1 numerator. A call can match the JSON Schema and still be the wrong edit. The synthetic transcript is 1,500 generated words standing in for 600 seconds of speech. It is not a person's recording.
+
+Dry-run is the default. A live call needs `--live`, the provider environment variable, a dated positive price row in `pricing.json`, and a finite non-negative `LLM_BENCHMARK_SPEND_CAP_USD` (default 1 USD). Before each request the runner reserves a conservative local estimate that includes the tool definitions and an 800-token output cap, and it skips the request when that reservation would exceed the remaining local cap. Failed calls, responses without usable token counts, and a nonempty request that reports zero input tokens together with zero output tokens keep the reservation. The zero-usage case stops later requests. This is not a provider-side invoice ceiling: the provider can still bill differently from the local estimate. Missing keys are `PENDING_CREDENTIALS`. Missing or invalid prices are `BLOCKED_COST`. Context-window fit stays `UNVERIFIED` until the response reports input tokens and `context_windows.json` has a documented limit for that exact model. A successful request does not by itself prove the transcript fit. This repository run did not make a paid call.
+
+Documentation accessed 2026-10-02:
+
+- OpenAI Chat Completions function calling: https://developers.openai.com/api/docs/guides/function-calling
+- Anthropic Messages tool use, version header `2023-06-01`: https://platform.claude.com/docs/en/agents-and-tools/tool-use/overview
+- Gemini Interactions function calling: https://ai.google.dev/gemini-api/docs/function-calling
+- Qwen function calling on a workspace-specific compatible-mode host: https://help.aliyun.com/en/model-studio/qwen-function-calling
+- DeepSeek Chat Completions tool calls: https://api-docs.deepseek.com/guides/tool_calls/
+
+No SDK is pinned. Requests use `urllib`. Model ids are arguments, not defaults. The OpenAI guide's note that GPT-6 Astra and GPT-6.1 Sol require the Responses API is recorded as unsupported on this Chat Completions adapter. Thinking controls are provider-specific and are not one shared boolean. `gpt-5.6` Chat Completions requests send `reasoning_effort` `none` with the function tools, because the migrate-to-Responses guide says other efforts are not supported for tool calling starting with GPT-5.4. The omitted Sol default remains `medium` and is not what this request sends. DeepSeek `deepseek-flash` still omits thinking, so the documented default stays enabled at effort `high`, with `tool_choice` `auto` and an output cap of 800. A response whose `finish_reason` is `length` is truncated and is not a CP1 success. Those labels cite the provider pages and are not live measurements.
+
+### Results
+
+Observed measurements: **PENDING**.
+
+Default provider and fallback provider: **PENDING**.
+
+Schema-valid tool calls, correct abstentions, semantic correctness, latency, tokens, cost, and context-window fit: **PENDING** for every provider. The CP1 numerator counts schema-valid tool calls on the ten primary requests only. The threshold stays 9 of 10. The two abstention guardrails are separate and do not fill that numerator.
+
+Formal CP1 LLM status: **NOT_VERIFIED**. A provider report can record PASS or FAIL only after a real live run sends all ten primary requests. Mocks, dry-runs, and this repository checkout do not do that. A comparison needs live results from at least two hosted providers. Live execution is **LIVE_READY_PENDING_AUTHORIZATION**. No paid call was made.
+
+Prepared comparison, not yet run: OpenAI `gpt-5.6-sol` and DeepSeek `deepseek-flash`. The explicit Sol id is the OpenAI model for this benchmark. The `gpt-5.6` alias remains in the price and context files and is not the live command. Prices and context limits copied on 2026-10-02 are in `pricing.json` and `context_windows.json`. GPT-6 Astra remains unsupported on this Chat Completions adapter.
+
+### Reproduction
+
+```bash
+python3 tools/benchmarks/llm/tests/test_llm_benchmark.py
+python3 tools/benchmarks/llm/runner.py --provider openai --model "$OPENAI_MODEL" --commit-sha "$(git rev-parse HEAD)" --output /tmp/llm-out
+```
+
+Add `--live` only after `pricing.json` has a dated `openai:<model>` price and `OPENAI_API_KEY` is set in the environment. The command above, without `--live`, does not call OpenAI.

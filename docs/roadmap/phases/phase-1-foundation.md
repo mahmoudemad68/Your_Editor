@@ -178,15 +178,15 @@ Time-boxed spikes answer the riskiest feasibility questions before the team comm
 
 **Technical tasks**
 
-- [ ] `US-107-T1` Define 10 scripted editing requests with a mock tool set (trim, add_caption, reframe)
-- [ ] `US-107-T2` Run them against at least two hosted providers and one local model (vLLM or Ollama) with native tool calling
-- [ ] `US-107-T3` Measure schema validity, latency, cost per run and context-window fit for a 10-minute transcript
+- [ ] `US-107-T1` Define 10 primary scripted editing requests that expect tool calls, plus separate abstention guardrails, with a mock tool set (trim, add_caption, reframe)
+- [ ] `US-107-T2` Run them only through hosted LLM APIs with user-provided keys for OpenAI, Anthropic Claude, Google Gemini, Alibaba Qwen, and DeepSeek. Do not use Ollama, vLLM, Kaggle, or other local serving. Register an adapter to add a hosted provider.
+- [ ] `US-107-T3` Measure schema-valid tool calls separately from semantic correctness and from abstention guardrails, plus latency, cost per run, and context-window fit for a 10-minute transcript
 - [ ] `US-107-T4` `DOC` Record results, costs and the default/fallback provider decision
 
 **Acceptance criteria**
 
-- [ ] AC1. Each candidate has a measured valid-call rate, median latency and estimated cost per agent run
-- [ ] AC2. Checkpoint CP1 LLM criterion is evaluated with a pass or fail result
+- [ ] AC1. Each hosted provider that returns a live run has a schema-valid rate, a separate semantic-correctness rate, median latency, and estimated cost. Providers without a live run stay pending, and a choice requires at least two hosted providers.
+- [ ] AC2. Checkpoint CP1 LLM criterion is evaluated with a pass or fail result only from live measurements
 
 ##### US-108 - Risk register and threat model v0
 
@@ -798,7 +798,7 @@ The phase is done when all of the following hold (in addition to the story-level
 
 - [ ] Faster-Whisper transcribes 10 minutes of speech in at most 3 minutes on the reference GPU, or a CPU-viable model is selected
 - [ ] Remotion renders 60 seconds of 1080p with captions in at most 5 minutes on the reference machine
-- [ ] The chosen LLM returns schema-valid tool calls for at least 9 of 10 scripted editing requests
+- [ ] The chosen LLM returns schema-valid tool calls for at least 9 of 10 primary scripted editing requests. Abstention guardrails are measured separately and do not count toward those 10.
 
 **M1 - v0.1 Ingest** (end of Sprint 2)
 
