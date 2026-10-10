@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://editagent.local/schemas/analysis-faces/1.0.0.schema.json",
+  "title": "FaceAnalysis",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "tracks": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/FaceTrack"
+      },
+      "maxItems": 128,
+      "minItems": 0
+    }
+  },
+  "required": ["tracks"],
+  "x-editagent-checks": [
+    {
+      "kind": "unique",
+      "field": "tracks",
+      "key": "id"
+    },
+    {
+      "kind": "nestedCount",
+      "field": "tracks",
+      "child": "observations",
+      "maximum": 108000
+    }
+  ],
+  "$defs": {
+    "FaceTrack": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "https://editagent.local/schemas/analysis-common/1.0.0.schema.json#/$defs/LogicalId"
+        },
+        "startUs": {
+          "$ref": "https://editagent.local/schemas/analysis-common/1.0.0.schema.json#/$defs/Time"
+        },
+        "endUs": {
+          "$ref": "https://editagent.local/schemas/analysis-common/1.0.0.schema.json#/$defs/Time"
+        },
+        "observations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/FaceObservation"
+          },
+          "maxItems": 108000,
+          "minItems": 1
+        }
+      },
+      "required": ["id", "startUs", "endUs", "observations"],
+      "x-editagent-checks": [
+        {
+          "kind": "less",
+          "left": "startUs",
+          "right": "endUs",
+          "decimal": true
+        },
+        {
+          "kind": "orderedPoints",
+          "field": "observations",
+          "time": "atUs"
+        },
+        {
+          "kind": "pointsWithin",
+          "field": "observations",
+          "lower": "startUs",
+          "upper": "endUs",
+          "time": "atUs"
+        }
+      ]
+    },
+    "FaceObservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "atUs": {
+          "$ref": "https://editagent.local/schemas/analysis-common/1.0.0.schema.json#/$defs/Time"
+        },
+        "boundingBox": {
+          "$ref": "https://editagent.local/schemas/analysis-common/1.0.0.schema.json#/$defs/BoundingBox"
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      },
+      "required": ["atUs", "boundingBox", "confidence"]
+    }
+  }
+}

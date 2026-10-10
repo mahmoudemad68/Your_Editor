@@ -1,0 +1,127 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://editagent.local/schemas/analysis-audio/1.0.0.schema.json",
+  "title": "AudioAnalysis",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "speech": {
+      "$ref": "https://editagent.local/schemas/speech-analysis.schema.json"
+    },
+    "silence": {
+      "type": "array",
+      "items": {
+        "$ref": "https://editagent.local/schemas/analysis-common/1.0.0.schema.json#/$defs/TimeRange"
+      },
+      "maxItems": 56250,
+      "minItems": 0
+    },
+    "loudness": {
+      "$ref": "#/$defs/Loudness"
+    },
+    "energyCurve": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/EnergyPoint"
+      },
+      "maxItems": 108000,
+      "minItems": 0
+    },
+    "waveformPeaks": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/WaveformPeak"
+      },
+      "maxItems": 108000,
+      "minItems": 0
+    }
+  },
+  "required": [],
+  "x-editagent-checks": [
+    {
+      "kind": "orderedRanges",
+      "field": "silence",
+      "start": "startUs",
+      "end": "endUs"
+    },
+    {
+      "kind": "orderedPoints",
+      "field": "energyCurve",
+      "time": "atUs"
+    },
+    {
+      "kind": "orderedPoints",
+      "field": "waveformPeaks",
+      "time": "atUs"
+    }
+  ],
+  "minProperties": 1,
+  "$defs": {
+    "Loudness": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "integratedLufs": {
+          "type": "number",
+          "minimum": -200,
+          "maximum": 100
+        },
+        "truePeakDbtp": {
+          "type": "number",
+          "minimum": -200,
+          "maximum": 100
+        },
+        "loudnessRangeLu": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 200
+        }
+      },
+      "required": [],
+      "minProperties": 1
+    },
+    "EnergyPoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "atUs": {
+          "$ref": "https://editagent.local/schemas/analysis-common/1.0.0.schema.json#/$defs/Time"
+        },
+        "rmsDbfs": {
+          "type": "number",
+          "minimum": -200,
+          "maximum": 0
+        }
+      },
+      "required": ["atUs", "rmsDbfs"]
+    },
+    "WaveformPeak": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "atUs": {
+          "$ref": "https://editagent.local/schemas/analysis-common/1.0.0.schema.json#/$defs/Time"
+        },
+        "minimum": {
+          "type": "number",
+          "minimum": -1,
+          "maximum": 1
+        },
+        "maximum": {
+          "type": "number",
+          "minimum": -1,
+          "maximum": 1
+        }
+      },
+      "required": ["atUs", "minimum", "maximum"],
+      "x-editagent-checks": [
+        {
+          "kind": "lessEqual",
+          "left": "minimum",
+          "right": "maximum",
+          "decimal": false
+        }
+      ]
+    }
+  }
+}

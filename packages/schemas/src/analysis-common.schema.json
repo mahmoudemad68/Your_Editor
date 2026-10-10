@@ -1,0 +1,133 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://editagent.local/schemas/analysis-common/1.0.0.schema.json",
+  "title": "AnalysisCommon",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "range": {
+      "$ref": "#/$defs/TimeRange"
+    }
+  },
+  "required": ["range"],
+  "$defs": {
+    "Time": {
+      "allOf": [
+        {
+          "$ref": "https://editagent.local/schemas/media-time.schema.json"
+        },
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 20,
+          "pattern": "^(0|[1-9][0-9]*)$(?![\\s\\S])"
+        }
+      ]
+    },
+    "TimeRange": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "startUs": {
+          "$ref": "#/$defs/Time"
+        },
+        "endUs": {
+          "$ref": "#/$defs/Time"
+        }
+      },
+      "required": ["startUs", "endUs"],
+      "x-editagent-checks": [
+        {
+          "kind": "less",
+          "left": "startUs",
+          "right": "endUs",
+          "decimal": true
+        }
+      ]
+    },
+    "Confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "LogicalId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._+-]*$(?![\\s\\S])"
+    },
+    "Sha256": {
+      "type": "string",
+      "minLength": 64,
+      "maxLength": 64,
+      "pattern": "^[0-9a-f]{64}$(?![\\s\\S])"
+    },
+    "UuidV7": {
+      "type": "string",
+      "minLength": 36,
+      "maxLength": 36,
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$(?![\\s\\S])"
+    },
+    "BoundingBox": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "x": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "y": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "width": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        },
+        "height": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        }
+      },
+      "required": ["x", "y", "width", "height"],
+      "x-editagent-checks": [
+        {
+          "kind": "sumMax",
+          "fields": ["x", "width"],
+          "maximum": 1
+        },
+        {
+          "kind": "sumMax",
+          "fields": ["y", "height"],
+          "maximum": 1
+        }
+      ]
+    },
+    "Failure": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "enum": ["invalid_input", "unsupported", "timeout", "unavailable", "internal"]
+        },
+        "reason": {
+          "enum": [
+            "Analysis input is invalid.",
+            "This analysis is unsupported.",
+            "Analysis timed out.",
+            "Analyzer is unavailable.",
+            "Analysis failed."
+          ]
+        },
+        "retryable": {
+          "type": "boolean"
+        }
+      },
+      "required": ["code", "reason", "retryable"]
+    }
+  }
+}
