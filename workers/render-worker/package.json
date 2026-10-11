@@ -5,16 +5,34 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node dist/infrastructure/build-bundle.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node ../../tools/test/run-node-tests.mjs dist/application/describe.test.js dist/infrastructure/config.test.js",
+    "test": "node ../../tools/test/run-node-tests.mjs dist/application/describe.test.js dist/infrastructure/config.test.js dist/infrastructure/render.test.js dist/infrastructure/timeline-mapping.test.js dist/infrastructure/asset-security.test.js",
     "start": "node dist/index.js"
   },
   "dependencies": {
-    "@editagent/shared": "workspace:*"
+    "@aws-sdk/client-s3": "3.1144.0",
+    "@editagent/domain": "workspace:*",
+    "@editagent/job-queue": "workspace:*",
+    "@editagent/media-core": "workspace:*",
+    "@editagent/schemas": "workspace:*",
+    "@editagent/shared": "workspace:*",
+    "@remotion/renderer": "4.0.534",
+    "ajv": "8.17.1",
+    "pg": "8.23.1",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "remotion": "4.0.534"
   },
   "devDependencies": {
+    "@remotion/bundler": "4.0.534",
     "@types/node": "catalog:",
+    "@types/pg": "8.23.1",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
     "typescript": "catalog:"
+  },
+  "optionalDependencies": {
+    "@remotion/compositor-linux-x64-gnu": "4.0.534"
   }
 }

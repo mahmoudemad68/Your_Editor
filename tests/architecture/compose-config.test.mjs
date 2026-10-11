@@ -13,6 +13,7 @@ const defaultServices = [
   "media-worker",
   "postgres",
   "redis",
+  "render-executor",
   "render-worker",
   "seaweed-filer",
   "seaweed-master",

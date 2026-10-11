@@ -17,7 +17,7 @@ jobs:
   ci:
     name: ci
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 45
     env:
       TURBO_TELEMETRY_DISABLED: "1"
       DATABASE_URL: postgresql://editagent:editagent-dev-password@localhost:5432/editagent
@@ -178,6 +178,17 @@ jobs:
       # pytest, Testcontainers and harness Playwright; execute each once.
       - name: Test
         run: pnpm test
+
+      - name: Real production render, cancellation and timeline golden frames
+        run: pnpm render:test
+
+      - name: Upload real render evidence
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: render-evidence-${{ github.sha }}
+          if-no-files-found: ignore
+          path: .local/render-batch/
 
       - name: Upload coverage reports
         if: ${{ !cancelled() }}

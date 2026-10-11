@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 export const processOwners = new Set([
   "workers/media-worker/src/infrastructure/media-validator.ts",
   "workers/media-worker/src/infrastructure/child-job-supervisor.ts",
+  "workers/render-worker/src/infrastructure/process-tree.ts",
   "workers/media-worker/src/handlers/sample-handlers.ts",
   "workers/ai-worker/src/editagent_ai_worker/infrastructure/job_queue.py",
 ]);

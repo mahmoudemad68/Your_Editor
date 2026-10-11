@@ -23,6 +23,7 @@ x-ai-environment: &ai-environment
 
 services:
   postgres:
+    networks: [default, render_control]
     build:
       context: .
       dockerfile: infra/postgres/Dockerfile
@@ -45,6 +46,7 @@ services:
     restart: unless-stopped
 
   redis:
+    networks: [default, render_control]
     build:
       context: .
       dockerfile: infra/redis/Dockerfile
@@ -201,6 +203,7 @@ services:
       storage_internal:
         ipv4_address: 172.30.210.13
       default: {}
+      render_control: {}
     ports:
       - "127.0.0.1:${S3_PORT:-${MINIO_PORT:-9000}}:8333"
     volumes:
@@ -356,15 +359,66 @@ services:
       start_period: 10s
     restart: "no"
 
+  # Credential-free rendering boundary: no Docker socket, host binds or networking.
+  render-executor:
+    build:
+      context: .
+      dockerfile: workers/render-worker/Dockerfile
+      target: executor
+    image: editagent-render-executor:local
+    network_mode: none
+    user: "10001:10001"
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    cpus: 2
+    mem_limit: 6g
+    memswap_limit: 6g
+    pids_limit: 256
+    shm_size: 1g
+    ulimits:
+      fsize: 1073741824
+      nofile: 1024
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=2g,mode=1777
+    volumes:
+      - render-work:/render-work
+      - render-control:/run/render
+    environment:
+      REMOTION_CONCURRENCY: "2"
+    restart: "no"
+
   render-worker:
     build:
       context: .
       dockerfile: workers/render-worker/Dockerfile
+      target: coordinator
     image: editagent-render-worker:local
     container_name: editagent-render-worker
+    user: "10001:10001"
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    cpus: 1
+    mem_limit: 1g
+    memswap_limit: 1g
+    pids_limit: 64
+    ulimits:
+      fsize: 1073741824
+      nofile: 1024
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=64m,mode=1777
+    networks: [render_control]
+    volumes:
+      - render-work:/render-work
+      - render-control:/run/render
     environment:
       DATABASE_URL: *database-url
       REDIS_URL: redis://redis:6379/0
+      EDITAGENT_RENDER_TIMEOUT_MS: "300000"
+      EDITAGENT_RENDER_QUEUE: render-remotion-v1
       <<: *object-storage
     depends_on:
       postgres:
@@ -373,8 +427,8 @@ services:
         condition: service_healthy
       seaweed-s3:
         condition: service_healthy
-    # Scaffold readiness is explicitly true after validated configuration.
-    # HTTP /health is liveness. HTTP /ready means the process can accept work.
+      render-executor:
+        condition: service_healthy
     healthcheck:
       test:
         [
@@ -459,6 +513,9 @@ services:
     restart: "no"
 
 networks:
+  render_control:
+    internal: true
+    driver: bridge
   storage_internal:
     internal: true
     driver: bridge
@@ -470,6 +527,18 @@ networks:
           gateway: 172.30.210.1
 
 volumes:
+  render-work:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: size=2147483648,uid=10001,gid=10001,mode=0700,nosuid,nodev,noexec
+  render-control:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: size=8388608,uid=10001,gid=10001,mode=0700,nosuid,nodev,noexec
   postgres-data:
   redis-data:
   # Historical MinIO bytes. No service mounts this volume. Do not remove it

@@ -1,0 +1,223 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://editagent.dev/schemas/render-job/1.schema.json",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "renderVersion",
+        "compositionId",
+        "width",
+        "height",
+        "frameRate",
+        "durationInFrames",
+        "props",
+        "correlationId"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "renderVersion": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "compositionId": {
+          "const": "FixtureV1"
+        },
+        "width": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 4096,
+          "multipleOf": 2
+        },
+        "height": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 4096,
+          "multipleOf": 2
+        },
+        "frameRate": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["numerator", "denominator"],
+          "properties": {
+            "numerator": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 60000
+            },
+            "denominator": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1001
+            }
+          }
+        },
+        "durationInFrames": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 108000
+        },
+        "correlationId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._-]+$"
+        },
+        "props": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["title", "background"],
+          "properties": {
+            "title": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200,
+              "pattern": "\\S"
+            },
+            "background": {
+              "type": "string",
+              "pattern": "^#[0-9a-fA-F]{6}$"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "renderVersion", "correlationId", "compositionId", "props"],
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "renderVersion": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "correlationId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._-]+$"
+        },
+        "compositionId": {
+          "const": "TimelineV1"
+        },
+        "props": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["timeline", "background", "captionStyle", "components"],
+          "properties": {
+            "timeline": {
+              "$ref": "https://editagent.local/schemas/project.schema.json#/$defs/timeline"
+            },
+            "background": {
+              "type": "string",
+              "pattern": "^#[0-9a-fA-F]{6}$"
+            },
+            "captionStyle": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["color", "background", "fontSize", "direction"],
+              "properties": {
+                "color": {
+                  "type": "string",
+                  "pattern": "^#[0-9a-fA-F]{6}$"
+                },
+                "background": {
+                  "type": "string",
+                  "pattern": "^#[0-9a-fA-F]{6}$"
+                },
+                "fontSize": {
+                  "type": "integer",
+                  "minimum": 8,
+                  "maximum": 160
+                },
+                "direction": {
+                  "enum": ["auto", "ltr", "rtl"]
+                }
+              }
+            },
+            "components": {
+              "type": "array",
+              "maxItems": 128,
+              "items": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["componentId", "type", "props"],
+                    "properties": {
+                      "componentId": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+                      },
+                      "type": {
+                        "const": "solid-v1"
+                      },
+                      "props": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": ["color"],
+                        "properties": {
+                          "color": {
+                            "type": "string",
+                            "pattern": "^#[0-9a-fA-F]{6}$"
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["componentId", "type", "props"],
+                    "properties": {
+                      "componentId": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+                      },
+                      "type": {
+                        "const": "title-v1"
+                      },
+                      "props": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": ["text", "color", "background", "fontSize"],
+                        "properties": {
+                          "text": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 200,
+                            "pattern": "\\S"
+                          },
+                          "color": {
+                            "type": "string",
+                            "pattern": "^#[0-9a-fA-F]{6}$"
+                          },
+                          "background": {
+                            "type": "string",
+                            "pattern": "^#[0-9a-fA-F]{6}$"
+                          },
+                          "fontSize": {
+                            "type": "integer",
+                            "minimum": 8,
+                            "maximum": 160
+                          }
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

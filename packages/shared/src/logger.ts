@@ -26,6 +26,13 @@ const LOG_FIELDS = new Set([
   "duplicate",
   "abortedStreams",
   "activeStreams",
+  "renderVersion",
+  "compositionId",
+  "totalFrames",
+  "phase",
+  "wallTimeMs",
+  "outputKey",
+  "outputSha256",
 ]);
 
 export function createServiceLogger(service: string, stream?: Writable): JsonLogger {

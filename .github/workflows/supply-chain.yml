@@ -139,6 +139,9 @@ jobs:
             dockerfile: workers/media-worker/Dockerfile
           - service: render-worker
             dockerfile: workers/render-worker/Dockerfile
+          - service: render-executor
+            dockerfile: workers/render-worker/Dockerfile
+            target: executor
           - service: agent-worker
             dockerfile: workers/agent-worker/Dockerfile
           - service: ai-worker
@@ -158,7 +161,9 @@ jobs:
       - name: Build image
         run: |
           set -eu
-          docker build \
+          render_target="${{ matrix.target }}"
+          if [ -n "$render_target" ]; then set -- --target "$render_target"; else set --; fi
+          docker build "$@" \
             --platform linux/amd64 \
             --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
             --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
@@ -264,6 +269,7 @@ jobs:
             web,
             media-worker,
             render-worker,
+            render-executor,
             agent-worker,
             ai-worker,
             seaweedfs,
