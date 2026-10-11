@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { parseRenderInput, outputKey, progressPercentage, canonicalJson } from "./contract.js";
-import { loadRenderWorkerConfig } from "./config.js";
+import { loadRenderWorkerConfig, loadRendererProcessConfig } from "./config.js";
 import { exactEncoderTiming } from "./encoder-timing.js";
 const id = "018fe277-6ec0-7000-8000-000000000001";
 const base = {
@@ -117,4 +117,19 @@ test("render timeout and queue configuration fail closed", () => {
   for (const value of ["NaN", "Infinity", "0", "-1", "1.2", "600001"])
     assert.throws(() => loadRenderWorkerConfig({ ...env, EDITAGENT_RENDER_TIMEOUT_MS: value }));
   assert.throws(() => loadRenderWorkerConfig({ ...env, EDITAGENT_RENDER_QUEUE: "../queue" }));
+});
+
+test("renderer configuration stays in its boundary and fails closed on credentials or browser substitution", () => {
+  assert.deepEqual(loadRendererProcessConfig({}), {
+    concurrency: 2,
+    browserExecutable: "/opt/chromium/chrome-headless-shell-linux64/chrome-headless-shell",
+    path: "/usr/bin:/bin",
+  });
+  assert.equal(loadRendererProcessConfig({ REMOTION_CONCURRENCY: "4" }).concurrency, 4);
+  for (const value of ["0", "5", "1.5", "NaN", "Infinity"])
+    assert.throws(() => loadRendererProcessConfig({ REMOTION_CONCURRENCY: value }));
+  for (const key of ["DATABASE_URL", "REDIS_URL", "AWS_REGION", "S3_BUCKET", "AUTH_SECRET"])
+    assert.throws(() => loadRendererProcessConfig({ [key]: "forbidden" }));
+  assert.throws(() => loadRendererProcessConfig({ REMOTION_BROWSER: "/tmp/other-browser" }));
+  assert.throws(() => loadRendererProcessConfig({ PATH: "bad\0path" }));
 });

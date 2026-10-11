@@ -1,6 +1,8 @@
 import { readFileSync, readdirSync } from "node:fs";
+import { loadRendererProcessConfig } from "./config.js";
 /** Fail closed in the credential-free browser container. Never enabled by user props. */
 export function assertRenderIsolation(): void {
+  loadRendererProcessConfig();
   const status = readFileSync("/proc/self/status", "utf8");
   const limit = (file: string) => readFileSync(`/sys/fs/cgroup/${file}`, "utf8").trim();
   const memory = Number(limit("memory.max")),
@@ -59,7 +61,4 @@ export function assertRenderIsolation(): void {
     .split(/\s+/);
   if (!fileLimit || Number(fileLimit[3]) > 1073741824 || !Number.isFinite(Number(fileLimit[3])))
     throw new Error("Render file-size limit is absent.");
-  for (const key of Object.keys(process.env))
-    if (/^(DATABASE_URL|REDIS_URL|S3_|AWS_|AUTH_)/.test(key))
-      throw new Error("Credentials are forbidden in the browser runtime.");
 }

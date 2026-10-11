@@ -12,9 +12,6 @@ export async function startExecutor() {
   assertRenderIsolation();
   await readFile(path.join(__dirname, "../bundle/catalog.json"));
   await lstat("/opt/chromium/chrome-headless-shell-linux64/chrome-headless-shell");
-  const concurrency = Number(process.env["REMOTION_CONCURRENCY"] ?? "2");
-  if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 4)
-    throw new Error("Invalid renderer concurrency.");
   for (const token of await readdir(ROOT)) {
     if (!/^[a-f0-9]{32}$/.test(token)) throw new Error("Unexpected render workspace entry.");
     await rm(path.join(ROOT, token), { recursive: true, force: true });

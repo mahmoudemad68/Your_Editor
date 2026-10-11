@@ -1,3 +1,4 @@
+import { loadRendererProcessConfig } from "./config.js";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { openBrowser, selectComposition, renderMedia, makeCancelSignal } from "@remotion/renderer";
@@ -13,6 +14,7 @@ const cancel = makeCancelSignal();
 controller.signal.addEventListener("abort", () => cancel.cancel(), { once: true });
 let started = false;
 async function run(raw: unknown, work: string, rawAssets: unknown) {
+  const config = loadRendererProcessConfig();
   const input = parseRenderInput(raw);
   const bundle = path.join(__dirname, "../bundle");
   const catalog = JSON.parse(await readFile(path.join(bundle, "catalog.json"), "utf8")) as {
@@ -26,7 +28,7 @@ async function run(raw: unknown, work: string, rawAssets: unknown) {
   try {
     controller.signal.throwIfAborted();
     browser = await openBrowser("chrome", {
-      browserExecutable: process.env.REMOTION_BROWSER!,
+      browserExecutable: config.browserExecutable,
       chromiumOptions: { enableMultiProcessOnLinux: true },
       logLevel: "error",
     });
@@ -60,7 +62,7 @@ async function run(raw: unknown, work: string, rawAssets: unknown) {
       offthreadVideoThreads: 2,
       offthreadVideoCacheSizeInBytes: 134217728,
       mediaCacheSizeInBytes: 134217728,
-      concurrency: Number(process.env.REMOTION_CONCURRENCY ?? 2),
+      concurrency: config.concurrency,
       timeoutInMilliseconds: 30000,
       cancelSignal: cancel.cancelSignal,
       logLevel: "error",

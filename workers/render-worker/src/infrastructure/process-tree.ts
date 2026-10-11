@@ -3,6 +3,7 @@ import { fork } from "node:child_process";
 import path from "node:path";
 import { JobExecutionUnconfirmedError } from "@editagent/job-queue";
 import type { RenderInput, RenderProgress, VerifiedAsset } from "../application/ports.js";
+import { loadRendererProcessConfig } from "./config.js";
 interface ProcessIdentity {
   pid: number;
   ppid: number;
@@ -38,16 +39,17 @@ export async function runRenderChild(
   assets: readonly VerifiedAsset[] = [],
 ): Promise<{ processes: ProcessIdentity[]; pid: number }> {
   signal.throwIfAborted();
+  const config = loadRendererProcessConfig();
   const child = fork(path.join(__dirname, "render-child.js"), [], {
     detached: true,
     execArgv: ["--max-old-space-size=512"],
     env: {
-      PATH: process.env.PATH ?? "/usr/bin:/bin",
+      PATH: config.path,
       NODE_ENV: "production",
       TMPDIR: temp,
       EDITAGENT_RENDER_JOB_TOKEN: path.basename(work),
-      REMOTION_CONCURRENCY: process.env.REMOTION_CONCURRENCY ?? "2",
-      REMOTION_BROWSER: "/opt/chromium/chrome-headless-shell-linux64/chrome-headless-shell",
+      REMOTION_CONCURRENCY: String(config.concurrency),
+      REMOTION_BROWSER: config.browserExecutable,
     },
     stdio: ["ignore", "ignore", "ignore", "ipc"],
   });
