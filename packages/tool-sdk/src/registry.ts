@@ -88,6 +88,8 @@ const permissions: readonly string[] = [
   "render.create",
 ];
 const capabilities: readonly string[] = ["editing", "render", "audio", "vision", "transcription"];
+const functionName = (m: Pick<ToolManifest, "name" | "version">): string =>
+  `${m.name.replace(".", "__")}__${m.version.replaceAll(".", "_")}`;
 export class ToolRegistry {
   private readonly tools = new Map<string, RegisteredTool>();
   register(manifest: ToolManifest, binding: ToolBinding): void {
@@ -135,6 +137,7 @@ export class ToolRegistry {
       typeof m.description !== "string" ||
       m.description.trim().length === 0 ||
       m.description.length > 2048 ||
+      functionName(m).length > 64 ||
       typeof m.mutating !== "boolean"
     )
       throw new ToolError("invalid_manifest");
@@ -230,7 +233,7 @@ export class ToolRegistry {
     return this.discover().map((m) => ({
       type: "function",
       function: {
-        name: `${m.name.replace(".", "__")}__${m.version.replaceAll(".", "_")}`,
+        name: functionName(m),
         description: m.description,
         parameters: m.inputSchema,
       },

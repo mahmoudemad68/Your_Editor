@@ -4,6 +4,20 @@ import { ToolRegistry } from "./registry.js";
 import { compileSchema, jsonValue, contentHash } from "./validation.js";
 import { manifest, tool, ids, objectSchema } from "./test-support.js";
 const binding = { mode: "in-process" as const, tool: tool((i) => ({ output: i, costMicros: 1 })) };
+test("exported function names fit the portable 64-character bound without truncation", () => {
+  const name = `${"a".repeat(23)}.${"b".repeat(23)}`;
+  const r = new ToolRegistry();
+  r.register(manifest({ name, version: "9999.9999.9999" }), binding);
+  const exported = r.exportFunctions()[0] as { function: { name: string } };
+  assert.equal(exported.function.name.length, 64);
+  assert.match(exported.function.name, /^[A-Za-z0-9_-]+$/);
+  assert.throws(() =>
+    new ToolRegistry().register(
+      manifest({ name: `${"a".repeat(24)}.${"b".repeat(24)}`, version: "9999.9999.9999" }),
+      binding,
+    ),
+  );
+});
 test("new tool registration, exact versions, capabilities and stable faithful function export", () => {
   const r = new ToolRegistry();
   r.register(manifest(), binding);
