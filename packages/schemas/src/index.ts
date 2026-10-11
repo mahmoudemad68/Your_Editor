@@ -55,3 +55,5 @@ export type {
   AnalyzerProvenance,
   Time as AnalysisTime,
 } from "./media-analysis.generated.js";
+
+export { default as renderJobSchema } from "./render-job.schema.json";

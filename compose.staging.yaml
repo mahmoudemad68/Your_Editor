@@ -21,6 +21,9 @@ services:
   render-worker:
     build: !reset null
     image: ${RENDER_WORKER_IMAGE:?Immutable render-worker image is required}
+  render-executor:
+    build: !reset null
+    image: ${RENDER_EXECUTOR_IMAGE:?Immutable render-executor image is required}
   agent-worker:
     build: !reset null
     image: ${AGENT_WORKER_IMAGE:?Immutable agent-worker image is required}

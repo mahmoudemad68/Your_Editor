@@ -109,6 +109,7 @@ def deploy(root, directory, dry=False, registry_user=None, pull=True):
         "Release must be inside the release store",
     )
     release = load_release(directory / "release.json")
+    apps = [*APPS, "render-executor"] if release["schemaVersion"] == 2 else APPS
     require(directory.name == release["gitSha"], "Release directory/SHA mismatch")
     values = runtime_environment(root / "shared/runtime.env")
     environment = {
@@ -153,7 +154,7 @@ def deploy(root, directory, dry=False, registry_user=None, pull=True):
                 run(["docker", "compose", "pull"], dry)
             run(["infra/seaweedfs/prepare-secrets.sh"], dry)
             run(["infra/seaweedfs/ensure-storage-network.sh"], dry)
-            run(["docker", "compose", "stop", *APPS, *STORAGE], dry)
+            run(["docker", "compose", "stop", *apps, *STORAGE], dry)
             run(
                 [
                     "docker",
@@ -203,7 +204,7 @@ def deploy(root, directory, dry=False, registry_user=None, pull=True):
                     "--wait",
                     "--wait-timeout",
                     "180",
-                    *APPS,
+                    *apps,
                 ],
                 dry,
             )

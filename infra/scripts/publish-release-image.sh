@@ -6,7 +6,7 @@ sha=${GITHUB_SHA:?SHA required}
 repository=${GITHUB_REPOSITORY:?repository required}
 owner=$(printf '%s' "${repository%/*}" | tr '[:upper:]' '[:lower:]')
 repo=$(printf '%s' "${repository#*/}" | tr '[:upper:]' '[:lower:]')
-case "$service" in api|web|media-worker|render-worker|agent-worker|ai-worker|seaweedfs|postgres|redis) ;; *) exit 2 ;; esac
+case "$service" in api|web|media-worker|render-worker|render-executor|agent-worker|ai-worker|seaweedfs|postgres|redis) ;; *) exit 2 ;; esac
 printf '%s' "$sha" | python3 -c 'import re,sys; assert re.fullmatch("[0-9a-f]{40}", sys.stdin.read())'
 local_image="editagent-$service:$sha"
 image="ghcr.io/$owner/$repo-$service"

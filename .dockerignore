@@ -21,3 +21,7 @@ coverage
 *.log
 docs/roadmap/export
 tests/architecture/fixtures
+
+# Private dataset bytes, local credentials and test/render artifacts never enter images.
+.local
+**/.remotion

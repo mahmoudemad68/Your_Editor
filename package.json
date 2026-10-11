@@ -40,7 +40,8 @@
     "schemas:check": "node tools/schema/generate-media-analysis.mjs --check",
     "schemas:test": "node --test tests/integration/media-analysis.test.mjs",
     "audio:evaluate": "node tools/audio/evaluate.mjs",
-    "audio:acceptance": "node tools/audio/acceptance.mjs"
+    "audio:acceptance": "node tools/audio/acceptance.mjs",
+    "render:test": "node tools/render/integration.mjs"
   },
   "devDependencies": {
     "@aws-sdk/client-s3": "3.1018.0",
@@ -63,8 +64,25 @@
   },
   "pnpm": {
     "onlyBuiltDependencies": [
-      "argon2"
-    ]
+      "argon2",
+      "esbuild"
+    ],
+    "packageExtensions": {
+      "@rspack/binding@1.7.11": {
+        "optionalDependencies": {
+          "@rspack/binding-darwin-arm64": "1.7.11",
+          "@rspack/binding-win32-arm64-msvc": "1.7.11",
+          "@rspack/binding-linux-arm64-musl": "1.7.11",
+          "@rspack/binding-linux-arm64-gnu": "1.7.11",
+          "@rspack/binding-win32-ia32-msvc": "1.7.11",
+          "@rspack/binding-darwin-x64": "1.7.11",
+          "@rspack/binding-win32-x64-msvc": "1.7.11",
+          "@rspack/binding-wasm32-wasi": "1.7.11",
+          "@rspack/binding-linux-x64-gnu": "1.7.11",
+          "@rspack/binding-linux-x64-musl": "1.7.11"
+        }
+      }
+    }
   },
   "lint-staged": {
     "*.{js,mjs,cjs,ts,tsx,json,md,yml,yaml}": "prettier --write",

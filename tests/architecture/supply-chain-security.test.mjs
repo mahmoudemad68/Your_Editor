@@ -134,6 +134,7 @@ test("the security gate rejects a missing or failed scan and accepts a complete 
     "web",
     "media-worker",
     "render-worker",
+    "render-executor",
     "agent-worker",
     "ai-worker",
     "seaweedfs",

@@ -36,6 +36,7 @@ test("staging Compose uses immutable images and preserves current storage isolat
       "WEB",
       "MEDIA_WORKER",
       "RENDER_WORKER",
+      "RENDER_EXECUTOR",
       "AGENT_WORKER",
       "AI_WORKER",
       "SEAWEEDFS",
