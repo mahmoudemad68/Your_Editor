@@ -1,4 +1,5 @@
 import React from "react";
+import { UnicodeText } from "./unicode-text.js";
 import {
   AbsoluteFill,
   Sequence,
@@ -31,7 +32,7 @@ function content(m: MappedClip, p: TimelineCompositionProps, hold = false) {
           justifyContent: "flex-end",
           alignItems: "center",
           padding: 16,
-          fontFamily: "DejaVu Sans",
+          fontFamily: '"DejaVu Sans", "Noto Color Emoji", sans-serif',
           fontSize: p.captionStyle.fontSize,
           color: p.captionStyle.color,
         }}
@@ -46,7 +47,7 @@ function content(m: MappedClip, p: TimelineCompositionProps, hold = false) {
             overflowWrap: "anywhere",
           }}
         >
-          {c.text}
+          <UnicodeText text={c.text!} />
         </div>
       </AbsoluteFill>
     );
@@ -60,7 +61,7 @@ function content(m: MappedClip, p: TimelineCompositionProps, hold = false) {
           style={{
             backgroundColor: b.props.background,
             color: b.props.color,
-            fontFamily: "DejaVu Sans",
+            fontFamily: '"DejaVu Sans", "Noto Color Emoji", sans-serif',
             fontSize: b.props.fontSize,
             alignItems: "center",
             justifyContent: "center",
@@ -68,7 +69,7 @@ function content(m: MappedClip, p: TimelineCompositionProps, hold = false) {
             overflowWrap: "anywhere",
           }}
         >
-          {b.props.text}
+          <UnicodeText text={b.props.text} />
         </AbsoluteFill>
       );
     throw new Error("Unknown registered component.");

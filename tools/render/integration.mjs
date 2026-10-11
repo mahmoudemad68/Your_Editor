@@ -6,7 +6,7 @@ import { setTimeout, clearTimeout } from "node:timers";
 /** No skipped Docker tests: exact production images, real queue, Chromium, FFprobe and S3. */
 import { spawn, execFileSync } from "node:child_process";
 import { randomBytes, createHash } from "node:crypto";
-import { readFile, readdir, mkdir, writeFile } from "node:fs/promises";
+import { readFile, readdir, mkdir, writeFile, rm } from "node:fs/promises";
 import assert from "node:assert/strict";
 import { Pool } from "pg";
 import {
@@ -17,6 +17,8 @@ import {
 } from "@aws-sdk/client-s3";
 import { startIntegrationServices } from "../../tests/integration/support/containers.mjs";
 import { buildRenderImages } from "./build.mjs";
+import { verifyEmojiFrame } from "./emoji-golden.mjs";
+import { verifyStorageReadiness, verifyStorageStartup } from "./readiness-proof.mjs";
 import {
   solidHash,
   verifyGoldenFrames,
@@ -121,6 +123,7 @@ try {
     S3_SECRET_ACCESS_KEY: services.minio.credentials.secretAccessKey,
     EDITAGENT_RENDER_QUEUE: "render-idle",
   };
+  docker(["network", "disconnect", network, services.minio.container.getId()]);
   docker([
     "run",
     "-d",
@@ -142,6 +145,12 @@ try {
     ...Object.entries(environment).flatMap(([k, v]) => ["-e", `${k}=${v}`]),
     "editagent-render-coordinator:test",
   ]);
+  let startupReadiness;
+  try {
+    startupReadiness = verifyStorageStartup(coordinator);
+  } finally {
+    docker(["network", "connect", "--alias", "minio", network, services.minio.container.getId()]);
+  }
   const inspect = JSON.parse(docker(["inspect", executor]))[0];
   assert.equal(inspect.Config.User, "10001:10001");
   assert.equal(inspect.HostConfig.NetworkMode, "none");
@@ -173,8 +182,18 @@ try {
     "healthy",
     docker(["logs", executor]),
   );
+  const readiness = await verifyStorageReadiness({
+    coordinator,
+    storage: services.minio.container.getId(),
+    network,
+  });
   const artifactDir = root + ".local/render-batch";
   await mkdir(artifactDir, { recursive: true });
+  await rm(artifactDir + "/report.json", { force: true });
+  await writeFile(
+    artifactDir + "/readiness.json",
+    JSON.stringify({ startup: startupReadiness, ...readiness }, null, 2) + "\n",
+  );
   // Fixed samples and analytic expected hashes exist before any timeline render.
   const expectedBlack = solidHash(0),
     expectedWhite = solidHash(255);
@@ -304,6 +323,7 @@ try {
     return JSON.parse(line.slice(marker.length + 1));
   }
   const report = parseEvidence(output, "RENDER_EVIDENCE");
+  report.readiness = { startup: startupReadiness, ...readiness };
   const timelineScript =
     `require('node:process').env.EDITAGENT_PROOF_PROJECT=${JSON.stringify(fixtureProject)};require('node:process').env.EDITAGENT_PROOF_SOURCE=${JSON.stringify(fixtureSource)};\n` +
     (await readFile(new URL("./timeline-proof.cjs", import.meta.url), "utf8"));
@@ -315,6 +335,9 @@ try {
     const object = await s3.send(new GetObjectCommand({ Bucket: "editagent", Key: artifact.key }));
     const file = artifactDir + "/" + artifact.label + ".mp4";
     await writeFile(file, await object.Body.transformToByteArray());
+  }
+  for (const artifact of timelineReport.artifacts) {
+    const file = artifactDir + "/" + artifact.label + ".mp4";
     const details = JSON.parse(
       execFileSync(
         "ffprobe",
@@ -323,8 +346,9 @@ try {
       ),
     );
     const v = details.streams.find((x) => x.codec_type === "video");
-    assert.equal(v.width, 64);
-    assert.equal(v.height, 64);
+    const dimension = artifact.label.startsWith("emoji-") ? 128 : 64;
+    assert.equal(v.width, dimension);
+    assert.equal(v.height, dimension);
     assert.equal(v.avg_frame_rate, artifact.label === "fractional-cut" ? "30000/1001" : "30/1");
     artifact.ffprobe = {
       fps: v.avg_frame_rate,
@@ -334,11 +358,43 @@ try {
       codec: v.codec_name,
       audio: details.streams.find((x) => x.codec_type === "audio")?.codec_name,
     };
-    artifact.goldenFrames = verifyGoldenFrames(file, artifact.label);
+    if (artifact.label === "emoji-tofu-control" || artifact.label === "emoji-unjoined-control") {
+      assert.throws(
+        () => verifyEmojiFrame(file, "emoji-woman-technologist"),
+        /colored glyph|glyph color\/shape error/,
+      );
+      artifact.goldenFrames = { negativeVisualControlRejected: true };
+    } else
+      artifact.goldenFrames = artifact.label.startsWith("emoji-")
+        ? verifyEmojiFrame(file, artifact.label)
+        : verifyGoldenFrames(file, artifact.label);
+    if (artifact.label.startsWith("emoji-"))
+      execFileSync("ffmpeg", [
+        "-v",
+        "error",
+        "-y",
+        "-i",
+        file,
+        "-vf",
+        "select=eq(n\\,15)",
+        "-frames:v",
+        "1",
+        "-threads",
+        "1",
+        artifactDir + "/" + artifact.label + ".png",
+      ]);
     if (artifact.label === "cut-offset-gap") artifact.audioOffsets = verifyAudioOffsets(file);
     if (artifact.label === "audio-track-offset")
       artifact.audioOffsets = verifySeparateAudioTrack(file);
   }
+  const emoji = timelineReport.artifacts.find((a) => a.label === "emoji-grinning"),
+    repeatedEmoji = timelineReport.artifacts.find((a) => a.label === "emoji-grinning-repeat");
+  assert.equal(
+    emoji.goldenFrames.frameSha256,
+    repeatedEmoji.goldenFrames.frameSha256,
+    "Actual emoji pixels must repeat exactly across two logical renders",
+  );
+  timelineReport.emojiPixelsRepeatExactly = true;
   report.timeline = timelineReport;
   const expatVersion = docker([
     "exec",
@@ -363,6 +419,23 @@ try {
     "process.getuid()+':'+process.getgid()",
   ]).trim();
   assert.equal(coordinatorIdentity, "10001:10001");
+  report.emojiFont = JSON.parse(
+    docker([
+      "exec",
+      executor,
+      "node",
+      "-e",
+      "const fs=require('node:fs'),h=require('node:crypto');const sha=p=>h.createHash('sha256').update(fs.readFileSync(p)).digest('hex');console.log(JSON.stringify({name:'Noto Color Emoji',version:'2.051',license:'SIL OFL 1.1',sha256:sha('/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf'),licenseSha256:sha('/usr/local/share/editagent/noto-emoji/LICENSE')}))",
+    ]),
+  );
+  assert.equal(
+    report.emojiFont.sha256,
+    "72a635cb3d2f3524c51620cdde406b217204e8a6a06c6a096ff8ed4b5fd6e27b",
+  );
+  assert.equal(
+    report.emojiFont.licenseSha256,
+    "6a73f9541c2de74158c0e7cf6b0a58ef774f5a780bf191f2d7ec9cc53efe2bf2",
+  );
   report.versions = {
     chromium: docker([
       "exec",

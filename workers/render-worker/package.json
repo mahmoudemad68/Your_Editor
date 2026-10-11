@@ -7,7 +7,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json && node dist/infrastructure/build-bundle.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node ../../tools/test/run-node-tests.mjs dist/application/describe.test.js dist/infrastructure/config.test.js dist/infrastructure/render.test.js dist/infrastructure/timeline-mapping.test.js dist/infrastructure/asset-security.test.js",
+    "test": "node ../../tools/test/run-node-tests.mjs dist/application/describe.test.js dist/infrastructure/config.test.js dist/infrastructure/readiness.test.js dist/infrastructure/render.test.js dist/infrastructure/timeline-mapping.test.js dist/infrastructure/asset-security.test.js",
     "start": "node dist/index.js"
   },
   "dependencies": {

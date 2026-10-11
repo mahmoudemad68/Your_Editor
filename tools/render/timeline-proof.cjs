@@ -269,6 +269,47 @@ async function main() {
       },
     };
     artifacts.push(await render(title, "title-safe-text"));
+    // Independent font-embedded golden glyphs: one caption per render so tofu,
+    // broken VS/ZWJ/modifier/flag shaping cannot hide behind other visible text.
+    const emojiCases = [
+      ["grinning", "😀"],
+      ["wave", "👋"],
+      ["heart-vs16", "❤\ufe0f"],
+      ["woman-technologist", "👩\u200d💻"],
+      ["skin-tone", "👍🏽"],
+      ["egypt-flag", "🇪🇬"],
+    ];
+    for (const [name, text] of emojiCases) {
+      const emoji = structuredClone(captions);
+      emoji.props.timeline.composition.width = 128;
+      emoji.props.timeline.composition.height = 128;
+      emoji.props.timeline.composition.durationUs = "2000000";
+      emoji.props.captionStyle.fontSize = 48;
+      emoji.props.timeline.tracks[0].clips[0].text = text;
+      artifacts.push(await render(emoji, "emoji-" + name));
+      if (name === "grinning") artifacts.push(await render(emoji, "emoji-grinning-repeat"));
+    }
+    const emojiTitle = structuredClone(title);
+    emojiTitle.props.timeline.composition.width = 128;
+    emojiTitle.props.timeline.composition.height = 128;
+    emojiTitle.props.timeline.composition.durationUs = "2000000";
+    emojiTitle.props.components[0].props.text = "👩\u200d💻";
+    emojiTitle.props.components[0].props.fontSize = 48;
+    artifacts.push(await render(emojiTitle, "emoji-title-woman-technologist"));
+    // Negative actual-frame controls prove the visual oracle rejects monochrome
+    // tofu-like boxes and separate glyphs pretending to be the accepted ZWJ glyph.
+    for (const [name, text] of [
+      ["tofu-control", "□"],
+      ["unjoined-control", "👩💻"],
+    ]) {
+      const negative = structuredClone(captions);
+      negative.props.timeline.composition.width = 128;
+      negative.props.timeline.composition.height = 128;
+      negative.props.timeline.composition.durationUs = "2000000";
+      negative.props.captionStyle.fontSize = 48;
+      negative.props.timeline.tracks[0].clips[0].text = text;
+      artifacts.push(await render(negative, "emoji-" + name));
+    }
     console.log(
       "TIMELINE_EVIDENCE " +
         JSON.stringify({

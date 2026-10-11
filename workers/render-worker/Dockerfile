@@ -39,6 +39,17 @@ RUN --mount=type=secret,id=proxy_ca \
  && echo '7c4a2751b361aeb3cff3ed788fa18b7a0849371b983d478bb9205b6cc25a8c52  /tmp/chromium.zip' | sha256sum -c - \
  && unzip -q /tmp/chromium.zip -d /opt/chromium
 
+# Official Noto Color Emoji 2.051, SIL Open Font License 1.1. Offline at runtime.
+FROM node:22.23.3-trixie-slim@sha256:b26b04c123d9ff8ab646ceb18b9d75a1173acf64b9a401094b906d27b29338d4 AS emoji-font
+RUN --mount=type=secret,id=proxy_ca \
+    set -eu; apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
+ && mkdir -p /font \
+ && if [ -f /run/secrets/proxy_ca ]; then export CURL_CA_BUNDLE=/run/secrets/proxy_ca; fi; \
+    curl --fail --location --retry 2 --max-time 180 https://raw.githubusercontent.com/googlefonts/noto-emoji/v2.051/fonts/NotoColorEmoji.ttf -o /font/NotoColorEmoji.ttf \
+ && echo '72a635cb3d2f3524c51620cdde406b217204e8a6a06c6a096ff8ed4b5fd6e27b  /font/NotoColorEmoji.ttf' | sha256sum -c - \
+ && curl --fail --location --retry 2 --max-time 180 https://raw.githubusercontent.com/googlefonts/noto-emoji/v2.051/fonts/LICENSE -o /font/LICENSE \
+ && echo '6a73f9541c2de74158c0e7cf6b0a58ef774f5a780bf191f2d7ec9cc53efe2bf2  /font/LICENSE' | sha256sum -c -
+
 # Debian's current Expat 2.8.3 has five HIGH advisories. Build the unmodified
 # official release fixing them; keep its version/license/source identity visible.
 FROM node:22.23.3-trixie-slim@sha256:b26b04c123d9ff8ab646ceb18b9d75a1173acf64b9a401094b906d27b29338d4 AS expat-build
@@ -74,6 +85,8 @@ COPY --from=expat-build /out/usr/local/lib/libexpat.so* /usr/local/lib/
 COPY --from=expat-build /out/usr/local/share/editagent/expat /usr/local/share/editagent/expat
 RUN ldconfig && test "$(ldd /usr/local/lib/libexpat.so.1 | grep -c 'not found')" = 0
 COPY --from=chromium-download /opt/chromium /opt/chromium
+COPY --from=emoji-font /font/NotoColorEmoji.ttf /usr/share/fonts/truetype/noto/NotoColorEmoji.ttf
+COPY --from=emoji-font /font/LICENSE /usr/local/share/editagent/noto-emoji/LICENSE
 
 FROM browser-runtime AS executor
 COPY --from=build --chown=10001:10001 /out/ ./

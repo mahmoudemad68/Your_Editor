@@ -33,10 +33,14 @@ async function run(raw: unknown, work: string, rawAssets: unknown) {
       logLevel: "error",
     });
     controller.signal.throwIfAborted();
+    const plan = input.compositionId === "TimelineV1" ? mapTimeline(input) : undefined;
+    const componentBoundaries =
+      plan?.clips
+        .filter((m) => m.clip.kind === "caption" || m.clip.kind === "graphics")
+        .flatMap((m) => [m.from, m.from + m.durationInFrames + m.holdFrames])
+        .filter((n) => n > 0 && n < timing.durationInFrames) ?? [];
     const props = {
-      ...(input.compositionId === "FixtureV1"
-        ? input.props
-        : { ...input.props, plan: mapTimeline(input), assets }),
+      ...(input.compositionId === "FixtureV1" ? input.props : { ...input.props, plan, assets }),
       width: timing.width,
       height: timing.height,
       fps: timing.frameRate.numerator / timing.frameRate.denominator,
@@ -58,7 +62,7 @@ async function run(raw: unknown, work: string, rawAssets: unknown) {
       pixelFormat: "yuv420p",
       crf: 23,
       x264Preset: "veryfast",
-      ffmpegOverride: ({ args }) => exactEncoderTiming(args, timing.frameRate),
+      ffmpegOverride: ({ args }) => exactEncoderTiming(args, timing.frameRate, componentBoundaries),
       offthreadVideoThreads: 2,
       offthreadVideoCacheSizeInBytes: 134217728,
       mediaCacheSizeInBytes: 134217728,

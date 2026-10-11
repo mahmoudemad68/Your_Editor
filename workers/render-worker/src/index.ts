@@ -13,6 +13,7 @@ import { createServiceLogger, startHealthServer, startNoopTracing } from "@edita
 import { loadRenderWorkerConfig, ConfigurationError } from "./infrastructure/config.js";
 import { createStorage, RenderObjects } from "./infrastructure/storage.js";
 import { executorReady } from "./infrastructure/remote-render.js";
+import { createRenderReadiness, storageReady } from "./infrastructure/readiness.js";
 import { RemotionRenderStrategy } from "./infrastructure/strategy.js";
 import { RenderJobSupervisor } from "./infrastructure/render-supervisor.js";
 import { PostgresRenderAssetResolver } from "./infrastructure/asset-resolver.js";
@@ -35,12 +36,15 @@ export async function main() {
   });
   const s3 = createStorage(config),
     shutdown = new AbortController();
-  const health = startHealthServer(3200, {
-    ready: async () =>
-      (await Promise.all([executorReady(), postgresAndRedisReady(pool, config.redisUrl)])).every(
-        Boolean,
-      ),
-  });
+  const ready = createRenderReadiness(
+    [
+      executorReady,
+      () => postgresAndRedisReady(pool, config.redisUrl),
+      () => storageReady(s3, config.objectStorage.bucket),
+    ],
+    shutdown.signal,
+  );
+  const health = startHealthServer(3200, { ready });
   const strategy = new RemotionRenderStrategy(
     new RenderObjects(s3, config.objectStorage.bucket),
     config.renderTimeoutMs,

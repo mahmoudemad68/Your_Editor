@@ -1,0 +1,44 @@
+{
+  "font": "Noto Color Emoji 2.051",
+  "source": "https://github.com/googlefonts/noto-emoji/tree/v2.051",
+  "fontSha256": "72a635cb3d2f3524c51620cdde406b217204e8a6a06c6a096ff8ed4b5fd6e27b",
+  "derivation": "Exact embedded CBDT PNG glyph bytes extracted with fontTools 4.61.1; references defined independently of Chromium/render output. ZWJ, skin-tone and flag glyphs follow the font GSUB ligatures.",
+  "glyphs": [
+    {
+      "name": "grinning",
+      "text": "😀",
+      "glyph": "u1F600",
+      "sha256": "10d6305ce9241ddf4a53ee4f130999922b1da72115b44809231d660da57c18b2"
+    },
+    {
+      "name": "wave",
+      "text": "👋",
+      "glyph": "u1F44B",
+      "sha256": "72d87529dfcd68a79c237620009b3754e0c8b48788cdf98799a09036e63d9f09"
+    },
+    {
+      "name": "heart-vs16",
+      "text": "❤️",
+      "glyph": "uni2764",
+      "sha256": "200134e6ecf39657dca13bc32b1be433305e98d2d460c68b413707f89a7bdc1f"
+    },
+    {
+      "name": "woman-technologist",
+      "text": "👩‍💻",
+      "glyph": "glyph02316",
+      "sha256": "0a9136252053744471e8519fb2af7cc35b2d54bfe94560d2edafa4d500e11ba9"
+    },
+    {
+      "name": "skin-tone",
+      "text": "👍🏽",
+      "glyph": "glyph01969",
+      "sha256": "03ccad17e4bf27b3905ec54c509cb8a83431564ab464d63fcc17d81ce2c5b935"
+    },
+    {
+      "name": "egypt-flag",
+      "text": "🇪🇬",
+      "glyph": "glyph01604",
+      "sha256": "d2c8058c68d2512abc729c4f4b54b2dbce7a1e5c9256951ecfc8721de2cc813f"
+    }
+  ]
+}

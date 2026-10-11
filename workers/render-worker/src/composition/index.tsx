@@ -1,4 +1,5 @@
 import React from "react";
+import { UnicodeText } from "./unicode-text.js";
 import { registerRoot, Composition, AbsoluteFill, useCurrentFrame } from "remotion";
 import { TimelineComposition, type TimelineCompositionProps } from "./timeline.js";
 export interface FixtureProps extends Record<string, unknown> {
@@ -18,11 +19,13 @@ const Fixture: React.FC<FixtureProps> = ({ title, background }) => {
         color: "white",
         alignItems: "center",
         justifyContent: "center",
-        fontFamily: "DejaVu Sans",
+        fontFamily: '"DejaVu Sans", "Noto Color Emoji", sans-serif',
         fontSize: 24,
       }}
     >
-      <div>{title}</div>
+      <div>
+        <UnicodeText text={title} />
+      </div>
       <div>{frame}</div>
     </AbsoluteFill>
   );

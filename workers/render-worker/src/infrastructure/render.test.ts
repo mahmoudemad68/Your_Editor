@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { parseRenderInput, outputKey, progressPercentage, canonicalJson } from "./contract.js";
 import { loadRenderWorkerConfig, loadRendererProcessConfig } from "./config.js";
+import { textRuns } from "../composition/unicode-text.js";
 import { exactEncoderTiming } from "./encoder-timing.js";
 const id = "018fe277-6ec0-7000-8000-000000000001";
 const base = {
@@ -132,4 +133,50 @@ test("renderer configuration stays in its boundary and fails closed on credentia
     assert.throws(() => loadRendererProcessConfig({ [key]: "forbidden" }));
   assert.throws(() => loadRendererProcessConfig({ REMOTION_BROWSER: "/tmp/other-browser" }));
   assert.throws(() => loadRendererProcessConfig({ PATH: "bad\0path" }));
+});
+
+test("emoji font fallback preserves normal text and complete Unicode graphemes", () => {
+  assert.deepEqual(textRuns("مرحبا 123 😀 👩\u200d💻 👍🏽 🇪🇬 ❤\ufe0f"), [
+    { text: "مرحبا 123 ", emoji: false },
+    { text: "😀", emoji: true },
+    { text: " ", emoji: false },
+    { text: "👩\u200d💻", emoji: true },
+    { text: " ", emoji: false },
+    { text: "👍🏽", emoji: true },
+    { text: " ", emoji: false },
+    { text: "🇪🇬", emoji: true },
+    { text: " ", emoji: false },
+    { text: "❤\ufe0f", emoji: true },
+  ]);
+  assert.deepEqual(textRuns("© ® ™ ❤ → 123"), [{ text: "© ® ™ ❤ → 123", emoji: false }]);
+  assert.deepEqual(textRuns("heart ❤\ufe0e 1️⃣!"), [
+    { text: "heart ❤\ufe0e ", emoji: false },
+    { text: "1️⃣", emoji: true },
+    { text: "!", emoji: false },
+  ]);
+});
+
+test("component removal keyframes preserve integer rational boundaries and do not alter stream-copy timing", () => {
+  const args = ["-framerate", "30", "-c:v", "libx264", "output.mp4"];
+  assert.deepEqual(
+    exactEncoderTiming(args, { numerator: 30000, denominator: 1001 }, [30, 60, 30]),
+    [
+      "-framerate",
+      "30000/1001",
+      "-c:v",
+      "libx264",
+      "-video_track_timescale",
+      "30000",
+      "-force_key_frames",
+      "1.001000000000,2.002000000000",
+      "output.mp4",
+    ],
+  );
+  const copy = ["-c:v", "copy", "output.mp4"];
+  assert.deepEqual(
+    exactEncoderTiming(copy, { numerator: 30, denominator: 1 }, [30]),
+    exactEncoderTiming(copy, { numerator: 30, denominator: 1 }),
+  );
+  for (const boundaries of [[NaN], [Infinity], [-1], [1.2], [108001], Array(4097).fill(30)])
+    assert.throws(() => exactEncoderTiming(args, { numerator: 30, denominator: 1 }, boundaries));
 });
