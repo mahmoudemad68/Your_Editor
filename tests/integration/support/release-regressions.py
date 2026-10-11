@@ -63,13 +63,13 @@ class ReleaseRegression(unittest.TestCase):
                 }
             )
         (directory / "release.json").write_text(
-            json.dumps({"schemaVersion": 1, "gitSha": sha, "images": records})
+            json.dumps({"schemaVersion": 2, "gitSha": sha, "images": records})
         )
         return directory
 
     def test_manifest_complete_immutable_sbom_binding_and_failures(self):
         data = manifest.load_release(self.directory / "release.json")
-        self.assertEqual(len(manifest.image_environment(data)), 9)
+        self.assertEqual(len(manifest.image_environment(data)), 10)
         self.assertTrue(
             all("@sha256:" in v for v in manifest.image_environment(data).values())
         )
@@ -87,6 +87,46 @@ class ReleaseRegression(unittest.TestCase):
         (self.directory / data["images"][0]["sbom"]).write_text("{}")
         with self.assertRaisesRegex(ValueError, "SBOM hash"):
             manifest.load_release(self.directory / "release.json")
+
+    def test_legacy_release_is_preserved_and_executor_required_only_in_v2(self):
+        path = self.directory / "release.json"
+        current = json.loads(path.read_text())
+        legacy = {
+            **current,
+            "schemaVersion": 1,
+            "images": [
+                r for r in current["images"] if r["service"] != "render-executor"
+            ],
+        }
+        path.write_text(json.dumps(legacy))
+        self.assertEqual(len(manifest.load_release(path)["images"]), 9)
+        with (
+            contextlib.redirect_stdout(io.StringIO()),
+            patch.object(deploy, "run") as run,
+        ):
+            deploy.deploy(self.root, self.directory, dry=True)
+            self.assertFalse(
+                any("render-executor" in call.args[0] for call in run.call_args_list)
+            )
+        for invalid in [
+            {**legacy, "schemaVersion": 2},
+            {**current, "schemaVersion": 1},
+            {**current, "schemaVersion": 3},
+            {**current, "schemaVersion": True},
+        ]:
+            path.write_text(json.dumps(invalid))
+            with self.assertRaises(ValueError):
+                manifest.load_release(path)
+        path.write_text(json.dumps(current))
+        self.assertEqual(len(manifest.load_release(path)["images"]), 10)
+        with (
+            contextlib.redirect_stdout(io.StringIO()),
+            patch.object(deploy, "run") as run,
+        ):
+            deploy.deploy(self.root, self.directory, dry=True)
+            self.assertTrue(
+                any("render-executor" in call.args[0] for call in run.call_args_list)
+            )
 
     def test_deploy_and_rollback_dry_run_never_execute_commands_or_change_current(self):
         prior = self.release("d" * 40)
@@ -199,6 +239,41 @@ class ReleaseRegression(unittest.TestCase):
             self.assertRaisesRegex(ValueError, "Staging smoke failed"),
         ):
             smoke.smoke(release, timeout=0)
+
+    def test_executor_smoke_uses_fixed_private_socket_and_checks_exact_image(self):
+        release = manifest.load_release(self.directory / "release.json")
+        record = next(r for r in release["images"] if r["service"] == "render-executor")
+        state = {
+            "State": {"Running": True, "Health": {"Status": "healthy"}},
+            "Image": record["scannedImageId"],
+            "Config": {
+                "Image": record["image"] + "@" + record["digest"],
+                "Labels": {"org.opencontainers.image.revision": release["gitSha"]},
+            },
+        }
+        calls = []
+
+        def commands(args):
+            calls.append(args)
+            if args[1] == "inspect":
+                return json.dumps([state])
+            return "container" if "ps" in args else ""
+
+        with patch.object(smoke, "command", side_effect=commands):
+            smoke.check_once(release, ["render-executor"])
+        probe = calls[-1]
+        self.assertEqual(
+            probe[:7],
+            ["docker", "compose", "exec", "-T", "render-executor", "node", "-e"],
+        )
+        self.assertIn("/run/render/control.sock", probe[7])
+        self.assertNotIn("http://", probe[7])
+        state["Image"] = "sha256:" + "d" * 64
+        with (
+            patch.object(smoke, "command", side_effect=commands),
+            self.assertRaises(ValueError),
+        ):
+            smoke.check_once(release, ["render-executor"])
 
     def test_runtime_credentials_required_and_not_evaluated(self):
         p = self.root / "shared/runtime.env"

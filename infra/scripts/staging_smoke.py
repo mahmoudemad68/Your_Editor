@@ -15,6 +15,7 @@ SERVICE_IMAGES = {
         "web",
         "media-worker",
         "render-worker",
+        "render-executor",
         "agent-worker",
         "ai-worker",
         "postgres",
@@ -36,7 +37,11 @@ def command(args):
 
 
 def check_once(release, services=None):
-    wanted = services or list(SERVICE_IMAGES)
+    wanted = services or [
+        s
+        for s in SERVICE_IMAGES
+        if s != "render-executor" or not release or release["schemaVersion"] == 2
+    ]
     records = {r["service"]: r for r in release["images"]} if release else {}
     for service in wanted:
         if service not in SERVICE_IMAGES:
@@ -64,6 +69,19 @@ def check_once(release, services=None):
                 != release["gitSha"]
             ):
                 raise ValueError(f"Wrong revision: {service}")
+        if service == "render-executor":
+            command(
+                [
+                    "docker",
+                    "compose",
+                    "exec",
+                    "-T",
+                    service,
+                    "node",
+                    "-e",
+                    "require('node:http').get({socketPath:'/run/render/control.sock',path:'/ready'},r=>{r.resume();process.exit(r.statusCode===200?0:1)}).on('error',()=>process.exit(1))",
+                ]
+            )
         if service in (
             "api",
             "web",

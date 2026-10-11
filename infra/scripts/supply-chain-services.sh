@@ -6,6 +6,7 @@ printf '%s\n' \
   web \
   media-worker \
   render-worker \
+  render-executor \
   agent-worker \
   ai-worker \
   seaweedfs \

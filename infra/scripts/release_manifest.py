@@ -11,12 +11,14 @@ SERVICES = (
     "web",
     "media-worker",
     "render-worker",
+    "render-executor",
     "agent-worker",
     "ai-worker",
     "seaweedfs",
     "postgres",
     "redis",
 )
+LEGACY_SERVICES = tuple(s for s in SERVICES if s != "render-executor")
 SHA = re.compile(r"[0-9a-f]{40}")
 DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
 IMAGE = re.compile(r"ghcr\.io/[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._-]*")
@@ -53,13 +55,15 @@ def validate_record(record, sha, directory):
 
 def load_release(path):
     release = json.loads(path.read_text())
-    require(release.get("schemaVersion") == 1, "Unknown release schema")
+    version = release.get("schemaVersion")
+    require(type(version) is int and version in (1, 2), "Unknown release schema")
+    services = LEGACY_SERVICES if version == 1 else SERVICES
     sha = release.get("gitSha", "")
     require(SHA.fullmatch(sha), "Invalid release SHA")
     records = release.get("images", [])
-    require(len(records) == len(SERVICES), "Incomplete release")
+    require(len(records) == len(services), "Incomplete release")
     require(
-        {r.get("service") for r in records} == set(SERVICES),
+        {r.get("service") for r in records} == set(services),
         "Missing or duplicate services",
     )
     for record in records:
@@ -107,7 +111,7 @@ def main():
         records = [
             json.loads((directory / f"image-{s}.json").read_text()) for s in SERVICES
         ]
-        data = {"schemaVersion": 1, "gitSha": args.sha, "images": records}
+        data = {"schemaVersion": 2, "gitSha": args.sha, "images": records}
         path = directory / "release.json"
         path.write_text(json.dumps(data, indent=2) + "\n")
         load_release(path)
