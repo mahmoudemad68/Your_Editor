@@ -57,3 +57,5 @@ export type {
 } from "./media-analysis.generated.js";
 
 export { default as renderJobSchema } from "./render-job.schema.json";
+
+export { default as toolManifestSchema } from "./tool-manifest.schema.json";

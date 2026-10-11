@@ -1,0 +1,122 @@
+{
+  "$id": "https://editagent.local/schemas/tool-manifest.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ToolManifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "id",
+    "name",
+    "version",
+    "description",
+    "inputSchema",
+    "outputSchema",
+    "permissions",
+    "capabilities",
+    "estimatedCostMicros",
+    "maximumCostMicros",
+    "timeoutMs",
+    "mutating",
+    "validationRules"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+      "minLength": 36,
+      "maxLength": 36
+    },
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{0,23}\\.[a-z][a-z0-9-]{0,23}$",
+      "not": {
+        "pattern": "\\s"
+      }
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]{0,3})\\.(0|[1-9][0-9]{0,3})\\.(0|[1-9][0-9]{0,3})$",
+      "not": {
+        "pattern": "\\s"
+      }
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048,
+      "pattern": "\\S"
+    },
+    "inputSchema": {
+      "type": "object"
+    },
+    "outputSchema": {
+      "type": "object"
+    },
+    "permissions": {
+      "type": "array",
+      "uniqueItems": true,
+      "minItems": 1,
+      "maxItems": 5,
+      "items": {
+        "enum": ["project.read", "timeline.propose", "asset.read", "analysis.read", "render.create"]
+      }
+    },
+    "capabilities": {
+      "type": "array",
+      "uniqueItems": true,
+      "maxItems": 5,
+      "items": {
+        "enum": ["editing", "render", "audio", "vision", "transcription"]
+      }
+    },
+    "estimatedCostMicros": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "maximumCostMicros": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "timeoutMs": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 600000
+    },
+    "mutating": {
+      "type": "boolean"
+    },
+    "validationRules": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["phase", "kind", "start", "end"],
+        "properties": {
+          "phase": {
+            "enum": ["input", "output"]
+          },
+          "kind": {
+            "const": "ordered"
+          },
+          "start": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "end": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        }
+      }
+    }
+  }
+}
