@@ -15,19 +15,35 @@ export type JsonSchema = Readonly<Record<string, unknown>>;
 /** Data is JSON, never executable objects/getters/classes. Bounded before validation/hash. */
 export function jsonValue(value: unknown): unknown {
   let nodes = 0;
+  let bytes = 0;
+  const charge = (size: number) => {
+    bytes += size;
+    if (bytes > 1_048_576) throw new ToolError("invalid_json", "JSON exceeds byte limit");
+  };
+  const stringSize = (s: string) => {
+    if (s.length > 1_048_576) throw new ToolError("invalid_json", "JSON exceeds byte limit");
+    return Buffer.byteLength(JSON.stringify(s));
+  };
   const visit = (v: unknown, depth: number): unknown => {
     if (++nodes > 100_000 || depth > 32)
       throw new ToolError("invalid_json", "JSON exceeds structural limits");
-    if (v === null || typeof v === "boolean") return v;
-    if (typeof v === "number" && Number.isFinite(v) && Math.abs(v) <= Number.MAX_SAFE_INTEGER)
+    if (v === null || typeof v === "boolean") {
+      charge(v === null || v === true ? 4 : 5);
       return v;
+    }
+    if (typeof v === "number" && Number.isFinite(v) && Math.abs(v) <= Number.MAX_SAFE_INTEGER) {
+      charge(JSON.stringify(v).length);
+      return v;
+    }
     if (typeof v === "string") {
+      charge(stringSize(v));
       if (!wellFormed(v)) throw new ToolError("invalid_json", "Ill-formed Unicode");
       return v;
     }
     if (Array.isArray(v)) {
       if (Object.keys(v).length !== v.length)
         throw new ToolError("invalid_json", "Sparse or extended array");
+      charge(2 + Math.max(0, v.length - 1));
       return Array.from({ length: v.length }, (_, i) => {
         const d = Object.getOwnPropertyDescriptor(v, String(i));
         if (!d || !("value" in d)) throw new ToolError("invalid_json", "Executable array property");
@@ -36,9 +52,13 @@ export function jsonValue(value: unknown): unknown {
     }
     if (v && typeof v === "object" && Object.getPrototypeOf(v) === Object.prototype) {
       const result: Record<string, unknown> = {};
+      charge(2);
+      let first = true;
       for (const key of Object.keys(v).sort()) {
+        charge(stringSize(key) + 1 + (first ? 0 : 1));
         if (["__proto__", "constructor", "prototype"].includes(key) || !wellFormed(key))
           throw new ToolError("invalid_json", "Forbidden property");
+        first = false;
         const d = Object.getOwnPropertyDescriptor(v, key)!;
         if (!("value" in d)) throw new ToolError("invalid_json", "Executable property");
         result[key] = visit(d.value, depth + 1);

@@ -4,6 +4,15 @@ import { ToolRegistry } from "./registry.js";
 import { compileSchema, jsonValue, contentHash } from "./validation.js";
 import { manifest, tool, ids, objectSchema } from "./test-support.js";
 const binding = { mode: "in-process" as const, tool: tool((i) => ({ output: i, costMicros: 1 })) };
+test("JSON byte budget rejects repeated large values before whole-document serialization", () => {
+  const repeated = Array(20_000).fill("x".repeat(65_536));
+  assert.throws(() => jsonValue(repeated), /byte limit/);
+  assert.throws(() => jsonValue({ text: "\\".repeat(600_000) }), /byte limit/);
+  assert.deepEqual(jsonValue({ text: "مرحبا 👩‍💻", values: [true, false, null, 1] }), {
+    text: "مرحبا 👩‍💻",
+    values: [true, false, null, 1],
+  });
+});
 test("exported function names fit the portable 64-character bound without truncation", () => {
   const name = `${"a".repeat(23)}.${"b".repeat(23)}`;
   const r = new ToolRegistry();
