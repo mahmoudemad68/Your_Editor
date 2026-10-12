@@ -584,6 +584,11 @@ test(
                       jobs,
                       { enqueue: (i) => enqueueJob(deps, i), cancel: (id) => cancelJob(deps, id) },
                       {
+                        cleanup: (id) => store.cleanup(id),
+                        noteCleanup: (id, s) => store.noteCleanup(id, s),
+                        fence: (id) => store.fence(id),
+                        claimPublications: (n, id) => store.claimPublications(n, id),
+                        acknowledgePublication: (id) => store.acknowledgePublication(id),
                         put: (c) => store.put(c),
                         get: (id) => store.get(id),
                         complete: (id, r) => store.complete(id, r),
@@ -640,7 +645,10 @@ test(
                       ? "actual"
                       : "reserved",
                   );
-                  assert.equal(row.cleanupStatus, "succeeded");
+                  assert.equal(
+                    row.cleanupStatus,
+                    stage === "cancelled-before-finish" ? "not_required" : "succeeded",
+                  );
                   const sumBefore = (
                     await pool.query(
                       "SELECT sum(cost_micros)::text AS n FROM tool_cost_reservations",
@@ -671,6 +679,27 @@ test(
                     cost: row.costMicros,
                     duration: row.durationMs,
                   });
+                } catch (error) {
+                  const job = id ? await jobs.findById(id) : null;
+                  const row = id ? await audit.get(id) : null;
+                  t.diagnostic(
+                    JSON.stringify({
+                      crashStage: stage,
+                      id,
+                      jobStatus: job?.status,
+                      jobFailure: job?.failureReason,
+                      auditOutcome: row?.outcome,
+                      auditCode: row?.code,
+                      stopCode: row?.stopCode,
+                      cleanup: id ? await store.cleanup(id) : null,
+                      resultPresent: id ? !!(await store.result(id)) : false,
+                      coordinatorStages: spawned.messages.map((m) => ({
+                        stage: m.stage,
+                        code: m.code,
+                      })),
+                    }),
+                  );
+                  throw error;
                 } finally {
                   releaseGate?.();
                   deps.supervisor = originalSupervisor;

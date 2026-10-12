@@ -28,7 +28,7 @@ export interface ToolAuthority {
 }
 export type ExecutionOutcome =
   "running" | "succeeded" | "rejected" | "failed" | "cancelled" | "timed_out";
-export type CleanupStatus = "not_required" | "succeeded" | "failed";
+export type CleanupStatus = "not_required" | "succeeded" | "failed" | "unconfirmed";
 export interface AuditSettlement {
   readonly finishedAtMs?: number;
   readonly cleanupStatus?: CleanupStatus;
@@ -68,6 +68,7 @@ export interface ToolAuditRepository {
   attachJob(id: string, jobId: string): Promise<void>;
   noteCleanupFailure(id: string): Promise<void>;
   requestStop(id: string, code: "cancelled" | "timed_out"): Promise<void>;
+  confirmCleanup(id: string, status: CleanupStatus): Promise<void>;
   pendingRemote(limit: number, executionId?: string): Promise<readonly ExecutionRecord[]>;
   get(id: string): Promise<ExecutionRecord | null>;
   list(projectId: string, limit: number): Promise<readonly ExecutionRecord[]>;
@@ -121,7 +122,6 @@ export class ToolExecutor {
     }
   }
   private async executeOwned(call: ToolCall, signal?: AbortSignal): Promise<ToolExecution> {
-    await this.recover();
     const id = createUuidV7(Date.now(), randomBytes(10));
     let malformed = false;
     try {
@@ -151,6 +151,7 @@ export class ToolExecutor {
     } catch {
       /* Unknown identifiers are not copied from caller text into the audit. */
     }
+    const startedAtMs = Date.now();
     await this.audit.begin({
       schemaVersion: 1,
       id,
@@ -159,7 +160,7 @@ export class ToolExecutor {
       toolName: registered?.manifest.name ?? null,
       toolVersion: registered?.manifest.version ?? null,
       inputHash,
-      startedAtMs: Date.now(),
+      startedAtMs,
       finishedAtMs: null,
       durationMs: null,
       outcome: "running",
@@ -203,8 +204,9 @@ export class ToolExecutor {
       const tool = this.registry.lookup(call.name, call.version);
       timeout = setTimeout(
         () => controller.abort(new ToolError("timed_out")),
-        tool.manifest.timeoutMs,
+        Math.max(0, startedAtMs + tool.manifest.timeoutMs - Date.now()),
       );
+      await withAbort(this.recover(), controller.signal);
       await withAbort(this.authority.authorize(call, tool.manifest.permissions), controller.signal);
       if (controller.signal.aborted) throw controller.signal.reason;
       let input: unknown;
@@ -423,7 +425,7 @@ export async function awaitOwned(run: OwnedToolRun, signal: AbortSignal): Promis
   }
 }
 
-async function withAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+export async function withAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
   let rejectAbort: (reason: unknown) => void = () => undefined;
   const aborted = new Promise<never>((_, reject) => {
     rejectAbort = reject;

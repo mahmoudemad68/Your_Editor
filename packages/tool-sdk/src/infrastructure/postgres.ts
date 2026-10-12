@@ -111,17 +111,8 @@ export class PostgresToolAuditRepository implements ToolAuditRepository {
     try {
       await c.query("BEGIN");
       const r = await c.query<Row>(
-        "UPDATE tool_executions SET outcome=$2,code=$3,cost_micros=$4,finished_at_ms=GREATEST(started_at_ms,$5),cleanup_status=CASE WHEN cleanup_status='failed' THEN cleanup_status ELSE $6 END,cleanup_code=COALESCE(cleanup_code,$7),cost_basis=$8 WHERE id=$1 AND outcome='running' RETURNING *",
-        [
-          id,
-          outcome,
-          code,
-          cost,
-          at,
-          cleanup,
-          cleanup === "failed" ? "cleanup_unconfirmed" : null,
-          basis,
-        ],
+        "UPDATE tool_executions SET outcome=$2,code=$3,cost_micros=$4,finished_at_ms=GREATEST(started_at_ms,$5),cleanup_status=CASE WHEN cleanup_status='failed' THEN cleanup_status WHEN job_id IS NOT NULL THEN COALESCE((SELECT r.cleanup_status FROM tool_remote_calls r WHERE r.execution_id=tool_executions.id),'unconfirmed') ELSE $6 END,cleanup_code=CASE WHEN cleanup_status='failed' OR (job_id IS NULL AND $6 IN ('failed','unconfirmed')) OR (job_id IS NOT NULL AND COALESCE((SELECT r.cleanup_status FROM tool_remote_calls r WHERE r.execution_id=tool_executions.id),'unconfirmed') IN ('failed','unconfirmed')) THEN 'cleanup_unconfirmed' ELSE NULL END,cost_basis=$7 WHERE id=$1 AND outcome='running' RETURNING *",
+        [id, outcome, code, cost, at, cleanup, basis],
       );
       if (r.rows[0])
         await c.query("UPDATE tool_cost_reservations SET cost_micros=$2 WHERE execution_id=$1", [
@@ -147,6 +138,14 @@ export class PostgresToolAuditRepository implements ToolAuditRepository {
       [id],
     );
   }
+  async confirmCleanup(id: string, status: CleanupStatus): Promise<void> {
+    if (status === "unconfirmed") return;
+    await this.pool.query(
+      `UPDATE tool_executions SET cleanup_status=$2,cleanup_code=CASE WHEN $2='failed' THEN 'cleanup_unconfirmed' ELSE NULL END
+      WHERE id=$1 AND cleanup_status='unconfirmed'`,
+      [id, status],
+    );
+  }
   async requestStop(id: string, code: "cancelled" | "timed_out"): Promise<void> {
     if (code !== "cancelled" && code !== "timed_out") throw new ToolError("invalid_call");
     await this.pool.query(
@@ -161,7 +160,7 @@ export class PostgresToolAuditRepository implements ToolAuditRepository {
     // Filter terminal Jobs before LIMIT: active work cannot starve restart reconciliation.
     const r = await this.pool.query<Row>(
       `SELECT e.* FROM tool_executions e JOIN jobs j ON j.id=e.job_id
-      WHERE e.outcome='running' AND j.status IN ('Completed','Failed','Cancelled') AND ($2::uuid IS NULL OR e.id=$2)
+      WHERE (e.outcome='running' OR (e.cleanup_status='unconfirmed' AND EXISTS (SELECT 1 FROM tool_remote_calls r WHERE r.execution_id=e.id AND r.cleanup_status<>'unconfirmed'))) AND j.status IN ('Completed','Failed','Cancelled') AND ($2::uuid IS NULL OR e.id=$2)
       ORDER BY e.started_at_ms,e.id LIMIT $1`,
       [limit, executionId ?? null],
     );

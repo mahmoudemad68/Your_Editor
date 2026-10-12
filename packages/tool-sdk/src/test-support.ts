@@ -104,6 +104,7 @@ export class MemoryAudit implements ToolAuditRepository {
     const r = this.rows.get(id)!;
     if (r.outcome === "running") this.rows.set(id, { ...r, stopCode: code });
   }
+  async confirmCleanup(): Promise<void> {}
   async pendingRemote(): Promise<readonly ExecutionRecord[]> {
     return [];
   }

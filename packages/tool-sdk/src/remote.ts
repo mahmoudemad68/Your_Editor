@@ -5,12 +5,15 @@ import {
   type JobQueue,
   type JobRepository,
   type JobSubject,
+  type EnqueueJobCommand,
 } from "@editagent/domain";
 import {
   type ToolAuthority,
+  type CleanupStatus,
   type ExecutionRecord,
   type ExecutionOutcome,
   awaitOwned,
+  withAbort,
   cleanupOwned,
   type ToolAuditRepository,
   type RemoteToolDispatcher,
@@ -42,6 +45,12 @@ export interface RemoteCallStore {
   put(call: RemoteCall): Promise<void>;
   get(executionId: string): Promise<RemoteCall | null>;
   result(executionId: string): Promise<ToolResult | null>;
+  /** Private acknowledgment is independent of audit-note persistence. Missing acknowledgment is unconfirmed. */
+  cleanup(executionId: string): Promise<CleanupStatus>;
+  noteCleanup(executionId: string, status: CleanupStatus): Promise<void>;
+  fence(executionId: string): Promise<void>;
+  claimPublications(limit: number, executionId?: string): Promise<readonly EnqueueJobCommand[]>;
+  acknowledgePublication(executionId: string): Promise<void>;
   complete(executionId: string, result: ToolResult): Promise<void>;
 }
 /** The composition root injects US-129 enqueueJob/cancelJob; this is not a second job state machine. */
@@ -79,33 +88,55 @@ export class QueueToolDispatcher implements RemoteToolDispatcher {
       input: jsonValue(input),
       inputHash: contentHash(input),
     };
-    await this.calls.put(call);
-    await this.audit.attachJob(call.executionId, call.executionId);
-    const id = call.executionId;
-    // Job timeout is the same manifest budget. SDK cancellation asks the queue, then awaits durable owned-work cleanup.
-    await this.lifecycle.enqueue({
-      id,
-      queueName: toolQueueName(tool.binding.target),
-      jobType: TOOL_REMOTE_JOB_TYPE,
-      idempotencyKey: `tool:${id}:${tool.fingerprint}`,
-      payload: { schemaVersion: 1, executionId: id },
-      subject: { kind: "project", projectId: projectId(call.projectId) },
-      timeoutMs: tool.manifest.timeoutMs,
-      maxAttempts: 3,
-      backoffBaseMs: 50,
-    });
+    // Return owned work BEFORE I/O: admission, Redis publication and queue wait share the deadline.
     let stop: Promise<void> | undefined;
     const polling = new AbortController();
-    const cancel = () => (stop ??= this.stop(id).finally(() => polling.abort()));
-    const result = this.wait(id, polling.signal);
-    return { result, cancel, forceStop: () => this.stop(id).finally(() => polling.abort()) };
+    const admission = (async () => {
+      if (context.signal.aborted) throw context.signal.reason;
+      await this.calls.put(call);
+      await this.audit.attachJob(context.executionId, context.executionId);
+      if (context.signal.aborted) throw context.signal.reason;
+      await this.lifecycle.enqueue({
+        id: context.executionId,
+        queueName: toolQueueName(tool.binding.mode === "remote" ? tool.binding.target : "media"),
+        jobType: TOOL_REMOTE_JOB_TYPE,
+        idempotencyKey: `tool:${context.executionId}:${tool.fingerprint}`,
+        payload: { schemaVersion: 1, executionId: context.executionId },
+        subject: { kind: "project", projectId: projectId(call.projectId) },
+        timeoutMs: tool.manifest.timeoutMs,
+        maxAttempts: 3,
+        backoffBaseMs: 50,
+      });
+      await this.calls.acknowledgePublication(context.executionId);
+    })();
+    const cancel = () => {
+      stop ??= this.stop(context.executionId).finally(() => polling.abort());
+      return stop;
+    };
+    const result = admission
+      .catch(async (error: unknown) => {
+        // Once admitted durably, publication is recoverable work, not a new transient execution attempt.
+        if (context.signal.aborted) throw context.signal.reason;
+        const job = await this.jobs.findById(jobId(context.executionId));
+        if (!job) throw error;
+      })
+      .then(() => this.wait(context.executionId, polling.signal));
+    return {
+      result,
+      cancel,
+      forceStop: () => this.stop(context.executionId).finally(() => polling.abort()),
+    };
   }
+
   /** Only terminal durable Jobs can settle abandoned audits. CAS settlement is safe across coordinators. */
   async reconcile(
     registry: ToolRegistry,
     limit: number,
     executionId?: string,
   ): Promise<readonly ExecutionRecord[]> {
+    // Claims are leased; a killed coordinator cannot permanently own publication. Stable BullMQ IDs
+    // make concurrent/late publication harmless. PostgreSQL and the consumer remain the execution fence.
+    await this.publishPending(limit, executionId);
     const recovered: ExecutionRecord[] = [];
     for (const record of await this.audit.pendingRemote(limit, executionId)) {
       const job = await this.jobs.findById(jobId(record.jobId!));
@@ -178,12 +209,18 @@ export class QueueToolDispatcher implements RemoteToolDispatcher {
       }
       if (
         (job.status === "Cancelled" || job.status === "Failed") &&
-        (record.stopCode === "timed_out" || job.failureReason === "timed out")
+        (record.stopCode === "timed_out" ||
+          ["timed out", "timed_out"].includes(job.failureReason ?? ""))
       ) {
         outcome = "timed_out";
         code = "timed_out";
       }
-      const cleanupStatus = job.failureReason === "cleanup_unconfirmed" ? "failed" : "succeeded";
+      const cleanupStatus = await this.calls.cleanup(record.id);
+      if (record.outcome !== "running") {
+        await this.audit.confirmCleanup(record.id, cleanupStatus);
+        recovered.push((await this.audit.get(record.id))!);
+        continue;
+      }
       recovered.push(
         await this.audit.finish(record.id, outcome, code, cost, {
           finishedAtMs: Number(job.updatedAt),
@@ -194,7 +231,21 @@ export class QueueToolDispatcher implements RemoteToolDispatcher {
     }
     return recovered;
   }
+  private async publishPending(limit: number, executionId?: string): Promise<void> {
+    const publications = await this.calls.claimPublications(Math.min(limit, 4), executionId);
+    await Promise.all(
+      publications.map(async (command) => {
+        try {
+          await bounded(this.lifecycle.enqueue(command), 1000);
+          await this.calls.acknowledgePublication(command.id);
+        } catch {
+          // Keep the durable intent. A reconnect/restart retries; never turn a transport outage into success.
+        }
+      }),
+    );
+  }
   private async wait(id: string, signal: AbortSignal): Promise<ToolResult> {
+    let nextPublication = 0;
     for (;;) {
       if (signal.aborted) throw new ToolError("cancelled");
       const job = await this.jobs.findById(jobId(id));
@@ -206,22 +257,30 @@ export class QueueToolDispatcher implements RemoteToolDispatcher {
       }
       if (job.status === "Failed") throw new ToolError(remoteFailureCode(job.failureReason));
       if (job.status === "Cancelled") throw new ToolError("cancelled");
+      if (job.status === "Queued" && Date.now() >= nextPublication) {
+        nextPublication = Date.now() + 1000;
+        await this.publishPending(1, id);
+      }
       await delay(25);
     }
   }
   private async stop(id: string): Promise<void> {
-    await this.lifecycle.cancel(id);
-    const until = performance.now() + 5000;
-    for (;;) {
-      const j = await this.jobs.findById(jobId(id));
-      if (j && ["Completed", "Cancelled", "Failed"].includes(j.status)) {
-        if ((await this.audit.get(id))?.cleanupStatus === "failed")
+    // Fence queued admissions in PostgreSQL first. Redis may be paused or a pending add may finish late.
+    await this.calls.fence(id);
+    void bounded(this.lifecycle.cancel(id), 1000).catch(() => undefined);
+    const deadline = performance.now() + 5000;
+    while (performance.now() < deadline) {
+      const job = await this.jobs.findById(jobId(id));
+      if (!job || ["Completed", "Failed", "Cancelled"].includes(job.status)) {
+        const cleanup = await this.calls.cleanup(id);
+        await this.audit.confirmCleanup(id, cleanup);
+        if (cleanup === "failed" || cleanup === "unconfirmed")
           throw new ToolError("cleanup_unconfirmed");
         return;
       }
-      if (performance.now() > until) throw new ToolError("cleanup_unconfirmed");
       await delay(25);
     }
+    throw new ToolError("cleanup_unconfirmed");
   }
 }
 /** A worker registers only real local implementations. The queue payload cannot select a module/file/function. */
@@ -236,6 +295,44 @@ export class RemoteToolConsumer {
     private readonly target: "media" | "ai" | "render",
   ) {}
   async handle(envelope: JobEnvelope, signal: AbortSignal): Promise<void> {
+    const record = await this.audit.get(envelope.jobId);
+    if (!record) throw new ToolError("remote_binding_mismatch");
+    const controller = new AbortController();
+    const abort = () => controller.abort(signal.reason);
+    signal.addEventListener("abort", abort, { once: true });
+    if (signal.aborted) abort();
+    const remaining = record.startedAtMs + envelope.timeoutMs - Date.now();
+    const timer = setTimeout(
+      () => controller.abort(new ToolError("timed_out")),
+      Math.max(0, remaining),
+    );
+    if (remaining <= 0 || record.stopCode || record.outcome !== "running")
+      controller.abort(new ToolError(record.stopCode ?? "timed_out"));
+    let checking = false;
+    const poll = setInterval(() => {
+      if (checking) return;
+      checking = true;
+      void this.audit
+        .get(envelope.jobId)
+        .then((current) => {
+          if (!current || current.stopCode || current.outcome !== "running")
+            controller.abort(new ToolError(current?.stopCode ?? "cancelled"));
+        })
+        .catch(() => controller.abort(new ToolError("remote_failed")))
+        .finally(() => {
+          checking = false;
+        });
+    }, 50);
+    try {
+      await this.handleOwned(envelope, controller.signal);
+    } finally {
+      clearTimeout(timer);
+      clearInterval(poll);
+      signal.removeEventListener("abort", abort);
+    }
+  }
+  private async handleOwned(envelope: JobEnvelope, signal: AbortSignal): Promise<void> {
+    if (signal.aborted) throw signal.reason;
     if (
       envelope.jobType !== TOOL_REMOTE_JOB_TYPE ||
       envelope.queueName !== toolQueueName(this.target) ||
@@ -273,7 +370,7 @@ export class RemoteToolConsumer {
       throw new ToolError("remote_binding_mismatch");
     await this.authority.authorize(call, tool.manifest.permissions);
     const input = this.registry.validate(tool, "input", call.input);
-    if (signal.aborted || (await this.queue.isCancelRequested(envelope.jobId)))
+    if (signal.aborted || (await withAbort(this.queue.isCancelRequested(envelope.jobId), signal)))
       throw signal.reason ?? new ToolError("cancelled");
     // Uploaded/persisted result from a crash-before-ack may be reused only after all authority/identity checks.
     const previous = await this.calls.result(call.executionId);
@@ -301,19 +398,24 @@ export class RemoteToolConsumer {
         if (!Number.isFinite(p) || p < last || p > 100) throw new ToolError("invalid_progress");
         last = p;
         if (!signal.aborted)
-          await this.queue.publishProgress(envelope.jobId, {
-            stage: "validating",
-            percentage: p,
-            attempt: envelope.attempt,
-          });
+          await withAbort(
+            this.queue.publishProgress(envelope.jobId, {
+              stage: "validating",
+              percentage: p,
+              attempt: envelope.attempt,
+            }),
+            signal,
+          );
       },
     };
+    await this.calls.noteCleanup(call.executionId, "unconfirmed");
+    if (signal.aborted) throw signal.reason;
     const run = impl.start(input, context);
     let result: ToolResult | undefined;
     let failure: unknown;
     try {
       result = await awaitOwned(run, signal);
-      if (signal.aborted || (await this.queue.isCancelRequested(envelope.jobId)))
+      if (signal.aborted || (await withAbort(this.queue.isCancelRequested(envelope.jobId), signal)))
         throw new ToolError("cancelled");
       this.registry.validate(tool, "output", result.output);
       if (
@@ -325,20 +427,31 @@ export class RemoteToolConsumer {
       await this.authority.authorize(call, tool.manifest.permissions);
       await validateCommands(tool, result.output, call, this.authority);
     } catch (error) {
-      failure = error;
+      failure = signal.aborted ? signal.reason : error;
     }
     const cleanup = await cleanupOwned(run);
     // Original execution outcome wins; cleanup is independently persisted, never a raw adapter exception.
-    if (cleanup === "failed") {
-      await this.audit.noteCleanupFailure(call.executionId);
+    let acknowledged = false;
+    try {
+      await this.calls.noteCleanup(call.executionId, cleanup);
+      acknowledged = true;
+    } catch {
+      // A persistence failure cannot replace the primary permanent validation error.
+    }
+    if (cleanup === "failed" || !acknowledged) {
+      try {
+        if (acknowledged) await this.audit.noteCleanupFailure(call.executionId);
+      } catch {
+        /* Private receipt remains authoritative. */
+      }
       if (!failure) failure = new ToolError("cleanup_unconfirmed");
     }
     if (failure) {
-      if (signal.aborted) throw signal.reason;
+      if (failure === signal.reason && signal.aborted) throw failure;
       if (failure instanceof ToolError) throw new ToolError(safeErrorCode(failure.code));
       throw remoteExecutionError();
     }
-    if (signal.aborted || (await this.queue.isCancelRequested(envelope.jobId)))
+    if (signal.aborted || (await withAbort(this.queue.isCancelRequested(envelope.jobId), signal)))
       throw signal.reason ?? new ToolError("cancelled");
     await this.calls.complete(call.executionId, result!);
     await context.progress(100);
@@ -352,6 +465,19 @@ const remoteFailureCode = (reason: string | null) =>
     : safeErrorCode(reason) === "execution_failed"
       ? "remote_failed"
       : safeErrorCode(reason);
+async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new ToolError("remote_unavailable")), ms);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 /** Matches the US-129 JobSupervisor port structurally; fixed target registry replaces payload module resolution. */
