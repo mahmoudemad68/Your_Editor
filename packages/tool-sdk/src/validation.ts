@@ -1,6 +1,6 @@
 import { uuidV7 } from "@editagent/domain";
 import { createHash } from "node:crypto";
-import Ajv2020, { type ValidateFunction } from "ajv/dist/2020.js";
+import Ajv2020, { type ValidateFunction, type ErrorObject } from "ajv/dist/2020.js";
 
 export class ToolError extends Error {
   constructor(
@@ -9,6 +9,8 @@ export class ToolError extends Error {
   ) {
     super(message);
     this.name = "ToolError";
+    // Public SDK failures contain only sanitized diagnostics, never internal stack frames.
+    this.stack = `ToolError: ${message}`;
   }
 }
 export type JsonSchema = Readonly<Record<string, unknown>>;
@@ -197,13 +199,27 @@ export function compileSchema(schema: JsonSchema): ValidateFunction {
 export function validate(validator: ValidateFunction, value: unknown, phase: string): unknown {
   const safe = jsonValue(value);
   if (!validator(safe)) {
-    const errors = validator.errors?.map((e) => ({
-      field: e.instancePath || "/",
-      rule: e.keyword,
-    }));
+    const errors = schemaDiagnostics(validator.errors);
     throw new ToolError(`invalid_${phase}`, `${phase}: ${JSON.stringify(errors)}`);
   }
   return freeze(safe);
+}
+
+/** JSON Pointer diagnostics contain locations/rules only, never offending input values. */
+export function schemaDiagnostics(errors: readonly ErrorObject[] | null | undefined) {
+  return errors?.map((e) => {
+    const property =
+      e.keyword === "required"
+        ? e.params.missingProperty
+        : e.keyword === "additionalProperties"
+          ? e.params.additionalProperty
+          : undefined;
+    const suffix =
+      typeof property === "string"
+        ? "/" + property.replaceAll("~", "~0").replaceAll("/", "~1")
+        : "";
+    return { field: e.instancePath + suffix || "/", rule: e.keyword };
+  });
 }
 
 /** Only SDK-owned codes enter durable records/job reasons; implementation messages never do. */
@@ -241,6 +257,9 @@ export function safeErrorCode(code: unknown): string {
     "invalid_worker_result",
     "execution_failed",
     "cleanup_unconfirmed",
+    "audit_recovery_failed",
+    "invalid_query",
+    "audit_missing",
   ];
   return typeof code === "string" && allowed.includes(code) ? code : "execution_failed";
 }

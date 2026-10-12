@@ -8,6 +8,10 @@ import {
 } from "@editagent/domain";
 import {
   type ToolAuthority,
+  type ExecutionRecord,
+  type ExecutionOutcome,
+  awaitOwned,
+  cleanupOwned,
   type ToolAuditRepository,
   type RemoteToolDispatcher,
   validateCommands,
@@ -94,7 +98,101 @@ export class QueueToolDispatcher implements RemoteToolDispatcher {
     const polling = new AbortController();
     const cancel = () => (stop ??= this.stop(id).finally(() => polling.abort()));
     const result = this.wait(id, polling.signal);
-    return { result, cancel };
+    return { result, cancel, forceStop: () => this.stop(id).finally(() => polling.abort()) };
+  }
+  /** Only terminal durable Jobs can settle abandoned audits. CAS settlement is safe across coordinators. */
+  async reconcile(
+    registry: ToolRegistry,
+    limit: number,
+    executionId?: string,
+  ): Promise<readonly ExecutionRecord[]> {
+    const recovered: ExecutionRecord[] = [];
+    for (const record of await this.audit.pendingRemote(limit, executionId)) {
+      const job = await this.jobs.findById(jobId(record.jobId!));
+      if (!job || !["Completed", "Failed", "Cancelled"].includes(job.status)) continue;
+      let outcome: Exclude<ExecutionOutcome, "running"> =
+        job.status === "Completed"
+          ? "succeeded"
+          : job.status === "Cancelled"
+            ? "cancelled"
+            : "failed";
+      let code: string | null =
+        job.status === "Completed"
+          ? null
+          : job.status === "Cancelled"
+            ? "cancelled"
+            : remoteFailureCode(job.failureReason);
+      const call = await this.calls.get(record.id);
+      // Read failures are infrastructure failures, not evidence of an invalid terminal outcome.
+      const result = await this.calls.result(record.id);
+      let cost = record.costMicros;
+      // Reservation is exposure, not an invented actual charge when inference failed before a cost receipt.
+      let basis: "actual" | "reserved" | "none" = "reserved";
+
+      try {
+        if (
+          !call ||
+          record.id !== job.id ||
+          record.jobId !== job.id ||
+          job.jobType !== TOOL_REMOTE_JOB_TYPE ||
+          job.subject.kind !== "project" ||
+          job.subject.projectId !== record.projectId ||
+          call.executionId !== record.id ||
+          call.projectId !== record.projectId ||
+          call.callerId !== record.callerId ||
+          call.name !== record.toolName ||
+          call.version !== record.toolVersion ||
+          call.inputHash !== record.inputHash ||
+          contentHash(call.input) !== call.inputHash ||
+          Object.keys(job.payload).sort().join() !== "executionId,schemaVersion" ||
+          job.payload.executionId !== record.id ||
+          job.payload.schemaVersion !== 1
+        )
+          throw new ToolError("remote_binding_mismatch");
+        const tool = registry.lookup(call.name, call.version);
+        if (
+          tool.binding.mode !== "remote" ||
+          toolQueueName(tool.binding.target) !== job.queueName ||
+          tool.fingerprint !== call.fingerprint ||
+          job.timeoutMs !== tool.manifest.timeoutMs ||
+          job.idempotencyKey !== `tool:${record.id}:${tool.fingerprint}`
+        )
+          throw new ToolError("remote_binding_mismatch");
+        registry.validate(tool, "input", call.input);
+        cost = tool.manifest.maximumCostMicros;
+
+        if (result) {
+          registry.validate(tool, "output", result.output);
+          if (
+            !Number.isSafeInteger(result.costMicros) ||
+            result.costMicros < 0 ||
+            result.costMicros > cost
+          )
+            throw new ToolError("invalid_cost");
+          cost = result.costMicros;
+          basis = "actual";
+        } else if (job.status === "Completed") throw new ToolError("remote_result_missing");
+      } catch (error) {
+        outcome = "failed";
+        code = error instanceof ToolError ? safeErrorCode(error.code) : "remote_binding_mismatch";
+      }
+      if (
+        (job.status === "Cancelled" || job.status === "Failed") &&
+        (record.stopCode === "timed_out" || job.failureReason === "timed out")
+      ) {
+        outcome = "timed_out";
+        code = "timed_out";
+      }
+      const cleanupStatus = job.failureReason === "cleanup_unconfirmed" ? "failed" : "succeeded";
+      recovered.push(
+        await this.audit.finish(record.id, outcome, code, cost, {
+          finishedAtMs: Number(job.updatedAt),
+          cleanupStatus,
+          costBasis: basis,
+        }),
+      );
+    }
+    return recovered;
   }
   private async wait(id: string, signal: AbortSignal): Promise<ToolResult> {
     for (;;) {
@@ -106,7 +204,7 @@ export class QueueToolDispatcher implements RemoteToolDispatcher {
         if (!result) throw new ToolError("remote_result_missing");
         return result;
       }
-      if (job.status === "Failed") throw new ToolError("remote_failed");
+      if (job.status === "Failed") throw new ToolError(remoteFailureCode(job.failureReason));
       if (job.status === "Cancelled") throw new ToolError("cancelled");
       await delay(25);
     }
@@ -116,7 +214,11 @@ export class QueueToolDispatcher implements RemoteToolDispatcher {
     const until = performance.now() + 5000;
     for (;;) {
       const j = await this.jobs.findById(jobId(id));
-      if (j && ["Completed", "Cancelled", "Failed"].includes(j.status)) return;
+      if (j && ["Completed", "Cancelled", "Failed"].includes(j.status)) {
+        if ((await this.audit.get(id))?.cleanupStatus === "failed")
+          throw new ToolError("cleanup_unconfirmed");
+        return;
+      }
       if (performance.now() > until) throw new ToolError("cleanup_unconfirmed");
       await delay(25);
     }
@@ -207,14 +309,12 @@ export class RemoteToolConsumer {
       },
     };
     const run = impl.start(input, context);
-    const abort = () => {
-      void run.cancel().catch(() => undefined);
-    };
-    signal.addEventListener("abort", abort, { once: true });
+    let result: ToolResult | undefined;
+    let failure: unknown;
     try {
-      const result = await run.result;
+      result = await awaitOwned(run, signal);
       if (signal.aborted || (await this.queue.isCancelRequested(envelope.jobId)))
-        throw signal.reason ?? new ToolError("cancelled");
+        throw new ToolError("cancelled");
       this.registry.validate(tool, "output", result.output);
       if (
         !Number.isSafeInteger(result.costMicros) ||
@@ -224,19 +324,34 @@ export class RemoteToolConsumer {
         throw new ToolError("invalid_cost");
       await this.authority.authorize(call, tool.manifest.permissions);
       await validateCommands(tool, result.output, call, this.authority);
-      if (signal.aborted || (await this.queue.isCancelRequested(envelope.jobId)))
-        throw signal.reason ?? new ToolError("cancelled");
-      await this.calls.complete(call.executionId, result);
-      await context.progress(100);
     } catch (error) {
-      if (signal.aborted) throw signal.reason;
-      throw error;
-    } finally {
-      signal.removeEventListener("abort", abort);
-      await run.cancel();
+      failure = error;
     }
+    const cleanup = await cleanupOwned(run);
+    // Original execution outcome wins; cleanup is independently persisted, never a raw adapter exception.
+    if (cleanup === "failed") {
+      await this.audit.noteCleanupFailure(call.executionId);
+      if (!failure) failure = new ToolError("cleanup_unconfirmed");
+    }
+    if (failure) {
+      if (signal.aborted) throw signal.reason;
+      if (failure instanceof ToolError) throw new ToolError(safeErrorCode(failure.code));
+      throw remoteExecutionError();
+    }
+    if (signal.aborted || (await this.queue.isCancelRequested(envelope.jobId)))
+      throw signal.reason ?? new ToolError("cancelled");
+    await this.calls.complete(call.executionId, result!);
+    await context.progress(100);
   }
 }
+// Transport boundaries must not attach raw adapter errors as public Error.cause.
+const remoteExecutionError = () => new Error("remote_execution_failed");
+const remoteFailureCode = (reason: string | null) =>
+  reason === "timed out"
+    ? "timed_out"
+    : safeErrorCode(reason) === "execution_failed"
+      ? "remote_failed"
+      : safeErrorCode(reason);
 const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 /** Matches the US-129 JobSupervisor port structurally; fixed target registry replaces payload module resolution. */
@@ -259,7 +374,7 @@ export class RemoteToolSupervisor {
         if (error.code === "cancelled") throw this.cancelled();
         throw this.permanent(safeErrorCode(error.code));
       }
-      throw new Error("remote_execution_failed", { cause: error });
+      throw remoteExecutionError();
     }
   }
 }

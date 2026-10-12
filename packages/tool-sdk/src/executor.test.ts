@@ -293,3 +293,119 @@ test("UUID aliases, case and trailing controls are rejected before side effects"
   assert.equal(effects, 0);
   assert.equal(audit.rows.size, 4);
 });
+
+test("QA49 F3 cleanup rejection never leaks raw errors or prevents terminal audit; primary failure wins", async () => {
+  const secret = "postgres://credential@internal/private/token";
+  for (const failure of [
+    "execution_failed",
+    "invalid_output",
+    "cleanup_unconfirmed",
+    "timed_out",
+    "cancelled",
+  ]) {
+    let cleanupAttempts = 0;
+    const { executor, audit } = setup(
+      {
+        start() {
+          return {
+            result:
+              failure === "execution_failed"
+                ? Promise.reject(new Error(secret))
+                : failure === "timed_out" || failure === "cancelled"
+                  ? new Promise(() => undefined)
+                  : Promise.resolve({
+                      output: failure === "invalid_output" ? { text: 1 } : call.input,
+                      costMicros: 1,
+                    }),
+            cancel: async () => {
+              cleanupAttempts++;
+              throw new Error(secret);
+            },
+          };
+        },
+      },
+      { timeoutMs: 20 },
+    );
+    const abort = new AbortController();
+    if (failure === "cancelled") setTimeout(() => abort.abort(), 5);
+    await assert.rejects(executor.execute(call, abort.signal), (error: Error) => {
+      assert.ok(error.message.includes(failure));
+      assert.ok(!error.message.includes(secret));
+      assert.ok(!error.stack?.includes(secret));
+      assert.ok(!error.stack?.includes("/workspace/"));
+      assert.ok(!error.stack?.includes(" at "));
+      return true;
+    });
+    const row = [...audit.rows.values()][0]!;
+    assert.notEqual(row.outcome, "running");
+    assert.equal(row.code, failure);
+    assert.equal(row.cleanupStatus, "failed");
+    assert.equal(row.cleanupCode, "cleanup_unconfirmed");
+    assert.ok(row.durationMs !== null);
+    assert.equal(cleanupAttempts, 2);
+    assert.equal((await executor.record(ids.owner, row.id))?.outcome, row.outcome);
+    assert.ok(!JSON.stringify(row).includes(secret));
+  }
+});
+
+test("QA49 F3 independent owned escalation stops actual timer after graceful cleanup rejection", async () => {
+  for (const cancellation of [false, true]) {
+    let alive = false,
+      effects = 0,
+      escalations = 0;
+    const { executor, audit } = setup(
+      {
+        start() {
+          alive = true;
+          const timer = setTimeout(() => effects++, 200);
+          return {
+            result: new Promise(() => undefined),
+            cancel: async () => {
+              throw new Error("SECRET");
+            },
+            forceStop: async () => {
+              clearTimeout(timer);
+              alive = false;
+              escalations++;
+            },
+          };
+        },
+      },
+      { timeoutMs: 20 },
+    );
+    const controller = new AbortController();
+    if (cancellation) setTimeout(() => controller.abort(), 5);
+    await assert.rejects(
+      executor.execute(call, controller.signal),
+      cancellation ? /cancelled/ : /timed_out/,
+    );
+    assert.equal(alive, false);
+    assert.equal(effects, 0);
+    assert.equal(escalations, 1);
+    assert.equal([...audit.rows.values()][0]?.cleanupStatus, "succeeded");
+  }
+});
+
+test("QA49 F4 historical record ownership cannot bypass current authority or list scope", async () => {
+  const registry = new ToolRegistry();
+  registry.register(manifest(), {
+    mode: "in-process",
+    tool: tool((i) => ({ output: i, costMicros: 1 })),
+  });
+  let member = true;
+  const currentAuthority = {
+    ...authority,
+    authorize: async (...args: Parameters<typeof authority.authorize>) => {
+      if (!member) throw new Error("denied");
+      await authority.authorize(...args);
+    },
+  };
+  const executor = new ToolExecutor(registry, currentAuthority, new MemoryAudit());
+  const result = await executor.execute(call);
+  member = false;
+  await assert.rejects(executor.record(ids.owner, result.record.id), /denied/);
+  for (const limit of [1, 50, 100])
+    await assert.rejects(executor.records(ids.owner, ids.project, limit), /denied/);
+  member = true;
+  assert.equal((await executor.record(ids.owner, result.record.id))?.outcome, "succeeded");
+});

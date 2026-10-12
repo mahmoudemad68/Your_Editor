@@ -28,6 +28,12 @@ export interface ToolAuthority {
 }
 export type ExecutionOutcome =
   "running" | "succeeded" | "rejected" | "failed" | "cancelled" | "timed_out";
+export type CleanupStatus = "not_required" | "succeeded" | "failed";
+export interface AuditSettlement {
+  readonly finishedAtMs?: number;
+  readonly cleanupStatus?: CleanupStatus;
+  readonly costBasis?: "actual" | "reserved" | "none";
+}
 export interface ExecutionRecord {
   readonly schemaVersion: 1;
   readonly id: string;
@@ -43,6 +49,10 @@ export interface ExecutionRecord {
   readonly code: string | null;
   readonly costMicros: number;
   readonly jobId: string | null;
+  readonly cleanupStatus: CleanupStatus;
+  readonly cleanupCode: "cleanup_unconfirmed" | null;
+  readonly stopCode: "cancelled" | "timed_out" | null;
+  readonly costBasis: "actual" | "reserved" | "none";
 }
 export interface ToolAuditRepository {
   begin(record: ExecutionRecord): Promise<void>;
@@ -53,13 +63,22 @@ export interface ToolAuditRepository {
     outcome: Exclude<ExecutionOutcome, "running">,
     code: string | null,
     costMicros: number,
+    settlement?: AuditSettlement,
   ): Promise<ExecutionRecord>;
   attachJob(id: string, jobId: string): Promise<void>;
+  noteCleanupFailure(id: string): Promise<void>;
+  requestStop(id: string, code: "cancelled" | "timed_out"): Promise<void>;
+  pendingRemote(limit: number, executionId?: string): Promise<readonly ExecutionRecord[]>;
   get(id: string): Promise<ExecutionRecord | null>;
   list(projectId: string, limit: number): Promise<readonly ExecutionRecord[]>;
 }
 export interface RemoteToolDispatcher {
   start(tool: RegisteredTool, input: unknown, context: ToolContext): Promise<OwnedToolRun>;
+  reconcile(
+    registry: ToolRegistry,
+    limit: number,
+    executionId?: string,
+  ): Promise<readonly ExecutionRecord[]>;
 }
 export interface ToolExecution {
   readonly record: ExecutionRecord;
@@ -73,6 +92,9 @@ const idOrNull = (s: string): string | null => {
     return null;
   }
 };
+/** Public query boundary deliberately drops exception messages/causes, which may contain credentials. */
+const queryError = (error: unknown) =>
+  new ToolError(error instanceof ToolError ? safeErrorCode(error.code) : "audit_recovery_failed");
 export class ToolExecutor {
   private active = 0;
   constructor(
@@ -91,6 +113,15 @@ export class ToolExecutor {
       throw new ToolError("invalid_concurrency");
   }
   async execute(call: ToolCall, signal?: AbortSignal): Promise<ToolExecution> {
+    try {
+      return await this.executeOwned(call, signal);
+    } catch (error) {
+      if (error instanceof ToolError) throw error;
+      throw new ToolError("audit_recovery_failed");
+    }
+  }
+  private async executeOwned(call: ToolCall, signal?: AbortSignal): Promise<ToolExecution> {
+    await this.recover();
     const id = createUuidV7(Date.now(), randomBytes(10));
     let malformed = false;
     try {
@@ -135,6 +166,10 @@ export class ToolExecutor {
       code: null,
       costMicros: 0,
       jobId: null,
+      cleanupStatus: "not_required",
+      cleanupCode: null,
+      stopCode: null,
+      costBasis: "none",
     });
     const controller = new AbortController();
     const abort = () => controller.abort(new ToolError("cancelled"));
@@ -142,6 +177,9 @@ export class ToolExecutor {
     if (signal?.aborted) abort();
     let timeout: ReturnType<typeof setTimeout> | undefined;
     let run: OwnedToolRun | undefined;
+    let inputDiagnostics: string | undefined;
+    let cleanupStatus: CleanupStatus = "not_required";
+    let cleanupAttempted = false;
     let reserved = 0,
       admitted = false,
       occupied = false;
@@ -169,7 +207,14 @@ export class ToolExecutor {
       );
       await withAbort(this.authority.authorize(call, tool.manifest.permissions), controller.signal);
       if (controller.signal.aborted) throw controller.signal.reason;
-      const input = this.registry.validate(tool, "input", call.input);
+      let input: unknown;
+      try {
+        input = this.registry.validate(tool, "input", call.input);
+      } catch (error) {
+        if (error instanceof ToolError && error.code === "invalid_input")
+          inputDiagnostics = error.message;
+        throw error;
+      }
       if (this.active >= this.maximumConcurrency) throw new ToolError("capacity_exceeded");
       this.active++;
       occupied = true;
@@ -205,16 +250,26 @@ export class ToolExecutor {
         controller.signal,
       );
       if (controller.signal.aborted) throw controller.signal.reason;
-      const record = await this.audit.finish(id, "succeeded", null, result.costMicros);
+      cleanupAttempted = true;
+      cleanupStatus = await cleanupOwned(run);
+      if (cleanupStatus === "failed") throw new ToolError("cleanup_unconfirmed");
+      if (controller.signal.aborted) throw controller.signal.reason;
+      const record = await this.audit.finish(id, "succeeded", null, result.costMicros, {
+        cleanupStatus,
+        costBasis: "actual",
+      });
+      if (record.outcome !== "succeeded") throw new ToolError(record.code ?? "execution_failed");
       this.emit(record);
       return { record, output, commands };
     } catch (error) {
-      if (run) await run.cancel(); // cleanup acknowledged before terminal audit state
       const code = controller.signal.aborted
         ? (controller.signal.reason as ToolError).code
         : error instanceof ToolError
           ? error.code
           : "execution_failed";
+      // Persist stop intent before cancellation: a crash cannot turn timeout into ordinary cancellation.
+      if (code === "cancelled" || code === "timed_out") await this.audit.requestStop(id, code);
+      if (run && !cleanupAttempted) cleanupStatus = await cleanupOwned(run);
       const sanitized = safeErrorCode(code);
       const outcome =
         code === "cancelled"
@@ -224,13 +279,16 @@ export class ToolExecutor {
             : admitted
               ? "failed"
               : "rejected";
-      const record = await this.audit.finish(id, outcome, sanitized, reserved);
+      const record = await this.audit.finish(id, outcome, sanitized, reserved, {
+        cleanupStatus,
+        costBasis: reserved ? "reserved" : "none",
+      });
       this.emit(record);
       throw new ToolError(
         sanitized,
         `Tool execution ${id}: ${sanitized}` +
-          (!admitted && code === "invalid_input" && error instanceof ToolError
-            ? `; ${error.message}`
+          (!admitted && code === "invalid_input" && inputDiagnostics
+            ? `; ${inputDiagnostics}`
             : ""),
       );
     } finally {
@@ -250,39 +308,68 @@ export class ToolExecutor {
     if (!this.remote) throw new ToolError("remote_unavailable");
     return this.remote.start(t, i, c);
   }
-  /** Query requires a trusted authenticated caller. Own rejected attempts are visible; others require current project authority. */
+  /** Startup/new admissions and authorized audit reads reconcile durable terminal remote jobs. */
+  async recover(limit = 100): Promise<readonly ExecutionRecord[]> {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100)
+      throw new ToolError("invalid_query");
+    try {
+      return (await this.remote?.reconcile(this.registry, limit)) ?? [];
+    } catch {
+      throw new ToolError("audit_recovery_failed");
+    }
+  }
+  /** Historical ownership never substitutes for current project read authority. */
   async record(callerId: string, executionId: string): Promise<ExecutionRecord | null> {
+    try {
+      return await this.readRecord(callerId, executionId);
+    } catch (error) {
+      throw queryError(error);
+    }
+  }
+  private async readRecord(callerId: string, executionId: string): Promise<ExecutionRecord | null> {
     checkedId(callerId);
     checkedId(executionId);
     const record = await this.audit.get(executionId);
     if (!record) return null;
-    if (record.callerId !== callerId) {
-      if (!record.projectId) throw new ToolError("denied");
-      await this.authority.authorize(
-        {
-          callerId,
-          projectId: record.projectId,
-          resource: { kind: "project", id: record.projectId },
-        },
-        ["project.read"],
-      );
+    if (!record.projectId) throw new ToolError("denied");
+    await this.readAuthority(callerId, record.projectId);
+    if (this.remote) {
+      try {
+        await this.remote.reconcile(this.registry, 1, record.id);
+      } catch {
+        throw new ToolError("audit_recovery_failed");
+      }
     }
-    return record;
+    await this.readAuthority(callerId, record.projectId);
+    return this.audit.get(record.id);
   }
   async records(
     callerId: string,
     projectId: string,
     limit = 50,
   ): Promise<readonly ExecutionRecord[]> {
-    checkedId(callerId);
-    checkedId(projectId);
-    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100)
-      throw new ToolError("invalid_query");
-    await this.authority.authorize(
-      { callerId, projectId, resource: { kind: "project", id: projectId } },
-      ["project.read"],
-    );
-    return this.audit.list(projectId, limit);
+    try {
+      checkedId(callerId);
+      checkedId(projectId);
+      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100)
+        throw new ToolError("invalid_query");
+      await this.readAuthority(callerId, projectId);
+      await this.recover();
+      await this.readAuthority(callerId, projectId);
+      return await this.audit.list(projectId, limit);
+    } catch (error) {
+      throw queryError(error);
+    }
+  }
+  private async readAuthority(callerId: string, projectId: string): Promise<void> {
+    try {
+      await this.authority.authorize(
+        { callerId, projectId, resource: { kind: "project", id: projectId } },
+        ["project.read"],
+      );
+    } catch {
+      throw new ToolError("denied");
+    }
   }
 }
 export async function validateCommands(
@@ -348,5 +435,33 @@ async function withAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T
     return await Promise.race([promise, aborted]);
   } finally {
     signal.removeEventListener("abort", abort);
+  }
+}
+
+/** Cleanup cannot replace an execution error or escape audit settlement. Escalation is owned and bounded. */
+export async function cleanupOwned(run: OwnedToolRun): Promise<"succeeded" | "failed"> {
+  const bounded = async (action: () => Promise<void>) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        Promise.resolve().then(action),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new ToolError("cleanup_unconfirmed")), 5000);
+        }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  };
+  try {
+    await bounded(() => run.cancel());
+    return "succeeded";
+  } catch {
+    try {
+      await bounded(() => (run.forceStop ? run.forceStop() : run.cancel()));
+      return "succeeded";
+    } catch {
+      return "failed";
+    }
   }
 }

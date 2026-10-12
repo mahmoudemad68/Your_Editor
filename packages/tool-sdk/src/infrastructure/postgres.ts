@@ -7,6 +7,8 @@ import {
   type ToolAuditRepository,
   type ToolAuthority,
   type ToolCall,
+  type CleanupStatus,
+  type AuditSettlement,
 } from "../executor.js";
 import { type ToolPermission } from "../registry.js";
 
@@ -24,6 +26,10 @@ interface Row {
   code: string | null;
   cost_micros: string;
   job_id: string | null;
+  cleanup_status: CleanupStatus;
+  cleanup_code: "cleanup_unconfirmed" | null;
+  stop_code: "cancelled" | "timed_out" | null;
+  cost_basis: "actual" | "reserved" | "none";
 }
 function record(r: Row): ExecutionRecord {
   return {
@@ -42,6 +48,10 @@ function record(r: Row): ExecutionRecord {
     code: r.code,
     costMicros: Number(r.cost_micros),
     jobId: r.job_id,
+    cleanupStatus: r.cleanup_status,
+    cleanupCode: r.cleanup_code,
+    stopCode: r.stop_code,
+    costBasis: r.cost_basis,
   };
 }
 export class PostgresToolAuditRepository implements ToolAuditRepository {
@@ -71,6 +81,10 @@ export class PostgresToolAuditRepository implements ToolAuditRepository {
       if (BigInt(r.rows[0]!.total) + BigInt(cost) > BigInt(this.projectCostLimitMicros))
         throw new ToolError("budget_exceeded");
       await c.query("INSERT INTO tool_cost_reservations VALUES ($1,$2,$3)", [id, projectId, cost]);
+      await c.query(
+        "UPDATE tool_executions SET cost_micros=$2,cost_basis='reserved' WHERE id=$1 AND outcome='running'",
+        [id, cost],
+      );
       await c.query("COMMIT");
     } catch (e) {
       await c.query("ROLLBACK");
@@ -84,14 +98,30 @@ export class PostgresToolAuditRepository implements ToolAuditRepository {
     outcome: Exclude<ExecutionOutcome, "running">,
     code: string | null,
     cost: number,
+    settlement: AuditSettlement = {},
   ): Promise<ExecutionRecord> {
     code = code === null ? null : safeErrorCode(code);
+    const at = settlement.finishedAtMs ?? Date.now();
+    if (!Number.isSafeInteger(cost) || cost < 0 || !Number.isSafeInteger(at) || at < 0)
+      throw new ToolError("invalid_cost");
+    const cleanup = settlement.cleanupStatus ?? "not_required";
+    const basis =
+      settlement.costBasis ?? (outcome === "succeeded" ? "actual" : cost ? "reserved" : "none");
     const c = await this.pool.connect();
     try {
       await c.query("BEGIN");
       const r = await c.query<Row>(
-        "UPDATE tool_executions SET outcome=$2,code=$3,cost_micros=$4,finished_at_ms=GREATEST(started_at_ms,$5) WHERE id=$1 AND outcome='running' RETURNING *",
-        [id, outcome, code, cost, Date.now()],
+        "UPDATE tool_executions SET outcome=$2,code=$3,cost_micros=$4,finished_at_ms=GREATEST(started_at_ms,$5),cleanup_status=CASE WHEN cleanup_status='failed' THEN cleanup_status ELSE $6 END,cleanup_code=COALESCE(cleanup_code,$7),cost_basis=$8 WHERE id=$1 AND outcome='running' RETURNING *",
+        [
+          id,
+          outcome,
+          code,
+          cost,
+          at,
+          cleanup,
+          cleanup === "failed" ? "cleanup_unconfirmed" : null,
+          basis,
+        ],
       );
       if (r.rows[0])
         await c.query("UPDATE tool_cost_reservations SET cost_micros=$2 WHERE execution_id=$1", [
@@ -110,6 +140,32 @@ export class PostgresToolAuditRepository implements ToolAuditRepository {
     } finally {
       c.release();
     }
+  }
+  async noteCleanupFailure(id: string): Promise<void> {
+    await this.pool.query(
+      "UPDATE tool_executions SET cleanup_status='failed',cleanup_code='cleanup_unconfirmed' WHERE id=$1 AND outcome='running'",
+      [id],
+    );
+  }
+  async requestStop(id: string, code: "cancelled" | "timed_out"): Promise<void> {
+    if (code !== "cancelled" && code !== "timed_out") throw new ToolError("invalid_call");
+    await this.pool.query(
+      "UPDATE tool_executions SET stop_code=COALESCE(stop_code,$2) WHERE id=$1 AND outcome='running'",
+      [id, code],
+    );
+  }
+  async pendingRemote(limit: number, executionId?: string): Promise<readonly ExecutionRecord[]> {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100)
+      throw new ToolError("invalid_query");
+    if (executionId) checkedId(executionId);
+    // Filter terminal Jobs before LIMIT: active work cannot starve restart reconciliation.
+    const r = await this.pool.query<Row>(
+      `SELECT e.* FROM tool_executions e JOIN jobs j ON j.id=e.job_id
+      WHERE e.outcome='running' AND j.status IN ('Completed','Failed','Cancelled') AND ($2::uuid IS NULL OR e.id=$2)
+      ORDER BY e.started_at_ms,e.id LIMIT $1`,
+      [limit, executionId ?? null],
+    );
+    return r.rows.map(record);
   }
   async attachJob(id: string, jobId: string): Promise<void> {
     await this.pool.query(

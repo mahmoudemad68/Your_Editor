@@ -4,7 +4,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { Pool } from "pg";
-import { execFile } from "node:child_process";
+import { execFile, fork } from "node:child_process";
 import { promisify } from "node:util";
 import {
   ToolExecutor,
@@ -390,7 +390,7 @@ test(
                 };
               },
             });
-            await assert.rejects(executor.execute(call), /remote_failed/);
+            await assert.rejects(executor.execute(call), /invalid_output/);
             implementations.set("proof.echo@1.0.0", original);
             await assert.rejects(
               authority.authorize({ ...call, resource: { kind: "asset", id: newId() } }, [
@@ -439,6 +439,346 @@ test(
             consuming = true;
             const results = await resultsPromise;
             assert.equal(results.filter((r) => r.status === "fulfilled").length, 1);
+          },
+        );
+        await t.test(
+          "QA49 F2 coordinator SIGKILL at queued/running/result/completed/failure/cancellation stages reconciles exactly once",
+          async () => {
+            const childSet = new Set();
+            const startChild = (config) => {
+              const child = fork(
+                path.join(root, "tests/integration/support/tool-coordinator.cjs"),
+                [],
+                {
+                  stdio: ["ignore", "ignore", "ignore", "ipc"],
+                  env: {
+                    PATH: process.env.PATH,
+                    DATABASE_URL: process.env.DATABASE_URL ?? pg.url,
+                    REDIS_URL: process.env.REDIS_URL ?? redis.url,
+                    TOOL_TEST_SCHEMA: namespace,
+                  },
+                },
+              );
+              childSet.add(child);
+              const messages = [];
+              child.on("message", (m) => messages.push(m));
+              child.send(config);
+              return { child, messages };
+            };
+            const waitUntil = async (predicate) => {
+              for (let i = 0; i < 600; i++) {
+                if (await predicate()) return;
+                await delay(10);
+              }
+              assert.fail("real crash stage not reached");
+            };
+            const kill = async (child) => {
+              const ended = new Promise((resolve) =>
+                child.once("exit", (_code, signal) => resolve(signal)),
+              );
+              child.kill("SIGKILL");
+              assert.equal(await ended, "SIGKILL");
+              childSet.delete(child);
+            };
+            const recoveredRows = [];
+            try {
+              for (const stage of [
+                "queued",
+                "running-timeout",
+                "result-before-ack",
+                "completed-before-finish",
+                "settlement-transaction",
+                "completed-missing-result",
+                "completed-corrupt-result",
+                "failed-with-receipt",
+                "failed-before-finish",
+                "cancelled-before-finish",
+                "timeout-before-finish",
+              ]) {
+                consuming = stage !== "queued" && stage !== "cancelled-before-finish";
+                const name =
+                  stage === "running-timeout" || stage === "timeout-before-finish"
+                    ? "proof.busy"
+                    : "proof.echo";
+                const selected = registry.lookup(name, "1.0.0").manifest;
+                const originalImpl = implementations.get("proof.echo@1.0.0"),
+                  originalSupervisor = deps.supervisor;
+                let releaseGate;
+                if (stage === "result-before-ack")
+                  deps.supervisor = {
+                    run: async (...args) => {
+                      await originalSupervisor.run(...args);
+                      await new Promise((resolve) => (releaseGate = resolve));
+                    },
+                  };
+                if (stage === "failed-with-receipt")
+                  deps.supervisor = {
+                    run: async (...args) => {
+                      await originalSupervisor.run(...args);
+                      throw new PermanentJobError("execution_failed");
+                    },
+                  };
+                if (stage === "failed-before-finish")
+                  implementations.set("proof.echo@1.0.0", {
+                    start() {
+                      return {
+                        result: Promise.resolve({ output: { text: 1 }, costMicros: 1 }),
+                        cancel: async () => undefined,
+                      };
+                    },
+                  });
+                const spawned = startChild({
+                  mode: "execute",
+                  manifest: selected,
+                  call: { ...call, name },
+                  pauseEnqueue: stage === "queued",
+                  pauseTransaction: stage === "settlement-transaction",
+                });
+                let id;
+                try {
+                  await waitUntil(() => spawned.messages.some((m) => m.stage === "queued"));
+                  id = spawned.messages.find((m) => m.stage === "queued").id;
+                  if (stage === "running-timeout")
+                    await waitUntil(
+                      async () =>
+                        (await jobs.findById(id)).status === "Running" &&
+                        implementations.get("proof.busy@1.0.0").activeWorkerCount === 1,
+                    );
+                  else if (stage === "result-before-ack")
+                    await waitUntil(async () => !!(await store.result(id)) && !!releaseGate);
+                  else if (stage === "cancelled-before-finish") {
+                    await cancelJob(deps, id);
+                    await waitUntil(() =>
+                      spawned.messages.some((m) => m.stage === "before-finish"),
+                    );
+                  } else if (stage !== "queued")
+                    await waitUntil(() =>
+                      spawned.messages.some((m) => m.stage === "before-finish"),
+                    );
+                  await kill(spawned.child);
+                  const abandoned = await audit.get(id);
+                  assert.equal(abandoned.outcome, "running");
+                  assert.equal(abandoned.durationMs, null);
+                  assert.equal(abandoned.costMicros, 10);
+                  if (stage === "queued") {
+                    assert.equal((await jobs.findById(id)).status, "Queued");
+                    assert.deepEqual(await executor.recover(), []);
+                    consuming = true;
+                  }
+                  releaseGate?.();
+                  await waitUntil(async () =>
+                    ["Completed", "Failed", "Cancelled"].includes((await jobs.findById(id)).status),
+                  );
+                  if (stage === "completed-missing-result")
+                    await pool.query(
+                      "UPDATE tool_remote_calls SET result=NULL WHERE execution_id=$1",
+                      [id],
+                    );
+                  if (stage === "completed-corrupt-result")
+                    await pool.query(
+                      "UPDATE tool_remote_calls SET result=$2::jsonb WHERE execution_id=$1",
+                      [id, JSON.stringify({ output: { text: 123 }, costMicros: 1 })],
+                    );
+                  if (stage === "completed-before-finish") {
+                    const unavailable = new QueueToolDispatcher(
+                      jobs,
+                      { enqueue: (i) => enqueueJob(deps, i), cancel: (id) => cancelJob(deps, id) },
+                      {
+                        put: (c) => store.put(c),
+                        get: (id) => store.get(id),
+                        complete: (id, r) => store.complete(id, r),
+                        result: async () => {
+                          throw new Error("SECRET transient database path");
+                        },
+                      },
+                      audit,
+                    );
+                    await assert.rejects(
+                      new ToolExecutor(registry, authority, audit, unavailable).recover(),
+                      /audit_recovery_failed/,
+                    );
+                    assert.equal((await audit.get(id)).outcome, "running");
+                  }
+                  const expected = stage.includes("timeout")
+                    ? "timed_out"
+                    : stage.includes("failed") ||
+                        stage === "completed-missing-result" ||
+                        stage === "completed-corrupt-result"
+                      ? "failed"
+                      : stage.includes("cancelled")
+                        ? "cancelled"
+                        : "succeeded";
+                  // A fresh OS coordinator recovers from real PG/Redis state; parent does not finalize it.
+                  const restarts = [
+                    startChild({ mode: "recover-concurrent", manifest: selected }),
+                    startChild({ mode: "recover-concurrent", manifest: selected }),
+                  ];
+                  await waitUntil(() =>
+                    restarts.every((r) => r.messages.some((m) => m.stage === "settlement-ready")),
+                  );
+                  const ended = restarts.map(
+                    (r) => new Promise((resolve) => r.child.once("exit", resolve)),
+                  );
+                  for (const restart of restarts) restart.child.send({ release: true });
+                  await waitUntil(() =>
+                    restarts.every((r) => r.messages.some((m) => m.stage === "recovered")),
+                  );
+                  await Promise.all(ended);
+                  for (const restart of restarts) childSet.delete(restart.child);
+                  const row = await audit.get(id),
+                    job = await jobs.findById(id);
+                  assert.equal(row.outcome, expected);
+                  assert.equal(row.finishedAtMs, Number(job.updatedAt));
+                  assert.equal(row.durationMs, row.finishedAtMs - row.startedAtMs);
+                  assert.equal(
+                    row.costMicros,
+                    expected === "succeeded" || stage === "failed-with-receipt" ? 1 : 10,
+                  );
+                  assert.equal(
+                    row.costBasis,
+                    expected === "succeeded" || stage === "failed-with-receipt"
+                      ? "actual"
+                      : "reserved",
+                  );
+                  assert.equal(row.cleanupStatus, "succeeded");
+                  const sumBefore = (
+                    await pool.query(
+                      "SELECT sum(cost_micros)::text AS n FROM tool_cost_reservations",
+                    )
+                  ).rows[0].n;
+                  await Promise.all([
+                    executor.recover(),
+                    new ToolExecutor(registry, authority, audit, dispatcher).recover(),
+                    executor.recover(),
+                  ]);
+                  assert.deepEqual(await audit.get(id), row);
+                  assert.equal(
+                    (
+                      await pool.query(
+                        "SELECT sum(cost_micros)::text AS n FROM tool_cost_reservations",
+                      )
+                    ).rows[0].n,
+                    sumBefore,
+                  );
+                  assert.equal(
+                    (await jobs.listAttempts(id)).filter((a) => a.status === "Completed").length,
+                    job.status === "Completed" ? 1 : 0,
+                  );
+                  assert.equal(implementations.get("proof.busy@1.0.0").activeWorkerCount, 0);
+                  recoveredRows.push({
+                    stage,
+                    outcome: row.outcome,
+                    cost: row.costMicros,
+                    duration: row.durationMs,
+                  });
+                } finally {
+                  releaseGate?.();
+                  deps.supervisor = originalSupervisor;
+                  implementations.set("proof.echo@1.0.0", originalImpl);
+                }
+              }
+            } finally {
+              for (const child of childSet) child.kill("SIGKILL");
+              consuming = true;
+            }
+            t.diagnostic(JSON.stringify({ coordinatorSigkillRecovery: recoveredRows }));
+          },
+        );
+        await t.test(
+          "QA49 F3 actual isolated Worker cleanup escalation and sanitized combined failure finalize audits",
+          async () => {
+            const original = implementations.get("proof.busy@1.0.0");
+            let escalated = 0;
+            implementations.set("proof.busy@1.0.0", {
+              start(input, context) {
+                const run = original.start(input, context);
+                return {
+                  result: run.result,
+                  cancel: async () => {
+                    throw new Error("postgres://SECRET@internal/private");
+                  },
+                  forceStop: async () => {
+                    escalated++;
+                    await run.cancel();
+                  },
+                };
+              },
+            });
+            try {
+              await assert.rejects(executor.execute({ ...call, name: "proof.busy" }), /timed_out/);
+              assert.ok(escalated > 0);
+              assert.equal(original.activeWorkerCount, 0);
+            } finally {
+              implementations.set("proof.busy@1.0.0", original);
+            }
+            const echo = implementations.get("proof.echo@1.0.0");
+            implementations.set("proof.echo@1.0.0", {
+              start(input, context) {
+                const run = echo.start(input, context);
+                return {
+                  result: run.result.then(() => ({ output: { text: 123 }, costMicros: 1 })),
+                  cancel: async () => {
+                    await run.cancel();
+                    throw new Error("SECRET /private/path");
+                  },
+                };
+              },
+            });
+            let error;
+            try {
+              await executor.execute(call);
+              assert.fail("invalid output passed");
+            } catch (e) {
+              error = e;
+            } finally {
+              implementations.set("proof.echo@1.0.0", echo);
+            }
+            assert.match(error.message, /invalid_output/);
+            assert.ok(!error.stack.includes("SECRET"));
+            const failed = (await executor.records(owner, project)).find(
+              (r) => r.cleanupStatus === "failed",
+            );
+            assert.ok(failed);
+            assert.equal(failed.outcome, "failed");
+            assert.equal(failed.code, "invalid_output");
+            assert.equal(failed.cleanupCode, "cleanup_unconfirmed");
+            assert.ok(failed.durationMs !== null);
+            assert.equal((await jobs.findById(failed.jobId)).failureReason, "invalid_output");
+            assert.equal(await store.result(failed.id), null);
+            assert.equal(echo.activeWorkerCount, 0);
+            assert.ok(!JSON.stringify(await executor.records(owner, project)).includes("SECRET"));
+          },
+        );
+        await t.test(
+          "QA49 F4 same authenticated session loses record/list access immediately on membership revocation",
+          async () => {
+            const result = await executor.execute(call);
+            await pool.query(
+              "UPDATE project_memberships SET role='editor' WHERE project_id=$1 AND user_id=$2",
+              [project, owner],
+            );
+            assert.equal((await executor.record(owner, result.record.id)).outcome, "succeeded");
+            await pool.query(
+              "UPDATE project_memberships SET role='viewer' WHERE project_id=$1 AND user_id=$2",
+              [project, owner],
+            );
+            assert.equal((await executor.record(owner, result.record.id)).outcome, "succeeded");
+            await assert.rejects(executor.execute(call), /denied/);
+            await pool.query("DELETE FROM project_memberships WHERE project_id=$1 AND user_id=$2", [
+              project,
+              owner,
+            ]);
+            await assert.rejects(executor.record(owner, result.record.id), /denied/);
+            for (const limit of [1, 50, 100])
+              await assert.rejects(executor.records(owner, project, limit), /denied/);
+            await assert.rejects(executor.record(outsider, result.record.id), /denied/);
+            await pool.query(
+              "INSERT INTO project_memberships VALUES ($1,$2,'owner',0),($3,$4,'owner',0)",
+              [project, owner, otherProject, outsider],
+            );
+            await assert.rejects(executor.record(outsider, result.record.id), /denied/);
+            assert.equal((await executor.record(owner, result.record.id)).outcome, "succeeded");
+            assert.equal((await audit.get(result.record.id)).outcome, "succeeded");
           },
         );
         await t.test(

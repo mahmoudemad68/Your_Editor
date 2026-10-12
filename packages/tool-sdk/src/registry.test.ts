@@ -175,3 +175,53 @@ test("manifest versions and function input contracts reject ambiguity", () => {
   );
   assert.throws(() => new ToolRegistry().register(manifest({ id: ids.tool + "\n" }), binding));
 });
+
+test("QA49 F1 missing/extra properties identify escaped full JSON Pointer in nested arrays", () => {
+  const nested = {
+    type: "object",
+    additionalProperties: false,
+    required: ["a/b~c"],
+    properties: {
+      "a/b~c": {
+        type: "array",
+        maxItems: 2,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["x/y~z"],
+          properties: { "x/y~z": { type: "string", maxLength: 32 } },
+        },
+      },
+    },
+  };
+  const r = new ToolRegistry();
+  r.register(manifest({ inputSchema: nested, outputSchema: nested }), binding);
+  const t = r.lookup("test.echo", "1.0.0");
+  for (const phase of ["input", "output"] as const) {
+    for (const [value, field, rule] of [
+      [{}, "/a~1b~0c", "required"],
+      [{ "a/b~c": [{}] }, "/a~1b~0c/0/x~1y~0z", "required"],
+      [
+        { "a/b~c": [{ "x/y~z": "ok", "extra/~": "SECRET_VALUE" }] },
+        "/a~1b~0c/0/extra~1~0",
+        "additionalProperties",
+      ],
+      [{ "a/b~c": [{ "x/y~z": 12345 }] }, "/a~1b~0c/0/x~1y~0z", "type"],
+    ] as const) {
+      assert.throws(
+        () => r.validate(t, phase, value),
+        (error: Error) => {
+          assert.ok(error.message.includes(field));
+          assert.ok(error.message.includes(rule));
+          assert.ok(!error.message.includes("SECRET_VALUE"));
+          assert.ok(!error.message.includes("12345"));
+          return true;
+        },
+      );
+    }
+  }
+  assert.deepEqual(
+    (r.exportFunctions()[0] as { function: { parameters: unknown } }).function.parameters,
+    nested,
+  );
+});

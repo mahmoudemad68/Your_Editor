@@ -4,6 +4,7 @@ import {
   type ExecutionRecord,
   type ExecutionOutcome,
   type ToolAuthority,
+  type AuditSettlement,
 } from "./executor.js";
 import { ToolError } from "./validation.js";
 export const ids = {
@@ -62,12 +63,14 @@ export class MemoryAudit implements ToolAuditRepository {
     if ([...this.reserved.values()].reduce((a, b) => a + b, 0) + cost > this.budget)
       throw new ToolError("budget_exceeded");
     this.reserved.set(id, cost);
+    this.rows.set(id, { ...this.rows.get(id)!, costMicros: cost, costBasis: "reserved" });
   }
   async finish(
     id: string,
     outcome: Exclude<ExecutionOutcome, "running">,
     code: string | null,
     cost: number,
+    settlement: AuditSettlement = {},
   ): Promise<ExecutionRecord> {
     const r = this.rows.get(id)!;
     if (r.outcome !== "running") return r;
@@ -76,12 +79,33 @@ export class MemoryAudit implements ToolAuditRepository {
       outcome,
       code,
       costMicros: cost,
-      finishedAtMs: Date.now(),
-      durationMs: Date.now() - r.startedAtMs,
+      finishedAtMs: settlement.finishedAtMs ?? Date.now(),
+      durationMs: (settlement.finishedAtMs ?? Date.now()) - r.startedAtMs,
+      cleanupStatus:
+        r.cleanupStatus === "failed" ? "failed" : (settlement.cleanupStatus ?? "not_required"),
+      cleanupCode:
+        r.cleanupStatus === "failed" || settlement.cleanupStatus === "failed"
+          ? ("cleanup_unconfirmed" as const)
+          : null,
+      costBasis:
+        settlement.costBasis ??
+        (outcome === "succeeded" ? ("actual" as const) : ("reserved" as const)),
     };
     this.reserved.set(id, cost);
     this.rows.set(id, next);
     return next;
+  }
+  async noteCleanupFailure(id: string): Promise<void> {
+    const r = this.rows.get(id)!;
+    if (r.outcome === "running")
+      this.rows.set(id, { ...r, cleanupStatus: "failed", cleanupCode: "cleanup_unconfirmed" });
+  }
+  async requestStop(id: string, code: "cancelled" | "timed_out"): Promise<void> {
+    const r = this.rows.get(id)!;
+    if (r.outcome === "running") this.rows.set(id, { ...r, stopCode: code });
+  }
+  async pendingRemote(): Promise<readonly ExecutionRecord[]> {
+    return [];
   }
   async attachJob(id: string, jobId: string): Promise<void> {
     this.rows.set(id, { ...this.rows.get(id)!, jobId });

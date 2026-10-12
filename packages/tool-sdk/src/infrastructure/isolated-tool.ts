@@ -67,6 +67,12 @@ export class IsolatedTool implements ITool {
     };
     context.signal.addEventListener("abort", abort, { once: true });
     if (context.signal.aborted) abort();
-    return { result, cancel };
+    return {
+      result,
+      cancel,
+      forceStop: async () => {
+        await worker.terminate();
+      },
+    };
   }
 }

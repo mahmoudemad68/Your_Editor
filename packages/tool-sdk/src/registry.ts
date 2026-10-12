@@ -9,6 +9,7 @@ import {
   freeze,
   jsonValue,
   validate,
+  schemaDiagnostics,
   type JsonSchema,
 } from "./validation.js";
 
@@ -53,6 +54,8 @@ export interface ToolResult {
 export interface OwnedToolRun {
   readonly result: Promise<ToolResult>;
   cancel(): Promise<void>;
+  /** Independently owned escalation, if graceful cleanup fails. Never a broad process kill. */
+  forceStop?(): Promise<void>;
 }
 export interface ITool {
   start(input: unknown, context: ToolContext): OwnedToolRun;
@@ -97,10 +100,7 @@ export class ToolRegistry {
     if (!validateManifest(m))
       throw new ToolError(
         "invalid_manifest",
-        "Manifest field/rule: " +
-          JSON.stringify(
-            validateManifest.errors?.map((e) => ({ field: e.instancePath, rule: e.keyword })),
-          ),
+        "Manifest field/rule: " + JSON.stringify(schemaDiagnostics(validateManifest.errors)),
       );
     if (
       Object.keys(m).sort().join() !==
