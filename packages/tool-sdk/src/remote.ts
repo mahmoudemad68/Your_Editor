@@ -94,7 +94,11 @@ export class QueueToolDispatcher implements RemoteToolDispatcher {
     const admission = (async () => {
       if (context.signal.aborted) throw context.signal.reason;
       await this.calls.put(call);
-      await this.audit.attachJob(context.executionId, context.executionId);
+      await this.audit.attachJob(
+        context.executionId,
+        context.executionId,
+        context.admissionOwnerId,
+      );
       if (context.signal.aborted) throw context.signal.reason;
       await this.lifecycle.enqueue({
         id: context.executionId,

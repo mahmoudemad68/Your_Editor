@@ -259,10 +259,11 @@ test(
               record = (await executor.records(owner, project)).find(
                 (r) => r.outcome === "running" && r.jobId,
               );
-              if (record) break;
+              if (record && (await jobs.findById(record.jobId))?.status === "Queued") break;
               await delay(10);
             }
             assert.ok(record);
+            assert.equal((await jobs.findById(record.jobId))?.status, "Queued");
             controller.abort();
             await assert.rejects(execution, /cancelled/);
             await cancelJob(deps, record.jobId);
@@ -637,13 +638,19 @@ test(
                   assert.equal(row.durationMs, row.finishedAtMs - row.startedAtMs);
                   assert.equal(
                     row.costMicros,
-                    expected === "succeeded" || stage === "failed-with-receipt" ? 1 : 10,
+                    expected === "succeeded" || stage === "failed-with-receipt"
+                      ? 1
+                      : stage === "cancelled-before-finish"
+                        ? 0
+                        : 10,
                   );
                   assert.equal(
                     row.costBasis,
                     expected === "succeeded" || stage === "failed-with-receipt"
                       ? "actual"
-                      : "reserved",
+                      : stage === "cancelled-before-finish"
+                        ? "none"
+                        : "reserved",
                   );
                   assert.equal(
                     row.cleanupStatus,

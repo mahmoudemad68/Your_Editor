@@ -9,6 +9,8 @@ import {
   type ToolCall,
   type CleanupStatus,
   type AuditSettlement,
+  type AdmissionLease,
+  type AdmissionPolicy,
 } from "../executor.js";
 import { type ToolPermission } from "../registry.js";
 
@@ -62,18 +64,46 @@ export class PostgresToolAuditRepository implements ToolAuditRepository {
     if (!Number.isSafeInteger(projectCostLimitMicros) || projectCostLimitMicros < 0)
       throw new ToolError("invalid_budget");
   }
-  async begin(r: ExecutionRecord): Promise<void> {
+  async begin(r: ExecutionRecord, admission?: AdmissionLease): Promise<void> {
+    if (admission) {
+      checkedId(admission.ownerId);
+      if (
+        !Number.isSafeInteger(admission.deadlineAtMs) ||
+        admission.deadlineAtMs <= r.startedAtMs ||
+        !["remote", "in-process", "unknown"].includes(admission.mode)
+      )
+        throw new ToolError("invalid_call");
+    }
     await this.pool.query(
-      `INSERT INTO tool_executions (id,schema_version,caller_id,project_id,tool_name,tool_version,input_hash,started_at_ms,outcome) VALUES ($1,1,$2,$3,$4,$5,$6,$7,'running')`,
-      [r.id, r.callerId, r.projectId, r.toolName, r.toolVersion, r.inputHash, r.startedAtMs],
+      `INSERT INTO tool_executions (id,schema_version,caller_id,project_id,tool_name,tool_version,input_hash,started_at_ms,outcome,admission_owner_id,admission_deadline_at_ms,execution_mode) VALUES ($1,1,$2,$3,$4,$5,$6,$7,'running',$8,$9,$10)`,
+      [
+        r.id,
+        r.callerId,
+        r.projectId,
+        r.toolName,
+        r.toolVersion,
+        r.inputHash,
+        r.startedAtMs,
+        admission?.ownerId ?? null,
+        admission?.deadlineAtMs ?? r.startedAtMs + 300000,
+        admission?.mode ?? "unknown",
+      ],
     );
   }
-  async reserve(id: string, projectId: string, cost: number): Promise<void> {
+  async reserve(id: string, projectId: string, cost: number, ownerId?: string): Promise<void> {
     if (!Number.isSafeInteger(cost) || cost < 0) throw new ToolError("invalid_cost");
     const c = await this.pool.connect();
     try {
       await c.query("BEGIN");
       await c.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [projectId]);
+      // Lock admission before any budget mutation. Recovery/late reserve are mutually fenced.
+      const admission = await c.query(
+        `SELECT id FROM tool_executions WHERE id=$1 AND project_id=$2 AND outcome='running'
+        AND stop_code IS NULL AND admission_deadline_at_ms > (extract(epoch FROM clock_timestamp())*1000)::bigint
+        AND (admission_owner_id IS NULL OR admission_owner_id=$3::uuid) FOR UPDATE`,
+        [id, projectId, ownerId ?? null],
+      );
+      if (admission.rowCount !== 1) throw new ToolError("timed_out");
       const r = await c.query<{ total: string }>(
         "SELECT COALESCE(sum(cost_micros),0)::text AS total FROM tool_cost_reservations WHERE project_id=$1",
         [projectId],
@@ -110,9 +140,25 @@ export class PostgresToolAuditRepository implements ToolAuditRepository {
     const c = await this.pool.connect();
     try {
       await c.query("BEGIN");
+      // A remote implementation cannot run without a durable Job. Prove unused exposure
+      // under the same audit lock used by attach/Job insertion; never release local work this way.
+      await c.query("SELECT id FROM tool_executions WHERE id=$1 FOR UPDATE", [id]);
+      const unused = await c.query(
+        `SELECT e.id FROM tool_executions e WHERE e.id=$1 AND e.outcome='running' AND e.execution_mode='remote'
+        AND (NOT EXISTS (SELECT 1 FROM jobs j WHERE j.id=e.id OR j.id=e.job_id)
+          OR EXISTS (SELECT 1 FROM jobs j JOIN tool_remote_calls r ON r.execution_id=e.id
+            WHERE j.id=e.job_id AND j.status='Cancelled' AND j.attempt_count=0
+            AND r.result IS NULL AND r.cleanup_status='not_required'
+            AND NOT EXISTS (SELECT 1 FROM job_attempts a WHERE a.job_id=j.id)))`,
+        [id],
+      );
+      if (unused.rowCount === 1 && outcome === "succeeded") throw new ToolError("remote_missing");
+      if (unused.rowCount === 1) {
+        cost = 0;
+      }
       const r = await c.query<Row>(
         "UPDATE tool_executions SET outcome=$2,code=$3,cost_micros=$4,finished_at_ms=GREATEST(started_at_ms,$5),cleanup_status=CASE WHEN cleanup_status='failed' THEN cleanup_status WHEN job_id IS NOT NULL THEN COALESCE((SELECT r.cleanup_status FROM tool_remote_calls r WHERE r.execution_id=tool_executions.id),'unconfirmed') ELSE $6 END,cleanup_code=CASE WHEN cleanup_status='failed' OR (job_id IS NULL AND $6 IN ('failed','unconfirmed')) OR (job_id IS NOT NULL AND COALESCE((SELECT r.cleanup_status FROM tool_remote_calls r WHERE r.execution_id=tool_executions.id),'unconfirmed') IN ('failed','unconfirmed')) THEN 'cleanup_unconfirmed' ELSE NULL END,cost_basis=$7 WHERE id=$1 AND outcome='running' RETURNING *",
-        [id, outcome, code, cost, at, cleanup, basis],
+        [id, outcome, code, cost, at, cleanup, unused.rowCount === 1 ? "none" : basis],
       );
       if (r.rows[0])
         await c.query("UPDATE tool_cost_reservations SET cost_micros=$2 WHERE execution_id=$1", [
@@ -166,11 +212,109 @@ export class PostgresToolAuditRepository implements ToolAuditRepository {
     );
     return r.rows.map(record);
   }
-  async attachJob(id: string, jobId: string): Promise<void> {
-    await this.pool.query(
-      "UPDATE tool_executions SET job_id=$2 WHERE id=$1 AND outcome='running' AND (job_id IS NULL OR job_id=$2)",
-      [id, jobId],
+  async attachJob(id: string, jobId: string, ownerId?: string): Promise<void> {
+    if (id !== jobId) throw new ToolError("remote_binding_mismatch");
+    const r = await this.pool.query(
+      `UPDATE tool_executions SET job_id=$2 WHERE id=$1 AND outcome='running' AND stop_code IS NULL
+      AND admission_deadline_at_ms > (extract(epoch FROM clock_timestamp())*1000)::bigint
+      AND (admission_owner_id IS NULL OR admission_owner_id=$3::uuid) AND (job_id IS NULL OR job_id=$2)`,
+      [id, jobId, ownerId ?? null],
     );
+    if (r.rowCount !== 1) throw new ToolError("timed_out");
+  }
+  async recoverAdmissions(
+    limit: number,
+    executionId?: string,
+    policies: readonly AdmissionPolicy[] = [],
+  ): Promise<readonly ExecutionRecord[]> {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100)
+      throw new ToolError("invalid_query");
+    if (executionId) checkedId(executionId);
+    const c = await this.pool.connect();
+    try {
+      await c.query("BEGIN");
+      // Job insertion takes the same audit lock in the outbox trigger. Thus there is no
+      // Upgrade expired pre-lease audits from trusted registered immutable name/version.
+      // Active old coordinators retain their original lease until its declared expiry.
+      await c.query(
+        `UPDATE tool_executions e SET admission_owner_id=e.id,
+        admission_deadline_at_ms=e.started_at_ms+p.timeout_ms,execution_mode=p.mode
+        FROM jsonb_to_recordset($1::jsonb) AS p(name text,version text,timeout_ms bigint,mode text)
+        WHERE e.admission_owner_id IS NULL AND e.outcome='running' AND e.tool_name=p.name
+        AND e.tool_version=p.version AND e.started_at_ms+p.timeout_ms <= (extract(epoch FROM clock_timestamp())*1000)::bigint
+        AND ($2::uuid IS NULL OR e.id=$2)`,
+        [
+          JSON.stringify(
+            policies.map((p) => ({
+              name: p.name,
+              version: p.version,
+              timeout_ms: p.timeoutMs,
+              mode: p.mode,
+            })),
+          ),
+          executionId ?? null,
+        ],
+      );
+      // check/settle race, including an insert already in-flight when expiry wins.
+      // Repair an interrupted historical attachment only from an existing, outbox-bound
+      // canonical Job and matching private identity; the dispatcher still validates its receipt.
+      await c.query(
+        `UPDATE tool_executions e SET job_id=j.id FROM jobs j,tool_remote_calls r,tool_job_publications p
+        WHERE e.job_id IS NULL AND e.outcome='running' AND j.id=e.id AND r.execution_id=e.id AND p.job_id=j.id
+        AND j.job_type='tool.execute.v1' AND j.subject_kind='project' AND j.subject_id=e.project_id
+        AND j.payload->>'executionId'=e.id::text AND j.payload->>'schemaVersion'='1'
+        AND r.call->>'executionId'=e.id::text AND r.call->>'projectId'=e.project_id::text
+        AND r.call->>'callerId'=e.caller_id::text AND r.call->>'inputHash'=e.input_hash
+        AND r.call->>'name'=e.tool_name AND r.call->>'version'=e.tool_version
+        AND ($1::uuid IS NULL OR e.id=$1)`,
+        [executionId ?? null],
+      );
+      const candidates = await c.query<
+        Row & { admission_deadline_at_ms: string; execution_mode: string }
+      >(
+        `SELECT e.* FROM tool_executions e WHERE e.outcome='running'
+        AND e.admission_deadline_at_ms <= (extract(epoch FROM clock_timestamp())*1000)::bigint
+        AND ($2::uuid IS NULL OR e.id=$2) AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.id=e.id OR j.id=e.job_id)
+        ORDER BY e.admission_deadline_at_ms,e.id LIMIT $1 FOR UPDATE OF e SKIP LOCKED`,
+        [limit, executionId ?? null],
+      );
+      const recovered: ExecutionRecord[] = [];
+      for (const e of candidates.rows) {
+        // Recheck after acquiring the row lock: a concurrent inserter may have committed
+        // while this statement waited. Never infer success or release Job-backed exposure.
+        const job = await c.query("SELECT id FROM jobs WHERE id=$1 OR id=$2", [e.id, e.job_id]);
+        if (job.rowCount) continue;
+        const remote = e.execution_mode === "remote" || e.cost_basis === "none";
+        const outcome = e.stop_code === "cancelled" ? "cancelled" : "timed_out";
+        const r = await c.query<Row>(
+          `UPDATE tool_executions SET outcome=$2,code=$2,stop_code=COALESCE(stop_code,$2),
+          finished_at_ms=GREATEST(started_at_ms,admission_deadline_at_ms),cost_micros=$3,cost_basis=$4,
+          cleanup_status=$5,cleanup_code=$6 WHERE id=$1 AND outcome='running' RETURNING *`,
+          [
+            e.id,
+            outcome,
+            remote ? 0 : e.cost_micros,
+            remote ? "none" : e.cost_basis,
+            remote ? "not_required" : "unconfirmed",
+            remote ? null : "cleanup_unconfirmed",
+          ],
+        );
+        if (r.rows[0]) {
+          await c.query("UPDATE tool_cost_reservations SET cost_micros=$2 WHERE execution_id=$1", [
+            e.id,
+            remote ? 0 : e.cost_micros,
+          ]);
+          recovered.push(record(r.rows[0]));
+        }
+      }
+      await c.query("COMMIT");
+      return recovered;
+    } catch (error) {
+      await c.query("ROLLBACK");
+      throw error;
+    } finally {
+      c.release();
+    }
   }
   async get(id: string): Promise<ExecutionRecord | null> {
     checkedId(id);

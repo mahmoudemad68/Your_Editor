@@ -55,9 +55,9 @@ export interface ExecutionRecord {
   readonly costBasis: "actual" | "reserved" | "none";
 }
 export interface ToolAuditRepository {
-  begin(record: ExecutionRecord): Promise<void>;
+  begin(record: ExecutionRecord, admission?: AdmissionLease): Promise<void>;
   /** Atomic per-project lifetime limit including concurrent reservations; trusted deployment config, never call payload. */
-  reserve(id: string, projectId: string, costMicros: number): Promise<void>;
+  reserve(id: string, projectId: string, costMicros: number, ownerId?: string): Promise<void>;
   finish(
     id: string,
     outcome: Exclude<ExecutionOutcome, "running">,
@@ -65,13 +65,30 @@ export interface ToolAuditRepository {
     costMicros: number,
     settlement?: AuditSettlement,
   ): Promise<ExecutionRecord>;
-  attachJob(id: string, jobId: string): Promise<void>;
+  attachJob(id: string, jobId: string, ownerId?: string): Promise<void>;
+  recoverAdmissions(
+    limit: number,
+    executionId?: string,
+    policies?: readonly AdmissionPolicy[],
+  ): Promise<readonly ExecutionRecord[]>;
   noteCleanupFailure(id: string): Promise<void>;
   requestStop(id: string, code: "cancelled" | "timed_out"): Promise<void>;
   confirmCleanup(id: string, status: CleanupStatus): Promise<void>;
   pendingRemote(limit: number, executionId?: string): Promise<readonly ExecutionRecord[]>;
   get(id: string): Promise<ExecutionRecord | null>;
   list(projectId: string, limit: number): Promise<readonly ExecutionRecord[]>;
+}
+/** Non-renewable admission ownership lease: the logical execution deadline is its fence. */
+export interface AdmissionLease {
+  readonly ownerId: string;
+  readonly deadlineAtMs: number;
+  readonly mode: "remote" | "in-process" | "unknown";
+}
+export interface AdmissionPolicy {
+  readonly name: string;
+  readonly version: string;
+  readonly timeoutMs: number;
+  readonly mode: "remote" | "in-process";
 }
 export interface RemoteToolDispatcher {
   start(tool: RegisteredTool, input: unknown, context: ToolContext): Promise<OwnedToolRun>;
@@ -152,26 +169,34 @@ export class ToolExecutor {
       /* Unknown identifiers are not copied from caller text into the audit. */
     }
     const startedAtMs = Date.now();
-    await this.audit.begin({
-      schemaVersion: 1,
-      id,
-      callerId: idOrNull(call.callerId),
-      projectId: idOrNull(call.projectId),
-      toolName: registered?.manifest.name ?? null,
-      toolVersion: registered?.manifest.version ?? null,
-      inputHash,
-      startedAtMs,
-      finishedAtMs: null,
-      durationMs: null,
-      outcome: "running",
-      code: null,
-      costMicros: 0,
-      jobId: null,
-      cleanupStatus: "not_required",
-      cleanupCode: null,
-      stopCode: null,
-      costBasis: "none",
-    });
+    const ownerId = createUuidV7(startedAtMs, randomBytes(10));
+    await this.audit.begin(
+      {
+        schemaVersion: 1,
+        id,
+        callerId: idOrNull(call.callerId),
+        projectId: idOrNull(call.projectId),
+        toolName: registered?.manifest.name ?? null,
+        toolVersion: registered?.manifest.version ?? null,
+        inputHash,
+        startedAtMs,
+        finishedAtMs: null,
+        durationMs: null,
+        outcome: "running",
+        code: null,
+        costMicros: 0,
+        jobId: null,
+        cleanupStatus: "not_required",
+        cleanupCode: null,
+        stopCode: null,
+        costBasis: "none",
+      },
+      {
+        ownerId,
+        deadlineAtMs: startedAtMs + (registered?.manifest.timeoutMs ?? 2000),
+        mode: registered?.binding.mode ?? "unknown",
+      },
+    );
     const controller = new AbortController();
     const abort = () => controller.abort(new ToolError("cancelled"));
     signal?.addEventListener("abort", abort, { once: true });
@@ -220,12 +245,13 @@ export class ToolExecutor {
       if (this.active >= this.maximumConcurrency) throw new ToolError("capacity_exceeded");
       this.active++;
       occupied = true;
-      await this.audit.reserve(id, call.projectId, tool.manifest.maximumCostMicros);
+      await this.audit.reserve(id, call.projectId, tool.manifest.maximumCostMicros, ownerId);
       reserved = tool.manifest.maximumCostMicros;
       if (controller.signal.aborted) throw controller.signal.reason;
       admitted = true;
       const context: ToolContext = {
         executionId: id,
+        admissionOwnerId: ownerId,
         callerId: call.callerId,
         projectId: call.projectId,
         resource: Object.freeze({ ...call.resource }),
@@ -306,6 +332,14 @@ export class ToolExecutor {
       /* Observational sink cannot alter persisted execution state. */
     }
   }
+  private admissionPolicies(): readonly AdmissionPolicy[] {
+    return this.registry.discover().map((m) => ({
+      name: m.name,
+      version: m.version,
+      timeoutMs: m.timeoutMs,
+      mode: this.registry.lookup(m.name, m.version).binding.mode,
+    }));
+  }
   private remoteStart(t: RegisteredTool, i: unknown, c: ToolContext): Promise<OwnedToolRun> {
     if (!this.remote) throw new ToolError("remote_unavailable");
     return this.remote.start(t, i, c);
@@ -315,7 +349,12 @@ export class ToolExecutor {
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100)
       throw new ToolError("invalid_query");
     try {
-      return (await this.remote?.reconcile(this.registry, limit)) ?? [];
+      const admissions = await this.audit.recoverAdmissions(
+        limit,
+        undefined,
+        this.admissionPolicies(),
+      );
+      return [...admissions, ...((await this.remote?.reconcile(this.registry, limit)) ?? [])];
     } catch {
       throw new ToolError("audit_recovery_failed");
     }
@@ -335,6 +374,7 @@ export class ToolExecutor {
     if (!record) return null;
     if (!record.projectId) throw new ToolError("denied");
     await this.readAuthority(callerId, record.projectId);
+    await this.audit.recoverAdmissions(1, record.id, this.admissionPolicies());
     if (this.remote) {
       try {
         await this.remote.reconcile(this.registry, 1, record.id);

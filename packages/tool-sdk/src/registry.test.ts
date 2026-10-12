@@ -203,7 +203,7 @@ test("QA49 F1 missing/extra properties identify escaped full JSON Pointer in nes
       [{ "a/b~c": [{}] }, "/a~1b~0c/0/x~1y~0z", "required"],
       [
         { "a/b~c": [{ "x/y~z": "ok", "extra/~": "SECRET_VALUE" }] },
-        "/a~1b~0c/0/extra~1~0",
+        "/a~1b~0c/0/[additional-property]",
         "additionalProperties",
       ],
       [{ "a/b~c": [{ "x/y~z": 12345 }] }, "/a~1b~0c/0/x~1y~0z", "type"],
@@ -224,4 +224,42 @@ test("QA49 F1 missing/extra properties identify escaped full JSON Pointer in nes
     (r.exportFunctions()[0] as { function: { parameters: unknown } }).function.parameters,
     nested,
   );
+});
+
+test("QA49 M1 caller property names never enter public validation diagnostics", () => {
+  const nested = {
+    type: "object",
+    additionalProperties: false,
+    required: ["safe/~"],
+    properties: {
+      "safe/~": {
+        type: "array",
+        maxItems: 2,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["text"],
+          properties: { text: { type: "string", maxLength: 128 } },
+        },
+      },
+    },
+  };
+  const r = new ToolRegistry();
+  r.register(manifest({ inputSchema: nested, outputSchema: nested }), binding);
+  const t = r.lookup("test.echo", "1.0.0");
+  for (const key of ["SECRET_TOKEN", "secret/~path", "secret\n\t\u0001", "SECRET_".repeat(1000)]) {
+    for (const phase of ["input", "output"] as const) {
+      assert.throws(
+        () => r.validate(t, phase, { "safe/~": [{ text: "ok", [key]: "sensitive" }] }),
+        (error: Error) => {
+          assert.ok(error.message.includes("/safe~1~0/0/[additional-property]"));
+          assert.ok(error.message.includes("additionalProperties"));
+          assert.ok(!error.message.includes("SECRET") && !error.message.includes("secret"));
+          assert.ok(!error.message.includes("sensitive"));
+          assert.equal(error.stack, `ToolError: ${error.message}`);
+          return true;
+        },
+      );
+    }
+  }
 });

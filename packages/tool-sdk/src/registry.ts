@@ -40,6 +40,8 @@ export interface ToolManifest {
 }
 export interface ToolContext {
   readonly executionId: string;
+  /** Internal coordinator lease, never accepted from tool input. */
+  readonly admissionOwnerId?: string;
   readonly callerId: string;
   readonly projectId: string;
   readonly resource: { readonly kind: "project" | "asset" | "timeline"; readonly id: string };
@@ -100,7 +102,8 @@ export class ToolRegistry {
     if (!validateManifest(m))
       throw new ToolError(
         "invalid_manifest",
-        "Manifest field/rule: " + JSON.stringify(schemaDiagnostics(validateManifest.errors)),
+        "Manifest field/rule: " +
+          JSON.stringify(schemaDiagnostics(validateManifest.errors, toolManifestSchema)),
       );
     if (
       Object.keys(m).sort().join() !==

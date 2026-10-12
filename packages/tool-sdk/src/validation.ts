@@ -199,26 +199,49 @@ export function compileSchema(schema: JsonSchema): ValidateFunction {
 export function validate(validator: ValidateFunction, value: unknown, phase: string): unknown {
   const safe = jsonValue(value);
   if (!validator(safe)) {
-    const errors = schemaDiagnostics(validator.errors);
+    const errors = schemaDiagnostics(validator.errors, validator.schema as JsonSchema);
     throw new ToolError(`invalid_${phase}`, `${phase}: ${JSON.stringify(errors)}`);
   }
   return freeze(safe);
 }
 
-/** JSON Pointer diagnostics contain locations/rules only, never offending input values. */
-export function schemaDiagnostics(errors: readonly ErrorObject[] | null | undefined) {
+/** Only repository-defined properties and numeric array indices enter public paths.
+ * Closed-object additional keys are caller data, even when they look like useful field names. */
+export function schemaDiagnostics(
+  errors: readonly ErrorObject[] | null | undefined,
+  schema: JsonSchema,
+) {
   return errors?.map((e) => {
-    const property =
-      e.keyword === "required"
-        ? e.params.missingProperty
-        : e.keyword === "additionalProperties"
-          ? e.params.additionalProperty
-          : undefined;
-    const suffix =
-      typeof property === "string"
-        ? "/" + property.replaceAll("~", "~0").replaceAll("/", "~1")
-        : "";
-    return { field: e.instancePath + suffix || "/", rule: e.keyword };
+    const encode = (key: string) => key.replaceAll("~", "~0").replaceAll("/", "~1");
+    let node: JsonSchema | undefined = schema;
+    const path: string[] = [];
+    for (const segment of e.instancePath.split("/").slice(1)) {
+      const key = segment.replaceAll("~1", "/").replaceAll("~0", "~");
+      if (node?.type === "array" && /^(0|[1-9][0-9]*)$/.test(key)) {
+        path.push(key);
+        node = node.items as JsonSchema;
+      } else if (
+        node?.type === "object" &&
+        node.properties &&
+        Object.hasOwn(node.properties as object, key)
+      ) {
+        path.push(encode(key));
+        node = (node.properties as Record<string, JsonSchema>)[key];
+      } else {
+        path.push("[untrusted-property]");
+        node = undefined;
+      }
+    }
+    if (e.keyword === "additionalProperties") path.push("[additional-property]");
+    else if (e.keyword === "required") {
+      const key: unknown = e.params.missingProperty;
+      path.push(
+        typeof key === "string" && node?.properties && Object.hasOwn(node.properties as object, key)
+          ? encode(key)
+          : "[untrusted-property]",
+      );
+    }
+    return { field: path.length ? "/" + path.join("/") : "/", rule: e.keyword };
   });
 }
 
