@@ -14,6 +14,7 @@ const {
   PostgresJobRepository,
   RedisJobEventPublisher,
   RedisJobEventSubscriber,
+  projectJobChannel,
 } = require("@editagent/job-queue");
 const { applyMigrations } = require("./dist/infrastructure/migrate.js");
 const {
@@ -82,11 +83,21 @@ export async function createJobFixture() {
     sessions: new PostgresRefreshSessionRepository(pool),
     composition,
     async transportState() {
+      // Parallel suites share Redis, but this fixture owns only its database's
+      // Projects. Another suite's live channel is not a leaked BFF subscription.
+      const owned = new Set(
+        (await pool.query("SELECT id::text FROM projects")).rows.map(({ id }) =>
+          projectJobChannel(id),
+        ),
+      );
+      const channels = await monitor.pubsub("CHANNELS", "editagent:project-job-events:*");
       return {
         ...transport.state(),
         readyAt,
         subscriptions: subscriber.subscriptionCount,
-        redisChannels: (await monitor.pubsub("CHANNELS", "editagent:project-job-events:*")).length,
+        redisChannels: channels.filter((channel) => owned.has(channel)).length,
+        sharedRedisChannels: channels.length,
+        redisChannelScope: "fixture-projects",
       };
     },
     async resetTransport(action) {
