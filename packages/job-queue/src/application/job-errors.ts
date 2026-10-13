@@ -32,6 +32,14 @@ export class LockLostError extends Error {
   }
 }
 
+/** Durable terminal state rejected a stale snapshot. No subsequent attempt/work is allowed. */
+export class JobWriteFencedError extends Error {
+  constructor() {
+    super("Job terminal write fenced.");
+    this.name = "JobWriteFencedError";
+  }
+}
+
 /** The supervised process could not be reaped. Terminal status must not be stored. */
 export class JobExecutionUnconfirmedError extends Error {
   constructor() {

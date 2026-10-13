@@ -12,6 +12,7 @@ import {
   type JobRepository,
 } from "@editagent/domain";
 import { type Pool, type PoolClient } from "pg";
+import { JobWriteFencedError } from "../application/job-errors.js";
 
 interface Sql {
   query(text: string, values?: readonly unknown[]): Promise<unknown>;
@@ -62,7 +63,7 @@ export class PostgresJobRepository implements JobRepository {
   }
 
   async save(job: Job): Promise<void> {
-    await writeJob(this.pool, job);
+    if (!(await writeJob(this.pool, job))) throw new JobWriteFencedError();
   }
 
   async appendAttempt(attempt: JobAttempt): Promise<void> {
@@ -83,7 +84,7 @@ export class PostgresJobRepository implements JobRepository {
     const client: PoolClient = await this.pool.connect();
     try {
       await client.query("BEGIN");
-      await writeJob(client, job);
+      if (!(await writeJob(client, job))) throw new JobWriteFencedError();
       await writeAttempt(client, attempt);
       await client.query("COMMIT");
     } catch (error) {
@@ -147,9 +148,9 @@ export class PostgresJobRepository implements JobRepository {
   }
 }
 
-async function writeJob(sql: Sql, job: Job): Promise<void> {
+async function writeJob(sql: Sql, job: Job): Promise<boolean> {
   const snapshot = job.toSnapshot();
-  await sql.query(
+  const result = await sql.query(
     `INSERT INTO jobs (
        id, queue_name, job_type, idempotency_key, status, subject_kind, subject_id,
        payload, timeout_ms, max_attempts, attempt_count, failure_reason, created_at, updated_at
@@ -178,6 +179,7 @@ async function writeJob(sql: Sql, job: Job): Promise<void> {
       snapshot.updatedAt.toString(),
     ],
   );
+  return !(result && typeof result === "object" && "rowCount" in result && result.rowCount === 0);
 }
 
 async function writeAttempt(sql: Sql, attempt: JobAttempt): Promise<void> {

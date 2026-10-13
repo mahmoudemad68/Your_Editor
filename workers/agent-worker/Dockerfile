@@ -30,6 +30,11 @@ COPY tsconfig.base.json ./
 COPY workers/agent-worker workers/agent-worker
 COPY packages/shared packages/shared
 COPY packages/tool-sdk packages/tool-sdk
+COPY packages/domain packages/domain
+COPY packages/schemas packages/schemas
+COPY tools/schema tools/schema
+COPY workers/ai-worker/src/editagent_ai_worker/contracts/media_analysis_generated.py workers/ai-worker/src/editagent_ai_worker/contracts/media_analysis_generated.py
+COPY workers/ai-worker/src/editagent_ai_worker/contracts/media_analysis_v1_1_generated.py workers/ai-worker/src/editagent_ai_worker/contracts/media_analysis_v1_1_generated.py
 RUN pnpm --filter @editagent/agent-worker... build \
     && find /app -type f \( -name '*.test.ts' -o -name '*.test.js' -o -name '*.test.js.map' -o -name '*.test.d.ts' -o -name '*.test.d.ts.map' \) -delete \
     && pnpm --filter @editagent/agent-worker --prod deploy --legacy /out \

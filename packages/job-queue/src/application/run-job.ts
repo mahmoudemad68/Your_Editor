@@ -8,10 +8,12 @@ import {
   Job,
   JobAttempt,
   type JobEnvelope,
+  type JobFailure,
   type JobQueue,
   type JobReceipt,
   type JobRepository,
   type JobSubject,
+  type ReservedJob,
   jobId,
 } from "@editagent/domain";
 import { acceptCorrelationId } from "@editagent/shared";
@@ -22,6 +24,7 @@ import {
   JobCancelledError,
   JobExecutionUnconfirmedError,
   JobTimeoutError,
+  JobWriteFencedError,
   LockLostError,
   PermanentJobError,
 } from "./job-errors.js";
@@ -142,6 +145,29 @@ export async function runNextJob(
   deps.queue.whenLockLost(reserved.receipt, () => {
     controller.abort(new LockLostError());
   });
+  try {
+    return await runReservedJob(deps, reserved, handler, controller);
+  } catch (error) {
+    if (!(error instanceof JobWriteFencedError)) throw error;
+    // Stop at the failed write. Never append an attempt or run a handler from
+    // the rejected snapshot; acknowledge only authoritative durable terminal state.
+    const terminal = await deps.jobs.findById(jobId(reserved.envelope.jobId));
+    if (terminal && ["Completed", "Failed", "Cancelled"].includes(terminal.status)) {
+      await acknowledgeTerminal(deps, terminal, reserved.receipt, controller.signal);
+      return "done";
+    }
+    // A fence without a terminal row is not evidence of successful execution.
+    if (!controller.signal.aborted) await deps.queue.release(reserved.receipt);
+    throw error;
+  }
+}
+
+async function runReservedJob(
+  deps: RunJobDeps,
+  reserved: ReservedJob,
+  handler: IsolatedHandler,
+  controller: AbortController,
+): Promise<"done"> {
   if (controller.signal.aborted) {
     return "done";
   }
@@ -154,6 +180,11 @@ export async function runNextJob(
       reason: "job row is missing",
       transient: false,
     });
+    return "done";
+  }
+  // A late cancellation flag cannot rewrite a committed terminal outcome after Redis recovers.
+  if (current.status === "Completed" || current.status === "Failed") {
+    await acknowledgeTerminal(deps, current, reserved.receipt, controller.signal);
     return "done";
   }
   let cancelRequested: boolean;
@@ -175,10 +206,6 @@ export async function runNextJob(
       await emitLifecycle(deps, "job.cancelled", reserved.envelope);
     }
     await deps.queue.complete(reserved.receipt);
-    return "done";
-  }
-  if (current.status === "Completed" || current.status === "Failed") {
-    await acknowledgeTerminal(deps, current, reserved.receipt, controller.signal);
     return "done";
   }
   const workable = await recoverAbandonedRun(deps, current, reserved.receipt, reserved.envelope);
@@ -451,7 +478,11 @@ async function settleFailure(
     await deps.jobs.save(started.cancel(at));
     await deps.jobs.appendAttempt(attempt.finish("Cancelled", at, "cancelled"));
     await emitLifecycle(deps, "job.cancelled", envelope);
-    await deps.queue.complete(receipt);
+    try {
+      await deps.queue.complete(receipt);
+    } catch {
+      // Cancellation already committed; a lost transport receipt is reconciled after Redis recovers.
+    }
     return;
   }
   const reason = error instanceof Error ? error.message : "job failed";
@@ -461,7 +492,7 @@ async function settleFailure(
     await deps.jobs.save(started.retry(at, reason));
     await deps.jobs.appendAttempt(attempt.finish("Retrying", at, reason));
     await emitLifecycle(deps, "job.retrying", envelope);
-    await deps.queue.fail(receipt, { reason, transient: true });
+    await acknowledgeFailure(deps, receipt, { reason, transient: true });
     return;
   }
   const failed = started.fail(at, reason);
@@ -474,7 +505,22 @@ async function settleFailure(
     createdAt: at,
   });
   await emitLifecycle(deps, "job.failed", envelope);
-  await deps.queue.fail(receipt, { reason, transient: false });
+  await acknowledgeFailure(deps, receipt, { reason, transient: false });
+}
+
+async function acknowledgeFailure(
+  deps: RunJobDeps,
+  receipt: JobReceipt,
+  failure: JobFailure,
+): Promise<void> {
+  try {
+    await deps.queue.fail(receipt, failure);
+  } catch (error) {
+    // Ledger settlement already committed. Lock loss during a paused Redis connection cannot
+    // replace the primary failure or start another handler attempt on a terminal Job.
+    if (!(await deps.queue.ownsReservation(receipt))) return;
+    throw error;
+  }
 }
 
 function isCancelled(error: unknown): boolean {
@@ -504,7 +550,8 @@ async function commitCompletion(
     try {
       await deps.jobs.recordCompletion(completed, closed);
       return "committed";
-    } catch {
+    } catch (error) {
+      if (error instanceof JobWriteFencedError) throw error;
       if (controller.signal.aborted) {
         return "lock-lost";
       }
@@ -542,7 +589,8 @@ async function closeOpenAttempt(deps: RunJobDeps, job: Job): Promise<void> {
   }
   const now = deps.now();
   const at = now < open.startedAt ? open.startedAt : now;
-  const status = job.status === "Failed" ? "Failed" : "Completed";
+  const status =
+    job.status === "Cancelled" ? "Cancelled" : job.status === "Failed" ? "Failed" : "Completed";
   await deps.jobs.appendAttempt(open.finish(status, at, job.failureReason));
 }
 

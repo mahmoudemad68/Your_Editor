@@ -4,6 +4,7 @@ export {
   JobCancelledError,
   JobExecutionUnconfirmedError,
   JobTimeoutError,
+  JobWriteFencedError,
   LockLostError,
   PermanentJobError,
 } from "./application/job-errors.js";

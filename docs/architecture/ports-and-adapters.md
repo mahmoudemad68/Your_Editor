@@ -139,12 +139,12 @@ Known strategies, both later stories: Remotion (US-216, US-217) and FFmpeg (US-2
 
 Owned by Tools. The port lives with `packages/tool-sdk`, which may depend on the domain. The domain does not depend on the SDK.
 
-| Port           | Capability                                                    |
-| -------------- | ------------------------------------------------------------- |
-| `ITool`        | `execute(call, context) → result`                             |
-| `ToolManifest` | Name, version, argument schema, permission set, cost, timeout |
+| Port           | Capability                                                      |
+| -------------- | --------------------------------------------------------------- |
+| `ITool`        | `start(input, context) → owned result promise + cancel/cleanup` |
+| `ToolManifest` | Name, version, argument schema, permission set, cost, timeout   |
 
-The executor denies permissions the manifest does not declare. No tool declares a shell permission.
+The executor denies permissions the manifest does not declare. No tool declares a shell permission. US-219/US-221 implement the registry, executor, scoped authority, durable audit repository and queue-dispatch ports in the SDK; see [adding a tool](../tool-sdk/adding-a-tool.md). Authenticated caller identity is supplied by the server; the registry never accepts model-provided code or privileges.
 
 ## Component port
 
