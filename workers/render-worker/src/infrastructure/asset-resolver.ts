@@ -11,6 +11,7 @@ interface SourceRow {
   content_sha256: string;
   byte_size: string;
   validation_source_sha256: string;
+  audio_present: boolean | null;
   source_type?: string;
   root_media_id?: string;
   parameter_signature?: string;
@@ -25,12 +26,14 @@ export class PostgresRenderAssetResolver implements IRenderAssetResolver {
     return (
       await this.pool.query<SourceRow>(
         `SELECT a.id::text,a.kind,a.duration::text,a.storage_key,a.mime_type,a.content_sha256,a.byte_size::text,a.validation_source_sha256,
-      'original' AS source_type,a.id::text AS root_media_id,NULL::text AS parameter_signature,NULL::text AS producer
+      'original' AS source_type,a.id::text AS root_media_id,NULL::text AS parameter_signature,NULL::text AS producer,
+      (a.audio_codec IS NOT NULL) AS audio_present
       FROM media_assets a JOIN projects p ON p.id=a.project_id
       WHERE a.project_id=$1 AND p.deleted_at IS NULL AND a.id=ANY($2::uuid[])
         AND a.upload_state='uploaded' AND a.inspection_status='completed' AND a.validation_status='validated'
       UNION ALL SELECT d.id::text,'video',d.metadata->>'durationUs',d.storage_key,d.mime_type,d.content_sha256,d.byte_size::text,d.content_sha256,
-        'edited-video',d.media_asset_id::text,d.parameter_signature,d.metadata->>'producer'
+        'edited-video',d.media_asset_id::text,d.parameter_signature,d.metadata->>'producer',
+        CASE WHEN jsonb_typeof(d.metadata->'audioPresent')='boolean' THEN (d.metadata->>'audioPresent')::boolean ELSE NULL END
       FROM derived_assets d JOIN projects p ON p.id=d.project_id
       WHERE d.project_id=$1 AND p.deleted_at IS NULL AND d.id=ANY($2::uuid[]) AND d.kind='edited-video'`,
         [project, ids],
@@ -110,6 +113,7 @@ export class PostgresRenderAssetResolver implements IRenderAssetResolver {
         row.duration !== source.durationUs ||
         !/^[a-f0-9]{64}$/.test(sha) ||
         row.validation_source_sha256 !== sha ||
+        typeof row.audio_present !== "boolean" ||
         (edited &&
           (!row.root_media_id ||
             !/^[a-f0-9]{64}$/.test(row.parameter_signature ?? "") ||
@@ -128,6 +132,7 @@ export class PostgresRenderAssetResolver implements IRenderAssetResolver {
         byteSize,
         name: `${sha}.${extension}`,
         objectKey: expectedKey,
+        audioPresent: row.audio_present,
       };
     });
   }

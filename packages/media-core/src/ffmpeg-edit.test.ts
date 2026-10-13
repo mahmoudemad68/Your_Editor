@@ -52,6 +52,78 @@ test("fixed media edits bound dimensions, speed, audio and malformed measurement
     );
 });
 test(
+  "fractional-rate resize preserves the inspected 179-frame count across microsecond rounding",
+  { timeout: 30000 },
+  async () => {
+    const work = await mkdtemp(path.join(tmpdir(), "resize-frame-count-"));
+    try {
+      const file = path.join(work, "179.mp4");
+      execFileSync(
+        "ffmpeg",
+        [
+          "-v",
+          "error",
+          "-y",
+          "-f",
+          "lavfi",
+          "-i",
+          "testsrc2=s=64x64:r=30000/1001",
+          "-frames:v",
+          "179",
+          "-c:v",
+          "libx264",
+          "-threads",
+          "1",
+          "-pix_fmt",
+          "yuv420p",
+          "-bf",
+          "3",
+          "-video_track_timescale",
+          "30000",
+          file,
+        ],
+        { timeout: 15000 },
+      );
+      const video = (await new FFprobeMediaProbe().inspectStreamTiming({ filePath: file })).find(
+        (s) => s.kind === "video",
+      )!;
+      assert.equal(video.frames, 179n);
+      const source = {
+        path: file,
+        width: 64,
+        height: 64,
+        durationUs: 5972634n,
+        frameRate: { numerator: 30000, denominator: 1001 },
+        frameCount: Number(video.frames),
+        hasAudio: false,
+      };
+      const edit = { operation: "resize_video" as const, width: 128, height: 128 };
+      assert.equal(editOutputTiming(source, edit).totalFrames, 179);
+      assert.throws(
+        () => editOutputTiming({ ...source, durationUs: 6000000n }, edit),
+        /inconsistent/,
+      );
+      const output = path.join(work, "resize.mp4");
+      await new FfmpegExecutor().execute(buildVideoEditArgs(source, edit, output), {
+        timeoutMs: 15000,
+      });
+      const resized = (
+        await new FFprobeMediaProbe().inspectStreamTiming({ filePath: output })
+      ).find((s) => s.kind === "video")!;
+      assert.equal(resized.frames, 179n);
+      assert.equal(resized.durationTicks, 179179n);
+      const decoded = execFileSync(
+        "ffmpeg",
+        ["-v", "error", "-i", output, "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+        { maxBuffer: 10000000, timeout: 15000 },
+      );
+      assert.equal(decoded.length, 179 * 128 * 128 * 3);
+    } finally {
+      await rm(work, { recursive: true, force: true });
+    }
+  },
+);
+test(
   "real crop, resize, both speed directions and two-pass loudness create deterministic playable MP4 without source mutation",
   { timeout: 60000 },
   async (t) => {

@@ -88,6 +88,31 @@ export async function executeMediaEdit(
       p = await new FFprobeMediaProbe({ timeoutMs: 10000 }).inspect({ filePath: file, signal });
     if (!p.videoCodec || !p.width || !p.height || !p.frameRate || !p.duration)
       throw new MediaEditInputError();
+    const video = (
+      await new FFprobeMediaProbe({ timeoutMs: 10000 }).inspectStreamTiming({
+        filePath: file,
+        signal,
+      })
+    ).find((s) => s.kind === "video");
+    let frameCount: number | undefined;
+    if (
+      video?.frames &&
+      video.durationTicks &&
+      video.durationTicks * video.timeBase.numerator * p.frameRate.numerator ===
+        video.frames * p.frameRate.denominator * video.timeBase.denominator &&
+      (await new FFprobeMediaProbe({ timeoutMs: 10000 }).supportsCutRendering(
+        { filePath: file, signal },
+        { numerator: Number(p.frameRate.numerator), denominator: Number(p.frameRate.denominator) },
+      ))
+    ) {
+      const logical =
+        (video.frames * 1000000n * p.frameRate.denominator + p.frameRate.numerator / 2n) /
+        p.frameRate.numerator;
+      const delta = BigInt(a.durationUs) - logical;
+      // Preserve genuinely audio-led media duration. Only a millisecond movie-header
+      // rounding tail may be removed from a video-preserving transform.
+      if (delta >= -1000n && delta <= 1000n) frameCount = Number(video.frames);
+    }
     sources.set(a.sourceId, {
       path: file,
       width: p.displayWidth ?? p.width,
@@ -98,6 +123,7 @@ export async function executeMediaEdit(
         denominator: Number(p.frameRate.denominator),
       },
       hasAudio: p.audioCodec !== null,
+      ...(frameCount !== undefined ? { frameCount } : {}),
     });
   }
   const first = sources.get(input.sources[0]!.id)!;
@@ -203,7 +229,7 @@ export async function executeMediaEdit(
     props: { title: "media-edit", background: "#000000" },
     correlationId: "media-edit",
   };
-  const validated = await validateOutput(output, expected, signal);
+  const validated = await validateOutput(output, expected, signal, audioPresent);
   const probe = await new FFprobeMediaProbe({ timeoutMs: 10000 }).inspect({
     filePath: output,
     signal,

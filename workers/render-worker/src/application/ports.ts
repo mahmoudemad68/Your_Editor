@@ -81,6 +81,8 @@ export interface VerifiedAsset {
 }
 export interface ResolvedAsset extends VerifiedAsset {
   readonly objectKey: string;
+  /** Current validated source inspection, never a client-provided claim. */
+  readonly audioPresent: boolean;
 }
 export interface IRenderAssetResolver {
   resolve(

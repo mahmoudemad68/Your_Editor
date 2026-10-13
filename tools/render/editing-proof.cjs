@@ -313,6 +313,7 @@ async function main() {
       metadata: chained.output.asset.artifact.metadata,
       executionId: chained.record.id,
     });
+    const consumerInvalidInputCosts = [];
     const unsuitable = JSON.parse(process.env.EDITAGENT_CUT_SOURCES).filter(
       (s) => s.numerator === 30 && (!s.hasAudio || s.silence),
     );
@@ -331,10 +332,11 @@ async function main() {
       );
       const failed = (
         await pool.query(
-          "SELECT e.outcome,e.code,e.cleanup_status,j.status,j.attempt_count FROM tool_executions e JOIN jobs j ON j.id=e.job_id JOIN tool_remote_calls r ON r.execution_id=e.id WHERE r.call->'resource'->>'id'=$1 ORDER BY e.started_at_ms DESC LIMIT 1",
+          "SELECT e.outcome,e.code,e.cleanup_status,e.cost_micros::text,e.cost_basis,j.status,j.attempt_count FROM tool_executions e JOIN jobs j ON j.id=e.job_id JOIN tool_remote_calls r ON r.execution_id=e.id WHERE r.call->'resource'->>'id'=$1 ORDER BY e.started_at_ms DESC LIMIT 1",
           [s.id],
         )
       ).rows[0];
+      consumerInvalidInputCosts.push(failed);
       assert.equal(failed.code, "invalid_input");
       assert.equal(failed.status, "Failed");
       assert.equal(failed.attempt_count, 1, "Permanent unsuitable audio must not retry");
@@ -657,6 +659,8 @@ async function main() {
           storageFailureRetry: true,
           postUploadRecovery: true,
           costSettledOnce: true,
+          consumerInvalidInputCosts,
+          cancelledAuditJob: cancelledRow,
           cancelledActiveProcesses: true,
           cancelProcesses,
         }),

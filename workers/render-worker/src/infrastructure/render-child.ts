@@ -12,6 +12,7 @@ import { exactEncoderTiming } from "./encoder-timing.js";
 import { renderFfmpegCut } from "./ffmpeg-render.js";
 import { parseMediaEdit, executeMediaEdit } from "./media-edit.js";
 import { MediaEditInputError } from "./media-edit-error.js";
+import { stagedExpectedAudio } from "./audio-contract.js";
 const controller = new AbortController();
 const cancel = makeCancelSignal();
 controller.signal.addEventListener("abort", () => cancel.cancel(), { once: true });
@@ -41,12 +42,18 @@ async function run(
   if (input.renderVersion !== catalog.renderVersion) throw new Error("Render version mismatch.");
   const assets = await verifyStagedAssets(input, rawAssets, work, controller.signal);
   const timing = compositionTiming(input);
+  const audioPresent = await stagedExpectedAudio(input, assets, work, controller.signal);
   if (engine === "ffmpeg") {
     if (input.compositionId !== "TimelineV1") throw new Error("FFmpeg requires a timeline.");
     await renderFfmpegCut(input, assets, work, controller.signal, (progress) =>
       process.send?.({ type: "progress", progress }),
     );
-    const output = await validateOutput(path.join(work, "output.mp4"), input, controller.signal);
+    const output = await validateOutput(
+      path.join(work, "output.mp4"),
+      input,
+      controller.signal,
+      audioPresent,
+    );
     await writeFile(path.join(work, "output.json"), JSON.stringify({ ...output, engine }) + "\n", {
       flag: "wx",
     });
@@ -111,7 +118,12 @@ async function run(
       },
     });
     controller.signal.throwIfAborted();
-    const output = await validateOutput(path.join(work, "output.mp4"), input, controller.signal);
+    const output = await validateOutput(
+      path.join(work, "output.mp4"),
+      input,
+      controller.signal,
+      audioPresent,
+    );
     await writeFile(path.join(work, "output.json"), JSON.stringify(output) + "\n", { flag: "wx" });
   } finally {
     if (browser) await browser.close({ silent: true });

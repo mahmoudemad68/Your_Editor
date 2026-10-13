@@ -42,7 +42,10 @@ export function buildCutRenderArgs(r: CutRenderRecipe): readonly string[] {
     throw new Error("Cut duration budget exceeded.");
   if (r.segments.length < 1 || r.segments.length > 17)
     throw new Error("Cut segment budget exceeded.");
-  const inputs = [...new Set(r.segments.flatMap((s) => (s.path ? [localMediaPath(s.path)] : [])))];
+  // Each media segment owns a demuxer/decoder, including repeated/backward
+  // references. Multiple atrim branches on one input pad share consumption and
+  // may reach EOF while another branch still needs earlier samples.
+  const inputs = r.segments.flatMap((s) => (s.path ? [localMediaPath(s.path)] : []));
   if (inputs.length > 8) throw new Error("Cut input budget exceeded.");
   const audio = r.segments.some((s) => s.hasAudio),
     color = `0x${r.background.slice(1)}`,
@@ -82,6 +85,7 @@ export function buildCutRenderArgs(r: CutRenderRecipe): readonly string[] {
   const sampleAt = (frame: number) =>
     (BigInt(frame) * 48000n * BigInt(d) + BigInt(Math.floor(n / 2))) / BigInt(n);
   let cursor = 0;
+  let nextInput = 0;
   r.segments.forEach((s, index) => {
     boundedNumber(s.frames, 1, r.totalFrames, true);
     if (s.fromFrame !== cursor) throw new Error("Non-contiguous cut plan.");
@@ -89,7 +93,9 @@ export function buildCutRenderArgs(r: CutRenderRecipe): readonly string[] {
     const durationUs = (BigInt(s.frames) * 1000000n * BigInt(d) + BigInt(n - 1)) / BigInt(n);
     const duration = secondsFromUs(durationUs),
       samples = sampleAt(cursor) - sampleAt(s.fromFrame);
-    const input = s.path ? inputs.indexOf(s.path) : -1;
+    const input = s.path ? nextInput++ : -1;
+    let sourceStartSample = 0n,
+      sourceEndSample = 0n;
     if (input >= 0) {
       if (
         s.sourceStartUs === undefined ||
@@ -102,6 +108,8 @@ export function buildCutRenderArgs(r: CutRenderRecipe): readonly string[] {
       const startFrame =
         (s.sourceStartUs * BigInt(n) + 500000n * BigInt(d)) / (1000000n * BigInt(d));
       const endFrame = (s.sourceEndUs * BigInt(n) + 500000n * BigInt(d)) / (1000000n * BigInt(d));
+      sourceStartSample = sampleAt(Number(startFrame));
+      sourceEndSample = sampleAt(Number(endFrame));
       if (endFrame - startFrame !== BigInt(s.frames))
         throw new Error("Cut source frame count mismatch.");
       graph.push(
@@ -114,10 +122,18 @@ export function buildCutRenderArgs(r: CutRenderRecipe): readonly string[] {
       );
     }
     if (audio) {
+      // Sample-count fades preserve the join ramps without acrossfade's
+      // short-input EOF buffering race. No overlap: joins retain every sample.
+      const ramp = samples < 480n ? samples / 2n : 240n;
+      const fades =
+        (index > 0 ? `,afade=t=in:ss=0:ns=${ramp}:curve=tri` : "") +
+        (index < r.segments.length - 1
+          ? `,afade=t=out:ss=${samples - ramp}:ns=${ramp}:curve=tri`
+          : "");
       graph.push(
         input >= 0 && s.hasAudio
-          ? `[${input}:a:0]aresample=async=1:first_pts=0,aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo,atrim=start_sample=${(s.sourceStartUs! * 48000n + 500000n) / 1000000n}:end_sample=${(s.sourceEndUs! * 48000n + 500000n) / 1000000n},asetpts=PTS-STARTPTS,aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo,apad,atrim=end_sample=${samples},asetpts=N/SR/TB[a${index}]`
-          : `anullsrc=r=48000:cl=stereo:d=${duration},atrim=end_sample=${samples},asetpts=N/SR/TB[a${index}]`,
+          ? `[${input}:a:0]aresample=async=1:first_pts=0,aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo,atrim=start_sample=${sourceStartSample}:end_sample=${sourceEndSample},asetpts=PTS-STARTPTS,aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo,apad,atrim=end_sample=${samples},asetpts=N/SR/TB${fades}[a${index}]`
+          : `anullsrc=r=48000:cl=stereo:d=${duration},atrim=end_sample=${samples},asetpts=N/SR/TB${fades}[a${index}]`,
       );
     }
   });
@@ -127,12 +143,10 @@ export function buildCutRenderArgs(r: CutRenderRecipe): readonly string[] {
       `concat=n=${r.segments.length}:v=1:a=0,settb=expr=${d}/${n},setpts=N[vout]`,
   );
   if (audio) {
-    if (r.segments.length === 1) graph.push("[a0]asetpts=N/SR/TB[aout]");
-    else
-      for (let i = 1; i < r.segments.length; i++)
-        graph.push(
-          `[${i === 1 ? "a0" : `mix${i - 1}`}][a${i}]acrossfade=d=0.005:o=0:c1=tri:c2=tri[${i === r.segments.length - 1 ? "aout" : `mix${i}`}]`,
-        );
+    graph.push(
+      r.segments.map((_, i) => `[a${i}]`).join("") +
+        `concat=n=${r.segments.length}:v=0:a=1,asettb=1/48000,asetpts=N/SR/TB[aout]`,
+    );
   }
   const filters = graph.join(";");
   validateFilterGraph(filters, true);
@@ -160,10 +174,10 @@ export function buildCutRenderArgs(r: CutRenderRecipe): readonly string[] {
     fps,
     "-fps_mode",
     "cfr",
-    "-frames:v",
-    String(r.totalFrames),
     "-video_track_timescale",
     String(n),
+    "-movie_timescale",
+    "48000",
     "-movflags",
     "+faststart",
     "-fs",

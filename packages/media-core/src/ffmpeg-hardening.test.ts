@@ -18,6 +18,10 @@ test("QA42 F1 per-filter keys and values reject network/sink/option/resource pay
     "pad=320:180:(ow-iw)/2:(oh-ih)/2:color=movie",
     "color=c=red:s=99999x1:r=30",
     "concat=n=100000:v=1:a=1",
+    "afade=t=in:ss=0:ns=0:curve=tri",
+    "afade=t=out:ss=0:ns=241:curve=tri",
+    "afade=t=in:ss=0:ns=240:curve=tri:filename=/etc/passwd",
+    "afade=t=in:ss=0:ns=240:curve=tri;amovie=/etc/passwd",
   ];
   for (const graph of bad) {
     assert.throws(() => validateFilterGraph(graph));

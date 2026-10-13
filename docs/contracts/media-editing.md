@@ -34,6 +34,29 @@ shortening the timeline; Remotion retains its existing hard audio cuts. Audio wa
 therefore need not be byte-identical across strategies. Neither path changes stored
 source timing. Output is H.264/yuv420p MP4 with AAC when audio exists.
 
+Each media segment has its own demuxer/decoder, including backward and repeated
+references. Audio sample boundaries come directly from the rational frame clock
+at 48 kHz. Join ramps use bounded sample-count fades followed by non-overlapping
+audio concat; chained `acrossfade` is not used for short cuts. The MP4 movie clock
+is also 48 kHz so its edit list does not round sample duration to milliseconds.
+
+Output and cached-artifact validation obtains expected audio presence from
+authorized source metadata, independently checked on staged bytes by the
+executor. It checks stream start clocks, exact video timing and decoded frame
+count, expected AAC stereo/48 kHz presence, logical audio duration and a full
+streaming PCM decode. Audio shortfall greater than one rounded sample is rejected.
+AAC packet/decoded padding is bounded separately to 1023 samples; it is not a
+general A/V-duration tolerance. Canonical artifact duration remains the rational
+video-frame duration, not packet padding. A source's inspected video count is
+retained for video-preserving transforms only with independent CFR evidence and
+at most one millisecond of movie-header rounding; genuinely audio-led duration
+is not discarded.
+
+The CFR capability probe selects video before its bounded 128-packet window,
+uses complete decoder frame evidence (excluding flush tails), orders presentation
+timestamps and verifies cadence against the rational stream clock. Rotation,
+HDR, unsupported codecs/formats and genuine VFR remain outside the fast path.
+
 ## Seven registered tools
 
 The SDK naming convention remains `namespace.hyphenated-name`, version `1.0.0`:

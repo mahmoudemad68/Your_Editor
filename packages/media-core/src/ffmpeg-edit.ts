@@ -12,6 +12,8 @@ export interface EditSource {
   readonly durationUs: bigint;
   readonly frameRate: { numerator: number; denominator: number };
   readonly hasAudio: boolean;
+  /** Exact inspected CFR video count, when the container header rounds the exact video end. */
+  readonly frameCount?: number;
 }
 export type VideoEdit =
   | {
@@ -32,6 +34,14 @@ export function editOutputTiming(source: EditSource, edit: VideoEdit) {
   let duration = source.durationUs,
     width = source.width,
     height = source.height;
+  if (source.frameCount !== undefined) {
+    boundedNumber(source.frameCount, 1, 108000, true);
+    const logical =
+      (BigInt(source.frameCount) * 1000000n * BigInt(d) + BigInt(Math.floor(n / 2))) / BigInt(n);
+    const delta = source.durationUs - logical;
+    if (delta < -1000n || delta > 1000n) throw new Error("Source frame timing is inconsistent.");
+    duration = logical;
+  }
   if (edit.operation === "crop_video" || edit.operation === "resize_video") {
     width = boundedNumber(edit.width, 2, 4096, true);
     height = boundedNumber(edit.height, 2, 4096, true);
@@ -65,9 +75,17 @@ export function editOutputTiming(source: EditSource, edit: VideoEdit) {
     duration > 1800000000n
   )
     throw new Error("Unsupported edit output.");
-  const totalFrames = Number(
-    ((2n * duration - 1n) * BigInt(n) + 2000000n * BigInt(d) - 1n) / (2000000n * BigInt(d)),
-  );
+  const totalFrames =
+    source.frameCount !== undefined
+      ? edit.operation === "change_speed"
+        ? Number(
+            (BigInt(source.frameCount) * BigInt(edit.denominator) + BigInt(edit.numerator - 1)) /
+              BigInt(edit.numerator),
+          )
+        : source.frameCount
+      : Number(
+          ((2n * duration - 1n) * BigInt(n) + 2000000n * BigInt(d) - 1n) / (2000000n * BigInt(d)),
+        );
   boundedNumber(totalFrames, 1, 108000, true);
   const durationUs =
     (BigInt(totalFrames) * 1000000n * BigInt(d) + BigInt(Math.floor(n / 2))) / BigInt(n);
@@ -163,8 +181,6 @@ export function buildVideoEditArgs(
     rate,
     "-fps_mode",
     "cfr",
-    "-frames:v",
-    String(t.totalFrames),
     "-video_track_timescale",
     String(t.frameRate.numerator),
   ];
@@ -200,7 +216,17 @@ export function buildVideoEditArgs(
       "192k",
     );
   } else args.push("-an");
-  args.push("-movflags", "+faststart", "-fs", "1073741824", "-f", "mp4", localMediaPath(output));
+  args.push(
+    "-movie_timescale",
+    "48000",
+    "-movflags",
+    "+faststart",
+    "-fs",
+    "1073741824",
+    "-f",
+    "mp4",
+    localMediaPath(output),
+  );
   return Object.freeze(args);
 }
 export function buildLoudnessMeasureArgs(

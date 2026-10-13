@@ -186,7 +186,7 @@ export class MediaEditingTool implements ITool {
                 progressFailed = true;
               });
           },
-          resolved.map(({ objectKey: _key, ...a }) => a),
+          resolved.map(({ objectKey: _key, audioPresent: _audio, ...a }) => a),
         );
         await progress;
         if (progressFailed) throw new Error("Editing progress unavailable.");
@@ -358,6 +358,7 @@ export class MediaEditingTool implements ITool {
       height: number;
       durationUs: string;
       frameRate: { numerator: number; denominator: number };
+      audioPresent: boolean;
     };
     const frames = Number(
       (BigInt(m.durationUs) * BigInt(m.frameRate.numerator) +
@@ -376,6 +377,6 @@ export class MediaEditingTool implements ITool {
       props: { title: "media-edit", background: "#000000" },
       correlationId: "media-edit",
     };
-    await validateOutput(file, contract, signal);
+    await validateOutput(file, contract, signal, m.audioPresent);
   }
 }

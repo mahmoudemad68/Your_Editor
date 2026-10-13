@@ -154,11 +154,11 @@ function validate(part: string) {
       if (!/^[1-5]x(?:[1-9]|1[0-9]|20):nb_frames=(?:[1-9]|1[0-9]|20)$/.test(v)) bad();
       return;
     case "concat":
-      return options(v, { n: (n) => decimal(n, 1, 32, true), v: exact("1"), a: exact("0", "1") }, [
-        "n",
-        "v",
-        "a",
-      ]);
+      return options(
+        v,
+        { n: (n) => decimal(n, 1, 32, true), v: exact("0", "1"), a: exact("0", "1") },
+        ["n", "v", "a"],
+      );
     case "color":
       return options(
         v,
@@ -194,6 +194,17 @@ function validate(part: string) {
     }
     case "atempo":
       return decimal(v, 0.5, 2);
+    case "afade":
+      return options(
+        v,
+        {
+          t: exact("in", "out"),
+          ss: count,
+          ns: (n) => decimal(n, 1, 240, true),
+          curve: exact("tri"),
+        },
+        ["t", "ss", "ns", "curve"],
+      );
     case "acrossfade":
       return exact("d=0.005:o=0:c1=tri:c2=tri")(v);
     case "loudnorm":

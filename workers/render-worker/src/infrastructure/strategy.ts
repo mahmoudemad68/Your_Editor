@@ -15,6 +15,7 @@ import { RenderObjects, workspace } from "./storage.js";
 import { validateOutput } from "./probe-output.js";
 import { compositionTiming } from "../application/timeline-mapping.js";
 import { renderEngine } from "../application/strategy-selection.js";
+import { expectedTimelineAudio } from "./audio-contract.js";
 class StoredRenderStrategy implements IRenderStrategy {
   constructor(
     private objects: RenderObjects,
@@ -46,6 +47,7 @@ class StoredRenderStrategy implements IRenderStrategy {
         ? await this.assets?.resolve(projectId, input.props.timeline.sources, signal)
         : [];
     if (!resolved) throw new PermanentJobError("Asset resolver unavailable.");
+    const audioPresent = expectedTimelineAudio(input, resolved);
     const signature = createHash("sha256")
       .update(canonicalJson({ input, assets: resolved }))
       .digest("hex");
@@ -55,7 +57,7 @@ class StoredRenderStrategy implements IRenderStrategy {
       const output = path.join(stage.work, "output.mp4");
       if (existing) {
         await this.objects.stage(key, output, existing, signal);
-        await validateOutput(output, input, signal);
+        await validateOutput(output, input, signal, audioPresent);
         return {
           objectKey: key,
           ...existing,
@@ -99,10 +101,10 @@ class StoredRenderStrategy implements IRenderStrategy {
         this.timeoutMs,
         signal,
         progress,
-        resolved.map(({ objectKey: _key, ...asset }) => asset),
+        resolved.map(({ objectKey: _key, audioPresent: _audio, ...asset }) => asset),
         engine,
       );
-      await validateOutput(output, input, signal);
+      await validateOutput(output, input, signal, audioPresent);
       const saved = await this.objects.put(key, signature, output, signal);
       signal.throwIfAborted();
       return {

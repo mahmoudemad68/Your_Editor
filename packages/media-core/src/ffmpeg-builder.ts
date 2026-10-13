@@ -88,6 +88,7 @@ export const FFMPEG_FILTER_ALLOWLIST = [
   "atempo",
   "loudnorm",
   "acrossfade",
+  "afade",
 ] as const;
 export function audioFilterGraph(filters: readonly AudioFilter[]): string {
   if (!Array.isArray(filters) || filters.length < 1 || filters.length > 16)

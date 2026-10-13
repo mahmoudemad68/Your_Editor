@@ -20,6 +20,8 @@ import { buildRenderImages } from "./build.mjs";
 import { verifyEmojiFrame } from "./emoji-golden.mjs";
 import { verifyStorageReadiness, verifyStorageStartup } from "./readiness-proof.mjs";
 import { verifyEditingArtifacts } from "./editing-verify.mjs";
+import { registerAudioCutFixtures } from "./audio-cut-fixtures.mjs";
+import { verifyAudioCutArtifacts } from "./audio-cut-verify.mjs";
 import { prepareCutFixtures } from "./editing-fixtures.mjs";
 import {
   solidHash,
@@ -346,6 +348,27 @@ try {
       (await readFile(new URL("./editing-proof.cjs", import.meta.url), "utf8")),
   );
   const editingReport = parseEvidence(editingOutput, "EDITING_EVIDENCE");
+  const audioSources = await registerAudioCutFixtures({
+    pool,
+    s3,
+    project: fixtureProject,
+    newId,
+    directory: artifactDir,
+  });
+  const audioOutput = await runProof(
+    `require('node:process').env.EDITAGENT_PROOF_PROJECT=${JSON.stringify(fixtureProject)};require('node:process').env.EDITAGENT_AUDIO_CUT_SOURCES=${JSON.stringify(JSON.stringify(audioSources))};\n` +
+      (await readFile(new URL("./audio-cut-proof.cjs", import.meta.url), "utf8")),
+  );
+  const audioReport = parseEvidence(audioOutput, "AUDIO_EVIDENCE");
+  for (const artifact of [...audioReport.artifacts, audioReport.negativeArtifact]) {
+    const object = await s3.send(new GetObjectCommand({ Bucket: "editagent", Key: artifact.key }));
+    await writeFile(
+      artifactDir + "/" + artifact.label + ".mp4",
+      await object.Body.transformToByteArray(),
+    );
+  }
+  audioReport.independentVerification = verifyAudioCutArtifacts(artifactDir, audioReport);
+  await writeFile(artifactDir + "/audio-report.json", JSON.stringify(audioReport, null, 2) + "\n");
   const processCheck = JSON.parse(
     docker([
       "exec",
@@ -370,7 +393,7 @@ try {
     ]).trim();
     assert.equal(alive, "gone", "Cancelled owned process identity must disappear");
   }
-  for (const original of [{ key: sourceKey, sha256: sha }, ...cutSources]) {
+  for (const original of [{ key: sourceKey, sha256: sha }, ...cutSources, ...audioSources]) {
     const current = await s3.send(new GetObjectCommand({ Bucket: "editagent", Key: original.key }));
     assert.equal(
       createHash("sha256")
