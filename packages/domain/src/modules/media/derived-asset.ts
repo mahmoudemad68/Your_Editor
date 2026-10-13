@@ -13,7 +13,7 @@ import {
   projectId,
 } from "../../kernel/id.js";
 
-export type DerivedAssetKind = "proxy" | "extracted-audio" | "thumbnail";
+export type DerivedAssetKind = "proxy" | "extracted-audio" | "thumbnail" | "edited-video";
 
 export interface DerivedArtifact {
   readonly projectId: string;
@@ -96,10 +96,17 @@ export class DerivedAsset {
 }
 
 export function derivedAssetKind(value: string): DerivedAssetKind {
-  if (value === "proxy" || value === "extracted-audio" || value === "thumbnail") {
+  if (
+    value === "proxy" ||
+    value === "extracted-audio" ||
+    value === "thumbnail" ||
+    value === "edited-video"
+  ) {
     return value;
   }
-  throw new DomainError("DerivedAsset kind must be proxy, extracted-audio, or thumbnail.");
+  throw new DomainError(
+    "DerivedAsset kind must be proxy, extracted-audio, thumbnail, or edited-video.",
+  );
 }
 
 function validateArtifact(
@@ -112,6 +119,21 @@ function validateArtifact(
     throw new DomainError("Derived artifact signature and checksum must be SHA-256.");
   }
   const prefix = `projects/${project}/derived/${source}/${kind}/${value.parameterSignature}/`;
+  if (kind === "edited-video") {
+    if (
+      value.storageKey !== `${prefix}${value.sha256}.mp4` ||
+      value.mimeType !== "video/mp4" ||
+      !/^[1-9][0-9]{0,9}$/.test(value.byteSize) ||
+      BigInt(value.byteSize) > 1073741824n ||
+      value.metadata["variant"] !== "edit" ||
+      !value.metadata["parameters"] ||
+      typeof value.metadata["parameters"] !== "object" ||
+      Array.isArray(value.metadata["parameters"])
+    )
+      throw new DomainError("Edited video artifact identity is invalid.");
+    const metadata = JSON.parse(JSON.stringify(value.metadata)) as Record<string, unknown>;
+    return Object.freeze({ ...value, projectId: project, metadata: freezeMetadata(metadata) });
+  }
   if (
     !value.storageKey.startsWith(prefix) ||
     !/^(proxy\.mp4|asr\.wav|mix\.wav|poster\.jpg|sprite\.jpg)$/.test(

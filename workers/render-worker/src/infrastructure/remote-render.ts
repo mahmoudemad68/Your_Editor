@@ -1,6 +1,13 @@
 import { request } from "node:http";
 import { JobExecutionUnconfirmedError } from "@editagent/job-queue";
-import type { RenderInput, RenderProgress, VerifiedAsset } from "../application/ports.js";
+import { ToolError } from "@editagent/tool-sdk";
+import type {
+  RendererWorkInput,
+  MediaEditInput,
+  RenderInput,
+  RenderProgress,
+  VerifiedAsset,
+} from "../application/ports.js";
 const socketPath = "/run/render/control.sock";
 export async function executorReady(): Promise<boolean> {
   try {
@@ -30,13 +37,14 @@ async function status(): Promise<string> {
     req.end();
   });
 }
-export async function remoteRender(
+async function remoteWork(
   token: string,
-  input: RenderInput,
+  input: RendererWorkInput,
   timeoutMs: number,
   signal: AbortSignal,
   progress: (p: RenderProgress) => void,
   assets: readonly VerifiedAsset[] = [],
+  engine: "remotion" | "ffmpeg" | "media-edit" = "remotion",
 ) {
   signal.throwIfAborted();
   try {
@@ -54,7 +62,7 @@ export async function remoteRender(
       const req = request(
         {
           socketPath,
-          path: "/render",
+          path: engine === "media-edit" ? "/edit" : "/render",
           method: "POST",
           headers: { "Content-Type": "application/json" },
         },
@@ -77,10 +85,15 @@ export async function remoteRender(
               const record = line.slice(0, end);
               line = line.slice(end + 1);
               try {
-                const v = JSON.parse(record) as RenderProgress & { type: string };
+                const v = JSON.parse(record) as RenderProgress & { type: string; code?: string };
                 if (v.type === "progress") progress(v);
                 else if (v.type === "completed") done = true;
-                else if (v.type === "failed") finish(new Error("Render failed."));
+                else if (v.type === "failed")
+                  finish(
+                    engine === "media-edit" && v.code === "invalid_input"
+                      ? new ToolError("invalid_input")
+                      : new Error("Render failed."),
+                  );
                 else throw new Error();
               } catch {
                 req.destroy();
@@ -96,7 +109,7 @@ export async function remoteRender(
         req.destroy(signal.reason instanceof Error ? signal.reason : new Error("Render aborted."));
       signal.addEventListener("abort", abort, { once: true });
       req.once("error", (e) => finish(e));
-      req.end(JSON.stringify({ token, input, timeoutMs, assets }));
+      req.end(JSON.stringify({ token, input, timeoutMs, assets, engine }));
       if (signal.aborted) abort();
     });
     signal.throwIfAborted();
@@ -118,4 +131,25 @@ export async function remoteRender(
     }
     throw new JobExecutionUnconfirmedError();
   }
+}
+export function remoteRender(
+  token: string,
+  input: RenderInput,
+  timeoutMs: number,
+  signal: AbortSignal,
+  progress: (p: RenderProgress) => void,
+  assets: readonly VerifiedAsset[] = [],
+  engine: "remotion" | "ffmpeg" = "remotion",
+) {
+  return remoteWork(token, input, timeoutMs, signal, progress, assets, engine);
+}
+export function remoteEdit(
+  token: string,
+  input: MediaEditInput,
+  timeoutMs: number,
+  signal: AbortSignal,
+  progress: (p: RenderProgress) => void,
+  assets: readonly VerifiedAsset[],
+) {
+  return remoteWork(token, input, timeoutMs, signal, progress, assets, "media-edit");
 }

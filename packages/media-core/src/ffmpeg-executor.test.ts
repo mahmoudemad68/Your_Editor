@@ -10,6 +10,14 @@ test("progress parser keeps exact integer timestamps", () => {
     finished: true,
   });
   assert.throws(() => parseFfmpegProgress("frame=-1\nout_time_us=NaN\n"));
+  for (const time of ["-21333", "N/A"])
+    assert.deepEqual(parseFfmpegProgress(`frame=0\nout_time_us=${time}\nprogress=continue\n`), {
+      frame: 0,
+      outTimeUs: 0n,
+      finished: false,
+    });
+  for (const time of ["NaN", "Infinity", "-9223372036854775809", "9223372036854775808"])
+    assert.throws(() => parseFfmpegProgress(`frame=0\nout_time_us=${time}\nprogress=continue\n`));
 });
 test("real FFmpeg no-shell execution, nonzero and bounded diagnostics", async () => {
   const executor = new FfmpegExecutor();

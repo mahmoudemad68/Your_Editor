@@ -2,8 +2,9 @@ import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { fork } from "node:child_process";
 import path from "node:path";
 import { JobExecutionUnconfirmedError } from "@editagent/job-queue";
-import type { RenderInput, RenderProgress, VerifiedAsset } from "../application/ports.js";
+import type { RendererWorkInput, RenderProgress, VerifiedAsset } from "../application/ports.js";
 import { loadRendererProcessConfig } from "./config.js";
+import { MediaEditInputError } from "./media-edit-error.js";
 interface ProcessIdentity {
   pid: number;
   ppid: number;
@@ -31,12 +32,13 @@ function table(): Map<number, ProcessIdentity> {
 }
 const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 export async function runRenderChild(
-  input: RenderInput,
+  input: RendererWorkInput,
   work: string,
   temp: string,
   signal: AbortSignal,
   onProgress: (p: RenderProgress) => void,
   assets: readonly VerifiedAsset[] = [],
+  engine: "remotion" | "ffmpeg" | "media-edit" = "remotion",
 ): Promise<{ processes: ProcessIdentity[]; pid: number }> {
   signal.throwIfAborted();
   const config = loadRendererProcessConfig();
@@ -125,7 +127,7 @@ export async function runRenderChild(
   });
   child.on("message", (raw: unknown) => {
     if (!raw || typeof raw !== "object" || !("type" in raw)) return;
-    const m = raw as { type: string; progress?: RenderProgress; detail?: string };
+    const m = raw as { type: string; progress?: RenderProgress; detail?: string; code?: string };
     if (m.type === "progress" && m.progress) {
       collect();
       try {
@@ -182,8 +184,14 @@ export async function runRenderChild(
       complete = true;
       finish();
     } else if (m.type === "failed") {
-      console.error(JSON.stringify({ errorCode: "render_execution_failed", detail: m.detail }));
-      finish(new Error("Render execution failed."));
+      console.error(
+        JSON.stringify({ errorCode: "render_execution_failed", engine, detail: m.detail }),
+      );
+      finish(
+        engine === "media-edit" && m.code === "invalid_input"
+          ? new MediaEditInputError()
+          : new Error("Render execution failed."),
+      );
     }
   });
   let term: ReturnType<typeof setTimeout> | undefined,
@@ -200,7 +208,7 @@ export async function runRenderChild(
     hard = setTimeout(() => kill("SIGKILL"), 600);
   };
   signal.addEventListener("abort", abort, { once: true });
-  child.send({ type: "start", input, work, assets });
+  child.send({ type: "start", input, work, assets, engine });
   if (signal.aborted) abort();
   let outcome: unknown;
   let unconfirmed = false;

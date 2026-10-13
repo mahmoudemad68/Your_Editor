@@ -6,6 +6,8 @@ import { assertRenderIsolation } from "./security.js";
 import { parseRenderInput } from "./contract.js";
 import { runRenderChild } from "./process-tree.js";
 import { verifyStagedAssets } from "./verified-assets.js";
+import { parseMediaEdit } from "./media-edit.js";
+import { MediaEditInputError } from "./media-edit-error.js";
 const ROOT = "/render-work",
   SOCKET = "/run/render/control.sock";
 export async function startExecutor() {
@@ -24,7 +26,12 @@ export async function startExecutor() {
         res.writeHead(unsafe ? 503 : 200).end(active ? "busy" : "idle");
         return;
       }
-      if (req.method !== "POST" || req.url !== "/render" || active || unsafe) {
+      if (
+        req.method !== "POST" ||
+        !["/render", "/edit"].includes(req.url ?? "") ||
+        active ||
+        unsafe
+      ) {
         res.writeHead(503).end();
         return;
       }
@@ -56,17 +63,26 @@ export async function startExecutor() {
           input: unknown;
           timeoutMs: number;
           assets: unknown;
+          engine?: "remotion" | "ffmpeg" | "media-edit";
         };
         if (
           !body ||
-          Object.keys(body).sort().join(",") !== "assets,input,timeoutMs,token" ||
+          !["assets,input,timeoutMs,token", "assets,engine,input,timeoutMs,token"].includes(
+            Object.keys(body).sort().join(","),
+          ) ||
+          (req.url === "/edit"
+            ? body.engine !== "media-edit"
+            : body.engine !== undefined &&
+              body.engine !== "remotion" &&
+              body.engine !== "ffmpeg") ||
           !/^[a-f0-9]{32}$/.test(body.token) ||
           !Number.isSafeInteger(body.timeoutMs) ||
           body.timeoutMs < 1 ||
           body.timeoutMs > 600000
         )
           throw new Error("Invalid executor request.");
-        const input = parseRenderInput(body.input);
+        const input =
+          req.url === "/edit" ? parseMediaEdit(body.input) : parseRenderInput(body.input);
         timeout = setTimeout(
           () => abort.abort(new Error("Render deadline exceeded.")),
           body.timeoutMs,
@@ -90,12 +106,19 @@ export async function startExecutor() {
                 abort.abort(new Error("Render progress consumer stalled."));
             },
             assets,
+            body.engine ?? "remotion",
           );
           abort.signal.throwIfAborted();
           res.end(JSON.stringify({ type: "completed", proof }) + "\n");
         } catch (e) {
           if (e instanceof JobExecutionUnconfirmedError) unsafe = true;
-          if (!res.destroyed) res.end(JSON.stringify({ type: "failed" }) + "\n");
+          if (!res.destroyed)
+            res.end(
+              JSON.stringify({
+                type: "failed",
+                code: e instanceof MediaEditInputError ? "invalid_input" : undefined,
+              }) + "\n",
+            );
           await rm(work, { recursive: true, force: true });
         }
       } finally {

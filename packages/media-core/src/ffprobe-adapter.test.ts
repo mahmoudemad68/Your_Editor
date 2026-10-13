@@ -126,6 +126,21 @@ test("ffprobe failures stay controlled", async () => {
   );
 });
 
+test("cut capability fails closed for variable cadence, rotation and non-video input", async () => {
+  const probe = new FFprobeMediaProbe();
+  assert.equal(await probe.supportsCutRendering({ filePath: normal }), true);
+  assert.equal(
+    await probe.supportsCutRendering({ filePath: normal }, { numerator: 25, denominator: 1 }),
+    true,
+  );
+  assert.equal(
+    await probe.supportsCutRendering({ filePath: normal }, { numerator: 30, denominator: 1 }),
+    false,
+  );
+  for (const name of ["vfr.mp4", "rotated.mov", "audio.wav", "image.png"])
+    assert.equal(await probe.supportsCutRendering({ filePath: path.join(media, name) }), false);
+});
+
 test("probe cancellation reaps the subprocess instead of waiting for its deadline", async () => {
   const controller = new AbortController();
   const probe = new FFprobeMediaProbe({

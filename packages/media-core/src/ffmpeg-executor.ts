@@ -26,10 +26,21 @@ export function parseFfmpegProgress(block: string): FfmpegProgress {
       .map((line) => line.split("=", 2)),
   );
   const frame = fields["frame"] ?? "0",
-    time = fields["out_time_us"] ?? "0";
-  if (!/^\d{1,15}$/.test(frame) || !/^\d{1,19}$/.test(time) || BigInt(time) > 9223372036854775807n)
+    time = fields["out_time_us"] === "N/A" ? "0" : (fields["out_time_us"] ?? "0");
+  if (
+    !/^\d{1,15}$/.test(frame) ||
+    !/^-?\d{1,19}$/.test(time) ||
+    BigInt(time) > 9223372036854775807n ||
+    BigInt(time) < -9223372036854775808n
+  )
     throw new Error("Malformed progress.");
-  return { frame: Number(frame), outTimeUs: BigInt(time), finished: fields["progress"] === "end" };
+  // Encoder priming may report negative/unknown progress before the first packet.
+  // This is transport progress, not a negative canonical media timestamp.
+  return {
+    frame: Number(frame),
+    outTimeUs: BigInt(time) < 0n ? 0n : BigInt(time),
+    finished: fields["progress"] === "end",
+  };
 }
 export interface FfmpegExecutionOptions {
   readonly executable?: string;
@@ -83,7 +94,7 @@ export class FfmpegExecutor {
           throw new Error("Input protocol policy is required.");
       }
       if (args[i] === "-af" || args[i] === "-vf" || args[i] === "-filter_complex")
-        validateFilterGraph(args[i + 1] ?? "");
+        validateFilterGraph(args[i + 1] ?? "", args[i] === "-filter_complex");
     }
     if (args.includes("-i") && !["-", "pipe:1"].includes(args.at(-1) ?? ""))
       localMediaPath(args.at(-1) ?? "");
@@ -103,13 +114,16 @@ export class FfmpegExecutor {
   ): Promise<{ stdout: Buffer; stderr: string }> {
     return new Promise((resolve, reject) => {
       const exe = options.executable ?? "ffmpeg";
+      const progressPipe = args.some(
+        (value, i) => value === "-progress" && args[i + 1] === "pipe:3",
+      );
       const child = spawn(
         options.sandbox?.executable ?? exe,
         options.sandbox ? [...options.sandbox.prefix, exe, "--", exe, ...args] : args,
         {
           shell: false,
           detached: process.platform !== "win32" && options.processGroup !== "supervised",
-          stdio: ["ignore", "pipe", "pipe", ...(options.onProgress ? ["pipe" as const] : [])],
+          stdio: ["ignore", "pipe", "pipe", ...(progressPipe ? ["pipe" as const] : [])],
           env: options.sandbox?.env ?? {
             PATH: "/usr/local/bin:/usr/bin:/bin",
             LANG: "C",
@@ -171,7 +185,7 @@ export class FfmpegExecutor {
         if (err > limit) stop("output_limit");
         else stderr.push(chunk);
       });
-      if (options.onProgress) {
+      if (progressPipe) {
         const stream = child.stdio[3];
         if (stream && "on" in stream)
           stream.on("data", (chunk: Buffer) => {

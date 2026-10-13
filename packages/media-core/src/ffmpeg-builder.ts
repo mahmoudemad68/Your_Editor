@@ -1,4 +1,5 @@
 import path from "node:path";
+import { checkFilterGraph } from "./ffmpeg-filter-policy.js";
 
 /** No URLs, relative paths, option values or control characters at the media boundary. */
 export function localMediaPath(value: string): string {
@@ -7,6 +8,7 @@ export function localMediaPath(value: string): string {
     !path.isAbsolute(value) ||
     hasUnsafeControl(value) ||
     value.includes("://") ||
+    /(?:^|\/)[a-zA-Z][a-zA-Z0-9+.-]*:/.test(value) ||
     value.length > 4096
   )
     throw new Error("A controlled absolute local media path is required.");
@@ -38,6 +40,27 @@ export type AudioFilter =
   | { readonly kind: "silencedetect"; readonly noiseDb: number; readonly durationUs: bigint }
   | { readonly kind: "ebur128" }
   | { readonly kind: "aresample"; readonly rate: number };
+export interface LoudnessSettings {
+  readonly targetLufs: number;
+  readonly truePeakDb: number;
+  readonly loudnessRange: number;
+  readonly measured?: {
+    readonly integrated: number;
+    readonly range: number;
+    readonly peak: number;
+    readonly threshold: number;
+    readonly offset: number;
+  };
+}
+export function loudnessFilter(settings: LoudnessSettings): string {
+  const v = `loudnorm=I=${boundedNumber(settings.targetLufs, -36, -14)}:LRA=${boundedNumber(settings.loudnessRange, 1, 20)}:TP=${boundedNumber(settings.truePeakDb, -6, -1)}`;
+  if (!settings.measured) return v + ":print_format=json";
+  const m = settings.measured;
+  return (
+    v +
+    `:measured_I=${boundedNumber(m.integrated, -100, 20)}:measured_LRA=${boundedNumber(m.range, 0, 100)}:measured_TP=${boundedNumber(m.peak, -100, 30)}:measured_thresh=${boundedNumber(m.threshold, -100, 0)}:offset=${boundedNumber(m.offset, -99, 99)}:linear=true:print_format=json`
+  );
+}
 export const FFMPEG_FILTER_ALLOWLIST = [
   "silencedetect",
   "ebur128",
@@ -54,6 +77,17 @@ export const FFMPEG_FILTER_ALLOWLIST = [
   "pad",
   "select",
   "tile",
+  "concat",
+  "color",
+  "anullsrc",
+  "aformat",
+  "volume",
+  "settb",
+  "asettb",
+  "crop",
+  "atempo",
+  "loudnorm",
+  "acrossfade",
 ] as const;
 export function audioFilterGraph(filters: readonly AudioFilter[]): string {
   if (!Array.isArray(filters) || filters.length < 1 || filters.length > 16)
@@ -212,41 +246,6 @@ export function hasUnsafeControl(value: string): boolean {
 }
 
 /** Defense in depth for infrastructure-owned argv: no unsupported raw graph shape. */
-export function validateFilterGraph(graph: string): void {
-  if (graph.length > 16384 || hasUnsafeControl(graph)) throw new Error("Invalid filter graph.");
-  const components: string[] = [];
-  let part = "",
-    quoted = false,
-    escaped = false;
-  for (const character of graph) {
-    if (escaped) {
-      part += character;
-      escaped = false;
-      continue;
-    }
-    if (character === "\\") {
-      part += character;
-      escaped = true;
-      continue;
-    }
-    if (character === "'") {
-      quoted = !quoted;
-      part += character;
-      continue;
-    }
-    if (!quoted && (character === ";" || character === "[" || character === "]"))
-      throw new Error("Unsupported graph shape.");
-    if (!quoted && character === ",") {
-      components.push(part);
-      part = "";
-    } else part += character;
-  }
-  if (quoted || escaped) throw new Error("Malformed filter graph.");
-  components.push(part);
-  if (components.length > 32) throw new Error("Unbounded filter graph.");
-  for (const component of components) {
-    const name = /^([a-z][a-z0-9]*)(?:=|$)/.exec(component)?.[1];
-    if (!name || !(FFMPEG_FILTER_ALLOWLIST as readonly string[]).includes(name))
-      throw new Error("Unsupported FFmpeg filter.");
-  }
+export function validateFilterGraph(graph: string, complex = false): void {
+  checkFilterGraph(graph, complex);
 }

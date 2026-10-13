@@ -48,7 +48,7 @@ cd "ffmpeg-${version}"
   --enable-encoder=libx264,aac,libvpx_vp9,libopus,pcm_s16le,pcm_f32le,mjpeg \
   --enable-parser=h264,hevc,vp9,av1,aac,opus,png \
   --enable-bsf=aac_adtstoasc,extract_extradata,h264_mp4toannexb,hevc_mp4toannexb,vp9_superframe \
-  --enable-filter=aresample,scale,format,aformat,null,anull,trim,atrim,concat,setpts,asetpts,fps,tpad,apad,pad,tile,setsar,transpose,hflip,vflip,select,silencedetect,ebur128
+  --enable-filter=aresample,scale,format,aformat,null,anull,trim,atrim,concat,setpts,asetpts,settb,asettb,fps,tpad,apad,pad,tile,setsar,transpose,hflip,vflip,select,silencedetect,ebur128,color,anullsrc,crop,atempo,loudnorm,acrossfade
 
 make -j"$(nproc)"
 make install

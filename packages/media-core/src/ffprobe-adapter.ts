@@ -86,6 +86,63 @@ export class FFprobeMediaProbe implements IMediaProbe {
       throw new MediaProbeError("invalid_result");
     }
   }
+
+  /** Transient renderer capability, not a change to persisted media metadata. */
+  async supportsCutRendering(
+    input: ProbeInput,
+    rate?: { numerator: number; denominator: number },
+  ): Promise<boolean> {
+    assertControlledLocalFile(input.filePath);
+    const args = [...buildFfprobeArgs(input.filePath)];
+    args[args.indexOf("-show_entries") + 1] = FFPROBE_SHOW_ENTRIES.replace(
+      "color_space,",
+      "color_space,pix_fmt,color_transfer,sample_aspect_ratio,field_order,",
+    ).replace("frame=media_type,", "frame=media_type,best_effort_timestamp,");
+    args.splice(args.indexOf("-show_streams") + 1, 0, "-show_frames");
+    const stdout = await runFfprobe(
+      this.executable,
+      args,
+      this.timeoutMs,
+      this.maxOutputBytes,
+      input.signal,
+    );
+    try {
+      const document = JSON.parse(stdout.toString("utf8"));
+      const probe = mapFfprobeDocument(document);
+      const video = document.streams?.find(
+        (s: { codec_type?: unknown }) => s.codec_type === "video",
+      );
+      // Integer stream ticks avoid rounding artifacts in decimal 30/29.97 fps timestamps.
+      const frames = document.frames?.filter(
+        (f: { media_type?: unknown }) => f.media_type === "video",
+      );
+      const pts = frames?.map((f: { best_effort_timestamp?: unknown }) => f.best_effort_timestamp);
+      const constant =
+        Array.isArray(pts) &&
+        pts.length >= 3 &&
+        pts.every((p: unknown) => typeof p === "number" && Number.isSafeInteger(p)) &&
+        pts[1] > pts[0] &&
+        pts.slice(2).every((p: number, i: number) => p - pts[i + 1] === pts[1] - pts[0]);
+      return (
+        probe.videoCodec === "h264" &&
+        (!rate ||
+          (probe.frameRate !== null &&
+            probe.frameRate.numerator * BigInt(rate.denominator) ===
+              probe.frameRate.denominator * BigInt(rate.numerator))) &&
+        constant &&
+        video?.avg_frame_rate === video?.r_frame_rate &&
+        (probe.rotation === null || probe.rotation === 0) &&
+        ["yuv420p", "yuvj420p", "yuv444p", "yuvj444p"].includes(video?.pix_fmt) &&
+        [undefined, "unknown", "bt709", "smpte170m", "iec61966-2-1"].includes(
+          video?.color_transfer,
+        ) &&
+        [undefined, "0:1", "1:1"].includes(video?.sample_aspect_ratio) &&
+        [undefined, "unknown", "progressive"].includes(video?.field_order)
+      );
+    } catch {
+      return false;
+    }
+  }
 }
 
 function finiteTimeout(value: number): number {

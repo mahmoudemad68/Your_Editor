@@ -59,6 +59,17 @@ export interface TimelineInput {
   };
 }
 export type RenderInput = FixtureInput | TimelineInput;
+/** Private fixed-operation recipe. Public callers never supply paths or executable filters. */
+export interface MediaEditInput {
+  readonly schemaVersion: 1;
+  readonly kind: "media-edit-v1";
+  readonly renderVersion: string;
+  readonly operation:
+    "concat_clips" | "crop_video" | "resize_video" | "change_speed" | "normalize_audio";
+  readonly parameters: Readonly<Record<string, unknown>>;
+  readonly sources: readonly SourceSnapshot[];
+}
+export type RendererWorkInput = RenderInput | MediaEditInput;
 /** Private, verified staging metadata. Never accepted from a public render payload. */
 export interface VerifiedAsset {
   readonly sourceId: string;

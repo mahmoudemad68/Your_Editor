@@ -9,20 +9,49 @@ import { compositionTiming, mapTimeline } from "../application/timeline-mapping.
 import type { VerifiedAsset } from "../application/ports.js";
 import { verifyStagedAssets } from "./verified-assets.js";
 import { exactEncoderTiming } from "./encoder-timing.js";
+import { renderFfmpegCut } from "./ffmpeg-render.js";
+import { parseMediaEdit, executeMediaEdit } from "./media-edit.js";
+import { MediaEditInputError } from "./media-edit-error.js";
 const controller = new AbortController();
 const cancel = makeCancelSignal();
 controller.signal.addEventListener("abort", () => cancel.cancel(), { once: true });
 let started = false;
-async function run(raw: unknown, work: string, rawAssets: unknown) {
+async function run(
+  raw: unknown,
+  work: string,
+  rawAssets: unknown,
+  engine: "remotion" | "ffmpeg" | "media-edit",
+) {
   const config = loadRendererProcessConfig();
-  const input = parseRenderInput(raw);
   const bundle = path.join(__dirname, "../bundle");
   const catalog = JSON.parse(await readFile(path.join(bundle, "catalog.json"), "utf8")) as {
     renderVersion: string;
   };
+  if (engine === "media-edit") {
+    const input = parseMediaEdit(raw);
+    if (input.renderVersion !== catalog.renderVersion) throw new Error("Render version mismatch.");
+    const assets = await verifyStagedAssets(input, rawAssets, work, controller.signal);
+    const output = await executeMediaEdit(input, assets, work, controller.signal, (p) =>
+      process.send?.({ type: "progress", progress: p }),
+    );
+    await writeFile(path.join(work, "output.json"), JSON.stringify(output) + "\n", { flag: "wx" });
+    return;
+  }
+  const input = parseRenderInput(raw);
   if (input.renderVersion !== catalog.renderVersion) throw new Error("Render version mismatch.");
   const assets = await verifyStagedAssets(input, rawAssets, work, controller.signal);
   const timing = compositionTiming(input);
+  if (engine === "ffmpeg") {
+    if (input.compositionId !== "TimelineV1") throw new Error("FFmpeg requires a timeline.");
+    await renderFfmpegCut(input, assets, work, controller.signal, (progress) =>
+      process.send?.({ type: "progress", progress }),
+    );
+    const output = await validateOutput(path.join(work, "output.mp4"), input, controller.signal);
+    await writeFile(path.join(work, "output.json"), JSON.stringify({ ...output, engine }) + "\n", {
+      flag: "wx",
+    });
+    return;
+  }
   const server = await startBundleServer(bundle, work, assets);
   let browser: Awaited<ReturnType<typeof openBrowser>> | undefined;
   try {
@@ -91,14 +120,29 @@ async function run(raw: unknown, work: string, rawAssets: unknown) {
 }
 process.on("message", (m: unknown) => {
   if (!m || typeof m !== "object" || !("type" in m)) return;
-  const v = m as { type: string; input: unknown; work: string; assets: VerifiedAsset[] };
+  const v = m as {
+    type: string;
+    input: unknown;
+    work: string;
+    assets: VerifiedAsset[];
+    engine?: "remotion" | "ffmpeg" | "media-edit";
+  };
   if (v.type === "abort") {
     controller.abort();
     return;
   }
   if (v.type !== "start" || started) return;
   started = true;
-  void run(v.input, v.work, v.assets).then(
+  if (
+    v.engine !== undefined &&
+    v.engine !== "remotion" &&
+    v.engine !== "ffmpeg" &&
+    v.engine !== "media-edit"
+  ) {
+    send("failed");
+    return;
+  }
+  void run(v.input, v.work, v.assets, v.engine ?? "remotion").then(
     () => send("completed"),
     (error: unknown) => send("failed", error),
   );
@@ -109,7 +153,11 @@ function send(type: string, error?: unknown) {
     error instanceof Error
       ? error.message.slice(0, 512).replace(/https?:\/\/\S+|\/[^\s]+/g, "[resource]")
       : undefined;
-  if (process.send) process.send({ type, detail }, () => process.exit(0));
+  if (process.send)
+    process.send(
+      { type, detail, code: error instanceof MediaEditInputError ? "invalid_input" : undefined },
+      () => process.exit(0),
+    );
   else process.exit(1);
 }
 process.once("disconnect", () => controller.abort());

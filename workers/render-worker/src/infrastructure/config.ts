@@ -8,9 +8,12 @@ export type { StorageWorkerConfig };
 export { ConfigurationError } from "@editagent/shared";
 
 /** Process boundary for render-worker configuration. Reads the environment once. */
-export function loadRenderWorkerConfig(
-  env: EnvSource = process.env,
-): StorageWorkerConfig & { renderTimeoutMs: number; renderQueue: string } {
+export function loadRenderWorkerConfig(env: EnvSource = process.env): StorageWorkerConfig & {
+  renderTimeoutMs: number;
+  renderQueue: string;
+  editingCostMicros: number;
+  editingProjectBudgetMicros: number;
+} {
   const base = parseRenderWorkerConfig(env);
   const timeout =
     env["EDITAGENT_RENDER_TIMEOUT_MS"] === undefined
@@ -24,7 +27,25 @@ export function loadRenderWorkerConfig(
     !/^render-[a-z0-9-]{1,48}$/.test(renderQueue)
   )
     throw new Error("Invalid render worker configuration.");
-  return { ...base, renderTimeoutMs: timeout, renderQueue };
+  const editingCostMicros = Number(env["EDITAGENT_EDITING_COST_MICROS"] ?? "1000"),
+    editingProjectBudgetMicros = Number(
+      env["EDITAGENT_EDITING_PROJECT_BUDGET_MICROS"] ?? "1000000",
+    );
+  if (
+    !Number.isSafeInteger(editingCostMicros) ||
+    editingCostMicros < 0 ||
+    editingCostMicros > 1000000 ||
+    !Number.isSafeInteger(editingProjectBudgetMicros) ||
+    editingProjectBudgetMicros < editingCostMicros
+  )
+    throw new Error("Invalid editing cost configuration.");
+  return {
+    ...base,
+    renderTimeoutMs: timeout,
+    renderQueue,
+    editingCostMicros,
+    editingProjectBudgetMicros,
+  };
 }
 
 /** Credential-free executor/child configuration; browser identity is never a job input. */

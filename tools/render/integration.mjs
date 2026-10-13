@@ -19,6 +19,8 @@ import { startIntegrationServices } from "../../tests/integration/support/contai
 import { buildRenderImages } from "./build.mjs";
 import { verifyEmojiFrame } from "./emoji-golden.mjs";
 import { verifyStorageReadiness, verifyStorageStartup } from "./readiness-proof.mjs";
+import { verifyEditingArtifacts } from "./editing-verify.mjs";
+import { prepareCutFixtures } from "./editing-fixtures.mjs";
 import {
   solidHash,
   verifyGoldenFrames,
@@ -26,6 +28,9 @@ import {
   verifySeparateAudioTrack,
 } from "./golden-frames.mjs";
 const root = new URL("../../", import.meta.url).pathname;
+// Focused local diagnosis still uses real production containers/services; required CI
+// runs the default command, which always includes the existing rendering regressions.
+const editingOnly = process.argv.includes("--editing-only");
 const docker = (args) => execFileSync("docker", args, { encoding: "utf8", maxBuffer: 2097152 });
 const nonce = randomBytes(6).toString("hex"),
   network = "render-proof-" + nonce,
@@ -316,239 +321,304 @@ try {
       child.stdin.end(script);
     });
   }
-  const output = await runProof(script);
+  const output = editingOnly ? "" : await runProof(script);
   function parseEvidence(output, marker) {
     const line = output.split("\n").find((x) => x.startsWith(marker + " "));
     assert.ok(line, "Production proof did not return " + marker);
     return JSON.parse(line.slice(marker.length + 1));
   }
-  const report = parseEvidence(output, "RENDER_EVIDENCE");
+  const report = editingOnly ? {} : parseEvidence(output, "RENDER_EVIDENCE");
   report.readiness = { startup: startupReadiness, ...readiness };
   const timelineScript =
     `require('node:process').env.EDITAGENT_PROOF_PROJECT=${JSON.stringify(fixtureProject)};require('node:process').env.EDITAGENT_PROOF_SOURCE=${JSON.stringify(fixtureSource)};\n` +
     (await readFile(new URL("./timeline-proof.cjs", import.meta.url), "utf8"));
-  const timelineOutput = await runProof(timelineScript);
-  const timelineReport = parseEvidence(timelineOutput, "TIMELINE_EVIDENCE");
-  timelineReport.expectedBlack = expectedBlack;
-  timelineReport.expectedWhite = expectedWhite;
-  for (const artifact of timelineReport.artifacts) {
-    const object = await s3.send(new GetObjectCommand({ Bucket: "editagent", Key: artifact.key }));
-    const file = artifactDir + "/" + artifact.label + ".mp4";
-    await writeFile(file, await object.Body.transformToByteArray());
-  }
-  for (const artifact of timelineReport.artifacts) {
-    const file = artifactDir + "/" + artifact.label + ".mp4";
-    const details = JSON.parse(
-      execFileSync(
-        "ffprobe",
-        ["-v", "error", "-show_format", "-show_streams", "-of", "json", file],
-        { encoding: "utf8" },
-      ),
-    );
-    const v = details.streams.find((x) => x.codec_type === "video");
-    const dimension = artifact.label.startsWith("emoji-") ? 128 : 64;
-    assert.equal(v.width, dimension);
-    assert.equal(v.height, dimension);
-    assert.equal(v.avg_frame_rate, artifact.label === "fractional-cut" ? "30000/1001" : "30/1");
-    artifact.ffprobe = {
-      fps: v.avg_frame_rate,
-      width: v.width,
-      height: v.height,
-      duration: details.format.duration,
-      codec: v.codec_name,
-      audio: details.streams.find((x) => x.codec_type === "audio")?.codec_name,
-    };
-    if (artifact.label === "emoji-tofu-control" || artifact.label === "emoji-unjoined-control") {
-      assert.throws(
-        () => verifyEmojiFrame(file, "emoji-woman-technologist"),
-        /colored glyph|glyph color\/shape error/,
-      );
-      artifact.goldenFrames = { negativeVisualControlRejected: true };
-    } else
-      artifact.goldenFrames = artifact.label.startsWith("emoji-")
-        ? verifyEmojiFrame(file, artifact.label)
-        : verifyGoldenFrames(file, artifact.label);
-    if (artifact.label.startsWith("emoji-"))
-      execFileSync("ffmpeg", [
-        "-v",
-        "error",
-        "-y",
-        "-i",
-        file,
-        "-vf",
-        "select=eq(n\\,15)",
-        "-frames:v",
-        "1",
-        "-threads",
-        "1",
-        artifactDir + "/" + artifact.label + ".png",
-      ]);
-    if (artifact.label === "cut-offset-gap") artifact.audioOffsets = verifyAudioOffsets(file);
-    if (artifact.label === "audio-track-offset")
-      artifact.audioOffsets = verifySeparateAudioTrack(file);
-  }
-  const emoji = timelineReport.artifacts.find((a) => a.label === "emoji-grinning"),
-    repeatedEmoji = timelineReport.artifacts.find((a) => a.label === "emoji-grinning-repeat");
-  assert.equal(
-    emoji.goldenFrames.frameSha256,
-    repeatedEmoji.goldenFrames.frameSha256,
-    "Actual emoji pixels must repeat exactly across two logical renders",
+  const timelineOutput = editingOnly ? "" : await runProof(timelineScript);
+  const timelineReport = editingOnly ? {} : parseEvidence(timelineOutput, "TIMELINE_EVIDENCE");
+  const cutSources = await prepareCutFixtures({
+    pool,
+    s3,
+    project: fixtureProject,
+    newId,
+    directory: artifactDir,
+  });
+  const editingOutput = await runProof(
+    `require('node:process').env.EDITAGENT_PROOF_PROJECT=${JSON.stringify(fixtureProject)};require('node:process').env.EDITAGENT_PROOF_SOURCE=${JSON.stringify(fixtureSource)};require('node:process').env.EDITAGENT_CUT_SOURCES=${JSON.stringify(JSON.stringify(cutSources))};\n` +
+      (await readFile(new URL("./editing-proof.cjs", import.meta.url), "utf8")),
   );
-  timelineReport.emojiPixelsRepeatExactly = true;
-  report.timeline = timelineReport;
-  const expatVersion = docker([
-    "exec",
-    executor,
-    "node",
-    "-e",
-    "const fs=require('node:fs');const b=fs.readFileSync('/usr/local/lib/libexpat.so.1');if(!b.includes(Buffer.from('expat_2.9.0')))throw new Error('Unexpected Expat version');console.log(JSON.stringify({version:'2.9.0',sha256:require('node:crypto').createHash('sha256').update(b).digest('hex')}))",
-  ]);
-  assert.ok(
-    report.firstProcesses.some((p) => p.expatLibrary?.startsWith("/usr/local/lib/libexpat.so.1")),
-    "Real Chrome must load the fixed Expat library",
-  );
-  const browsers = report.firstProcesses.filter((p) =>
-    p.argv?.some((a) => a.includes("chrome-headless-shell")),
-  );
-  assert.ok(browsers.length > 0 && browsers.every((p) => p.uid === "10001"));
-  const coordinatorIdentity = docker([
-    "exec",
-    coordinator,
-    "node",
-    "-p",
-    "process.getuid()+':'+process.getgid()",
-  ]).trim();
-  assert.equal(coordinatorIdentity, "10001:10001");
-  report.emojiFont = JSON.parse(
+  const editingReport = parseEvidence(editingOutput, "EDITING_EVIDENCE");
+  const processCheck = JSON.parse(
     docker([
       "exec",
       executor,
       "node",
       "-e",
-      "const fs=require('node:fs'),h=require('node:crypto');const sha=p=>h.createHash('sha256').update(fs.readFileSync(p)).digest('hex');console.log(JSON.stringify({name:'Noto Color Emoji',version:'2.051',license:'SIL OFL 1.1',sha256:sha('/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf'),licenseSha256:sha('/usr/local/share/editagent/noto-emoji/LICENSE')}))",
+      `const fs=require('node:fs');const identities=${JSON.stringify([])};console.log(JSON.stringify({temp:fs.readdirSync('/tmp').filter(n=>n.startsWith('render-'))}));`,
     ]),
   );
-  assert.equal(
-    report.emojiFont.sha256,
-    "72a635cb3d2f3524c51620cdde406b217204e8a6a06c6a096ff8ed4b5fd6e27b",
+  assert.deepEqual(
+    processCheck.temp,
+    [],
+    "Cancelled edit must remove the executor temporary workspace",
   );
-  assert.equal(
-    report.emojiFont.licenseSha256,
-    "6a73f9541c2de74158c0e7cf6b0a58ef774f5a780bf191f2d7ec9cc53efe2bf2",
-  );
-  report.versions = {
-    chromium: docker([
+  for (const identity of editingReport.cancelProcesses) {
+    const alive = docker([
       "exec",
       executor,
-      "/opt/chromium/chrome-headless-shell-linux64/chrome-headless-shell",
-      "--version",
-    ]).trim(),
-    ffmpeg: docker(["exec", coordinator, "ffmpeg", "-version"]).split("\n")[0],
-    ffprobe: docker(["exec", coordinator, "ffprobe", "-version"]).split("\n")[0],
-    node: docker(["exec", coordinator, "node", "--version"]).trim(),
-    remotion: docker([
+      "node",
+      "-e",
+      `const fs=require('node:fs');try{const raw=fs.readFileSync('/proc/${identity.pid}/stat','utf8');const p=raw.slice(raw.lastIndexOf(')')+2).split(' ');console.log(p[19]===${JSON.stringify(identity.start)}?'alive':'gone');}catch{console.log('gone');}`,
+    ]).trim();
+    assert.equal(alive, "gone", "Cancelled owned process identity must disappear");
+  }
+  for (const original of [{ key: sourceKey, sha256: sha }, ...cutSources]) {
+    const current = await s3.send(new GetObjectCommand({ Bucket: "editagent", Key: original.key }));
+    assert.equal(
+      createHash("sha256")
+        .update(await current.Body.transformToByteArray())
+        .digest("hex"),
+      original.sha256,
+    );
+  }
+  editingReport.originalObjectHashesVerified = true;
+  editingReport.ownedProcessesAbsent = true;
+  for (const artifact of editingReport.artifacts) {
+    const object = await s3.send(new GetObjectCommand({ Bucket: "editagent", Key: artifact.key }));
+    await writeFile(
+      artifactDir + "/" + artifact.label + ".mp4",
+      await object.Body.transformToByteArray(),
+    );
+  }
+  editingReport.independentVerification = verifyEditingArtifacts(artifactDir, editingReport);
+  await writeFile(
+    artifactDir + "/editing-report.json",
+    JSON.stringify(editingReport, null, 2) + "\n",
+  );
+  if (!editingOnly) {
+    timelineReport.expectedBlack = expectedBlack;
+    timelineReport.expectedWhite = expectedWhite;
+    for (const artifact of timelineReport.artifacts) {
+      const object = await s3.send(
+        new GetObjectCommand({ Bucket: "editagent", Key: artifact.key }),
+      );
+      const file = artifactDir + "/" + artifact.label + ".mp4";
+      await writeFile(file, await object.Body.transformToByteArray());
+    }
+    for (const artifact of timelineReport.artifacts) {
+      const file = artifactDir + "/" + artifact.label + ".mp4";
+      const details = JSON.parse(
+        execFileSync(
+          "ffprobe",
+          ["-v", "error", "-show_format", "-show_streams", "-of", "json", file],
+          { encoding: "utf8" },
+        ),
+      );
+      const v = details.streams.find((x) => x.codec_type === "video");
+      const dimension = artifact.label.startsWith("emoji-") ? 128 : 64;
+      assert.equal(v.width, dimension);
+      assert.equal(v.height, dimension);
+      assert.equal(v.avg_frame_rate, artifact.label === "fractional-cut" ? "30000/1001" : "30/1");
+      artifact.ffprobe = {
+        fps: v.avg_frame_rate,
+        width: v.width,
+        height: v.height,
+        duration: details.format.duration,
+        codec: v.codec_name,
+        audio: details.streams.find((x) => x.codec_type === "audio")?.codec_name,
+      };
+      if (artifact.label === "emoji-tofu-control" || artifact.label === "emoji-unjoined-control") {
+        assert.throws(
+          () => verifyEmojiFrame(file, "emoji-woman-technologist"),
+          /colored glyph|glyph color\/shape error/,
+        );
+        artifact.goldenFrames = { negativeVisualControlRejected: true };
+      } else
+        artifact.goldenFrames = artifact.label.startsWith("emoji-")
+          ? verifyEmojiFrame(file, artifact.label)
+          : verifyGoldenFrames(file, artifact.label);
+      if (artifact.label.startsWith("emoji-"))
+        execFileSync("ffmpeg", [
+          "-v",
+          "error",
+          "-y",
+          "-i",
+          file,
+          "-vf",
+          "select=eq(n\\,15)",
+          "-frames:v",
+          "1",
+          "-threads",
+          "1",
+          artifactDir + "/" + artifact.label + ".png",
+        ]);
+      if (artifact.label === "cut-offset-gap") artifact.audioOffsets = verifyAudioOffsets(file);
+      if (artifact.label === "audio-track-offset")
+        artifact.audioOffsets = verifySeparateAudioTrack(file);
+    }
+    const emoji = timelineReport.artifacts.find((a) => a.label === "emoji-grinning"),
+      repeatedEmoji = timelineReport.artifacts.find((a) => a.label === "emoji-grinning-repeat");
+    assert.equal(
+      emoji.goldenFrames.frameSha256,
+      repeatedEmoji.goldenFrames.frameSha256,
+      "Actual emoji pixels must repeat exactly across two logical renders",
+    );
+    timelineReport.emojiPixelsRepeatExactly = true;
+    report.timeline = timelineReport;
+    const expatVersion = docker([
+      "exec",
+      executor,
+      "node",
+      "-e",
+      "const fs=require('node:fs');const b=fs.readFileSync('/usr/local/lib/libexpat.so.1');if(!b.includes(Buffer.from('expat_2.9.0')))throw new Error('Unexpected Expat version');console.log(JSON.stringify({version:'2.9.0',sha256:require('node:crypto').createHash('sha256').update(b).digest('hex')}))",
+    ]);
+    assert.ok(
+      report.firstProcesses.some((p) => p.expatLibrary?.startsWith("/usr/local/lib/libexpat.so.1")),
+      "Real Chrome must load the fixed Expat library",
+    );
+    const browsers = report.firstProcesses.filter((p) =>
+      p.argv?.some((a) => a.includes("chrome-headless-shell")),
+    );
+    assert.ok(browsers.length > 0 && browsers.every((p) => p.uid === "10001"));
+    const coordinatorIdentity = docker([
       "exec",
       coordinator,
       "node",
       "-p",
-      "require('remotion/package.json').version",
-    ]).trim(),
-    react: docker([
-      "exec",
-      coordinator,
-      "node",
-      "-p",
-      "require('react/package.json').version",
-    ]).trim(),
-  };
-  assert.match(report.versions.chromium, /157\.0\.8080\.0/);
-  report.security = {
-    chromiumNoSandbox: browsers.some((p) => p.argv.includes("--no-sandbox")),
-    chromiumDisableSetuidSandbox: browsers.some((p) => p.argv.includes("--disable-setuid-sandbox")),
-    expat: JSON.parse(expatVersion),
-    missingControlsRejected,
-    networkEgressRejected: true,
-    productionUid: 10001,
-    coordinatorIdentity,
-    noHostBindMounts: true,
-  };
-  // Independent process-identity proof after cancellation, in the browser's PID namespace.
-  const check = `const fs=require('node:fs');const ids=${JSON.stringify([...report.cancellationProcesses, ...report.timeoutProcesses])};for(const p of ids){try{const f=fs.readFileSync('/proc/'+p.pid+'/stat','utf8').split(') ')[1].split(' ');if(f[19]===p.start)throw new Error('Browser/renderer PID survives cancellation');}catch(e){if(e.code!=='ENOENT')throw e;}}if(fs.readdirSync('/tmp').some(x=>x.startsWith('render-')))throw new Error('Temporary workspace leaked');`;
-  docker(["exec", executor, "node", "-e", check]);
-  const dir = root + ".local/render-batch";
-  await mkdir(dir, { recursive: true });
-  const object = await s3.send(
-    new GetObjectCommand({ Bucket: "editagent", Key: report.outputKey }),
-  );
-  await writeFile(dir + "/fixture.mp4", await object.Body.transformToByteArray());
-  const probe = JSON.parse(
-    execFileSync(
-      "ffprobe",
-      ["-v", "error", "-show_format", "-show_streams", "-of", "json", dir + "/fixture.mp4"],
-      { encoding: "utf8" },
-    ),
-  );
-  const video = probe.streams.find((x) => x.codec_type === "video");
-  assert.equal(video.width, 320);
-  assert.equal(video.height, 180);
-  assert.equal(video.avg_frame_rate, "30/1");
-  assert.ok(Math.abs(Number(probe.format.duration) - 5) <= 1 / 60);
-  assert.equal(video.codec_name, "h264");
-  // A decodable H.264 file in the wrong container must never pass the MP4 contract.
-  const wrongContainer = dir + "/wrong-container.mkv";
-  execFileSync("ffmpeg", [
-    "-v",
-    "error",
-    "-y",
-    "-i",
-    dir + "/fixture.mp4",
-    "-c",
-    "copy",
-    "-f",
-    "matroska",
-    wrongContainer,
-  ]);
-  // docker cp cannot write through a read-only root even when /tmp is tmpfs.
-  // Stream the test bytes to the existing non-root process instead; keep all
-  // production filesystem restrictions in force.
-  execFileSync(
-    "docker",
-    [
-      "exec",
+      "process.getuid()+':'+process.getgid()",
+    ]).trim();
+    assert.equal(coordinatorIdentity, "10001:10001");
+    report.emojiFont = JSON.parse(
+      docker([
+        "exec",
+        executor,
+        "node",
+        "-e",
+        "const fs=require('node:fs'),h=require('node:crypto');const sha=p=>h.createHash('sha256').update(fs.readFileSync(p)).digest('hex');console.log(JSON.stringify({name:'Noto Color Emoji',version:'2.051',license:'SIL OFL 1.1',sha256:sha('/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf'),licenseSha256:sha('/usr/local/share/editagent/noto-emoji/LICENSE')}))",
+      ]),
+    );
+    assert.equal(
+      report.emojiFont.sha256,
+      "72a635cb3d2f3524c51620cdde406b217204e8a6a06c6a096ff8ed4b5fd6e27b",
+    );
+    assert.equal(
+      report.emojiFont.licenseSha256,
+      "6a73f9541c2de74158c0e7cf6b0a58ef774f5a780bf191f2d7ec9cc53efe2bf2",
+    );
+    report.versions = {
+      chromium: docker([
+        "exec",
+        executor,
+        "/opt/chromium/chrome-headless-shell-linux64/chrome-headless-shell",
+        "--version",
+      ]).trim(),
+      ffmpeg: docker(["exec", coordinator, "ffmpeg", "-version"]).split("\n")[0],
+      ffprobe: docker(["exec", coordinator, "ffprobe", "-version"]).split("\n")[0],
+      node: docker(["exec", coordinator, "node", "--version"]).trim(),
+      remotion: docker([
+        "exec",
+        coordinator,
+        "node",
+        "-p",
+        "require('remotion/package.json').version",
+      ]).trim(),
+      react: docker([
+        "exec",
+        coordinator,
+        "node",
+        "-p",
+        "require('react/package.json').version",
+      ]).trim(),
+    };
+    assert.match(report.versions.chromium, /157\.0\.8080\.0/);
+    report.security = {
+      chromiumNoSandbox: browsers.some((p) => p.argv.includes("--no-sandbox")),
+      chromiumDisableSetuidSandbox: browsers.some((p) =>
+        p.argv.includes("--disable-setuid-sandbox"),
+      ),
+      expat: JSON.parse(expatVersion),
+      missingControlsRejected,
+      networkEgressRejected: true,
+      productionUid: 10001,
+      coordinatorIdentity,
+      noHostBindMounts: true,
+    };
+    // Independent process-identity proof after cancellation, in the browser's PID namespace.
+    const check = `const fs=require('node:fs');const ids=${JSON.stringify([...report.cancellationProcesses, ...report.timeoutProcesses])};for(const p of ids){try{const f=fs.readFileSync('/proc/'+p.pid+'/stat','utf8').split(') ')[1].split(' ');if(f[19]===p.start)throw new Error('Browser/renderer PID survives cancellation');}catch(e){if(e.code!=='ENOENT')throw e;}}if(fs.readdirSync('/tmp').some(x=>x.startsWith('render-')))throw new Error('Temporary workspace leaked');`;
+    docker(["exec", executor, "node", "-e", check]);
+    const dir = root + ".local/render-batch";
+    await mkdir(dir, { recursive: true });
+    const object = await s3.send(
+      new GetObjectCommand({ Bucket: "editagent", Key: report.outputKey }),
+    );
+    await writeFile(dir + "/fixture.mp4", await object.Body.transformToByteArray());
+    const probe = JSON.parse(
+      execFileSync(
+        "ffprobe",
+        ["-v", "error", "-show_format", "-show_streams", "-of", "json", dir + "/fixture.mp4"],
+        { encoding: "utf8" },
+      ),
+    );
+    const video = probe.streams.find((x) => x.codec_type === "video");
+    assert.equal(video.width, 320);
+    assert.equal(video.height, 180);
+    assert.equal(video.avg_frame_rate, "30/1");
+    assert.ok(Math.abs(Number(probe.format.duration) - 5) <= 1 / 60);
+    assert.equal(video.codec_name, "h264");
+    // A decodable H.264 file in the wrong container must never pass the MP4 contract.
+    const wrongContainer = dir + "/wrong-container.mkv";
+    execFileSync("ffmpeg", [
+      "-v",
+      "error",
+      "-y",
       "-i",
+      dir + "/fixture.mp4",
+      "-c",
+      "copy",
+      "-f",
+      "matroska",
+      wrongContainer,
+    ]);
+    // docker cp cannot write through a read-only root even when /tmp is tmpfs.
+    // Stream the test bytes to the existing non-root process instead; keep all
+    // production filesystem restrictions in force.
+    execFileSync(
+      "docker",
+      [
+        "exec",
+        "-i",
+        coordinator,
+        "node",
+        "-e",
+        "require('node:fs').writeFileSync('/tmp/wrong-container.mkv',require('node:fs').readFileSync(0),{flag:'wx',mode:0o600})",
+      ],
+      { input: await readFile(wrongContainer) },
+    );
+    docker([
+      "exec",
       coordinator,
       "node",
       "-e",
-      "require('node:fs').writeFileSync('/tmp/wrong-container.mkv',require('node:fs').readFileSync(0),{flag:'wx',mode:0o600})",
-    ],
-    { input: await readFile(wrongContainer) },
-  );
-  docker([
-    "exec",
-    coordinator,
-    "node",
-    "-e",
-    `const fs=require('node:fs/promises');const assert=require('node:assert/strict');const {validateOutput}=require('./dist/infrastructure/probe-output.js');const catalog=require('./dist/bundle/catalog.json');(async()=>{try{await assert.rejects(validateOutput('/tmp/wrong-container.mkv',{schemaVersion:1,renderVersion:catalog.renderVersion,compositionId:'FixtureV1',correlationId:'container-negative',width:320,height:180,frameRate:{numerator:30,denominator:1},durationInFrames:150,props:{title:'Container test',background:'#000000'}}));}finally{await fs.rm('/tmp/wrong-container.mkv',{force:true});}})().catch(()=>process.exitCode=1);`,
-  ]);
-  report.wrongContainerRejected = true;
-  report.ffprobe = {
-    duration: probe.format.duration,
-    width: video.width,
-    height: video.height,
-    fps: video.avg_frame_rate,
-    codec: video.codec_name,
-    pixelFormat: video.pix_fmt,
-  };
-  report.container = {
-    uid: inspect.Config.User,
-    network: "none",
-    capDrop: inspect.HostConfig.CapDrop,
-    memory: inspect.HostConfig.Memory,
-    pids: inspect.HostConfig.PidsLimit,
-    readOnly: true,
-  };
-  await writeFile(dir + "/report.json", JSON.stringify(report, null, 2) + "\n");
-  console.log("Render integration PASS. Evidence: .local/render-batch/report.json");
+      `const fs=require('node:fs/promises');const assert=require('node:assert/strict');const {validateOutput}=require('./dist/infrastructure/probe-output.js');const catalog=require('./dist/bundle/catalog.json');(async()=>{try{await assert.rejects(validateOutput('/tmp/wrong-container.mkv',{schemaVersion:1,renderVersion:catalog.renderVersion,compositionId:'FixtureV1',correlationId:'container-negative',width:320,height:180,frameRate:{numerator:30,denominator:1},durationInFrames:150,props:{title:'Container test',background:'#000000'}}));}finally{await fs.rm('/tmp/wrong-container.mkv',{force:true});}})().catch(()=>process.exitCode=1);`,
+    ]);
+    report.wrongContainerRejected = true;
+    report.ffprobe = {
+      duration: probe.format.duration,
+      width: video.width,
+      height: video.height,
+      fps: video.avg_frame_rate,
+      codec: video.codec_name,
+      pixelFormat: video.pix_fmt,
+    };
+    report.container = {
+      uid: inspect.Config.User,
+      network: "none",
+      capDrop: inspect.HostConfig.CapDrop,
+      memory: inspect.HostConfig.Memory,
+      pids: inspect.HostConfig.PidsLimit,
+      readOnly: true,
+    };
+    await writeFile(dir + "/report.json", JSON.stringify(report, null, 2) + "\n");
+    console.log("Render integration PASS. Evidence: .local/render-batch/report.json");
+  } else console.log("Editing integration PASS. Evidence: .local/render-batch/editing-report.json");
 } catch (error) {
   for (const name of [executor, coordinator]) {
     try {

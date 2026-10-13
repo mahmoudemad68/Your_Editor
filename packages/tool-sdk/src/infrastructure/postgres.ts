@@ -375,10 +375,10 @@ export class PostgresToolAuthority implements ToolAuthority {
     if (call.resource.kind === "project" && call.resource.id !== call.projectId)
       throw new ToolError("denied");
     if (call.resource.kind === "asset") {
-      const a = await this.pool.query("SELECT id FROM media_assets WHERE id=$1 AND project_id=$2", [
-        call.resource.id,
-        call.projectId,
-      ]);
+      const a = await this.pool.query(
+        "SELECT id FROM media_assets WHERE id=$1 AND project_id=$2 UNION ALL SELECT id FROM derived_assets WHERE id=$1 AND project_id=$2 AND kind='edited-video'",
+        [call.resource.id, call.projectId],
+      );
       if (a.rowCount !== 1) throw new ToolError("denied");
     } else if (call.resource.kind === "timeline") {
       const t = await this.timeline(call.projectId, call.resource.id);
