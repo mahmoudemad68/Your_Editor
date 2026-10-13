@@ -74,6 +74,27 @@ test("frozen derivative recipes remain accepted by strict filter policy", () => 
       if (args[i] === "-vf" || args[i] === "-af") validateFilterGraph(args[i + 1]!);
   }
 });
+test("historical midpoint sprites retain bounded sub-one-fps and midpoint-start syntax", () => {
+  const legacy =
+    "tpad=stop_mode=clone:stop_duration=5,fps=1/2:start_time=1:round=near," +
+    "scale=w='max(2,trunc(iw*sar/2)*2)':h=ih,setsar=1," +
+    "scale=160:90:force_original_aspect_ratio=decrease," +
+    "pad=160:90:(ow-iw)/2:(oh-ih)/2,tile=1x1:nb_frames=1";
+  assert.doesNotThrow(() => validateFilterGraph(legacy));
+  assert.doesNotThrow(() => validateFilterGraph("fps=20/1800:start_time=45:round=near"));
+  for (const value of [
+    "fps=21/2:start_time=1:round=near",
+    "fps=1/0:start_time=0:round=near",
+    "fps=1/0.001:start_time=0:round=near",
+    "fps=1/1801:start_time=1:round=near",
+    "fps=1/2:start_time=-1:round=near",
+    "fps=1/2:start_time=1801:round=near",
+    "fps=1/2:start_time=movie:round=near",
+    "fps=1/2:start_time=1:round=near:evil=1",
+    "fps=fps=1/2:start_time=0:round=near",
+  ])
+    assert.throws(() => validateFilterGraph(value), value);
+});
 test("cut recipe is deterministic, rational, bounded and has no caller graph/URL capability", () => {
   const recipe = {
     segments: [

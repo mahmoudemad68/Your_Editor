@@ -368,18 +368,23 @@ test(
       });
       const startedAt = Date.now();
       let status = "Queued";
+      let score: string | null = null;
       while (Date.now() - startedAt < 20_000) {
         const row = await pool.query<{ status: string }>("SELECT status FROM jobs WHERE id = $1", [
           jobId,
         ]);
         status = row.rows[0]?.status ?? "";
-        if (status === "Completed" || status === "Failed") {
-          break;
+        // Durable completion precedes the separate BullMQ acknowledgment. Both
+        // must converge inside the original deadline; SQL alone is not a Redis
+        // completion handshake, especially under concurrent CI load.
+        if (status === "Completed") {
+          score = await redis.zscore(`bull:${queueName}:completed`, jobId ?? "");
+          if (score !== null) break;
         }
+        if (status === "Failed") break;
         await delay(100);
       }
       assert.equal(status, "Completed", `${workerErr}\n${workerOut}`);
-      const score = await redis.zscore(`bull:${queueName}:completed`, jobId ?? "");
       if (score === null) {
         const keys = await redis.keys(`bull:${queueName}:*`);
         assert.fail(`BullMQ completed set is missing the job. keys=${keys.join(",")}`);

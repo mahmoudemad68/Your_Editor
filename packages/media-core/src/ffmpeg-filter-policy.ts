@@ -103,8 +103,20 @@ function validate(part: string) {
     case "fps":
       if (!v.startsWith("fps=") && v.includes(":")) {
         const [value, ...rest] = v.split(":");
-        frameRate(value!);
-        return options(rest.join(":"), { start_time: exact("0"), round: exact("near") });
+        // Historical US-128 midpoint sprites sample count/source-seconds, which
+        // can be below one fps, and start at the first midpoint. This positional
+        // spelling is kept bounded separately from composition frame rates.
+        const fraction = /^([1-9]|1[0-9]|20)\/(.+)$/.exec(value!);
+        if (fraction) {
+          duration(fraction[2]!);
+          const seconds = Number(fraction[2]);
+          if (seconds <= 0 || Number(fraction[1]) / seconds > 60) bad();
+        } else frameRate(value!);
+        return options(
+          rest.join(":"),
+          { start_time: fraction ? duration : exact("0"), round: exact("near") },
+          ["start_time", "round"],
+        );
       }
       if (!v.includes("=")) return frameRate(v);
       return options(v, { fps: frameRate, start_time: exact("0"), round: exact("near") }, ["fps"]);
