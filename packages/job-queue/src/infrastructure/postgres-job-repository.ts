@@ -12,6 +12,7 @@ import {
   type JobRepository,
 } from "@editagent/domain";
 import { type Pool, type PoolClient } from "pg";
+import { JobWriteFencedError } from "../application/job-errors.js";
 
 interface Sql {
   query(text: string, values?: readonly unknown[]): Promise<unknown>;
@@ -62,7 +63,7 @@ export class PostgresJobRepository implements JobRepository {
   }
 
   async save(job: Job): Promise<void> {
-    await writeJob(this.pool, job);
+    if (!(await writeJob(this.pool, job))) throw new JobWriteFencedError();
   }
 
   async appendAttempt(attempt: JobAttempt): Promise<void> {
@@ -83,7 +84,7 @@ export class PostgresJobRepository implements JobRepository {
     const client: PoolClient = await this.pool.connect();
     try {
       await client.query("BEGIN");
-      if (!(await writeJob(client, job))) throw new Error("Job terminal write fenced.");
+      if (!(await writeJob(client, job))) throw new JobWriteFencedError();
       await writeAttempt(client, attempt);
       await client.query("COMMIT");
     } catch (error) {

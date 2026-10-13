@@ -83,10 +83,7 @@ test(
     });
     try {
       for (const file of (await readdir(path.join(root, "apps/api/migrations")))
-        .filter(
-          (f) =>
-            f.endsWith(".sql") && (!process.env.TOOL_TEST_BASELINE_SDK || !f.startsWith("0016")),
-        )
+        .filter((f) => f.endsWith(".sql") && (!process.env.TOOL_TEST_BASELINE_SDK || f < "0016"))
         .sort())
         await pool.query(await readFile(path.join(root, "apps/api/migrations", file), "utf8"));
       const owner = id(),

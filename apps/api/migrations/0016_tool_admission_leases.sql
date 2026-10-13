@@ -5,7 +5,8 @@ ALTER TABLE tool_executions ADD COLUMN execution_mode text NOT NULL DEFAULT 'unk
   CHECK (execution_mode IN ('remote','in-process','unknown'));
 ALTER TABLE tool_executions ADD COLUMN admission_deadline_at_ms bigint;
 UPDATE tool_executions e SET admission_deadline_at_ms=e.started_at_ms+COALESCE(
-  (SELECT j.timeout_ms FROM jobs j WHERE j.id=e.job_id),300000),
+  -- Job-less legacy calls may legally run for the manifest maximum (ten minutes).
+  (SELECT j.timeout_ms FROM jobs j WHERE j.id=e.job_id),600000),
   execution_mode=CASE WHEN e.job_id IS NOT NULL OR EXISTS
     (SELECT 1 FROM tool_remote_calls r WHERE r.execution_id=e.id) THEN 'remote' ELSE 'unknown' END;
 ALTER TABLE tool_executions ALTER COLUMN admission_deadline_at_ms SET NOT NULL;
@@ -65,8 +66,8 @@ BEGIN
 END $$;
 
 -- A rejected stale write must be visible as rowCount=0, not a fictitious UPDATE 1.
--- Canonical Job save has a void contract; recordCompletion checks the write before
--- committing its attempt. Non-Tool Jobs retain their US-129 behavior.
+-- Canonical Job saves reject fenced writes before any subsequent attempt/work.
+-- Non-Tool Jobs retain their US-129 behavior.
 CREATE OR REPLACE FUNCTION tool_job_terminal_fence() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
   IF OLD.job_type='tool.execute.v1' AND OLD.status IN ('Completed','Failed','Cancelled')

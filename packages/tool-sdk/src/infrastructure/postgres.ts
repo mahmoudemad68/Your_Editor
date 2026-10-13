@@ -85,7 +85,8 @@ export class PostgresToolAuditRepository implements ToolAuditRepository {
         r.inputHash,
         r.startedAtMs,
         admission?.ownerId ?? null,
-        admission?.deadlineAtMs ?? r.startedAtMs + 300000,
+        // Legacy callers without a lease may use the manifest's maximum ten minutes.
+        admission?.deadlineAtMs ?? r.startedAtMs + 600000,
         admission?.mode ?? "unknown",
       ],
     );
