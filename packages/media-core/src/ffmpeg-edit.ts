@@ -12,7 +12,7 @@ export interface EditSource {
   readonly durationUs: bigint;
   readonly frameRate: { numerator: number; denominator: number };
   readonly hasAudio: boolean;
-  /** Exact inspected CFR video count, when the container header rounds the exact video end. */
+  /** Authoritative inspected CFR video count, independent of the audio/container end. */
   readonly frameCount?: number;
 }
 export type VideoEdit =
@@ -39,7 +39,9 @@ export function editOutputTiming(source: EditSource, edit: VideoEdit) {
     const logical =
       (BigInt(source.frameCount) * 1000000n * BigInt(d) + BigInt(Math.floor(n / 2))) / BigInt(n);
     const delta = source.durationUs - logical;
-    if (delta < -1000n || delta > 1000n) throw new Error("Source frame timing is inconsistent.");
+    // The asset clock may include a genuine audio tail or AAC padding. It can
+    // exceed video end, but must not materially understate the verified video.
+    if (delta < -1000n) throw new Error("Source frame timing is inconsistent.");
     duration = logical;
   }
   if (edit.operation === "crop_video" || edit.operation === "resize_video") {

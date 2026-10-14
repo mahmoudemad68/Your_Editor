@@ -12,7 +12,7 @@ const frameUs = (f: number, n: number, d: number) =>
   (BigInt(f) * 1000000n * BigInt(d) + BigInt(Math.floor(n / 2))) / BigInt(n);
 const sampleAt = (f: number, n: number, d: number) =>
   Number((BigInt(f) * 48000n * BigInt(d) + BigInt(Math.floor(n / 2))) / BigInt(n));
-const markers = [12, 24, 35, 52, 58, 75];
+const markers = [12, 24, 35, 52, 58, 75, 100, 103, 111, 121];
 test(
   "QA53 real yuv420p B-frame audio integrity: backward/repeated/overlapping cuts, gaps, short clips and layouts",
   { timeout: 180000 },
@@ -31,6 +31,8 @@ test(
         [25, 1],
         [30, 1],
         [30000, 1001],
+        [24000, 1001],
+        [60000, 1001],
       ]) {
         const mono = fixtures.find((s) => s.n === n && s.layout === "mono48")!,
           stereo = fixtures.find((s) => s.n === n && s.layout === "stereo44")!,
@@ -75,6 +77,38 @@ test(
           ],
           "one-frame-short": [clip(12, 13, 0), gap(1, 1), clip(58, 60, 2)],
           "no-audio": [clip(12, 13, 0, silent), gap(1, 1), clip(58, 60, 2, silent)],
+          "qa53r-56": [
+            clip(10, 24, 0),
+            gap(14, 2),
+            clip(30, 63, 16),
+            gap(49, 2),
+            clip(100, 105, 51),
+          ],
+          "qa53r-58-max-segments": [
+            ...[10, 50, 12, 100, 30, 58, 10, 100].flatMap((start, i) => [
+              gap(i * 7, 2),
+              clip(start, start + 5, i * 7 + 2),
+            ]),
+            gap(56, 2),
+          ],
+          "one-gap": [clip(10, 24, 0), gap(14, 2), clip(100, 105, 16)],
+          "leading-middle-trailing": [
+            gap(0, 1),
+            clip(10, 24, 1),
+            gap(15, 2),
+            clip(30, 63, 17),
+            gap(50, 1),
+            clip(100, 105, 51),
+            gap(56, 2),
+          ],
+          "mixed-short-gaps": [
+            clip(12, 13, 0),
+            gap(1, 2),
+            clip(100, 105, 3, silent),
+            gap(8, 1),
+            clip(50, 62, 9, stereo),
+            gap(21, 2),
+          ],
         };
         for (const [name, segments] of Object.entries(cases))
           await t.test(`${n}/${d} ${name}`, async () => {
@@ -152,9 +186,9 @@ test(
             assert.equal(audio?.sampleRate, 48000);
             assert.equal(audio?.channels, 2);
             const samples = sampleAt(totalFrames, n!, d!);
-            assert.ok(
-              audio!.durationTicks! >= BigInt(samples - 1) &&
-                audio!.durationTicks! <= BigInt(samples + 1),
+            assert.equal(
+              audio!.durationTicks!,
+              BigInt(samples),
               `audio samples ${audio!.durationTicks} expected ${samples}`,
             );
             if (n === 30000 && name === "one-frame-short") {
@@ -206,12 +240,14 @@ test(
                   "beep onset must not lead by 5–10 ms",
                 );
             }
-            for (const s of segments.filter((s) => !s.hasAudio))
-              if (s.frames > 1) {
-                const a = sampleAt(s.fromFrame, n!, d!) + 480,
-                  b = sampleAt(s.fromFrame + s.frames, n!, d!) - 480;
-                assert.ok(rms(a, b) < 0.005, "explicit gap/no-audio silence");
-              }
+            for (const s of segments.filter((s) => !s.hasAudio)) {
+              const start = sampleAt(s.fromFrame, n!, d!),
+                end = sampleAt(s.fromFrame + s.frames, n!, d!),
+                guard = Math.min(480, Math.floor((end - start) / 4)),
+                a = start + guard,
+                b = end - guard;
+              assert.ok(rms(a, b) < 0.005, "explicit gap/no-audio silence");
+            }
           });
       }
     } finally {

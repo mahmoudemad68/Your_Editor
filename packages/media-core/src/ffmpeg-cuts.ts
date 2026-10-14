@@ -130,10 +130,12 @@ export function buildCutRenderArgs(r: CutRenderRecipe): readonly string[] {
         (index < r.segments.length - 1
           ? `,afade=t=out:ss=${samples - ramp}:ns=${ramp}:curve=tri`
           : "");
+      // Silence has finite sample-count EOF even though its producer is not
+      // duration-limited. A rounded duration can underfill cumulative boundaries.
       graph.push(
         input >= 0 && s.hasAudio
           ? `[${input}:a:0]aresample=async=1:first_pts=0,aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo,atrim=start_sample=${sourceStartSample}:end_sample=${sourceEndSample},asetpts=PTS-STARTPTS,aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo,apad,atrim=end_sample=${samples},asetpts=N/SR/TB${fades}[a${index}]`
-          : `anullsrc=r=48000:cl=stereo:d=${duration},atrim=end_sample=${samples},asetpts=N/SR/TB${fades}[a${index}]`,
+          : `anullsrc=r=48000:cl=stereo,atrim=end_sample=${samples},asetpts=N/SR/TB${fades}[a${index}]`,
       );
     }
   });

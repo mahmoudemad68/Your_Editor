@@ -149,3 +149,74 @@ acknowledgment is not claimed as proven by the SQL rollback test. L2–L4 above
 remain explicit nonblocking findings pending follow-up and independent review.
 
 No deployment, merge or Ready transition is authorized by this evidence.
+
+## QA53R-1 and AAC-tail resize follow-up
+
+Independent Re-QA rejected `43a253fc7a9f652d13874de504cd79b4418e7153`.
+Both new reproductions were confirmed in that exact non-root production executor:
+the 56-frame 30000/1001 case produced 89688 logical audio samples instead of
+89690, and the 179-frame source with a 6000000-us AAC/container end resized to
+180 frames. The previous resize fix covered only header rounding; it did not
+cover this independently reproduced longer audio tail.
+
+Gap audio now uses `anullsrc=r=48000:cl=stereo,atrim=end_sample=...`.
+The finite consumer owns EOF at the exact cumulative rational sample boundary;
+the producer cannot prematurely stop at a rounded microsecond duration.
+Every branch terminates, and the existing execution timeout, capture, file,
+process and container limits remain intact. Segment demuxer isolation and
+sample-count non-overlapping fades remain unchanged. The strict output validator
+is unchanged.
+
+Video-preserving edits use the verified CFR video stream's count independently
+of the audio/container end. The source clock must still cover that video stream;
+a materially shorter asset clock is rejected. Resize retains 179 frames rather
+than manufacturing a frame for an AAC or audio tail. Audio is bounded to the
+resulting video's sample clock by the existing edit recipe; source bytes are
+never modified.
+
+Permanent real-FFmpeg tests cover the exact 56-frame reproduction, 58 frames with
+17 segments and 8 inputs, one/multiple gaps, leading/middle/trailing one- and
+two-frame gaps, repeated/backward and mixed-audio sources, and 25, 30,
+30000/1001, 24000/1001 and 60000/1001 fps. The independent expectations use
+authored sample/frame truth, not detector or render output. Additional production
+fixtures honor the existing integer-us 1:1 domain rounding phase before rendering;
+no domain or selector rule is weakened to admit a fixture.
+
+The production queue suite includes a real AAC-tail resize with source frame
+identities, sample timing, durable audit outcome and immutable S3 output checks.
+The regression oracle also rejects an actual same-length silent replacement by
+its missing authored beeps. That is a content regression test, not a claim that
+the general runtime validator can prove arbitrary audio semantics. L2/#54,
+L3/#51, planned-Job audit linkage and the #50 isolation risk remain visible.
+
+Independent decoding of the production-image regression artifacts confirms:
+
+| Fixture                                       | Video frames | Logical 48-kHz samples | Decoded samples including AAC padding |
+| --------------------------------------------- | -----------: | ---------------------: | ------------------------------------: |
+| Exact QA53R-1, 30000/1001                     |           56 |                  89690 |                                 90112 |
+| Maximum 17-segment / 8-source fractional case |           58 |                  92893 |                                 93184 |
+| Original H1 at 25 fps                         |           45 |                  86400 |                                 87040 |
+| 179-frame AAC-tail resize                     |          179 |                 286686 |                                286720 |
+
+The H1 beeps remain aligned at frames 0, 10, 25, 35 and 37. The resize oracle
+checks all 179 authored frame identities, not merely the container frame-count
+header. Native real-FFmpeg regression coverage passes 60 cases across five frame
+rates, plus the parent test, retaining 20 repeated short fractional encodes.
+
+Early local attempts are retained as failures: disposable S3 rejected uploads
+when the 32-GB workspace fell below its free-space threshold; a subsequent
+unchanged Remotion startup failed with a closed browser target. A completed
+editing-only run exposed two new test references sharing an artifact filename;
+labels are now unique and asserted before download. Independent decode oracles
+use bounded decoder threads to avoid host process exhaustion. No production
+probe, render deadline, assertion, permission or isolation control is relaxed.
+The complete default suite and exact-head workflow results are recorded in the
+PR handoff rather than inferred from partial local runs.
+
+The five-minute expiration, exact post-S3-upload SIGKILL window and corruption
+during an in-flight retry remain separately NOT_PROVEN unless additional
+executed evidence is supplied. Existing cached-byte corruption, SQL rollback,
+publication recovery and reservation accounting tests do not imply those exact
+windows were exercised. The new mid-render revocation probe waits for a genuine
+FFmpeg process, revokes the current member, and requires no S3 write, no published
+intent, a settled non-successful audit/job and unchanged settlement on recovery.

@@ -360,6 +360,11 @@ try {
       (await readFile(new URL("./audio-cut-proof.cjs", import.meta.url), "utf8")),
   );
   const audioReport = parseEvidence(audioOutput, "AUDIO_EVIDENCE");
+  assert.equal(
+    new Set(audioReport.artifacts.map((a) => a.label)).size,
+    audioReport.artifacts.length,
+    "Independent artifact labels must be unique before downloading evidence",
+  );
   for (const artifact of [...audioReport.artifacts, audioReport.negativeArtifact]) {
     const object = await s3.send(new GetObjectCommand({ Bucket: "editagent", Key: artifact.key }));
     await writeFile(
@@ -368,6 +373,77 @@ try {
     );
   }
   audioReport.independentVerification = verifyAudioCutArtifacts(artifactDir, audioReport);
+  // Sample counts alone cannot prove content. A real same-length silent
+  // replacement passes timing but MUST fail the authored beep/content oracle.
+  const semanticSource = audioReport.artifacts.find((a) => a.label === "qa53-25-backward"),
+    semanticFile = artifactDir + "/qa53r-silent-replacement.mp4";
+  execFileSync(
+    "ffmpeg",
+    [
+      "-v",
+      "error",
+      "-y",
+      "-i",
+      artifactDir + "/" + semanticSource.label + ".mp4",
+      "-f",
+      "lavfi",
+      "-i",
+      "anullsrc=r=48000:cl=stereo",
+      "-map",
+      "0:v:0",
+      "-map",
+      "1:a:0",
+      "-c:v",
+      "copy",
+      "-af",
+      "atrim=end_sample=86400",
+      "-c:a",
+      "aac",
+      "-movie_timescale",
+      "48000",
+      semanticFile,
+    ],
+    { timeout: 10000 },
+  );
+  const semanticProbe = JSON.parse(
+    execFileSync("ffprobe", ["-v", "error", "-show_streams", "-of", "json", semanticFile], {
+      encoding: "utf8",
+      timeout: 10000,
+    }),
+  );
+  assert.equal(semanticProbe.streams.find((s) => s.codec_type === "audio").duration_ts, 86400);
+  const semanticSha256 = createHash("sha256")
+    .update(await readFile(semanticFile))
+    .digest("hex");
+  assert.throws(
+    () =>
+      verifyAudioCutArtifacts(artifactDir, {
+        ...audioReport,
+        artifacts: [
+          {
+            ...semanticSource,
+            label: "qa53r-silent-replacement",
+            sha256: semanticSha256,
+          },
+        ],
+      }),
+    /audible aligned beep/,
+  );
+  audioReport.sameLengthSilentReplacementRejectedByContentOracle = true;
+  audioReport.runtimeSemanticAudioValidation = "NOT_CLAIMED";
+  audioReport.resourceObservation = JSON.parse(
+    docker([
+      "exec",
+      executor,
+      "node",
+      "-e",
+      "const fs=require('fs');const read=p=>{try{return fs.readFileSync('/sys/fs/cgroup/'+p,'utf8').trim()}catch{return null}};console.log(JSON.stringify({scope:'whole-production-suite-including-17-segment-renders',memoryPeakBytes:read('memory.peak'),memoryLimitBytes:read('memory.max'),pidsPeak:read('pids.peak'),pidsLimit:read('pids.max')}));",
+    ]),
+  );
+  if (audioReport.resourceObservation.memoryPeakBytes)
+    assert.ok(BigInt(audioReport.resourceObservation.memoryPeakBytes) <= 6442450944n);
+  if (audioReport.resourceObservation.pidsPeak)
+    assert.ok(Number(audioReport.resourceObservation.pidsPeak) <= 256);
   await writeFile(artifactDir + "/audio-report.json", JSON.stringify(audioReport, null, 2) + "\n");
   const processCheck = JSON.parse(
     docker([

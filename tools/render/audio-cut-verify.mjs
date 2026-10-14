@@ -23,6 +23,8 @@ export function verifyAudioCutArtifacts(directory, report) {
       [
         "-v",
         "error",
+        "-threads",
+        "1",
         "-i",
         file,
         "-map",
@@ -45,6 +47,8 @@ export function verifyAudioCutArtifacts(directory, report) {
         [
           "-v",
           "error",
+          "-threads",
+          "1",
           "-i",
           file,
           "-map",
@@ -81,7 +85,55 @@ export function verifyAudioCutArtifacts(directory, report) {
     if (artifact.resize) {
       assert.equal(video.width, 128);
       assert.equal(video.height, 128);
-      artifact.independentVerification = { frames: artifact.frames, duplicated180thFrame: false };
+      for (let f = 0; f < 179; f++)
+        for (let c = 0; c < 3; c++)
+          assert.ok(
+            Math.abs(pixels[(f * 128 * 128 + 64 * 128 + 64) * 3 + c] - audioFrameColor(f)[c]) <= 8,
+            `${artifact.label} original video frame identity ${f}`,
+          );
+      let decodedSamples = 0;
+      const expected = sampleAt(179, 30000, 1001);
+      if (audio) {
+        assert.equal(audio.time_base, "1/48000");
+        assert.equal(audio.start_pts, 0);
+        assert.equal(Number(audio.duration_ts), expected);
+        const pcm = execFileSync(
+          "ffmpeg",
+          [
+            "-v",
+            "error",
+            "-threads",
+            "1",
+            "-i",
+            file,
+            "-map",
+            "0:a:0",
+            "-ac",
+            "1",
+            "-ar",
+            "48000",
+            "-f",
+            "f32le",
+            "-",
+          ],
+          { maxBuffer: 16000000, timeout: 10000 },
+        );
+        decodedSamples = pcm.length / 4;
+        assert.ok(decodedSamples >= expected && decodedSamples <= expected + 1023);
+        for (const start of [4800, expected - 2400]) {
+          let energy = 0;
+          for (let i = start; i < start + 960; i++) energy += pcm.readFloatLE(i * 4) ** 2;
+          assert.ok(Math.sqrt(energy / 960) > 0.03, "Resize must preserve real source audio");
+        }
+      }
+      artifact.independentVerification = {
+        frames: artifact.frames,
+        originalFrameIdentities: true,
+        duplicated180thFrame: false,
+        expectedSamples: audio ? expected : 0,
+        streamSamples: audio ? Number(audio.duration_ts) : 0,
+        decodedSamples,
+      };
       continue;
     }
     assert.equal(video.width, 64);
@@ -90,13 +142,14 @@ export function verifyAudioCutArtifacts(directory, report) {
     for (const segment of artifact.segments) {
       for (let f = 0; f < segment.frames; f++) {
         const source = segment.start + f,
-          color = segment.media ? audioFrameColor(source) : [0, 0, 0];
+          markers = segment.markerFrames ?? beepFrames,
+          color = segment.media ? audioFrameColor(source, markers) : [0, 0, 0];
         for (let c = 0; c < 3; c++)
           assert.ok(
             Math.abs(pixels[((segment.from + f) * 64 * 64 + 32 * 64 + 32) * 3 + c] - color[c]) <= 8,
             `${artifact.label} frame ${segment.from + f}`,
           );
-        if (segment.hasAudio && beepFrames.includes(source))
+        if (segment.hasAudio && markers.includes(source))
           beeps.push(sampleAt(segment.from + f, artifact.n, artifact.d) + 240);
       }
     }
@@ -110,8 +163,9 @@ export function verifyAudioCutArtifacts(directory, report) {
       const expected = sampleAt(artifact.frames, artifact.n, artifact.d);
       streamSamples = Number(audio.duration_ts);
       assert.ok(
-        streamSamples >= expected - 1 &&
-          streamSamples <= expected + (artifact.reference ? 1023 : 1),
+        artifact.reference
+          ? streamSamples >= expected - 1 && streamSamples <= expected + 1023
+          : streamSamples === expected,
         `${artifact.label} logical AAC duration`,
       );
       const pcm = execFileSync(
@@ -119,6 +173,8 @@ export function verifyAudioCutArtifacts(directory, report) {
         [
           "-v",
           "error",
+          "-threads",
+          "1",
           "-i",
           file,
           "-map",
@@ -153,9 +209,12 @@ export function verifyAudioCutArtifacts(directory, report) {
             `${artifact.label} no beep 5–10ms early`,
           );
       }
-      for (const s of artifact.segments.filter((s) => !s.hasAudio && s.frames > 1)) {
-        const a = sampleAt(s.from, artifact.n, artifact.d) + 480,
-          b = sampleAt(s.from + s.frames, artifact.n, artifact.d) - 480;
+      for (const s of artifact.segments.filter((s) => !s.hasAudio)) {
+        const start = sampleAt(s.from, artifact.n, artifact.d),
+          end = sampleAt(s.from + s.frames, artifact.n, artifact.d),
+          guard = Math.min(480, Math.floor((end - start) / 4)),
+          a = start + guard,
+          b = end - guard;
         assert.ok(rms(a, b) < 0.005, `${artifact.label} gap/no-audio segment`);
       }
     }
@@ -165,6 +224,7 @@ export function verifyAudioCutArtifacts(directory, report) {
       streamSamples,
       decodedSamples,
       audibleAlignedBeeps: beeps.length,
+      beepFrames: beeps.map((s) => Math.round(((s - 240) * artifact.n) / (48000 * artifact.d))),
       formatDuration: probe.format.duration,
     };
   }

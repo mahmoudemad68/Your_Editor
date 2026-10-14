@@ -105,13 +105,9 @@ export async function executeMediaEdit(
         { numerator: Number(p.frameRate.numerator), denominator: Number(p.frameRate.denominator) },
       ))
     ) {
-      const logical =
-        (video.frames * 1000000n * p.frameRate.denominator + p.frameRate.numerator / 2n) /
-        p.frameRate.numerator;
-      const delta = BigInt(a.durationUs) - logical;
-      // Preserve genuinely audio-led media duration. Only a millisecond movie-header
-      // rounding tail may be removed from a video-preserving transform.
-      if (delta >= -1000n && delta <= 1000n) frameCount = Number(video.frames);
+      // Verified CFR video owns video-preserving transform timing. A longer
+      // audio/container clock must never manufacture an additional video frame.
+      frameCount = Number(video.frames);
     }
     sources.set(a.sourceId, {
       path: file,

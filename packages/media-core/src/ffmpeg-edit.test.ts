@@ -100,9 +100,10 @@ test(
       const edit = { operation: "resize_video" as const, width: 128, height: 128 };
       assert.equal(editOutputTiming(source, edit).totalFrames, 179);
       assert.throws(
-        () => editOutputTiming({ ...source, durationUs: 6000000n }, edit),
+        () => editOutputTiming({ ...source, durationUs: 5900000n }, edit),
         /inconsistent/,
       );
+      assert.equal(editOutputTiming({ ...source, durationUs: 6000000n }, edit).totalFrames, 179);
       const output = path.join(work, "resize.mp4");
       await new FfmpegExecutor().execute(buildVideoEditArgs(source, edit, output), {
         timeoutMs: 15000,

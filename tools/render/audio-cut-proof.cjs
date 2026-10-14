@@ -29,7 +29,9 @@ async function main() {
     });
   class ObservedObjects extends RenderObjects {
     engines = new Map();
+    putCount = 0;
     async put(...args) {
+      this.putCount++;
       if (args[0].startsWith("renders/")) {
         const meta = JSON.parse(
           await fs.readFile(path.join(path.dirname(args[2]), "output.json"), "utf8"),
@@ -161,11 +163,24 @@ async function main() {
       [25, 1],
       [30, 1],
       [30000, 1001],
+      [24000, 1001],
+      [60000, 1001],
     ]) {
       const mono = sources.find((s) => s.n === n && s.layout === "mono48"),
         stereo = sources.find((s) => s.n === n && s.layout === "stereo44"),
         none = sources.find((s) => s.n === n && s.layout === "none");
       const clip = (start, frames, from, source = mono) => ({ start, frames, from, source });
+      // A frame placement must also obey the existing 1:1 integer-us domain.
+      // Author these additional fixture ranges before inference with matching
+      // rounding phase; never relax the selector or timeline invariants.
+      const phaseClip = (start, frames, from, source = mono) => {
+        const rate = { numerator: BigInt(n), denominator: BigInt(d) },
+          us = (f) => frameTime(BigInt(f), rate);
+        for (let offset = 0; offset < 3; offset++)
+          if (us(start + offset + frames) - us(start + offset) === us(from + frames) - us(from))
+            return clip(start + offset, frames, from, source);
+        throw new Error("Fixture frame rounding phase is unsupported");
+      };
       const cases = {
         backward: [
           clip(10, 20, 0),
@@ -193,7 +208,49 @@ async function main() {
               ],
         short: [clip(12, 1, 0), { from: 1, frames: 1 }, clip(n !== 25 ? 59 : 58, 2, 2)],
         mute: [clip(12, 1, 0, none), { from: 1, frames: 1 }, clip(n !== 25 ? 59 : 58, 2, 2, none)],
+        "gap-56": [
+          phaseClip(10, 14, 0),
+          { from: 14, frames: 2 },
+          phaseClip(30, 33, 16),
+          { from: 49, frames: 2 },
+          phaseClip(100, 5, 51),
+        ],
+        "gap-58-max": [
+          ...[10, 50, 12, 100, 30, 58, 10, 100].flatMap((start, i) => [
+            { from: i * 7, frames: 2 },
+            phaseClip(start, 5, i * 7 + 2),
+          ]),
+          { from: 56, frames: 2 },
+        ],
+        "one-gap": [phaseClip(10, 14, 0), { from: 14, frames: 2 }, phaseClip(100, 5, 16)],
+        "edge-gaps": [
+          { from: 0, frames: 1 },
+          phaseClip(10, 14, 1),
+          { from: 15, frames: 2 },
+          phaseClip(30, 33, 17),
+          { from: 50, frames: 1 },
+          phaseClip(100, 5, 51),
+          { from: 56, frames: 2 },
+        ],
+        "mixed-short-gaps": [
+          phaseClip(12, 1, 0),
+          { from: 1, frames: 2 },
+          phaseClip(100, 5, 3, none),
+          { from: 8, frames: 1 },
+          phaseClip(50, 12, 9, stereo),
+          { from: 21, frames: 2 },
+        ],
       };
+      if (n === 25) {
+        const exact = sources.find((s) => s.layout === "h1exact");
+        cases["h1-exact-beeps"] = [
+          clip(10, 20, 0, exact),
+          { from: 20, frames: 5 },
+          clip(50, 12, 25, exact),
+          clip(10, 5, 37, exact),
+          { from: 42, frames: 3 },
+        ];
+      }
       for (const [label, segments] of Object.entries(cases)) {
         const frames = segments.reduce((sum, s) => sum + s.frames, 0),
           input = inputFor(n, d, segments, frames);
@@ -236,12 +293,14 @@ async function main() {
         n,
         d,
         hasAudio: segments.some((s) => s.source?.hasAudio),
+        job: { id: jobId, status: job.status, attemptCount: job.attemptCount },
         segments: segments.map((s) => ({
           from: s.from,
           frames: s.frames,
           start: s.start ?? null,
           hasAudio: s.source?.hasAudio ?? false,
           media: Boolean(s.source),
+          markerFrames: s.source?.beepFrames,
         })),
       };
       artifacts.push(spec);
@@ -249,7 +308,7 @@ async function main() {
         retryInput = input;
         retryJob = jobId;
       }
-      if (label === "backward") {
+      if (label === "backward" || (n === 30000 && label === "gap-56")) {
         const reference = await remotion.render(
           input,
           project,
@@ -259,7 +318,7 @@ async function main() {
         );
         artifacts.push({
           ...spec,
-          label: `qa53-${n}-remotion-backward`,
+          label: `qa53-${n}-remotion-${label}`,
           key: reference.objectKey,
           sha256: reference.sha256,
           reference: true,
@@ -303,7 +362,7 @@ async function main() {
       label: "qa53-speed-third",
       key: slowAsset.storageKey,
       sha256: slowAsset.sha256,
-      frames: 288,
+      frames: source.frames * 3,
       n: 30,
       d: 1,
       hasAudio: true,
@@ -329,6 +388,128 @@ async function main() {
       hasAudio: false,
       resize: true,
     });
+    const tailSource = sources.find((s) => s.layout === "179-tail");
+    const tailResize = await runtime.executor.execute({
+      name: "editing.resize-video",
+      version: "1.0.0",
+      callerId: actor,
+      projectId: project,
+      resource: { kind: "asset", id: tailSource.id },
+      input: { assetId: tailSource.id, width: 128, height: 128 },
+    });
+    assert.equal(tailResize.record.outcome, "succeeded");
+    const tailAsset = tailResize.output.asset.artifact;
+    artifacts.push({
+      label: "qa53r-resize-179-tail",
+      key: tailAsset.storageKey,
+      sha256: tailAsset.sha256,
+      frames: 179,
+      n: 30000,
+      d: 1001,
+      hasAudio: true,
+      resize: true,
+      aacTailSource: true,
+      audit: {
+        id: tailResize.record.id,
+        outcome: tailResize.record.outcome,
+        costBasis: tailResize.record.costBasis,
+        costMicros: tailResize.record.costMicros,
+      },
+    });
+    // Revoke a distinct member only after genuine production FFmpeg execution
+    // starts. The existing publication fence must deny it before any S3 PUT.
+    const revokedActor = id();
+    await pool.query(
+      "INSERT INTO users(id,email,password_hash,created_at,updated_at) VALUES($1,$2,'$argon2id$fixture',0,0)",
+      [revokedActor, revokedActor + "@example.test"],
+    );
+    await pool.query(
+      "INSERT INTO project_memberships(project_id,user_id,role,created_at) VALUES($1,$2,'editor',0)",
+      [project, revokedActor],
+    );
+    const putsBeforeRevocation = objects.putCount;
+    const revocationRun = runtime.executor
+      .execute({
+        name: "editing.resize-video",
+        version: "1.0.0",
+        callerId: revokedActor,
+        projectId: project,
+        resource: { kind: "asset", id: source.id },
+        input: { assetId: source.id, width: 4096, height: 2024 },
+      })
+      .then(
+        () => assert.fail("Revoked member published media"),
+        (error) => error,
+      );
+    let renderingObserved = false;
+    const revocationWatchdog = Date.now() + 20000;
+    while (!renderingObserved && Date.now() < revocationWatchdog) {
+      for (const token of await fs.readdir("/render-work")) {
+        try {
+          const processes = JSON.parse(
+            await fs.readFile(`/render-work/${token}/processes.json`, "utf8"),
+          );
+          if (processes.some((p) => p.argv?.[0]?.endsWith("ffmpeg"))) {
+            renderingObserved = true;
+            break;
+          }
+        } catch {
+          /* execution has not reached its actual FFmpeg process */
+        }
+      }
+      if (!renderingObserved) await new Promise((r) => setTimeout(r, 10));
+    }
+    assert.equal(renderingObserved, true, "Revocation requires actual active media processing");
+    assert.equal(
+      (
+        await pool.query("DELETE FROM project_memberships WHERE project_id=$1 AND user_id=$2", [
+          project,
+          revokedActor,
+        ])
+      ).rowCount,
+      1,
+    );
+    const revocationError = await revocationRun;
+    // The durable active fence cancels revoked admission; the live permission
+    // check denies it. Both existing contracts prohibit successful publication.
+    assert.ok(["cancelled", "denied"].includes(revocationError.code));
+    assert.equal(objects.putCount, putsBeforeRevocation, "No S3 write after mid-render revocation");
+    const revocationS3Writes = objects.putCount - putsBeforeRevocation;
+    const revocationAudit = (
+      await pool.query(
+        "SELECT id,outcome,code,cost_basis,cost_micros::text,cleanup_status FROM tool_executions WHERE caller_id=$1",
+        [revokedActor],
+      )
+    ).rows[0];
+    assert.equal(
+      revocationAudit.outcome,
+      revocationError.code === "cancelled" ? "cancelled" : "failed",
+    );
+    assert.equal(revocationAudit.code, revocationError.code);
+    assert.equal(
+      (await runtime.deps.jobs.findById(revocationAudit.id)).status,
+      revocationError.code === "cancelled" ? "Cancelled" : "Failed",
+    );
+    assert.equal((await runtime.deps.jobs.listAttempts(revocationAudit.id)).length, 1);
+    assert.equal(
+      (
+        await pool.query(
+          "SELECT count(*)::int n FROM editing_output_intents WHERE execution_id=$1 AND published=true",
+          [revocationAudit.id],
+        )
+      ).rows[0].n,
+      0,
+    );
+    await runtime.executor.recover();
+    assert.deepEqual(
+      (
+        await pool.query(
+          "SELECT id,outcome,code,cost_basis,cost_micros::text,cleanup_status FROM tool_executions WHERE id=$1",
+          [revocationAudit.id],
+        )
+      ).rows[0],
+      revocationAudit,
+    );
     // Corrupt persisted bytes through the test-only storage admin; normal writes
     // remain immutable. A retry must verify bytes before declaring success.
     const original = artifacts[0];
@@ -478,7 +659,12 @@ async function main() {
       "AUDIO_EVIDENCE " +
         JSON.stringify({
           artifacts,
-          actualQueueRenders: 21,
+          midRenderRevocation: {
+            actualRenderingObserved: renderingObserved,
+            s3PutCount: revocationS3Writes,
+            audit: revocationAudit,
+          },
+          actualQueueRenders: plans.length,
           admissionCancel,
           repeatedBackwardSources: true,
           sourceLayouts: ["mono48", "stereo44", "none"],
