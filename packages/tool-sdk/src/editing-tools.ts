@@ -122,6 +122,8 @@ const mediaOutput = obj({
           durationUs: us,
           videoDurationUs: us,
           videoFrames: int(1, 108000),
+          sourceVideoFrames: int(1, 108000),
+          spatialFrameCountBasis: { type: "string", const: "decoded_cfr_v1" },
           audioSamples: { type: "string", pattern: digits, minLength: 1, maxLength: 8 },
           width: even(2, 4096),
           height: even(2, 4096),

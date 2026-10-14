@@ -47,10 +47,10 @@ count, expected AAC stereo/48 kHz presence, logical audio duration and a full
 streaming PCM decode. Audio shortfall greater than one rounded sample is rejected.
 AAC packet/decoded padding is bounded separately to 1023 samples; it is not a
 general A/V-duration tolerance. Canonical artifact duration remains the rational
-video-frame duration, not packet padding. A source's inspected video count is
-retained for video-preserving transforms only with independent CFR evidence and
-at most one millisecond of movie-header rounding; genuinely audio-led duration
-is not discarded.
+video-frame duration, not packet padding. Spatial transforms require an
+independently decoded CFR frame census, regardless of source length or render
+strategy eligibility. Other transforms retain their existing timing policy;
+genuinely audio-led duration is not discarded.
 
 The CFR capability probe selects video before its bounded 128-packet window,
 uses complete decoder frame evidence (excluding flush tails), orders presentation
@@ -164,7 +164,9 @@ New derivative metadata records `videoFrames`, `videoDurationUs` and
 `audioSamples` (the logical 48-kHz count before AAC packet padding).
 `durationUs` is the longer logical stream duration, excluding AAC padding. Old
 metadata remains structurally readable, but spatial cache reuse requires both
-explicit clocks; an older truncated descriptor cannot establish audio integrity.
+explicit clocks and `sourceVideoFrames` with `spatialFrameCountBasis=decoded_cfr_v1`.
+The output count must equal the verified source count; an older stretched or
+truncated descriptor cannot establish spatial integrity.
 The immutable render build identity separates new producers from earlier output
 intents. Fresh and cached files must independently pass exact video-frame checks,
 logical audio-duration checks and complete decoded sample coverage. AAC's bounded
@@ -178,3 +180,19 @@ audio samples and genuine markers at 6.005 and 6.335 seconds. Decoded PCM marker
 also reject same-length silence replacement in this regression suite; runtime
 sample-count validation does not claim universal semantic audio equivalence.
 Speed and normalization retain their prior duration and padding policy.
+
+### Short spatial sources (QA53R-3)
+
+One-, two- and three-frame CFR sources are supported independently of the fast
+render selector's minimum cadence evidence. FFprobe decodes the complete video
+stream under one-thread, 108000-frame, 30-minute, 16-MiB-output and job-cancellation
+bounds. The frame census must agree with stream timebase, rational FPS, declared
+duration, every actual presentation timestamp and frame duration. A missing
+header frame count can be established by the decoded census; contradictory
+metadata, missing timing or VFR fails permanently with sanitized `invalid_input`.
+Crop/resize never estimate frames from the asset clock and never pad video.
+
+The real regression matrix includes each short length at all five rates with
+no audio, shorter audio, equal audio and 0.4-second audio. Both tools verify
+decoded frame identity/count, independent audio samples and authored events,
+source hashes, terminal jobs/audits, immutable publication and cache rejection.

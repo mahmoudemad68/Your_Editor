@@ -7,7 +7,11 @@
 export const mediaCorePackageName = "@editagent/media-core" as const;
 
 export { FFprobeMediaProbe, buildFfprobeArgs, FFPROBE_SHOW_ENTRIES } from "./ffprobe-adapter.js";
-export type { FFprobeAdapterOptions, EncodedStreamTiming } from "./ffprobe-adapter.js";
+export type {
+  FFprobeAdapterOptions,
+  EncodedStreamTiming,
+  SpatialVideoTiming,
+} from "./ffprobe-adapter.js";
 export { mapFfprobeDocument } from "./ffprobe-json.js";
 
 export * from "./ffmpeg-builder.js";

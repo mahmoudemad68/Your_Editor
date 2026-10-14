@@ -39,6 +39,97 @@ export interface EncodedStreamTiming {
   readonly channels: number | null;
 }
 
+/** Full bounded presentation-frame census, independent of renderer eligibility. */
+export interface SpatialVideoTiming {
+  readonly frameCount: number;
+  readonly durationUs: bigint;
+}
+
+export function parseSpatialVideoTiming(
+  document: unknown,
+  rate: { numerator: number; denominator: number },
+): SpatialVideoTiming {
+  try {
+    if (
+      !Number.isSafeInteger(rate.numerator) ||
+      !Number.isSafeInteger(rate.denominator) ||
+      rate.numerator < 1 ||
+      rate.numerator > 60000 ||
+      rate.denominator < 1 ||
+      rate.denominator > 1001 ||
+      rate.numerator / rate.denominator < 1 ||
+      rate.numerator / rate.denominator > 60
+    )
+      throw new Error();
+    const doc = document as {
+      streams?: Record<string, unknown>[];
+      frames?: Record<string, unknown>[];
+    };
+    if (
+      !Array.isArray(doc.streams) ||
+      doc.streams.length !== 1 ||
+      !Array.isArray(doc.frames) ||
+      doc.frames.length < 1 ||
+      doc.frames.length > 108000
+    )
+      throw new Error();
+    const integer = (value: unknown): bigint => {
+      if (typeof value === "number" && Number.isSafeInteger(value)) return BigInt(value);
+      if (typeof value === "string" && /^(0|[1-9][0-9]{0,18})$/.test(value)) {
+        const n = BigInt(value);
+        if (n <= 9223372036854775807n) return n;
+      }
+      throw new Error();
+    };
+    const rational = (value: unknown) => {
+      const m = typeof value === "string" && /^([1-9][0-9]{0,9})\/([1-9][0-9]{0,9})$/.exec(value);
+      if (!m) throw new Error();
+      return { n: BigInt(m[1]!), d: BigInt(m[2]!) };
+    };
+    const stream = doc.streams[0]!;
+    if (stream.codec_type !== "video") throw new Error();
+    const tb = rational(stream.time_base),
+      n = BigInt(rate.numerator),
+      d = BigInt(rate.denominator);
+    for (const value of [stream.avg_frame_rate, stream.r_frame_rate]) {
+      const fps = rational(value);
+      if (fps.n * d !== fps.d * n) throw new Error();
+    }
+    const count = BigInt(doc.frames.length),
+      start = integer(stream.start_pts),
+      duration = integer(stream.duration_ts);
+    if (
+      start < 0n ||
+      duration <= 0n ||
+      duration * tb.n * n !== count * d * tb.d ||
+      duration * tb.n > 1800n * tb.d ||
+      integer(stream.nb_read_frames) !== count
+    )
+      throw new Error();
+    if (
+      stream.nb_frames !== undefined &&
+      stream.nb_frames !== "N/A" &&
+      integer(stream.nb_frames) !== count
+    )
+      throw new Error();
+    for (let i = 0; i < doc.frames.length; i++) {
+      const frame = doc.frames[i]!;
+      const pts = integer(frame.pts),
+        best = integer(frame.best_effort_timestamp),
+        span = integer(frame.duration ?? frame.pkt_duration);
+      if (
+        pts !== best ||
+        (pts - start) * tb.n * n !== BigInt(i) * d * tb.d ||
+        span * tb.n * n !== d * tb.d
+      )
+        throw new Error();
+    }
+    return { frameCount: doc.frames.length, durationUs: (count * 1000000n * d + n / 2n) / n };
+  } catch {
+    throw new MediaProbeError("invalid_result");
+  }
+}
+
 export function buildFfprobeArgs(filePath: string): readonly string[] {
   return [
     "-hide_banner",
@@ -169,6 +260,45 @@ export class FFprobeMediaProbe implements IMediaProbe {
             channels,
           };
         });
+    } catch {
+      throw new MediaProbeError("invalid_result");
+    }
+  }
+
+  async inspectSpatialVideoTiming(
+    input: ProbeInput,
+    rate: { numerator: number; denominator: number },
+  ): Promise<SpatialVideoTiming> {
+    assertControlledLocalFile(input.filePath);
+    const stdout = await runFfprobe(
+      this.executable,
+      [
+        "-v",
+        "error",
+        "-protocol_whitelist",
+        "file",
+        "-threads",
+        "1",
+        "-err_detect",
+        "explode",
+        "-select_streams",
+        "v:0",
+        "-count_frames",
+        "-show_frames",
+        "-show_streams",
+        "-show_entries",
+        "stream=codec_type,time_base,start_pts,duration_ts,nb_frames,nb_read_frames,avg_frame_rate,r_frame_rate:frame=pts,best_effort_timestamp,duration,pkt_duration",
+        "-of",
+        "json",
+        "-i",
+        input.filePath,
+      ],
+      this.timeoutMs,
+      this.maxOutputBytes,
+      input.signal,
+    );
+    try {
+      return parseSpatialVideoTiming(JSON.parse(stdout.toString("utf8")), rate);
     } catch {
       throw new MediaProbeError("invalid_result");
     }

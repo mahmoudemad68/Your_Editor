@@ -424,7 +424,9 @@ async function main() {
     });
     // Independent audio-short/equal/long source clocks, including genuine late
     // events at 6.005/6.335 seconds. Both tools use real durable dispatch and S3.
-    for (const source of sources.filter((s) => s.layout.startsWith("spatial-"))) {
+    for (const source of sources.filter(
+      (s) => s.layout.startsWith("spatial-") && !s.rejectSpatial,
+    )) {
       for (const operation of ["crop_video", "resize_video"]) {
         const request = {
           name: `editing.${operation.replaceAll("_", "-")}`,
@@ -435,7 +437,11 @@ async function main() {
           input:
             operation === "crop_video"
               ? { assetId: source.id, x: 0, y: 0, width: 32, height: 32 }
-              : { assetId: source.id, width: 128, height: 128 },
+              : {
+                  assetId: source.id,
+                  width: source.shortSource ? 160 : 128,
+                  height: source.shortSource ? 120 : 128,
+                },
         };
         const recoveryCase = source.relation === "qa2997-l1" && operation === "resize_video";
         if (recoveryCase) objects.failAfterSpatialUpload = true;
@@ -445,6 +451,8 @@ async function main() {
         assert.equal(edited.record.costMicros, 1000);
         const artifact = edited.output.asset.artifact;
         assert.equal(artifact.metadata.videoFrames, source.frames);
+        assert.equal(artifact.metadata.sourceVideoFrames, source.frames);
+        assert.equal(artifact.metadata.spatialFrameCountBasis, "decoded_cfr_v1");
         assert.equal(artifact.metadata.audioSamples, String(source.samples));
         assert.equal(artifact.metadata.durationUs, source.assetDurationUs);
         const job = await runtime.deps.jobs.findById(edited.record.jobId);
@@ -470,7 +478,7 @@ async function main() {
           frames: source.frames,
           n: source.n,
           d: source.d,
-          hasAudio: true,
+          hasAudio: source.hasAudio,
           spatial: source,
           operation,
           metadata: artifact.metadata,
@@ -560,6 +568,80 @@ async function main() {
             await stage.close();
           }
         }
+        if (
+          source.shortSource &&
+          source.n === 30 &&
+          source.frames === 1 &&
+          source.relation === "longer"
+        ) {
+          const { MediaEditingTool } = require("./dist/infrastructure/editing-media-tool.js");
+          const validationTool = new MediaEditingTool(operation, pool, {}, objects),
+            stage = await workspace();
+          try {
+            const good = path.join(stage.work, "good.mp4"),
+              stretched = path.join(stage.work, "stretched.mp4");
+            const stored = await objects.find(
+              artifact.storageKey,
+              artifact.parameterSignature,
+              new AbortController().signal,
+            );
+            await objects.stage(artifact.storageKey, good, stored, new AbortController().signal);
+            await validationTool.validate(good, edited.output, new AbortController().signal);
+            require("node:child_process").execFileSync(
+              "ffmpeg",
+              [
+                "-v",
+                "error",
+                "-y",
+                "-i",
+                good,
+                "-vf",
+                "tpad=stop_mode=clone:stop_duration=0.4,trim=end_frame=12",
+                "-c:v",
+                "libx264",
+                "-threads",
+                "1",
+                "-video_track_timescale",
+                "30",
+                "-c:a",
+                "copy",
+                stretched,
+              ],
+              { timeout: 10000 },
+            );
+            const bad = structuredClone(edited.output);
+            bad.asset.artifact.sha256 = createHash("sha256")
+              .update(await fs.readFile(stretched))
+              .digest("hex");
+            bad.asset.artifact.byteSize = String((await fs.stat(stretched)).size);
+            bad.asset.artifact.storageKey = artifact.storageKey.replace(
+              artifact.sha256,
+              bad.asset.artifact.sha256,
+            );
+            bad.asset.artifact.metadata.videoFrames = 12;
+            bad.asset.artifact.metadata.videoDurationUs = "400000";
+            const before = objects.putCount;
+            await assert.rejects(
+              validationTool.validate(stretched, bad, new AbortController().signal),
+              (e) => e.code === "invalid_output",
+            );
+            delete bad.asset.artifact.metadata.sourceVideoFrames;
+            delete bad.asset.artifact.metadata.spatialFrameCountBasis;
+            await assert.rejects(
+              validationTool.validate(stretched, bad, new AbortController().signal),
+              (e) => e.code === "invalid_output",
+            );
+            assert.equal(objects.putCount, before);
+            artifacts.at(-1).cachedShortReader = {
+              current: "PASS",
+              stretchedHashConsistent: "REJECTED",
+              legacyMissingCensus: "REJECTED",
+              uploadsAfterRejection: 0,
+            };
+          } finally {
+            await stage.close();
+          }
+        }
         // Completed logical execution reuse must not perform another upload or charge.
         const writes = objects.putCount;
         const replayed = await runtime.calls.result(edited.record.id);
@@ -567,6 +649,51 @@ async function main() {
         assert.equal(objects.putCount, writes);
       }
     }
+    const invalidSpatial = [];
+    for (const source of sources.filter((s) => s.rejectSpatial))
+      for (const operation of ["crop_video", "resize_video"]) {
+        const before = objects.putCount;
+        await assert.rejects(
+          runtime.executor.execute({
+            name: `editing.${operation.replaceAll("_", "-")}`,
+            version: "1.0.0",
+            callerId: actor,
+            projectId: project,
+            resource: { kind: "asset", id: source.id },
+            input:
+              operation === "crop_video"
+                ? { assetId: source.id, x: 0, y: 0, width: 32, height: 32 }
+                : { assetId: source.id, width: 160, height: 120 },
+          }),
+          (e) => e.code === "invalid_input" && e.message === "invalid_input",
+        );
+        const rejected = (
+          await pool.query(
+            "SELECT e.id FROM tool_executions e JOIN tool_remote_calls r ON r.execution_id=e.id WHERE r.call->'resource'->>'id'=$1 AND e.tool_name=$2 ORDER BY e.started_at_ms DESC LIMIT 1",
+            [source.id, `editing.${operation.replaceAll("_", "-")}`],
+          )
+        ).rows[0];
+        const record = await runtime.audit.get(rejected.id);
+        assert.equal(record.outcome, "failed");
+        assert.equal(record.code, "invalid_input");
+        assert.equal(record.cleanupStatus, "succeeded");
+        assert.equal(objects.putCount, before);
+        const job = await runtime.deps.jobs.findById(record.jobId);
+        assert.equal(job.status, "Failed");
+        assert.equal(job.attemptCount, 1);
+        const intents = await pool.query(
+          "SELECT count(*)::int n FROM editing_output_intents WHERE execution_id=$1",
+          [record.id],
+        );
+        assert.equal(intents.rows[0].n, 0);
+        invalidSpatial.push({
+          operation,
+          audit: record,
+          job: { id: job.id, status: job.status, attempts: job.attemptCount },
+          uploads: 0,
+          outputIntents: 0,
+        });
+      }
     // Revoke a distinct member only after genuine production FFmpeg execution
     // starts. The existing publication fence must deny it before any S3 PUT.
     const revokedActor = id();
@@ -841,6 +968,7 @@ async function main() {
       "AUDIO_EVIDENCE " +
         JSON.stringify({
           artifacts,
+          invalidSpatial,
           midRenderRevocation: {
             actualRenderingObserved: renderingObserved,
             s3PutCount: revocationS3Writes,

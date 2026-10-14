@@ -33,6 +33,9 @@ export function editOutputTiming(source: EditSource, edit: VideoEdit) {
     d = boundedNumber(source.frameRate.denominator, 1, 1001, true);
   if (n / d < 1 || n / d > 60 || source.durationUs <= 0n || source.durationUs > 1800000000n)
     throw new Error("Unsupported source timing.");
+  const spatial = edit.operation === "crop_video" || edit.operation === "resize_video";
+  if (spatial && source.frameCount === undefined)
+    throw new Error("An authoritative source video frame count is required.");
   let duration = source.durationUs,
     width = source.width,
     height = source.height;
@@ -93,7 +96,6 @@ export function editOutputTiming(source: EditSource, edit: VideoEdit) {
   boundedNumber(totalFrames, 1, 108000, true);
   const durationUs =
     (BigInt(totalFrames) * 1000000n * BigInt(d) + BigInt(Math.floor(n / 2))) / BigInt(n);
-  const spatial = edit.operation === "crop_video" || edit.operation === "resize_video";
   const videoSamples =
     (BigInt(totalFrames) * 48000n * BigInt(d) + BigInt(Math.floor(n / 2))) / BigInt(n);
   const audioSamples = source.hasAudio ? (spatial ? source.audioSamples : videoSamples) : 0n;
@@ -134,6 +136,7 @@ export function buildVideoEditArgs(
 ): readonly string[] {
   const t = editOutputTiming(source, edit),
     rate = `${t.frameRate.numerator}/${t.frameRate.denominator}`;
+  const spatial = edit.operation === "crop_video" || edit.operation === "resize_video";
   const video: string[] = ["setpts=PTS-STARTPTS"];
   if (edit.operation === "crop_video")
     video.push(`crop=${edit.width}:${edit.height}:${edit.x}:${edit.y}`);
@@ -147,7 +150,7 @@ export function buildVideoEditArgs(
   video.push(
     `fps=fps=${rate}:start_time=0:round=near`,
     "setsar=1",
-    `tpad=stop_mode=clone:stop_duration=${Number(t.durationUs) / 1000000}`,
+    ...(!spatial ? [`tpad=stop_mode=clone:stop_duration=${Number(t.durationUs) / 1000000}`] : []),
     `trim=end_frame=${t.totalFrames}`,
     `settb=expr=${t.frameRate.denominator}/${t.frameRate.numerator}`,
     "setpts=N",

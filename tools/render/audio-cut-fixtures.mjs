@@ -222,8 +222,11 @@ export async function registerAudioCutFixtures({ pool, s3, project, newId, direc
     channels: 1,
     assetDurationUs: "6000000",
   });
-  const { prepareSpatialFixtures } = await import("./spatial-audio-fixtures.mjs");
+  const { prepareSpatialFixtures, prepareUnverifiableSpatialFixture } =
+    await import("./spatial-audio-fixtures.mjs");
   fixtures.push(...prepareSpatialFixtures(directory));
+  fixtures.push(...prepareSpatialFixtures(directory, () => true, true));
+  fixtures.push(prepareUnverifiableSpatialFixture(directory));
   for (const fixture of fixtures) {
     const bytes = readFileSync(fixture.file),
       sha256 = createHash("sha256").update(bytes).digest("hex"),

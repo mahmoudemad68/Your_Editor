@@ -73,6 +73,13 @@ test("spatial audio clocks are mandatory, bounded, independent, and never padded
         editOutputTiming({ ...source, audioSamples: audioSamples as bigint }, edit),
       );
     const args = buildVideoEditArgs({ ...source, audioSamples: 310656n }, edit, "/tmp/output.mp4");
+    const unknownCount = { ...source, audioSamples: 310656n } as { frameCount?: number } & Omit<
+      typeof source,
+      "frameCount"
+    > & { audioSamples: bigint };
+    delete unknownCount.frameCount;
+    assert.throws(() => editOutputTiming(unknownCount, edit), /video frame count/);
+    assert.doesNotMatch(args[args.indexOf("-vf") + 1]!, /tpad/);
     const filter = args[args.indexOf("-af") + 1]!;
     assert.match(filter, /atrim=end_sample=310656/);
     assert.doesNotMatch(filter, /apad/);
@@ -194,6 +201,7 @@ test(
         height: 90,
         durationUs: 2000000n,
         frameRate: { numerator: 30, denominator: 1 },
+        frameCount: 60,
         hasAudio: true,
         audioSamples: 96000n,
       };

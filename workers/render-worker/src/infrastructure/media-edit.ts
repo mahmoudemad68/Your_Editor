@@ -1,5 +1,5 @@
 import path from "node:path";
-import { uuidV7, snapToFrame, frameTime } from "@editagent/domain";
+import { uuidV7, snapToFrame, frameTime, MediaProbeError } from "@editagent/domain";
 import { validateEditingParameters } from "@editagent/tool-sdk";
 import {
   FFprobeMediaProbe,
@@ -26,6 +26,16 @@ function checked<T>(operation: () => T): T {
     return operation();
   } catch {
     throw new MediaEditInputError();
+  }
+}
+async function inspected<T>(operation: () => Promise<T>, signal: AbortSignal): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    signal.throwIfAborted();
+    if (error instanceof MediaProbeError && ["invalid_result", "invalid_json"].includes(error.code))
+      throw new MediaEditInputError();
+    throw error; // preserve timeout/interruption/infrastructure classification
   }
 }
 
@@ -85,13 +95,17 @@ export async function executeMediaEdit(
   const sources = new Map<string, EditSource>();
   for (const a of assets) {
     const file = path.join(work, a.name),
-      p = await new FFprobeMediaProbe({ timeoutMs: 10000 }).inspect({ filePath: file, signal });
+      p = await inspected(
+        () => new FFprobeMediaProbe({ timeoutMs: 10000 }).inspect({ filePath: file, signal }),
+        signal,
+      );
     if (!p.videoCodec || !p.width || !p.height || !p.frameRate || !p.duration)
       throw new MediaEditInputError();
-    const streamTiming = await new FFprobeMediaProbe({ timeoutMs: 10000 }).inspectStreamTiming({
-      filePath: file,
+    const streamTiming = await inspected(
+      () =>
+        new FFprobeMediaProbe({ timeoutMs: 10000 }).inspectStreamTiming({ filePath: file, signal }),
       signal,
-    });
+    );
     const video = streamTiming.find((s) => s.kind === "video");
     const audio = streamTiming.filter((s) => s.kind === "audio");
     let audioSamples: bigint | undefined;
@@ -115,7 +129,29 @@ export async function executeMediaEdit(
         throw new MediaEditInputError();
     }
     let frameCount: number | undefined;
-    if (
+    const spatial = input.operation === "crop_video" || input.operation === "resize_video";
+    if (spatial) {
+      if (streamTiming.filter((s) => s.kind === "video").length !== 1)
+        throw new MediaEditInputError();
+      // Decode in the isolated executor. Even one real frame must be preserved;
+      // this is deliberately independent of the strategy selector's prefix.
+      {
+        const rate = {
+          numerator: Number(p.frameRate.numerator),
+          denominator: Number(p.frameRate.denominator),
+        };
+        const census = await inspected(
+          () =>
+            new FFprobeMediaProbe({
+              timeoutMs: 300000,
+              maxOutputBytes: 16777216,
+            }).inspectSpatialVideoTiming({ filePath: file, signal }, rate),
+          signal,
+        );
+        if (census.durationUs > BigInt(a.durationUs) + 1000n) throw new MediaEditInputError();
+        frameCount = census.frameCount;
+      }
+    } else if (
       video?.frames &&
       video.durationTicks &&
       video.durationTicks * video.timeBase.numerator * p.frameRate.numerator ===
@@ -131,12 +167,7 @@ export async function executeMediaEdit(
       const delta = BigInt(a.durationUs) - logical;
       // Crop/resize preserve verified video frames, regardless of AAC/audio tails.
       // Audio/speed operations retain their existing genuine audio-led duration.
-      if (
-        input.operation === "crop_video" ||
-        input.operation === "resize_video" ||
-        (delta >= -1000n && delta <= 1000n)
-      )
-        frameCount = Number(video.frames);
+      if (delta >= -1000n && delta <= 1000n) frameCount = Number(video.frames);
     }
     sources.set(a.sourceId, {
       path: file,
@@ -273,5 +304,14 @@ export async function executeMediaEdit(
   });
   if ((probe.audioCodec !== null) !== audioPresent || (audioPresent && probe.audioCodec !== "aac"))
     throw new Error("Edited audio stream differs from contract.");
-  return { ...validated, audioPresent };
+  return {
+    ...validated,
+    audioPresent,
+    ...(input.operation === "crop_video" || input.operation === "resize_video"
+      ? {
+          sourceVideoFrames: first.frameCount!,
+          spatialFrameCountBasis: "decoded_cfr_v1" as const,
+        }
+      : {}),
+  };
 }

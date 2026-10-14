@@ -8,6 +8,7 @@ import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import {
   prepareSpatialFixtures,
+  prepareUnverifiableSpatialFixture,
   verifySpatialOutput,
 } from "../../tools/render/spatial-audio-fixtures.mjs";
 const { AbortController } = globalThis;
@@ -18,15 +19,28 @@ const {
 const {
   validateOutput,
 } = require("../../workers/render-worker/dist/infrastructure/probe-output.js");
-for (const rate of [25, 30, 30000, 24000, 60000, "qa2997-l1"])
+for (const { rate, frames } of [
+  ...[25, 30, 30000, 24000, 60000, "qa2997-l1"].map((rate) => ({ rate, frames: undefined })),
+  ...[25, 30, 24000, 30000, 60000].flatMap((n) =>
+    [1, 2, 3].map((frames) => ({ rate: `short-${n}`, frames })),
+  ),
+])
   test(
-    `QA53R-2: real crop/resize preserve independent audio clocks and content (${rate})`,
+    `QA53R-2/R3: real crop/resize preserve independent clocks and content (${rate}${frames ? "/" + frames + "f" : ""})`,
     { timeout: 120000 },
     async () => {
       const work = await mkdtemp(path.join(tmpdir(), "spatial-audio-"));
       try {
-        const fixtures = prepareSpatialFixtures(work, (p) =>
-            rate === "qa2997-l1" ? p.relation === rate : p.n === rate && p.relation !== "qa2997-l1",
+        const short = typeof rate === "string" && rate.startsWith("short-");
+        const fixtures = prepareSpatialFixtures(
+            work,
+            (p) =>
+              rate === "qa2997-l1"
+                ? p.relation === rate
+                : p.n === (short ? Number(rate.slice(6)) : rate) &&
+                  p.relation !== "qa2997-l1" &&
+                  (!short || p.frames === frames),
+            short,
           ),
           id = "018f6b6e-7c3a-7b2a-8d3e-9c0b1a2d3e4f";
         for (const fixture of fixtures)
@@ -42,7 +56,11 @@ for (const rate of [25, 30, 30000, 24000, 60000, "qa2997-l1"])
                 parameters:
                   operation === "crop_video"
                     ? { assetId: id, x: 0, y: 0, width: 32, height: 32 }
-                    : { assetId: id, width: 128, height: 128 },
+                    : {
+                        assetId: id,
+                        width: fixture.shortSource ? 160 : 128,
+                        height: fixture.shortSource ? 120 : 128,
+                      },
               },
               [
                 {
@@ -62,6 +80,8 @@ for (const rate of [25, 30, 30000, 24000, 60000, "qa2997-l1"])
             verifySpatialOutput(file, fixture, operation);
             assert.equal(result.audioSamples, String(fixture.samples));
             assert.equal(result.durationUs, fixture.assetDurationUs);
+            assert.equal(result.sourceVideoFrames, fixture.frames);
+            assert.equal(result.spatialFrameCountBasis, "decoded_cfr_v1");
             assert.equal(
               createHash("sha256")
                 .update(await readFile(fixture.file))
@@ -114,3 +134,50 @@ for (const rate of [25, 30, 30000, 24000, 60000, "qa2997-l1"])
       }
     },
   );
+
+test(
+  "QA53R-3: real non-CFR source fails closed before crop/resize output exists",
+  { timeout: 30000 },
+  async () => {
+    const work = await mkdtemp(path.join(tmpdir(), "spatial-invalid-"));
+    try {
+      const fixture = prepareUnverifiableSpatialFixture(work),
+        id = "018f6b6e-7c3a-7b2a-8d3e-9c0b1a2d3e4f";
+      for (const operation of ["crop_video", "resize_video"]) {
+        await assert.rejects(
+          executeMediaEdit(
+            {
+              schemaVersion: 1,
+              kind: "media-edit-v1",
+              renderVersion: "a".repeat(64),
+              operation,
+              sources: [{ id, kind: "video", durationUs: fixture.assetDurationUs }],
+              parameters:
+                operation === "crop_video"
+                  ? { assetId: id, x: 0, y: 0, width: 32, height: 32 }
+                  : { assetId: id, width: 160, height: 120 },
+            },
+            [
+              {
+                sourceId: id,
+                kind: "video",
+                name: path.basename(fixture.file),
+                durationUs: fixture.assetDurationUs,
+                sha256: fixture.sha256,
+                byteSize: 1,
+              },
+            ],
+            work,
+            new AbortController().signal,
+            () => {},
+          ),
+          (e) =>
+            e.name === "MediaEditInputError" && e.message === "Unsupported media editing input.",
+        );
+        await assert.rejects(readFile(path.join(work, "output.mp4")), { code: "ENOENT" });
+      }
+    } finally {
+      await rm(work, { recursive: true, force: true });
+    }
+  },
+);

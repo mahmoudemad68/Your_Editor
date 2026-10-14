@@ -195,6 +195,8 @@ export class MediaEditingTool implements ITool {
           videoDurationUs: string;
           decodedFrames: number;
           audioSamples: string;
+          sourceVideoFrames?: number;
+          spatialFrameCountBasis?: "decoded_cfr_v1";
           width: number;
           height: number;
           frameRate: { numerator: string; denominator: string };
@@ -237,6 +239,12 @@ export class MediaEditingTool implements ITool {
               videoDurationUs: meta.videoDurationUs,
               videoFrames: meta.decodedFrames,
               audioSamples: meta.audioSamples,
+              ...(meta.sourceVideoFrames !== undefined
+                ? {
+                    sourceVideoFrames: meta.sourceVideoFrames,
+                    spatialFrameCountBasis: meta.spatialFrameCountBasis,
+                  }
+                : {}),
               width: meta.width,
               height: meta.height,
               frameRate: {
@@ -366,6 +374,8 @@ export class MediaEditingTool implements ITool {
       videoDurationUs?: string;
       videoFrames?: number;
       audioSamples?: string;
+      sourceVideoFrames?: number;
+      spatialFrameCountBasis?: string;
       frameRate: { numerator: number; denominator: number };
       audioPresent: boolean;
     };
@@ -376,7 +386,9 @@ export class MediaEditingTool implements ITool {
       spatial &&
       (m.videoFrames === undefined ||
         m.videoDurationUs === undefined ||
-        m.audioSamples === undefined)
+        m.audioSamples === undefined ||
+        m.spatialFrameCountBasis !== "decoded_cfr_v1" ||
+        m.sourceVideoFrames !== m.videoFrames)
     )
       throw new ToolError("invalid_output");
     const frames =

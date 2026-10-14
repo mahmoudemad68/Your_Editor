@@ -7,6 +7,7 @@ import { InMemoryProjectRepository } from "../application/in-memory-project-repo
 import { ProjectJobEvents } from "../application/job-events.js";
 import { bindActor } from "./actor.js";
 import { JobEventsController } from "./job-events.controller.js";
+import { ProjectNotFoundError } from "../application/project-access.js";
 
 const project = projectId("018f6b6e-7c3a-7b2c-8d3e-9c0b1a2d3e4f");
 const actor = userId("018f6b6e-7c3a-7b2c-8d3e-9c0b1a2d3e4a");
@@ -80,6 +81,61 @@ function base(sequence: number) {
   };
 }
 const tick = () => new Promise((resolve) => setImmediate(resolve));
+
+test("membership revoked during subscriber admission cannot open an authorized SSE stream", async () => {
+  const projects = new InMemoryProjectRepository(),
+    owner = userId(id);
+  const state = Project.create(project, "pending admission", owner, instant(1n)).grantMembership(
+    owner,
+    actor,
+    "editor",
+    instant(2n),
+  );
+  await projects.save(state, null);
+  let entered!: () => void,
+    resume!: () => void,
+    count = 0;
+  const pending = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const gate = new Promise<void>((resolve) => {
+    resume = resolve;
+  });
+  const events = new ProjectJobEvents(projects, {
+    async subscribe() {
+      entered();
+      await gate;
+      count++;
+      return {
+        async close() {
+          count--;
+        },
+      };
+    },
+    async close() {},
+  });
+  const controller = new JobEventsController(events),
+    response = new Reply(),
+    request = {};
+  response.writable = true;
+  bindActor(request, actor);
+  const opening = controller.stream(project, request, response);
+  try {
+    await pending;
+    await projects.save(state.revokeMembership(owner, actor, instant(3n)), 0n);
+    resume();
+    await assert.rejects(opening, ProjectNotFoundError);
+    assert.equal(count, 0);
+    assert.deepEqual(response.chunks, []);
+    assert.equal(response.ended, false, "Do not send a 200 before the normal 404 exception filter");
+    assert.equal(response.listenerCount("close"), 0);
+    assert.equal(response.listenerCount("drain"), 0);
+  } finally {
+    resume();
+    await opening.catch(() => undefined);
+    await events.onModuleDestroy();
+  }
+});
 
 test("Redis continuity reset closes SSE without manufacturing events and releases resources once", async () => {
   const { events, response, reset, count, send } = await setup(true);
