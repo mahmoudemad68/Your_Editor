@@ -486,11 +486,33 @@ async function main() {
       revocationError.code === "cancelled" ? "cancelled" : "failed",
     );
     assert.equal(revocationAudit.code, revocationError.code);
+    const revocationJob = await runtime.deps.jobs.findById(revocationAudit.id),
+      revocationAttempts = await runtime.deps.jobs.listAttempts(revocationAudit.id);
     assert.equal(
-      (await runtime.deps.jobs.findById(revocationAudit.id)).status,
+      revocationJob.status,
       revocationError.code === "cancelled" ? "Cancelled" : "Failed",
     );
-    assert.equal((await runtime.deps.jobs.listAttempts(revocationAudit.id)).length, 1);
+    // At-least-once workers may retry a transport/process failure before the
+    // authoritative revocation fence settles. Require bounded, closed attempts,
+    // one settlement and zero publication, rather than inventing exactly-once work.
+    assert.equal(revocationJob.maxAttempts, 3);
+    assert.equal(revocationAttempts.length, revocationJob.attemptCount);
+    assert.ok(
+      revocationAttempts.length > 0 && revocationAttempts.length <= revocationJob.maxAttempts,
+    );
+    for (const [index, attempt] of revocationAttempts.entries()) {
+      assert.equal(attempt.attemptNumber, index + 1);
+      assert.ok(attempt.finishedAt !== null);
+      assert.ok(["Retrying", "Cancelled", "Failed"].includes(attempt.status));
+    }
+    assert.equal(revocationAttempts.at(-1).status, revocationJob.status);
+    const revocationReservation = (
+      await pool.query(
+        "SELECT cost_micros::text FROM tool_cost_reservations WHERE execution_id=$1",
+        [revocationAudit.id],
+      )
+    ).rows;
+    assert.deepEqual(revocationReservation, [{ cost_micros: revocationAudit.cost_micros }]);
     assert.equal(
       (
         await pool.query(
@@ -501,6 +523,15 @@ async function main() {
       0,
     );
     await runtime.executor.recover();
+    assert.deepEqual(
+      (
+        await pool.query(
+          "SELECT cost_micros::text FROM tool_cost_reservations WHERE execution_id=$1",
+          [revocationAudit.id],
+        )
+      ).rows,
+      revocationReservation,
+    );
     assert.deepEqual(
       (
         await pool.query(
@@ -663,6 +694,13 @@ async function main() {
             actualRenderingObserved: renderingObserved,
             s3PutCount: revocationS3Writes,
             audit: revocationAudit,
+            attempts: revocationAttempts.map((a) => ({
+              number: a.attemptNumber,
+              status: a.status,
+              reason: a.reason,
+              closed: a.finishedAt !== null,
+            })),
+            reservation: revocationReservation,
           },
           actualQueueRenders: plans.length,
           admissionCancel,
