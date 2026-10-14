@@ -105,8 +105,8 @@ export function compileSchema(schema: JsonSchema): ValidateFunction {
     const common = ["type", "description", "const", "enum"];
     const byType: Record<string, string[]> = {
       string: ["minLength", "maxLength", "pattern"],
-      number: ["minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum"],
-      integer: ["minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum"],
+      number: ["minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "multipleOf"],
+      integer: ["minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "multipleOf"],
       boolean: [],
       null: [],
       object: ["properties", "required", "additionalProperties", "minProperties", "maxProperties"],
@@ -140,15 +140,25 @@ export function compileSchema(schema: JsonSchema): ValidateFunction {
     )
       throw new ToolError("invalid_schema", "Strings require bounded maxLength");
     if (s.pattern !== undefined) {
+      // Exact end-of-input assertion only; retain the conservative regex grammar.
+      // ECMAScript '$' alone also matches before a final newline.
+      const portable =
+        typeof s.pattern === "string" ? s.pattern.replace(/\$\(\?!\[\\s\\S\]\)(?=\||$)/g, "$") : "";
       if (
         typeof s.pattern !== "string" ||
         s.pattern.length > 256 ||
-        /[(){}*]|\\[1-9]/.test(s.pattern) ||
+        /[(){}*]|\\[1-9]/.test(portable) ||
         (s.pattern.match(/\+/g)?.length ?? 0) > 1
       )
         throw new ToolError("invalid_schema", "Unsupported regular expression");
       new RegExp(s.pattern, "u");
     }
+    // This deliberately limited subset admits positive integer divisors only.
+    if (
+      s.multipleOf !== undefined &&
+      (!Number.isSafeInteger(s.multipleOf) || (s.multipleOf as number) <= 0)
+    )
+      throw new ToolError("invalid_schema", "Invalid multipleOf");
     for (const k of [
       "minimum",
       "maximum",

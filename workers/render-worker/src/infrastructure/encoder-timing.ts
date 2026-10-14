@@ -35,6 +35,10 @@ export function exactEncoderTiming(
   // Stream-copy stitching must retain the same exact timebase as pre-encoding.
   if (!timescale)
     result.splice(result.length - 1, 0, "-video_track_timescale", String(rate.numerator));
+  // A movie clock matching the output PCM rate avoids rounding edit-list
+  // audio durations down to milliseconds (up to 24 samples).
+  if (!result.includes("-movie_timescale"))
+    result.splice(result.length - 1, 0, "-movie_timescale", "48000");
   const copy = args.some((v, i) => ["-c", "-c:v", "-vcodec"].includes(v) && args[i + 1] === "copy");
   if (!copy && componentBoundaries.length) {
     // A fresh intra frame at text visibility boundaries prevents colored glyph

@@ -420,6 +420,9 @@ importers:
       '@editagent/shared':
         specifier: workspace:*
         version: link:../../packages/shared
+      '@editagent/tool-sdk':
+        specifier: workspace:*
+        version: link:../../packages/tool-sdk
       '@remotion/renderer':
         specifier: 4.0.534
         version: 4.0.534(react-dom@19.3.0(react@19.3.0))(react@19.3.0)

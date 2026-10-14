@@ -1,15 +1,20 @@
 import { lstat, realpath } from "node:fs/promises";
 import path from "node:path";
-import type { RenderInput, VerifiedAsset } from "../application/ports.js";
+import type { RendererWorkInput, VerifiedAsset } from "../application/ports.js";
 import { fileSha } from "./storage.js";
 /** Independent executor validation; only exact content-bound filenames become HTTP routes. */
 export async function verifyStagedAssets(
-  input: RenderInput,
+  input: RendererWorkInput,
   raw: unknown,
   work: string,
   signal: AbortSignal,
 ): Promise<VerifiedAsset[]> {
-  const sources = input.compositionId === "TimelineV1" ? input.props.timeline.sources : [];
+  const sources =
+    "kind" in input
+      ? input.sources
+      : input.compositionId === "TimelineV1"
+        ? input.props.timeline.sources
+        : [];
   if (!Array.isArray(raw) || raw.length !== sources.length)
     throw new Error("Invalid staged asset set.");
   const ids = new Set<string>();

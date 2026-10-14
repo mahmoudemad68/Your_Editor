@@ -36,6 +36,8 @@ test("supported SDK encoder hook retains exact rational timebase without mutable
     "-video_track_timescale",
     "30000",
     "-y",
+    "-movie_timescale",
+    "48000",
     "/tmp/output.mp4",
   ]);
   assert.deepEqual(args, before);
@@ -44,7 +46,17 @@ test("supported SDK encoder hook retains exact rational timebase without mutable
       numerator: 24,
       denominator: 1,
     }),
-    ["-i", "/tmp/input.mp4", "-c:v", "copy", "-video_track_timescale", "24", "/tmp/output.mp4"],
+    [
+      "-i",
+      "/tmp/input.mp4",
+      "-c:v",
+      "copy",
+      "-video_track_timescale",
+      "24",
+      "-movie_timescale",
+      "48000",
+      "/tmp/output.mp4",
+    ],
   );
   for (const numerator of [NaN, Infinity, 0, -1, 1.2, 60001])
     assert.throws(() => exactEncoderTiming(args, { numerator, denominator: 1 }));
@@ -167,6 +179,8 @@ test("component removal keyframes preserve integer rational boundaries and do no
       "libx264",
       "-video_track_timescale",
       "30000",
+      "-movie_timescale",
+      "48000",
       "-force_key_frames",
       "1.001000000000,2.002000000000",
       "output.mp4",

@@ -82,7 +82,7 @@ export class JobEventsController {
     let subscription: JobEventSubscription | undefined;
     const pending: JobEvent[] = [];
     let untrack = () => undefined as void;
-    const cleanup = (force: boolean) => {
+    const cleanup = (force: boolean, endResponse = true) => {
       if (closed) return;
       closed = true;
       pending.length = 0;
@@ -99,7 +99,7 @@ export class JobEventsController {
         // zero-window orphan in FIN_WAIT1 after the Node handle is gone.
         response.socket?.resetAndDestroy();
         response.destroy();
-      } else response.end();
+      } else if (endResponse) response.end();
     };
     const close = () => cleanup(false);
     const abortSlowClient = () => cleanup(true);
@@ -190,6 +190,15 @@ export class JobEventsController {
       untrack();
       throw new ServiceUnavailableException("Job events unavailable.");
     }
+    // Redis admission can span an outage. Membership may have been revoked
+    // while SUBSCRIBE was pending; revalidate before 200 or protected bytes.
+    try {
+      await this.events.authorize(actor, id);
+    } catch (error) {
+      cleanup(false, false);
+      throw error;
+    }
+    if (closed) return;
     response.setHeader("Content-Type", "text/event-stream");
     response.setHeader("Cache-Control", "no-cache, no-store");
     response.setHeader("Connection", "keep-alive");

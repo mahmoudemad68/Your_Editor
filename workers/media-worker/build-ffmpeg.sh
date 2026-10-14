@@ -48,7 +48,7 @@ cd "ffmpeg-${version}"
   --enable-encoder=libx264,aac,libvpx_vp9,libopus,pcm_s16le,pcm_f32le,mjpeg \
   --enable-parser=h264,hevc,vp9,av1,aac,opus,png \
   --enable-bsf=aac_adtstoasc,extract_extradata,h264_mp4toannexb,hevc_mp4toannexb,vp9_superframe \
-  --enable-filter=aresample,scale,format,aformat,null,anull,trim,atrim,concat,setpts,asetpts,fps,tpad,apad,pad,tile,setsar,transpose,hflip,vflip,select,silencedetect,ebur128
+  --enable-filter=aresample,scale,format,aformat,null,anull,trim,atrim,concat,setpts,asetpts,settb,asettb,fps,tpad,apad,pad,tile,setsar,transpose,hflip,vflip,select,silencedetect,ebur128,color,anullsrc,crop,atempo,loudnorm,acrossfade,afade
 
 make -j"$(nproc)"
 make install
@@ -65,3 +65,6 @@ ffmpeg -hide_banner -demuxers | grep -q 'matroska,webm'
 ffmpeg -hide_banner -demuxers | grep -q 'mov,mp4'
 ffmpeg -hide_banner -demuxers | grep -q 'png_pipe'
 ffprobe -version | head -n 1 | grep -q '7.1.5-editagent1'
+
+# The cut renderer needs sample-count join ramps; fail the build if omitted.
+ffmpeg -hide_banner -filters | grep -q ' afade '

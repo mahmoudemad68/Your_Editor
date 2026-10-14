@@ -65,3 +65,26 @@ test("derived artifacts remain tied to project/source/signature/kind and deep im
   ])
     expect(() => new DerivedAsset(ID, ID, "proxy", 100n, 100n, invalid)).toThrow();
 });
+test("edited-video is an explicit immutable content-addressed derivation, preserving legacy kinds", () => {
+  const artifact: DerivedArtifact = {
+    projectId: ID,
+    storageKey: `projects/${ID}/derived/${ID}/edited-video/${SHA}/${SHA}.mp4`,
+    parameterSignature: SHA,
+    mimeType: "video/mp4",
+    byteSize: "1024",
+    sha256: SHA,
+    metadata: { variant: "edit", parameters: { operation: "change_speed" } },
+  };
+  const asset = new DerivedAsset(ID, ID, "edited-video", 100n, 100n, artifact);
+  expect(asset.kind).toBe("edited-video");
+  expect(DerivedAsset.restore(asset.toSnapshot()).toSnapshot()).toEqual(asset.toSnapshot());
+  expect(Object.isFrozen(asset.artifact?.metadata.parameters)).toBe(true);
+  for (const invalid of [
+    { ...artifact, storageKey: artifact.storageKey.replace(SHA + ".mp4", "wrong.mp4") },
+    { ...artifact, mimeType: "audio/wav" },
+    { ...artifact, byteSize: "1073741825" },
+    { ...artifact, metadata: { variant: "proxy", parameters: {} } },
+    { ...artifact, metadata: { variant: "edit", parameters: [] } },
+  ])
+    expect(() => new DerivedAsset(ID, ID, "edited-video", 100n, 100n, invalid)).toThrow();
+});

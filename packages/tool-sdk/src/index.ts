@@ -7,3 +7,4 @@ export { ToolError, contentHash, canonicalJson, jsonValue } from "./validation.j
 export { PostgresToolAuditRepository, PostgresToolAuthority } from "./infrastructure/postgres.js";
 export { PostgresRemoteCallStore } from "./infrastructure/remote-store.js";
 export { IsolatedTool } from "./infrastructure/isolated-tool.js";
+export * from "./editing-tools.js";

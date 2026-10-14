@@ -61,7 +61,7 @@ async function main() {
     }
     await runtime(path.join(__dirname, ".."), "render-worker");
     const repository = path.resolve(__dirname, "../../../..");
-    for (const name of ["domain", "shared", "schemas", "media-core", "job-queue"])
+    for (const name of ["domain", "shared", "schemas", "media-core", "job-queue", "tool-sdk"])
       await runtime(path.join(repository, "packages", name, "dist"), "packages/" + name);
     for (const file of [
       "pnpm-lock.yaml",

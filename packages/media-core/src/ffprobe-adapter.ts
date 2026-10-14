@@ -27,6 +27,109 @@ export interface FFprobeAdapterOptions {
   readonly maxOutputBytes?: number;
 }
 
+/** Infrastructure timing in exact stream ticks; no persisted domain/schema change. */
+export interface EncodedStreamTiming {
+  readonly kind: "video" | "audio";
+  readonly codec: string;
+  readonly timeBase: { numerator: bigint; denominator: bigint };
+  readonly startTicks: bigint;
+  readonly durationTicks: bigint | null;
+  readonly frames: bigint | null;
+  readonly sampleRate: number | null;
+  readonly channels: number | null;
+}
+
+/** Full bounded presentation-frame census, independent of renderer eligibility. */
+export interface SpatialVideoTiming {
+  readonly frameCount: number;
+  readonly durationUs: bigint;
+}
+
+export function parseSpatialVideoTiming(
+  document: unknown,
+  rate: { numerator: number; denominator: number },
+): SpatialVideoTiming {
+  try {
+    if (
+      !Number.isSafeInteger(rate.numerator) ||
+      !Number.isSafeInteger(rate.denominator) ||
+      rate.numerator < 1 ||
+      rate.numerator > 60000 ||
+      rate.denominator < 1 ||
+      rate.denominator > 1001 ||
+      rate.numerator / rate.denominator < 1 ||
+      rate.numerator / rate.denominator > 60
+    )
+      throw new Error();
+    const doc = document as {
+      streams?: Record<string, unknown>[];
+      frames?: Record<string, unknown>[];
+    };
+    if (
+      !Array.isArray(doc.streams) ||
+      doc.streams.length !== 1 ||
+      !Array.isArray(doc.frames) ||
+      doc.frames.length < 1 ||
+      doc.frames.length > 108000
+    )
+      throw new Error();
+    const integer = (value: unknown): bigint => {
+      if (typeof value === "number" && Number.isSafeInteger(value)) return BigInt(value);
+      if (typeof value === "string" && /^(0|[1-9][0-9]{0,18})$/.test(value)) {
+        const n = BigInt(value);
+        if (n <= 9223372036854775807n) return n;
+      }
+      throw new Error();
+    };
+    const rational = (value: unknown) => {
+      const m = typeof value === "string" && /^([1-9][0-9]{0,9})\/([1-9][0-9]{0,9})$/.exec(value);
+      if (!m) throw new Error();
+      return { n: BigInt(m[1]!), d: BigInt(m[2]!) };
+    };
+    const stream = doc.streams[0]!;
+    if (stream.codec_type !== "video") throw new Error();
+    const tb = rational(stream.time_base),
+      n = BigInt(rate.numerator),
+      d = BigInt(rate.denominator);
+    for (const value of [stream.avg_frame_rate, stream.r_frame_rate]) {
+      const fps = rational(value);
+      if (fps.n * d !== fps.d * n) throw new Error();
+    }
+    const count = BigInt(doc.frames.length),
+      start = integer(stream.start_pts),
+      duration = integer(stream.duration_ts);
+    if (
+      start < 0n ||
+      duration <= 0n ||
+      duration * tb.n * n !== count * d * tb.d ||
+      duration * tb.n > 1800n * tb.d ||
+      integer(stream.nb_read_frames) !== count
+    )
+      throw new Error();
+    if (
+      stream.nb_frames !== undefined &&
+      stream.nb_frames !== "N/A" &&
+      integer(stream.nb_frames) !== count
+    )
+      throw new Error();
+    for (let i = 0; i < doc.frames.length; i++) {
+      const frame = doc.frames[i]!;
+      const pts = integer(frame.pts),
+        best = integer(frame.best_effort_timestamp),
+        span = integer(frame.duration ?? frame.pkt_duration);
+      if (
+        pts !== best ||
+        (pts - start) * tb.n * n !== BigInt(i) * d * tb.d ||
+        span * tb.n * n !== d * tb.d
+      )
+        throw new Error();
+    }
+    return { frameCount: doc.frames.length, durationUs: (count * 1000000n * d + n / 2n) / n };
+  } catch {
+    throw new MediaProbeError("invalid_result");
+  }
+}
+
 export function buildFfprobeArgs(filePath: string): readonly string[] {
   return [
     "-hide_banner",
@@ -84,6 +187,200 @@ export class FFprobeMediaProbe implements IMediaProbe {
         throw error;
       }
       throw new MediaProbeError("invalid_result");
+    }
+  }
+
+  async inspectStreamTiming(input: ProbeInput): Promise<readonly EncodedStreamTiming[]> {
+    assertControlledLocalFile(input.filePath);
+    const stdout = await runFfprobe(
+      this.executable,
+      [
+        "-v",
+        "error",
+        "-protocol_whitelist",
+        "file",
+        "-show_streams",
+        "-show_entries",
+        "stream=codec_type,codec_name,time_base,start_pts,duration_ts,nb_frames,sample_rate,channels",
+        "-of",
+        "json",
+        "-i",
+        input.filePath,
+      ],
+      this.timeoutMs,
+      this.maxOutputBytes,
+      input.signal,
+    );
+    try {
+      const document = JSON.parse(stdout.toString("utf8"));
+      if (!Array.isArray(document.streams) || document.streams.length > 64) throw new Error();
+      const integer = (v: unknown): bigint => {
+        if (typeof v === "number" && Number.isSafeInteger(v)) return BigInt(v);
+        if (typeof v === "string" && /^-?(0|[1-9][0-9]{0,18})$/.test(v)) {
+          const n = BigInt(v);
+          if (n >= -9223372036854775808n && n <= 9223372036854775807n) return n;
+        }
+        throw new Error();
+      };
+      return document.streams
+        .filter(
+          (s: { codec_type?: unknown }) => s.codec_type === "video" || s.codec_type === "audio",
+        )
+        .map((s: Record<string, unknown>) => {
+          const rate =
+            typeof s.time_base === "string" &&
+            /^([1-9][0-9]{0,9})\/([1-9][0-9]{0,9})$/.exec(s.time_base);
+          if (!rate || typeof s.codec_name !== "string") throw new Error();
+          const durationTicks = s.duration_ts === undefined ? null : integer(s.duration_ts);
+          const frames =
+            s.nb_frames === undefined || s.nb_frames === "N/A" ? null : integer(s.nb_frames);
+          if ((durationTicks !== null && durationTicks <= 0n) || (frames !== null && frames < 1n))
+            throw new Error();
+          const audio = s.codec_type === "audio";
+          const sampleRate = audio ? Number(integer(s.sample_rate)) : null;
+          const channels = audio ? Number(integer(s.channels)) : null;
+          if (
+            audio &&
+            (!sampleRate ||
+              sampleRate < 8000 ||
+              sampleRate > 192000 ||
+              !channels ||
+              channels < 1 ||
+              channels > 64)
+          )
+            throw new Error();
+          return {
+            kind: s.codec_type as "video" | "audio",
+            codec: s.codec_name,
+            timeBase: { numerator: BigInt(rate[1]!), denominator: BigInt(rate[2]!) },
+            startTicks: s.start_pts === undefined ? 0n : integer(s.start_pts),
+            durationTicks,
+            frames,
+            sampleRate,
+            channels,
+          };
+        });
+    } catch {
+      throw new MediaProbeError("invalid_result");
+    }
+  }
+
+  async inspectSpatialVideoTiming(
+    input: ProbeInput,
+    rate: { numerator: number; denominator: number },
+  ): Promise<SpatialVideoTiming> {
+    assertControlledLocalFile(input.filePath);
+    const stdout = await runFfprobe(
+      this.executable,
+      [
+        "-v",
+        "error",
+        "-protocol_whitelist",
+        "file",
+        "-threads",
+        "1",
+        "-err_detect",
+        "explode",
+        "-select_streams",
+        "v:0",
+        "-count_frames",
+        "-show_frames",
+        "-show_streams",
+        "-show_entries",
+        "stream=codec_type,time_base,start_pts,duration_ts,nb_frames,nb_read_frames,avg_frame_rate,r_frame_rate:frame=pts,best_effort_timestamp,duration,pkt_duration",
+        "-of",
+        "json",
+        "-i",
+        input.filePath,
+      ],
+      this.timeoutMs,
+      this.maxOutputBytes,
+      input.signal,
+    );
+    try {
+      return parseSpatialVideoTiming(JSON.parse(stdout.toString("utf8")), rate);
+    } catch {
+      throw new MediaProbeError("invalid_result");
+    }
+  }
+
+  /** Transient renderer capability, not a change to persisted media metadata. */
+  async supportsCutRendering(
+    input: ProbeInput,
+    rate?: { numerator: number; denominator: number },
+  ): Promise<boolean> {
+    assertControlledLocalFile(input.filePath);
+    const args = [...buildFfprobeArgs(input.filePath)];
+    // Packet order is decode order, not presentation order. Select video before
+    // counting packets (audio interleaving otherwise shrinks the evidence), and
+    // retain a bounded complete prefix rather than decoder-flush tail frames.
+    args[args.indexOf("-read_intervals") + 1] = "%+#128";
+    args.splice(args.indexOf("-show_streams") + 1, 0, "-select_streams", "v:0");
+    args[args.indexOf("-show_entries") + 1] = FFPROBE_SHOW_ENTRIES.replace(
+      "color_space,",
+      "color_space,pix_fmt,color_transfer,sample_aspect_ratio,field_order,",
+    ).replace("frame=media_type,", "frame=media_type,best_effort_timestamp,pkt_dts,");
+    args.splice(args.indexOf("-show_streams") + 1, 0, "-show_frames");
+    const stdout = await runFfprobe(
+      this.executable,
+      args,
+      this.timeoutMs,
+      this.maxOutputBytes,
+      input.signal,
+    );
+    try {
+      const document = JSON.parse(stdout.toString("utf8"));
+      const probe = mapFfprobeDocument(document);
+      const video = document.streams?.find(
+        (s: { codec_type?: unknown }) => s.codec_type === "video",
+      );
+      // Integer stream ticks avoid rounding artifacts in decimal 30/29.97 fps timestamps.
+      const frames = document.frames?.filter(
+        (f: { media_type?: unknown; pkt_dts?: unknown }) =>
+          f.media_type === "video" &&
+          typeof f.pkt_dts === "number" &&
+          Number.isSafeInteger(f.pkt_dts),
+      );
+      const pts = frames?.map((f: { best_effort_timestamp?: unknown }) => f.best_effort_timestamp);
+      if (
+        Array.isArray(pts) &&
+        pts.every((p: unknown) => typeof p === "number" && Number.isSafeInteger(p))
+      )
+        pts.sort((a: number, b: number) => a - b);
+      const constant =
+        Array.isArray(pts) &&
+        pts.length >= 3 &&
+        pts.every((p: unknown) => typeof p === "number" && Number.isSafeInteger(p)) &&
+        pts[1] > pts[0] &&
+        pts.slice(2).every((p: number, i: number) => p - pts[i + 1] === pts[1] - pts[0]);
+      const timeBase =
+        typeof video?.time_base === "string" &&
+        /^([1-9][0-9]*)\/([1-9][0-9]*)$/.exec(video.time_base);
+      const cadence = Boolean(
+        constant &&
+        timeBase &&
+        probe.frameRate &&
+        BigInt(pts[1] - pts[0]) * BigInt(timeBase[1]!) * probe.frameRate.numerator ===
+          BigInt(timeBase[2]!) * probe.frameRate.denominator,
+      );
+      return (
+        probe.videoCodec === "h264" &&
+        (!rate ||
+          (probe.frameRate !== null &&
+            probe.frameRate.numerator * BigInt(rate.denominator) ===
+              probe.frameRate.denominator * BigInt(rate.numerator))) &&
+        cadence &&
+        video?.avg_frame_rate === video?.r_frame_rate &&
+        (probe.rotation === null || probe.rotation === 0) &&
+        ["yuv420p", "yuvj420p", "yuv444p", "yuvj444p"].includes(video?.pix_fmt) &&
+        [undefined, "unknown", "bt709", "smpte170m", "iec61966-2-1"].includes(
+          video?.color_transfer,
+        ) &&
+        [undefined, "0:1", "1:1"].includes(video?.sample_aspect_ratio) &&
+        [undefined, "unknown", "progressive"].includes(video?.field_order)
+      );
+    } catch {
+      return false;
     }
   }
 }

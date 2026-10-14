@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { PermanentJobError } from "@editagent/job-queue";
+import { FFprobeMediaProbe } from "@editagent/media-core";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import type {
@@ -12,11 +13,15 @@ import { parseRenderInput, outputKey, canonicalJson } from "./contract.js";
 import { remoteRender } from "./remote-render.js";
 import { RenderObjects, workspace } from "./storage.js";
 import { validateOutput } from "./probe-output.js";
-export class RemotionRenderStrategy implements IRenderStrategy {
+import { compositionTiming } from "../application/timeline-mapping.js";
+import { renderEngine } from "../application/strategy-selection.js";
+import { expectedTimelineAudio } from "./audio-contract.js";
+class StoredRenderStrategy implements IRenderStrategy {
   constructor(
     private objects: RenderObjects,
     private timeoutMs: number,
     private assets?: IRenderAssetResolver,
+    private readonly engine: "remotion" | "ffmpeg" = "remotion",
   ) {}
   async discard(artifact: import("../application/ports.js").RenderArtifact) {
     await this.objects.remove(artifact.objectKey, artifact.inputSha256);
@@ -42,6 +47,7 @@ export class RemotionRenderStrategy implements IRenderStrategy {
         ? await this.assets?.resolve(projectId, input.props.timeline.sources, signal)
         : [];
     if (!resolved) throw new PermanentJobError("Asset resolver unavailable.");
+    const audioPresent = expectedTimelineAudio(input, resolved);
     const signature = createHash("sha256")
       .update(canonicalJson({ input, assets: resolved }))
       .digest("hex");
@@ -51,7 +57,7 @@ export class RemotionRenderStrategy implements IRenderStrategy {
       const output = path.join(stage.work, "output.mp4");
       if (existing) {
         await this.objects.stage(key, output, existing, signal);
-        await validateOutput(output, input, signal);
+        await validateOutput(output, input, signal, audioPresent);
         return {
           objectKey: key,
           ...existing,
@@ -70,15 +76,35 @@ export class RemotionRenderStrategy implements IRenderStrategy {
           );
         staged.add(asset.name);
       }
+      let engine = this.engine;
+      if (engine === "ffmpeg" && renderEngine(input) !== "ffmpeg") engine = "remotion";
+      if (engine === "ffmpeg") {
+        const probe = new FFprobeMediaProbe({ timeoutMs: 10000 });
+        for (const asset of resolved) {
+          if (
+            !(await probe.supportsCutRendering(
+              {
+                filePath: path.join(stage.work, asset.name),
+                signal,
+              },
+              compositionTiming(input).frameRate,
+            ))
+          ) {
+            engine = "remotion";
+            break;
+          }
+        }
+      }
       await remoteRender(
         stage.token,
         input,
         this.timeoutMs,
         signal,
         progress,
-        resolved.map(({ objectKey: _key, ...asset }) => asset),
+        resolved.map(({ objectKey: _key, audioPresent: _audio, ...asset }) => asset),
+        engine,
       );
-      await validateOutput(output, input, signal);
+      await validateOutput(output, input, signal, audioPresent);
       const saved = await this.objects.put(key, signature, output, signal);
       signal.throwIfAborted();
       return {
@@ -96,5 +122,11 @@ export class RemotionRenderStrategy implements IRenderStrategy {
         }
       else await stage.close();
     }
+  }
+}
+export class RemotionRenderStrategy extends StoredRenderStrategy {}
+export class FFmpegRenderStrategy extends StoredRenderStrategy {
+  constructor(objects: RenderObjects, timeoutMs: number, assets: IRenderAssetResolver) {
+    super(objects, timeoutMs, assets, "ffmpeg");
   }
 }

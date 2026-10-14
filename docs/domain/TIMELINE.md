@@ -13,7 +13,10 @@ in JSON (ADR-008). JSON numbers, fractional/nonfinite/unsafe numbers and noncano
 are rejected. Bigint values above Number.MAX_SAFE_INTEGER remain exact. Durations of clips and
 sources are positive. An empty composition may have zero duration; every placed item must end
 inside its explicit composition duration. Source catalog entries are immutable references to
-canonical MediaAsset IDs, kind and verified duration, not another MediaAsset aggregate.
+canonical source UUIDs, kind and verified duration, not another MediaAsset aggregate.
+The rendering boundary resolves uploaded MediaAssets or owned immutable `edited-video`
+DerivedAssets (US-222). A derived source keeps its own UUID/content identity and verified
+duration; it is not rewritten as an uploaded asset. Source playback remains 1:1.
 
 Media clips play 1:1: duration = outPoint - inPoint and timeline end = placement + duration.
 Their source ranges cannot exceed the catalog duration. Captions and graphics use intrinsic
