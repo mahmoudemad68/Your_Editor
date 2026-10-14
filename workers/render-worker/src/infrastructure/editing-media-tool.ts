@@ -192,6 +192,9 @@ export class MediaEditingTool implements ITool {
         if (progressFailed) throw new Error("Editing progress unavailable.");
         const meta = JSON.parse(await readFile(path.join(stage.work, "output.json"), "utf8")) as {
           durationUs: string;
+          videoDurationUs: string;
+          decodedFrames: number;
+          audioSamples: string;
           width: number;
           height: number;
           frameRate: { numerator: string; denominator: string };
@@ -231,6 +234,9 @@ export class MediaEditingTool implements ITool {
                 renderVersion: catalog.renderVersion,
               },
               durationUs: meta.durationUs,
+              videoDurationUs: meta.videoDurationUs,
+              videoFrames: meta.decodedFrames,
+              audioSamples: meta.audioSamples,
               width: meta.width,
               height: meta.height,
               frameRate: {
@@ -357,14 +363,29 @@ export class MediaEditingTool implements ITool {
       width: number;
       height: number;
       durationUs: string;
+      videoDurationUs?: string;
+      videoFrames?: number;
+      audioSamples?: string;
       frameRate: { numerator: number; denominator: number };
       audioPresent: boolean;
     };
-    const frames = Number(
-      (BigInt(m.durationUs) * BigInt(m.frameRate.numerator) +
-        500000n * BigInt(m.frameRate.denominator)) /
-        (1000000n * BigInt(m.frameRate.denominator)),
-    );
+    const spatial = this.operation === "crop_video" || this.operation === "resize_video";
+    // Pre-repair spatial descriptors cannot establish full source audio coverage.
+    // Reject them rather than inferring an audio clock from shortened video metadata.
+    if (
+      spatial &&
+      (m.videoFrames === undefined ||
+        m.videoDurationUs === undefined ||
+        m.audioSamples === undefined)
+    )
+      throw new ToolError("invalid_output");
+    const frames =
+      m.videoFrames ??
+      Number(
+        (BigInt(m.videoDurationUs ?? m.durationUs) * BigInt(m.frameRate.numerator) +
+          500000n * BigInt(m.frameRate.denominator)) /
+          (1000000n * BigInt(m.frameRate.denominator)),
+      );
     const contract: FixtureInput = {
       schemaVersion: 1,
       renderVersion: (output.asset.artifact.metadata.parameters as { renderVersion: string })
@@ -377,6 +398,17 @@ export class MediaEditingTool implements ITool {
       props: { title: "media-edit", background: "#000000" },
       correlationId: "media-edit",
     };
-    await validateOutput(file, contract, signal, m.audioPresent);
+    const verified = await validateOutput(
+      file,
+      contract,
+      signal,
+      m.audioPresent,
+      !spatial || m.audioSamples === undefined ? undefined : BigInt(m.audioSamples),
+    );
+    if (
+      verified.durationUs !== m.durationUs ||
+      (m.videoDurationUs !== undefined && verified.videoDurationUs !== m.videoDurationUs)
+    )
+      throw new ToolError("invalid_output");
   }
 }

@@ -7,10 +7,19 @@ export async function validateOutput(
   input: RenderInput,
   signal?: AbortSignal,
   expectedAudio?: boolean,
+  expectedAudioSamples?: bigint,
 ) {
   if (expectedAudio === undefined && input.compositionId === "TimelineV1")
     throw new Error("An authoritative audio contract is required.");
   expectedAudio ??= false;
+  if (
+    expectedAudioSamples !== undefined &&
+    (typeof expectedAudioSamples !== "bigint" ||
+      expectedAudioSamples < (expectedAudio ? 1n : 0n) ||
+      expectedAudioSamples > 86400000n ||
+      (!expectedAudio && expectedAudioSamples !== 0n))
+  )
+    throw new Error("Invalid authoritative audio sample contract.");
   const timing = compositionTiming(input);
   const size = (await stat(filePath)).size;
   if (size < 1 || size > 1073741824) throw new Error("Invalid render output size.");
@@ -68,12 +77,14 @@ export async function validateOutput(
   if (audios.length !== (expectedAudio ? 1 : 0))
     throw new Error("Rendered audio presence differs from its contract.");
   let decodedAudioSamples = 0n;
+  let audioSamples = 0n;
   if (expectedAudio) {
     const audio = audios[0]!;
     const expectedSamples =
+      expectedAudioSamples ??
       (BigInt(timing.durationInFrames) * 48000n * BigInt(timing.frameRate.denominator) +
         BigInt(Math.floor(timing.frameRate.numerator / 2))) /
-      BigInt(timing.frameRate.numerator);
+        BigInt(timing.frameRate.numerator);
     if (
       audio.codec !== "aac" ||
       audio.sampleRate !== 48000 ||
@@ -89,6 +100,7 @@ export async function validateOutput(
     // extend beyond the last decoded packet by a fraction of an AAC packet;
     // this may never excuse missing composition samples.
     const logicalSamples = audio.durationTicks;
+    audioSamples = expectedSamples;
     if (logicalSamples < expectedSamples - 1n || logicalSamples > expectedSamples + 1023n)
       throw new Error("Rendered audio duration differs from its contract.");
     let bytes = 0;
@@ -148,11 +160,17 @@ export async function validateOutput(
   );
   if (decodedFrames !== timing.durationInFrames)
     throw new Error("Rendered MP4 frame count does not match its contract.");
+  const audioDurationUs = (audioSamples * 1000000n + 24000n) / 48000n;
   return {
     decodedFrames,
     byteSize: size,
-    // Persist logical frame duration, not AAC packet padding/container rounding.
-    durationUs: String(duration),
+    // Spatial derivatives can be audio-led. Keep both authoritative clocks;
+    // AAC packet padding/container rounding is not semantic media duration.
+    durationUs: String(
+      expectedAudioSamples !== undefined && audioDurationUs > duration ? audioDurationUs : duration,
+    ),
+    videoDurationUs: String(duration),
+    audioSamples: String(audioSamples),
     decodedAudioSamples: String(decodedAudioSamples),
     width: p.width,
     height: p.height,

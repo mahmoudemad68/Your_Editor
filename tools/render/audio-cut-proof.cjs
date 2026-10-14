@@ -1,5 +1,5 @@
 // Real PG/Redis/BullMQ/S3 + constrained production executors. No renderer mocks.
-const { AbortController } = globalThis;
+const { AbortController, structuredClone } = globalThis;
 const { Buffer } = require("node:buffer"),
   { setTimeout } = require("node:timers");
 const assert = require("node:assert/strict"),
@@ -30,6 +30,7 @@ async function main() {
   class ObservedObjects extends RenderObjects {
     engines = new Map();
     putCount = 0;
+    failAfterSpatialUpload = false;
     async put(...args) {
       this.putCount++;
       if (args[0].startsWith("renders/")) {
@@ -38,7 +39,12 @@ async function main() {
         );
         this.engines.set(args[0], meta.engine ?? "remotion");
       }
-      return super.put(...args);
+      const stored = await super.put(...args);
+      if (this.failAfterSpatialUpload && args[0].startsWith("projects/")) {
+        this.failAfterSpatialUpload = false;
+        throw new Error("Injected failure after immutable upload, before acknowledgment.");
+      }
+      return stored;
     }
   }
   const objects = new ObservedObjects(s3, c.objectStorage.bucket),
@@ -416,6 +422,151 @@ async function main() {
         costMicros: tailResize.record.costMicros,
       },
     });
+    // Independent audio-short/equal/long source clocks, including genuine late
+    // events at 6.005/6.335 seconds. Both tools use real durable dispatch and S3.
+    for (const source of sources.filter((s) => s.layout.startsWith("spatial-"))) {
+      for (const operation of ["crop_video", "resize_video"]) {
+        const request = {
+          name: `editing.${operation.replaceAll("_", "-")}`,
+          version: "1.0.0",
+          callerId: actor,
+          projectId: project,
+          resource: { kind: "asset", id: source.id },
+          input:
+            operation === "crop_video"
+              ? { assetId: source.id, x: 0, y: 0, width: 32, height: 32 }
+              : { assetId: source.id, width: 128, height: 128 },
+        };
+        const recoveryCase = source.relation === "qa2997-l1" && operation === "resize_video";
+        if (recoveryCase) objects.failAfterSpatialUpload = true;
+        const edited = await runtime.executor.execute(request);
+        assert.equal(edited.record.outcome, "succeeded");
+        assert.equal(edited.record.costBasis, "actual");
+        assert.equal(edited.record.costMicros, 1000);
+        const artifact = edited.output.asset.artifact;
+        assert.equal(artifact.metadata.videoFrames, source.frames);
+        assert.equal(artifact.metadata.audioSamples, String(source.samples));
+        assert.equal(artifact.metadata.durationUs, source.assetDurationUs);
+        const job = await runtime.deps.jobs.findById(edited.record.jobId);
+        assert.equal(job.status, "Completed");
+        if (recoveryCase) {
+          assert.ok(job.attemptCount >= 2 && job.attemptCount <= 3);
+          const intent = await pool.query(
+            "SELECT published,descriptor FROM editing_output_intents WHERE execution_id=$1",
+            [edited.record.id],
+          );
+          assert.equal(intent.rows[0].published, true);
+          assert.deepEqual(intent.rows[0].descriptor, edited.output);
+          const count = await pool.query(
+            "SELECT count(*)::int AS n FROM derived_assets WHERE id=$1",
+            [edited.output.asset.id],
+          );
+          assert.equal(count.rows[0].n, 1);
+        }
+        artifacts.push({
+          label: source.layout + "-" + operation,
+          key: artifact.storageKey,
+          sha256: artifact.sha256,
+          frames: source.frames,
+          n: source.n,
+          d: source.d,
+          hasAudio: true,
+          spatial: source,
+          operation,
+          metadata: artifact.metadata,
+          recoveryAfterUpload: recoveryCase
+            ? {
+                attempts: job.attemptCount,
+                immutableIntentReused: true,
+                derivedRows: 1,
+                settledCost: edited.record.costMicros,
+              }
+            : undefined,
+          audit: {
+            id: edited.record.id,
+            outcome: edited.record.outcome,
+            costMicros: edited.record.costMicros,
+            costBasis: edited.record.costBasis,
+          },
+          job: { id: job.id, status: job.status },
+        });
+        if (source.relation === "qa2997-l1") {
+          // Exercise the exact cached-derived-artifact reader on real immutable
+          // S3 bytes and the persisted descriptor. Hash-correct truncation must
+          // still fail the independent audio contract before publication.
+          const { MediaEditingTool } = require("./dist/infrastructure/editing-media-tool.js");
+          const validationTool = new MediaEditingTool(operation, pool, {}, objects);
+          const stage = await workspace();
+          try {
+            const good = path.join(stage.work, "cached-good.mp4"),
+              truncated = path.join(stage.work, "cached-truncated.mp4");
+            const stored = await objects.find(
+              artifact.storageKey,
+              artifact.parameterSignature,
+              new AbortController().signal,
+            );
+            await objects.stage(artifact.storageKey, good, stored, new AbortController().signal);
+            await validationTool.validate(good, edited.output, new AbortController().signal);
+            require("node:child_process").execFileSync(
+              "ffmpeg",
+              [
+                "-v",
+                "error",
+                "-y",
+                "-i",
+                good,
+                "-c:v",
+                "copy",
+                "-af",
+                "atrim=end_sample=286686",
+                "-c:a",
+                "aac",
+                "-ar",
+                "48000",
+                "-ac",
+                "2",
+                truncated,
+              ],
+              { timeout: 10000 },
+            );
+            const forged = structuredClone(edited.output);
+            forged.asset.artifact.sha256 = createHash("sha256")
+              .update(await fs.readFile(truncated))
+              .digest("hex");
+            forged.asset.artifact.byteSize = String((await fs.stat(truncated)).size);
+            forged.asset.artifact.storageKey = artifact.storageKey.replace(
+              artifact.sha256,
+              forged.asset.artifact.sha256,
+            );
+            const before = objects.putCount;
+            await assert.rejects(
+              validationTool.validate(truncated, forged, new AbortController().signal),
+              /audio duration/,
+            );
+            assert.equal(objects.putCount, before);
+            const legacy = structuredClone(edited.output);
+            delete legacy.asset.artifact.metadata.audioSamples;
+            await assert.rejects(
+              validationTool.validate(good, legacy, new AbortController().signal),
+              (e) => e.code === "invalid_output",
+            );
+            artifacts.at(-1).cachedReader = {
+              correctAudioLed: "PASS",
+              truncated: "REJECTED",
+              legacyClockMissing: "REJECTED",
+              uploadsAfterRejection: 0,
+            };
+          } finally {
+            await stage.close();
+          }
+        }
+        // Completed logical execution reuse must not perform another upload or charge.
+        const writes = objects.putCount;
+        const replayed = await runtime.calls.result(edited.record.id);
+        assert.deepEqual(replayed.output, edited.output);
+        assert.equal(objects.putCount, writes);
+      }
+    }
     // Revoke a distinct member only after genuine production FFmpeg execution
     // starts. The existing publication fence must deny it before any S3 PUT.
     const revokedActor = id();

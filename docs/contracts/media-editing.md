@@ -148,3 +148,33 @@ recipe, protocol/filter rejection, frame-snapped proposals and replay regression
 
 No US-110 annotations, US-202 settings, CP2 status, or Issues #43/#50/#51 are repaired here.
 This batch adds no API, autonomous agent, transcription, scene/face detection or deployment.
+
+### Spatial-edit stream clocks (QA53R-2)
+
+Crop and resize preserve the inspected CFR video frame count and the independent
+source audio end. An audio-led MP4 is valid: the final video frame ends normally
+while genuine audio continues. A shorter audio stream stays shorter; these edits
+never append silence to cover the video. No `-shortest` or video-derived audio
+trim is used. Audio is normalized to stereo 48 kHz and bounded by the inspected
+stream start plus duration, converted with integer rational rounding. Positive
+source audio start offsets retain their timestamp through bounded normalization.
+Missing or inconsistent source timing fails closed.
+
+New derivative metadata records `videoFrames`, `videoDurationUs` and
+`audioSamples` (the logical 48-kHz count before AAC packet padding).
+`durationUs` is the longer logical stream duration, excluding AAC padding. Old
+metadata remains structurally readable, but spatial cache reuse requires both
+explicit clocks; an older truncated descriptor cannot establish audio integrity.
+The immutable render build identity separates new producers from earlier output
+intents. Fresh and cached files must independently pass exact video-frame checks,
+logical audio-duration checks and complete decoded sample coverage. AAC's bounded
+1024-sample packet padding does not excuse a missing source tail.
+
+`tests/integration/spatial-audio-integrity.test.mjs` and the production
+`pnpm render:test` path exercise audio-shorter/equal/longer fixtures at 25, 30,
+30000/1001, 24000/1001 and 60000/1001 fps. Gold sample counts and audio events are
+sample-authored before encoding. The 179-frame regression includes 310656 logical
+audio samples and genuine markers at 6.005 and 6.335 seconds. Decoded PCM markers
+also reject same-length silence replacement in this regression suite; runtime
+sample-count validation does not claim universal semantic audio equivalence.
+Speed and normalization retain their prior duration and padding policy.

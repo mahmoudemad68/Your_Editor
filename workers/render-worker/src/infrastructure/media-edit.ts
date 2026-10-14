@@ -88,12 +88,32 @@ export async function executeMediaEdit(
       p = await new FFprobeMediaProbe({ timeoutMs: 10000 }).inspect({ filePath: file, signal });
     if (!p.videoCodec || !p.width || !p.height || !p.frameRate || !p.duration)
       throw new MediaEditInputError();
-    const video = (
-      await new FFprobeMediaProbe({ timeoutMs: 10000 }).inspectStreamTiming({
-        filePath: file,
-        signal,
-      })
-    ).find((s) => s.kind === "video");
+    const streamTiming = await new FFprobeMediaProbe({ timeoutMs: 10000 }).inspectStreamTiming({
+      filePath: file,
+      signal,
+    });
+    const video = streamTiming.find((s) => s.kind === "video");
+    const audio = streamTiming.filter((s) => s.kind === "audio");
+    let audioSamples: bigint | undefined;
+    if (
+      p.audioCodec !== null &&
+      (input.operation === "crop_video" || input.operation === "resize_video")
+    ) {
+      const stream = audio[0];
+      if (audio.length !== 1 || !stream || stream.durationTicks === null || stream.startTicks < 0n)
+        throw new MediaEditInputError();
+      const ticks = stream.startTicks + stream.durationTicks;
+      audioSamples =
+        (ticks * stream.timeBase.numerator * 48000n + stream.timeBase.denominator / 2n) /
+        stream.timeBase.denominator;
+      if (
+        audioSamples < 1n ||
+        audioSamples > 86400000n ||
+        ticks * stream.timeBase.numerator * 1000000n >
+          (BigInt(a.durationUs) + 1000n) * stream.timeBase.denominator
+      )
+        throw new MediaEditInputError();
+    }
     let frameCount: number | undefined;
     if (
       video?.frames &&
@@ -129,6 +149,7 @@ export async function executeMediaEdit(
       },
       hasAudio: p.audioCodec !== null,
       ...(frameCount !== undefined ? { frameCount } : {}),
+      ...(audioSamples !== undefined ? { audioSamples } : {}),
     });
   }
   const first = sources.get(input.sources[0]!.id)!;
@@ -171,6 +192,9 @@ export async function executeMediaEdit(
       frameRate: first.frameRate,
       totalFrames: cursor,
       durationUs,
+      audioSamples: segments.some((s) => s.hasAudio)
+        ? (BigInt(cursor) * 48000n * rate.denominator + rate.numerator / 2n) / rate.numerator
+        : 0n,
     };
     audioPresent = segments.some((s) => s.hasAudio);
     args = checked(() =>
@@ -234,7 +258,15 @@ export async function executeMediaEdit(
     props: { title: "media-edit", background: "#000000" },
     correlationId: "media-edit",
   };
-  const validated = await validateOutput(output, expected, signal, audioPresent);
+  const validated = await validateOutput(
+    output,
+    expected,
+    signal,
+    audioPresent,
+    input.operation === "crop_video" || input.operation === "resize_video"
+      ? timing.audioSamples
+      : undefined,
+  );
   const probe = await new FFprobeMediaProbe({ timeoutMs: 10000 }).inspect({
     filePath: output,
     signal,

@@ -97,7 +97,7 @@ test(
       assert.equal(video.avg_frame_rate, "30000/1001");
       assert.equal(video.duration_ts, 179179);
       assert.equal(Number(video.nb_frames), 179);
-      assert.equal(audio.duration_ts, 286686);
+      assert.equal(audio.duration_ts, 288000);
       const decoded = execFileSync(
         "ffmpeg",
         [

@@ -22,6 +22,7 @@ test("fixed media edits bound dimensions, speed, audio and malformed measurement
     durationUs: 2000000n,
     frameRate: { numerator: 30000, denominator: 1001 },
     hasAudio: true,
+    audioSamples: 96000n,
   };
   for (const edit of [
     { operation: "crop_video", x: 1, y: 0, width: 32, height: 32 },
@@ -50,6 +51,34 @@ test("fixed media edits bound dimensions, speed, audio and malformed measurement
         "/tmp/output.mp4",
       ).includes("-af"),
     );
+});
+test("spatial audio clocks are mandatory, bounded, independent, and never padded", () => {
+  const source = {
+    path: "/tmp/source.mp4",
+    width: 64,
+    height: 64,
+    durationUs: 6472000n,
+    frameRate: { numerator: 30000, denominator: 1001 },
+    frameCount: 179,
+    hasAudio: true,
+  };
+  for (const operation of ["crop_video", "resize_video"] as const) {
+    const edit =
+      operation === "crop_video"
+        ? { operation, x: 0, y: 0, width: 32, height: 32 }
+        : { operation, width: 128, height: 128 };
+    assert.throws(() => buildVideoEditArgs(source, edit, "/tmp/output.mp4"), /audio clock/);
+    for (const audioSamples of [-1n, 0n, 86400001n, 500000n, "310656", NaN, Infinity])
+      assert.throws(() =>
+        editOutputTiming({ ...source, audioSamples: audioSamples as bigint }, edit),
+      );
+    const args = buildVideoEditArgs({ ...source, audioSamples: 310656n }, edit, "/tmp/output.mp4");
+    const filter = args[args.indexOf("-af") + 1]!;
+    assert.match(filter, /atrim=end_sample=310656/);
+    assert.doesNotMatch(filter, /apad/);
+    assert.ok(!args.includes("-shortest"));
+    assert.equal(editOutputTiming({ ...source, audioSamples: 240000n }, edit).totalFrames, 179);
+  }
 });
 test(
   "fractional-rate resize preserves the inspected 179-frame count across microsecond rounding",
@@ -166,6 +195,7 @@ test(
         durationUs: 2000000n,
         frameRate: { numerator: 30, denominator: 1 },
         hasAudio: true,
+        audioSamples: 96000n,
       };
       const settings = { targetLufs: -23, truePeakDb: -1, loudnessRange: 7 };
       const measure = await new FfmpegExecutor().execute(

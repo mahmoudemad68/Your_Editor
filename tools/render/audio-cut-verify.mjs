@@ -2,12 +2,21 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { verifySpatialOutput } from "./spatial-audio-fixtures.mjs";
 import { sampleAt, beepFrames, audioFrameColor } from "./audio-cut-fixtures.mjs";
 
 export function verifyAudioCutArtifacts(directory, report) {
   for (const artifact of report.artifacts) {
     const file = `${directory}/${artifact.label}.mp4`;
     assert.equal(createHash("sha256").update(readFileSync(file)).digest("hex"), artifact.sha256);
+    if (artifact.spatial) {
+      artifact.independentVerification = verifySpatialOutput(
+        file,
+        artifact.spatial,
+        artifact.operation,
+      );
+      continue;
+    }
     const probe = JSON.parse(
       execFileSync(
         "ffprobe",
@@ -92,7 +101,7 @@ export function verifyAudioCutArtifacts(directory, report) {
             `${artifact.label} original video frame identity ${f}`,
           );
       let decodedSamples = 0;
-      const expected = sampleAt(179, 30000, 1001);
+      const expected = artifact.aacTailSource ? 288000 : sampleAt(179, 30000, 1001);
       if (audio) {
         assert.equal(audio.time_base, "1/48000");
         assert.equal(audio.start_pts, 0);

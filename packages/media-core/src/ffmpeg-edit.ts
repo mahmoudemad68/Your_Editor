@@ -14,6 +14,8 @@ export interface EditSource {
   readonly hasAudio: boolean;
   /** Authoritative inspected CFR video count, independent of the audio/container end. */
   readonly frameCount?: number;
+  /** Inspected source audio end on the normalized 48-kHz clock, including a positive start offset. */
+  readonly audioSamples?: bigint;
 }
 export type VideoEdit =
   | {
@@ -91,7 +93,25 @@ export function editOutputTiming(source: EditSource, edit: VideoEdit) {
   boundedNumber(totalFrames, 1, 108000, true);
   const durationUs =
     (BigInt(totalFrames) * 1000000n * BigInt(d) + BigInt(Math.floor(n / 2))) / BigInt(n);
-  return { width, height, frameRate: { numerator: n, denominator: d }, totalFrames, durationUs };
+  const spatial = edit.operation === "crop_video" || edit.operation === "resize_video";
+  const videoSamples =
+    (BigInt(totalFrames) * 48000n * BigInt(d) + BigInt(Math.floor(n / 2))) / BigInt(n);
+  const audioSamples = source.hasAudio ? (spatial ? source.audioSamples : videoSamples) : 0n;
+  if (
+    typeof audioSamples !== "bigint" ||
+    audioSamples < (source.hasAudio ? 1n : 0n) ||
+    audioSamples > 86400000n ||
+    (spatial && audioSamples * 1000000n > (source.durationUs + 1000n) * 48000n)
+  )
+    throw new Error("An authoritative bounded source audio clock is required.");
+  return {
+    width,
+    height,
+    frameRate: { numerator: n, denominator: d },
+    totalFrames,
+    durationUs,
+    audioSamples,
+  };
 }
 function audioTempo(n: number, d: number): string[] {
   let ratio = n / d;
@@ -192,16 +212,12 @@ export function buildVideoEditArgs(
     if (edit.operation === "change_speed")
       audio.push(...audioTempo(edit.numerator, edit.denominator));
     if (edit.operation === "normalize_audio") audio.push(loudnessFilter(edit));
-    const samples =
-      (BigInt(t.totalFrames) * 48000n * BigInt(t.frameRate.denominator) +
-        BigInt(Math.floor(t.frameRate.numerator / 2))) /
-      BigInt(t.frameRate.numerator);
-    audio.push(
-      "aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo",
-      "apad",
-      `atrim=end_sample=${samples}`,
-      "asetpts=N/SR/TB",
-    );
+    // Spatial edits preserve source audio independently of the video clock. Never
+    // fabricate missing samples with apad: validation must detect extraction loss.
+    const spatial = edit.operation === "crop_video" || edit.operation === "resize_video";
+    audio.push("aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo");
+    if (!spatial) audio.push("apad");
+    audio.push(`atrim=end_sample=${t.audioSamples}`, "asetpts=N/SR/TB");
     validateFilterGraph(audio.join(","));
     args.push(
       "-map",
