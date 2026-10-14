@@ -653,6 +653,7 @@ async function main() {
     for (const source of sources.filter((s) => s.rejectSpatial))
       for (const operation of ["crop_video", "resize_video"]) {
         const before = objects.putCount;
+        let failure;
         await assert.rejects(
           runtime.executor.execute({
             name: `editing.${operation.replaceAll("_", "-")}`,
@@ -665,7 +666,10 @@ async function main() {
                 ? { assetId: source.id, x: 0, y: 0, width: 32, height: 32 }
                 : { assetId: source.id, width: 160, height: 120 },
           }),
-          (e) => e.code === "invalid_input" && e.message === "invalid_input",
+          (e) => {
+            failure = e;
+            return e.code === "invalid_input";
+          },
         );
         const rejected = (
           await pool.query(
@@ -674,6 +678,7 @@ async function main() {
           )
         ).rows[0];
         const record = await runtime.audit.get(rejected.id);
+        assert.equal(failure.message, `Tool execution ${record.id}: invalid_input`);
         assert.equal(record.outcome, "failed");
         assert.equal(record.code, "invalid_input");
         assert.equal(record.cleanupStatus, "succeeded");
