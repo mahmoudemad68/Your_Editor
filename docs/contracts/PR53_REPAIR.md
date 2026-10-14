@@ -220,3 +220,13 @@ publication recovery and reservation accounting tests do not imply those exact
 windows were exercised. The new mid-render revocation probe waits for a genuine
 FFmpeg process, revokes the current member, and requires no S3 write, no published
 intent, a settled non-successful audit/job and unchanged settlement on recovery.
+
+The unconditional inspected-frame rule is limited to crop/resize. Existing
+normalization and speed behavior for genuinely audio-led assets is preserved:
+a real 15-frame/30-fps source with 18.4 seconds of audio still produces 552 frames
+and 883200 logical audio samples for normalization and 1:1 speed. Its audible
+17–18-second tail and source checksum survive. Applying the resize rule to every
+operation would have shortened that accepted audio; the adapter regression test
+prevents that compatibility error. Other operations retain the prior one-millisecond
+header-rounding selection rule. Explicit trusted frame counts remain authoritative
+inside the media-core recipe.

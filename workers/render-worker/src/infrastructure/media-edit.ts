@@ -105,9 +105,18 @@ export async function executeMediaEdit(
         { numerator: Number(p.frameRate.numerator), denominator: Number(p.frameRate.denominator) },
       ))
     ) {
-      // Verified CFR video owns video-preserving transform timing. A longer
-      // audio/container clock must never manufacture an additional video frame.
-      frameCount = Number(video.frames);
+      const logical =
+        (video.frames * 1000000n * p.frameRate.denominator + p.frameRate.numerator / 2n) /
+        p.frameRate.numerator;
+      const delta = BigInt(a.durationUs) - logical;
+      // Crop/resize preserve verified video frames, regardless of AAC/audio tails.
+      // Audio/speed operations retain their existing genuine audio-led duration.
+      if (
+        input.operation === "crop_video" ||
+        input.operation === "resize_video" ||
+        (delta >= -1000n && delta <= 1000n)
+      )
+        frameCount = Number(video.frames);
     }
     sources.set(a.sourceId, {
       path: file,
