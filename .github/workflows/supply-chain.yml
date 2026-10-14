@@ -43,7 +43,7 @@ jobs:
           python-version: "3.11"
 
       - name: Setup uv
-        uses: astral-sh/setup-uv@v10.2.0
+        uses: astral-sh/setup-uv@v10.3.0
         with:
           cache-python: true
           enable-cache: true
@@ -228,7 +228,7 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Download scan results
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           pattern: supply-chain-scan-*
           merge-multiple: true
@@ -236,7 +236,7 @@ jobs:
         continue-on-error: true
 
       - name: Download vulnerability reports
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           pattern: supply-chain-trivy-*
           merge-multiple: true
@@ -278,10 +278,10 @@ jobs:
           ]
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           name: scanned-image-${{ matrix.service }}
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           name: supply-chain-sbom-${{ matrix.service }}
       - name: Load exact scanned bytes and log in to GHCR
@@ -310,7 +310,7 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           pattern: release-image-*
           merge-multiple: true
@@ -353,7 +353,7 @@ jobs:
         run: |
           gh api "repos/$GITHUB_REPOSITORY/environments/staging" > environment.json
           python3 -c 'import json; e=json.load(open("environment.json")); assert any(r.get("type")=="required_reviewers" and r.get("reviewers") and r.get("prevent_self_review") for r in e.get("protection_rules",[])), "Owner Environment protection is required"'
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           name: release-${{ github.sha }}
       - name: Deploy immutable image set and run bounded smoke
