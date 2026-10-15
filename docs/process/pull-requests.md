@@ -47,14 +47,28 @@ The Definition of Done still requires a second approval for security-sensitive m
 
 The branch must contain the latest `main` before merge. Branch protection uses strict required status checks: update the branch, then wait for `ci` to finish on that revision.
 
+## Draft, independent QA, and manual merge
+
+[Working agreements](working-agreements.md) record the day-to-day sequence. It keeps the rules on this page.
+
+1. Branch from the latest `main` and open the pull request as a draft.
+2. Wait for the required `ci` check on that HEAD.
+3. Independent QA, who is not the author, tests that exact HEAD in a read-only pass.
+4. A failure is fixed on the same pull request. QA retests the new HEAD.
+5. Mark the pull request ready for review only after that pass.
+6. Human review still requires one approval, and a second approval for security-sensitive modules.
+7. The repository owner merges manually. Automatic merge is disabled (`allow_auto_merge` is false, observed 2026-10-02).
+
+A green `ci` check does not merge the pull request. Independent QA does not replace the human approval.
+
 ## Merge
 
 Merge only when `ci` is green, the required approval is present, and the branch is up to date with `main`. A red `ci` check blocks the merge once branch protection requires that check. Delete the branch after merge.
 
-Repository administration has to record that gate on `main`:
+Repository administration records that gate on `main`:
 
 - required status check: `ci`
 - required approving reviews: 1
 - require the branch to be up to date before merging (strict required status checks)
 
-Applying those settings needs administration permission on the repository (Settings → Branches, or the branch protection API).
+Observed on 2026-10-02: ruleset `main` is active on `refs/heads/main` and includes those three settings. Automatic merge is off. Changing the ruleset still needs administration permission on the repository.
