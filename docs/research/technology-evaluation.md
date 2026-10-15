@@ -256,3 +256,76 @@ On this VM the median of three measured Remotion runs is 139.644 seconds, which 
 - Remotion 4.0.532 license, checked 2026-10-01: https://github.com/remotion-dev/remotion/blob/v4.0.532/LICENSE.md
 - Remotion 5.0 terms, not yet in effect for 4.0.532: https://www.remotion.dev/docs/terms
 - Raw measurements: `tools/benchmarks/rendering/results/summary.json`
+
+## US-105 ASR and VAD feasibility (Faster-Whisper and Silero VAD)
+
+This section is only the speech spike. It does not change the US-106 rendering measurements or the rendering CP1 gate above, which stays **NOT_VERIFIED**.
+
+### 1. Question
+
+Which Faster-Whisper size and compute type should be the default, which int8 model should be the CPU fallback, and what hardware that choice needs. Silero VAD is measured separately for speech-interval quality.
+
+No model is selected in this revision. Observed numbers are **PENDING** until the owner runs the Kaggle notebook and the export is reviewed on this pull request.
+
+### 2. Method
+
+The runnable package is `tools/benchmarks/asr/`. GitHub Actions runs its unit tests only. It does not download weights or execute the matrix.
+
+GPU configurations, when CUDA is present and the compute type is supported:
+
+- small, medium, and large-v3, each at int8 and float16
+
+CPU configurations:
+
+- small, medium, and large-v3 at int8
+- the same three models at float16 are recorded as `UNSUPPORTED` and are not launched
+
+Each planned row is written even when it is skipped or fails. A per-clip timeout and a session budget can skip later rows with an explicit reason. Warm-up runs are stored and are not the measured rows. ASR timing uses Faster-Whisper with its internal VAD filter off. Silero VAD is its own pass.
+
+Real-time factor is inference time divided by audio duration. The CP1 ASR rate is 10 minutes of speech in at most 3 minutes, which is a real-time factor of 0.3, on the reference GPU, or a viable CPU model once one is selected from a successful CPU run. A shorter recording does not produce an observed pass.
+
+WER and timestamp errors use the normalization and alignment in `metrics.py`. VAD precision, recall, and F1 use 10 ms frames. Quality `reported_pass` is false when the reference annotations are missing. Three manually aligned clips are required before a timestamp metric is treated as evaluated.
+
+### 3. Data
+
+The owner attaches a Kaggle dataset. Audio, private recordings, and third-party corpora are not in git. The manifest records path, language, duration, source, license, transcript, and optional word times and speech intervals. The runner requires at least 10 minutes in total and prefers 10 minutes in each of English and Arabic. Ground truth is not invented here.
+
+### 4. Reproduction
+
+Enable a Kaggle GPU and Internet, set `BENCHMARK_SHA` in `kaggle_benchmark.ipynb`, attach the dataset under `/kaggle/input/`, and run the notebook. Download `/kaggle/working/asr-benchmark.zip`. The zip names the commit that produced it.
+
+Local unit tests, with no weights:
+
+```bash
+python3 tools/benchmarks/asr/tests/test_asr_benchmark.py
+```
+
+### 5. Results
+
+Observed ASR measurements: **PENDING**.
+
+Hardware on the machine that will run the notebook: **PENDING**. The export will record the Kaggle GPU name, total memory, driver, and CUDA version from `nvidia-smi` when that command succeeds.
+
+Default ASR model: **PENDING**.
+
+CPU fallback model: **PENDING**.
+
+Hardware requirement: **PENDING**.
+
+Word-timestamp error: **PENDING**.
+
+Silero VAD precision, recall, and F1: **PENDING**.
+
+Formal CP1 ASR status: **NOT_VERIFIED**. An observed rate on Kaggle hardware, once it exists, is not this gate. The reference machine is still not confirmed.
+
+### 6. Licenses
+
+- Faster-Whisper: https://github.com/SYSTRAN/faster-whisper/blob/master/LICENSE
+- Whisper models: https://github.com/openai/whisper/blob/main/LICENSE
+- Silero VAD: https://github.com/snakers4/silero-vad/blob/master/LICENSE
+
+The packages pinned for the benchmark are `faster-whisper==1.2.1` and `silero-vad==6.2.3`. Commercial eligibility is not decided here.
+
+### 7. Decision rule after the export arrives
+
+A later commit on the same pull request may name a default model only from a successful measured GPU run at real-time factor 0.3 or lower on at least 10 minutes of audio, with WER present for the languages in that run. A CPU fallback may be named only from a successful CPU int8 run. Rows that were unsupported, skipped, or failed stay in the table.
