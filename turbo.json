@@ -45,6 +45,7 @@
       ]
     },
     "@editagent/ai-worker#test": {
+      "dependsOn": ["build", "@editagent/api#test"],
       "cache": false
     }
   },

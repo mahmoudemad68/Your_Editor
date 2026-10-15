@@ -69,8 +69,8 @@ Defaults use 24-second cores, two-second context, beam 5, seed 0 and two CPU
 threads. Context never exceeds the model's 30-second alignment window.
 Temperature is zero; previous-text conditioning is disabled; one native model
 worker runs per isolated inference process. Silero VAD operates on the original
-bounded PCM window. Timestamp conversion uses decimal rounding before adding
-exact source offsets.
+bounded PCM window. Timestamp conversion adds the exact rational PCM sample offset
+before rounding once to integer microseconds.
 
 Native zero-length or overlapping lexical intervals are not valid output.
 Supported CTranslate2 forced alignment uses the original PCM and complete
@@ -163,3 +163,9 @@ worker, and builds the selected model into the image. Changing model selection
 requires rebuilding. GPU operators must set the shared device/compute settings
 explicitly; selecting the GPU profile alone does not change persisted ASR intent.
 Actual CUDA inference and nightly GPU accuracy remain unproven on CPU-only CI.
+
+The required test graph runs real CPU ASR tests after the API suite. This avoids
+native inference competing with the API's process-startup and authentication
+deadline probes on shared CI CPUs; it changes no assertion or timeout. The
+ten-minute CPU resource measurement uses `tiny`; the separately reported
+evaluation-window WER uses `small`. Neither measurement implies GPU performance.
