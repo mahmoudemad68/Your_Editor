@@ -12,24 +12,23 @@ const compose = (args: string[]) =>
     stdio: "pipe",
     timeout: 60_000,
   });
-/** Trusted test/operator setup invokes the existing publisher in the production
- * worker image. No web route, fake artifact rows or automatic derive scheduling.
+/** Read-only evidence from the production database: US-210 must publish the
+ * existing US-128 job automatically, without a test/operator enqueue shortcut.
  */
-function derive(project: string, media: string) {
+function automaticDerivation(project: string, media: string) {
   const script = `
-    const {randomBytes} = require('node:crypto');
     const {Pool} = require('pg');
-    const {instant,createUuidV7} = require('@editagent/domain');
-    const {BullMqJobQueue,PostgresJobRepository,RedisJobEventPublisher} = require('@editagent/job-queue');
-    const {publishMediaDeriveJob} = require('./dist/application/publish-media-derive.js');
     (async()=>{
       const pool=new Pool({connectionString:process.env.DATABASE_URL});
-      const queue=new BullMqJobQueue(process.env.REDIS_URL,{events:new RedisJobEventPublisher(pool,process.env.REDIS_URL)});
-      const uuid=()=>createUuidV7(Date.now(),randomBytes(10));
-      try { await publishMediaDeriveJob({jobs:new PostgresJobRepository(pool),queue,now:()=>instant(BigInt(Date.now())),newAttemptId:uuid,supervisor:{run:async()=>{throw new Error('Publisher never executes');}}},{jobId:uuid(),projectId:process.argv[1],mediaAssetId:process.argv[2],correlationId:'req_'+randomBytes(16).toString('hex'),queueName:process.env.MEDIA_INSPECT_QUEUE||'media'}); }
-      finally {await queue.close(true);await pool.end();}
+      try {
+        const key='media.derive.'+process.argv[1]+'.'+process.argv[2]+'.us128-v1';
+        const result=await pool.query('SELECT status FROM jobs WHERE idempotency_key=$1 AND job_type=$2',[key,'media.derive']);
+        console.log(JSON.stringify(result.rows.map(row=>row.status)));
+      } finally {await pool.end();}
     })().catch(()=>process.exit(1));`;
-  compose(["exec", "-T", "media-worker", "node", "-e", script, project, media]);
+  return JSON.parse(
+    compose(["exec", "-T", "media-worker", "node", "-e", script, project, media]).toString(),
+  );
 }
 
 async function signup(page: Page, prefix: string) {
@@ -144,9 +143,12 @@ test("US-125 real processing → derivatives → sprite/proxy playback → rejec
     .poll(async () => (await snapshot()).validationStatus, { timeout: 30_000 })
     .toBe("validated");
   const card = library.getByRole("article", { name: "library-motion.mp4" });
-  await expect(card.getByText("Awaiting preview derivatives.")).toBeVisible();
-  derive(project, media);
+  // Automatic derivation may finish before the validated snapshot reaches the
+  // browser. A transient pending label is not a durable synchronization point.
   await expect(card.getByText("Ready", { exact: true })).toBeVisible({ timeout: 30_000 });
+  await expect
+    .poll(() => automaticDerivation(project, media), { timeout: 30_000 })
+    .toEqual(["Completed"]);
   const poster = card.getByAltText("Thumbnail for library-motion.mp4");
   await expect
     .poll(() => poster.evaluate((node) => (node as HTMLImageElement).naturalWidth))
