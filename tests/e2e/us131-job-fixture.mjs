@@ -153,12 +153,24 @@ export async function createJobFixture() {
       try {
         const deadline = Date.now() + 20000;
         while (Date.now() < deadline) {
-          const latest = (
-            await pool.query("SELECT status FROM jobs ORDER BY created_at DESC,id DESC LIMIT 1")
-          ).rows[0];
-          if (latest?.status === "Completed")
-            return { completedAt: Date.now(), status: latest.status };
-          if (latest?.status === "Failed" || child.exitCode !== null)
+          const inspections = await pool.query(
+            "SELECT id::text,status FROM jobs WHERE queue_name=$1 AND job_type='media.inspect' ORDER BY created_at,id",
+            [queueName],
+          );
+          if (
+            inspections.rows.length > 0 &&
+            inspections.rows.every((job) => job.status === "Completed")
+          )
+            return {
+              completedAt: Date.now(),
+              status: "Completed",
+              jobIds: inspections.rows.map((job) => job.id),
+            };
+          if (
+            inspections.rows.some((job) => job.status === "Failed") ||
+            child.exitCode !== null ||
+            child.signalCode !== null
+          )
             throw new Error(`Production fixture worker failed: ${stderr}`);
           await new Promise((resolve) => setTimeout(resolve, 20));
         }
@@ -196,9 +208,17 @@ export async function createJobFixture() {
     },
     async evidence() {
       const result = await pool.query(
-        `SELECT id::text, status, subject_id::text, idempotency_key, timeout_ms, max_attempts, attempt_count, created_at::text, updated_at::text FROM jobs ORDER BY created_at, id`,
+        `SELECT id::text, job_type, status, subject_id::text, idempotency_key, timeout_ms, max_attempts, attempt_count, created_at::text, updated_at::text FROM jobs WHERE queue_name=$1 ORDER BY created_at, id`,
+        [queueName],
       );
-      return { jobs: result.rows, events, reports };
+      // Automatic US-210 derivation shares this queue. Keep its durable facts
+      // visible, but it cannot satisfy an inspection-completion assertion.
+      return {
+        jobs: result.rows.filter((job) => job.job_type === "media.inspect"),
+        backgroundJobs: result.rows.filter((job) => job.job_type !== "media.inspect"),
+        events,
+        reports,
+      };
     },
     async close() {
       for (const sub of subscriptions) await sub.close();
