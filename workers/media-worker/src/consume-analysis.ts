@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import path from "node:path";
-import { PostgresAnalysis, analysisConfiguration } from "@editagent/analysis-core";
+import { PostgresAnalysis, type AnalysisConfiguration } from "@editagent/analysis-core";
 import { createUuidV7, instant, type JobQueue } from "@editagent/domain";
 import { runNextJob, PostgresJobRepository } from "@editagent/job-queue";
 import { type Pool } from "pg";
@@ -11,9 +11,9 @@ export async function consumeAnalysis(
   queue: JobQueue,
   mediaQueue: string,
   signal: AbortSignal,
+  configuration: AnalysisConfiguration,
 ): Promise<void> {
   const store = new PostgresAnalysis(pool);
-  const configuration = analysisConfiguration();
   const deps = {
     jobs: new PostgresJobRepository(pool),
     queue,

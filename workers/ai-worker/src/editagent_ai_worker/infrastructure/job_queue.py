@@ -24,6 +24,7 @@ from bullmq.custom_errors import UnrecoverableError  # type: ignore[import-untyp
 from jsonschema import ValidationError
 
 from editagent_ai_worker.infrastructure.analysis_workspace import create_workspace
+from editagent_ai_worker.infrastructure.config import analysis_child_environment
 from editagent_ai_worker.infrastructure.job_envelope import load_job_envelope_schema
 from editagent_ai_worker.infrastructure.job_history import JobHistory
 
@@ -422,17 +423,12 @@ async def run_analysis_handler(
             sys.executable,
             "-m",
             "editagent_ai_worker.composition.analysis_entry",
+            str(os.getpid()),
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=None,
             start_new_session=True,
-            env={
-                **os.environ,
-                "EDITAGENT_ANALYSIS_TEMP": temporary.name,
-                "EDITAGENT_ANALYSIS_PARENT_PID": str(os.getpid()),
-                "OPENBLAS_NUM_THREADS": "1",
-                "OMP_NUM_THREADS": "1",
-            },
+            env=analysis_child_environment(temporary.name),
         )
     )
     try:

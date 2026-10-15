@@ -4,6 +4,8 @@ The process entry point calls ``load_ai_worker_settings`` once. Domain and
 application code do not read the environment.
 """
 
+import os
+from pathlib import Path
 from typing import Literal
 
 from pydantic import AnyHttpUrl, Field, PostgresDsn, RedisDsn, ValidationError
@@ -12,6 +14,30 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class ConfigurationError(Exception):
     """Missing or invalid AI worker configuration."""
+
+
+def analysis_child_environment(workspace: str) -> dict[str, str]:
+    """Internal supervisor-owned process configuration; never supplied by a job."""
+    return {
+        **os.environ,
+        "EDITAGENT_ANALYSIS_TEMP": workspace,
+        "OPENBLAS_NUM_THREADS": "1",
+        "OMP_NUM_THREADS": "1",
+    }
+
+
+def analysis_workspace_root() -> Path:
+    raw = os.environ.get("EDITAGENT_ANALYSIS_TEMP", "")
+    value = Path(raw)
+    if (
+        not raw
+        or "\0" in raw
+        or not value.is_absolute()
+        or not value.is_dir()
+        or value.is_symlink()
+    ):
+        raise ConfigurationError("Invalid analysis child configuration.")
+    return value
 
 
 class AiWorkerSettings(BaseSettings):

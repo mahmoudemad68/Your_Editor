@@ -1,4 +1,3 @@
-import { analysisConfiguration } from "@editagent/analysis-core";
 import { RedisJobEventPublisher } from "@editagent/job-queue";
 import { assertValidationSandbox } from "./infrastructure/media-validator.js";
 import { Pool } from "pg";
@@ -12,7 +11,6 @@ import { mediaAdapterPackage } from "./infrastructure/marker.js";
 export function main(): void {
   const config = loadMediaWorkerConfig();
   assertValidationSandbox();
-  analysisConfiguration();
   startNoopTracing("media-worker");
   const logger = createServiceLogger("media-worker");
   const pool = new Pool({ connectionString: config.databaseUrl });
@@ -36,11 +34,15 @@ export function main(): void {
   ).catch(() => {
     logger.error({ errorCode: "consumer_stopped" }, "service.consumer.stopped");
   });
-  const analyzing = consumeAnalysis(pool, queue, config.mediaInspectQueue, shutdown.signal).catch(
-    () => {
-      logger.error({ errorCode: "analysis_consumer_stopped" }, "service.analysis.stopped");
-    },
-  );
+  const analyzing = consumeAnalysis(
+    pool,
+    queue,
+    config.mediaInspectQueue,
+    shutdown.signal,
+    config.analysis,
+  ).catch(() => {
+    logger.error({ errorCode: "analysis_consumer_stopped" }, "service.analysis.stopped");
+  });
   const stop = async () => {
     shutdown.abort();
     health.close();

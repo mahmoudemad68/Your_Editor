@@ -44,7 +44,7 @@ function parseSetting(raw: string): unknown {
 
 /** Deployment values only; no caller may specify paths, modules, URLs or executable code. */
 export function analysisConfiguration(
-  env: Readonly<Record<string, string | undefined>> = process.env,
+  env: Readonly<Record<string, string | undefined>>,
 ): AnalysisConfiguration {
   const asr: Record<string, unknown> = { ...ASR_DEFAULTS };
   for (const [key, value] of Object.entries(asr)) {

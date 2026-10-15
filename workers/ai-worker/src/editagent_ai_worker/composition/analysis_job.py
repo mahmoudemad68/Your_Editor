@@ -28,7 +28,10 @@ from editagent_ai_worker.domain.analysis.transcription import (
 from editagent_ai_worker.domain.analysis.voice_activity import AudioIdentity, VadTimeout
 from editagent_ai_worker.infrastructure.analysis_events import emit_progress
 from editagent_ai_worker.infrastructure.asr_config import AsrSettings
-from editagent_ai_worker.infrastructure.config import load_ai_worker_settings
+from editagent_ai_worker.infrastructure.config import (
+    analysis_workspace_root,
+    load_ai_worker_settings,
+)
 from editagent_ai_worker.infrastructure.faster_whisper import FasterWhisperAdapter
 
 
@@ -158,7 +161,7 @@ def main() -> int:
                 ),
             )
             with tempfile.TemporaryDirectory(
-                prefix="editagent-asr-", dir=os.environ["EDITAGENT_ANALYSIS_TEMP"]
+                prefix="editagent-asr-", dir=analysis_workspace_root()
             ) as temporary:
                 path = Path(temporary) / "audio.wav"
                 phase = "staging"

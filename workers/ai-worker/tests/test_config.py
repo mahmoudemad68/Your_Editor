@@ -1,10 +1,48 @@
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
 from editagent_ai_worker.infrastructure.config import ConfigurationError, load_ai_worker_settings
+
+
+def test_analysis_scratch_configuration_fails_closed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from editagent_ai_worker.infrastructure.config import (
+        analysis_child_environment,
+        analysis_workspace_root,
+    )
+
+    for raw in ("", "relative", str(tmp_path / "missing")):
+        monkeypatch.setenv("EDITAGENT_ANALYSIS_TEMP", raw)
+        with pytest.raises(ConfigurationError, match="Invalid analysis child configuration"):
+            analysis_workspace_root()
+    link = tmp_path / "link"
+    link.symlink_to(tmp_path, target_is_directory=True)
+    monkeypatch.setenv("EDITAGENT_ANALYSIS_TEMP", str(link))
+    with pytest.raises(ConfigurationError):
+        analysis_workspace_root()
+    monkeypatch.setenv("EDITAGENT_ANALYSIS_TEMP", str(tmp_path))
+    assert analysis_workspace_root() == tmp_path
+    child = analysis_child_environment(str(tmp_path))
+    assert child["EDITAGENT_ANALYSIS_TEMP"] == str(tmp_path)
+    assert child["OMP_NUM_THREADS"] == child["OPENBLAS_NUM_THREADS"] == "1"
+
+
+@pytest.mark.parametrize("arguments", [[], ["invalid"], ["1"]])
+def test_analysis_entry_fails_before_inference_for_invalid_parent(arguments: list[str]) -> None:
+    result = subprocess.run(
+        [sys.executable, "-m", "editagent_ai_worker.composition.analysis_entry", *arguments],
+        check=False,
+        capture_output=True,
+        timeout=5,
+    )
+    assert result.returncode == 1
+    assert b"Traceback" not in result.stderr
+
 
 _REQUIRED = {
     "DATABASE_URL": "postgresql://editagent:editagent-dev-password@postgres:5432/editagent",

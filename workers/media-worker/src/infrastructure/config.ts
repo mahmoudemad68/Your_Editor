@@ -1,5 +1,6 @@
 import { stat, realpath } from "node:fs/promises";
 import path from "node:path";
+import { analysisConfiguration, type AnalysisConfiguration } from "@editagent/analysis-core";
 import {
   ConfigurationError,
   parseMediaWorkerConfig,
@@ -14,6 +15,7 @@ export { ConfigurationError } from "@editagent/shared";
 import { parseValidationPolicy, type ValidationPolicy } from "../application/validation-policy.js";
 
 export interface MediaWorkerConfig extends StorageWorkerConfig {
+  readonly analysis: AnalysisConfiguration;
   readonly ffprobePath: string;
   readonly ffmpegPath: string;
   readonly validationPolicy: ValidationPolicy;
@@ -37,6 +39,7 @@ export function loadMediaWorkerConfig(env: EnvSource = process.env): MediaWorker
     ...parseWorkerRuntime(env),
     ffmpegPath,
     validationPolicy: parseValidationPolicy(env),
+    analysis: analysisConfiguration(env),
   };
 }
 
