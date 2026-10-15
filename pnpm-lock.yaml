@@ -31,6 +31,9 @@ importers:
       '@commitlint/config-conventional':
         specifier: 21.2.3
         version: 21.2.3
+      '@editagent/analysis-core':
+        specifier: workspace:*
+        version: link:packages/analysis-core
       '@eslint/js':
         specifier: 10.0.1
         version: 10.0.1(eslint@10.11.0(jiti@2.7.0))
@@ -82,6 +85,9 @@ importers:
       '@aws-sdk/s3-request-presigner':
         specifier: 3.1144.0
         version: 3.1144.0
+      '@editagent/analysis-core':
+        specifier: workspace:*
+        version: link:../../packages/analysis-core
       '@editagent/domain':
         specifier: workspace:*
         version: link:../../packages/domain
@@ -210,6 +216,31 @@ importers:
       tailwindcss:
         specifier: ^4.3.3
         version: 4.3.3
+      typescript:
+        specifier: 'catalog:'
+        version: 6.0.3
+
+  packages/analysis-core:
+    dependencies:
+      '@editagent/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@editagent/job-queue':
+        specifier: workspace:*
+        version: link:../job-queue
+      '@editagent/schemas':
+        specifier: workspace:*
+        version: link:../schemas
+      pg:
+        specifier: 8.23.1
+        version: 8.23.1
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 22.20.4
+      '@types/pg':
+        specifier: 8.23.1
+        version: 8.23.1
       typescript:
         specifier: 'catalog:'
         version: 6.0.3
@@ -362,6 +393,9 @@ importers:
       '@aws-sdk/client-s3':
         specifier: 3.1144.0
         version: 3.1144.0
+      '@editagent/analysis-core':
+        specifier: workspace:*
+        version: link:../../packages/analysis-core
       '@editagent/domain':
         specifier: workspace:*
         version: link:../../packages/domain

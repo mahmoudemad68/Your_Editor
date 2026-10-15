@@ -41,19 +41,48 @@ class JobHistory:
         self._database_url = database_url
 
     def read_status(self, job_id: str) -> str | None:
-        with psycopg.connect(self._database_url) as connection:
+        with psycopg.connect(
+            self._database_url,
+            connect_timeout=3,
+            options="-c statement_timeout=3000 -c lock_timeout=3000",
+        ) as connection:
             row = connection.execute("SELECT status FROM jobs WHERE id = %s", (job_id,)).fetchone()
         if row is None:
             return None
         return str(row[0])
 
+    def validate_analysis(self, envelope: dict[str, Any]) -> int:
+        with psycopg.connect(
+            self._database_url, connect_timeout=3, options="-c statement_timeout=3000"
+        ) as connection:
+            row = connection.execute(
+                "SELECT j.job_type,j.payload,j.subject_kind,j.subject_id,"
+                "j.timeout_ms,j.max_attempts,t.deadline_at_ms "
+                "FROM jobs j JOIN analysis_tasks t ON t.job_id=j.id WHERE j.id=%s",
+                (envelope["jobId"],),
+            ).fetchone()
+            if row is None or (row[0], row[1], row[2], str(row[3]), row[4], row[5]) != (
+                envelope["jobType"],
+                envelope["payload"],
+                envelope["subject"]["kind"],
+                envelope["subject"]["id"],
+                envelope["timeoutMs"],
+                envelope["maxAttempts"],
+            ):
+                raise ValueError("Invalid durable analysis intent")
+            return int(row[6])
+
     def begin(self, job_id: str, envelope: dict[str, Any] | None = None) -> tuple[str, int]:
         """Move Queued or Retrying work to Running. Recover a leftover Running row."""
-        with psycopg.connect(self._database_url) as connection:
+        with psycopg.connect(
+            self._database_url,
+            connect_timeout=3,
+            options="-c statement_timeout=3000 -c lock_timeout=3000",
+        ) as connection:
             row = connection.execute(
                 """
                 SELECT status, attempt_count, max_attempts, updated_at
-                FROM jobs WHERE id = %s
+                FROM jobs WHERE id = %s FOR UPDATE
                 """,
                 (job_id,),
             ).fetchone()
@@ -63,7 +92,9 @@ class JobHistory:
             now = _now_ms(int(updated_at))
             if status == "Running":
                 if int(attempt_count) >= int(max_attempts):
-                    self._fail(connection, job_id, now, "worker failed", envelope)
+                    self._fail(
+                        connection, job_id, now, "worker failed", envelope, int(attempt_count)
+                    )
                     return ("exhausted", int(attempt_count))
                 connection.execute(
                     """
@@ -108,17 +139,24 @@ class JobHistory:
             )
             return ("running", attempt_number)
 
-    def cancel(self, job_id: str) -> None:
-        with psycopg.connect(self._database_url) as connection:
+    def cancel(self, job_id: str, expected_attempt: int | None = None) -> None:
+        with psycopg.connect(
+            self._database_url,
+            connect_timeout=3,
+            options="-c statement_timeout=3000 -c lock_timeout=3000",
+        ) as connection:
             now = self._later_than_job(connection, job_id)
-            connection.execute(
+            changed = connection.execute(
                 """
                 UPDATE jobs
                 SET status = 'Cancelled', updated_at = %s
                 WHERE id = %s AND status = 'Running'
+                  AND (%s::integer IS NULL OR attempt_count=%s)
                 """,
-                (now, job_id),
+                (now, job_id, expected_attempt, expected_attempt),
             )
+            if changed.rowcount != 1:
+                return
             connection.execute(
                 """
                 UPDATE job_attempts
@@ -128,17 +166,24 @@ class JobHistory:
                 (now, job_id),
             )
 
-    def complete(self, job_id: str) -> None:
-        with psycopg.connect(self._database_url) as connection:
+    def complete(self, job_id: str, expected_attempt: int | None = None) -> None:
+        with psycopg.connect(
+            self._database_url,
+            connect_timeout=3,
+            options="-c statement_timeout=3000 -c lock_timeout=3000",
+        ) as connection:
             now = self._later_than_job(connection, job_id)
-            connection.execute(
+            changed = connection.execute(
                 """
                 UPDATE jobs
                 SET status = 'Completed', failure_reason = NULL, updated_at = %s
                 WHERE id = %s AND status = 'Running'
+                  AND (%s::integer IS NULL OR attempt_count=%s)
                 """,
-                (now, job_id),
+                (now, job_id, expected_attempt, expected_attempt),
             )
+            if changed.rowcount != 1:
+                return
             connection.execute(
                 """
                 UPDATE job_attempts
@@ -148,17 +193,24 @@ class JobHistory:
                 (now, job_id),
             )
 
-    def retry(self, job_id: str, reason: str) -> None:
-        with psycopg.connect(self._database_url) as connection:
+    def retry(self, job_id: str, reason: str, expected_attempt: int | None = None) -> None:
+        with psycopg.connect(
+            self._database_url,
+            connect_timeout=3,
+            options="-c statement_timeout=3000 -c lock_timeout=3000",
+        ) as connection:
             now = self._later_than_job(connection, job_id)
-            connection.execute(
+            changed = connection.execute(
                 """
                 UPDATE jobs
                 SET status = 'Retrying', failure_reason = %s, updated_at = %s
                 WHERE id = %s AND status = 'Running'
+                  AND (%s::integer IS NULL OR attempt_count=%s)
                 """,
-                (reason, now, job_id),
+                (reason, now, job_id, expected_attempt, expected_attempt),
             )
+            if changed.rowcount != 1:
+                return
             connection.execute(
                 """
                 UPDATE job_attempts
@@ -168,10 +220,20 @@ class JobHistory:
                 (now, reason, job_id),
             )
 
-    def fail(self, job_id: str, reason: str, envelope: dict[str, Any]) -> None:
-        with psycopg.connect(self._database_url) as connection:
+    def fail(
+        self,
+        job_id: str,
+        reason: str,
+        envelope: dict[str, Any],
+        expected_attempt: int | None = None,
+    ) -> None:
+        with psycopg.connect(
+            self._database_url,
+            connect_timeout=3,
+            options="-c statement_timeout=3000 -c lock_timeout=3000",
+        ) as connection:
             now = self._later_than_job(connection, job_id)
-            self._fail(connection, job_id, now, reason, envelope)
+            self._fail(connection, job_id, now, reason, envelope, expected_attempt)
 
     def _fail(
         self,
@@ -180,15 +242,19 @@ class JobHistory:
         now: int,
         reason: str,
         envelope: dict[str, Any] | None,
+        expected_attempt: int | None = None,
     ) -> None:
-        connection.execute(
+        changed = connection.execute(
             """
             UPDATE jobs
             SET status = 'Failed', failure_reason = %s, updated_at = %s
             WHERE id = %s AND status IN ('Running', 'Retrying', 'Queued')
+              AND (%s::integer IS NULL OR attempt_count=%s)
             """,
-            (reason, now, job_id),
+            (reason, now, job_id, expected_attempt, expected_attempt),
         )
+        if changed.rowcount != 1:
+            return
         connection.execute(
             """
             UPDATE job_attempts

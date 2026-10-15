@@ -1,15 +1,18 @@
+import { analysisConfiguration } from "@editagent/analysis-core";
 import { RedisJobEventPublisher } from "@editagent/job-queue";
 import { assertValidationSandbox } from "./infrastructure/media-validator.js";
 import { Pool } from "pg";
 import { BullMqJobQueue, observePostgresPool, postgresAndRedisReady } from "@editagent/job-queue";
 import { createServiceLogger, startHealthServer, startNoopTracing } from "@editagent/shared";
 import { consumeMediaJobs } from "./consume-media-jobs.js";
+import { consumeAnalysis } from "./consume-analysis.js";
 import { loadMediaWorkerConfig } from "./infrastructure/config.js";
 import { mediaAdapterPackage } from "./infrastructure/marker.js";
 
 export function main(): void {
   const config = loadMediaWorkerConfig();
   assertValidationSandbox();
+  analysisConfiguration();
   startNoopTracing("media-worker");
   const logger = createServiceLogger("media-worker");
   const pool = new Pool({ connectionString: config.databaseUrl });
@@ -33,11 +36,17 @@ export function main(): void {
   ).catch(() => {
     logger.error({ errorCode: "consumer_stopped" }, "service.consumer.stopped");
   });
+  const analyzing = consumeAnalysis(pool, queue, config.mediaInspectQueue, shutdown.signal).catch(
+    () => {
+      logger.error({ errorCode: "analysis_consumer_stopped" }, "service.analysis.stopped");
+    },
+  );
   const stop = async () => {
     shutdown.abort();
     health.close();
     await queue.close(true);
     await consuming;
+    await analyzing;
     await pool.end();
   };
   process.once("SIGTERM", () => {

@@ -1,4 +1,7 @@
 import { MediaInspectionJobs, type InspectionJobs } from "./application/inspection-job.js";
+import { type AnalysisReader } from "@editagent/analysis-core";
+import { GetMediaAnalysis } from "./application/media-analysis.js";
+import { MediaAnalysisController } from "./presentation/media-analysis.controller.js";
 import { InspectionJobController } from "./presentation/inspection-job.controller.js";
 import { ProjectJobEvents } from "./application/job-events.js";
 import { JobEventsController } from "./presentation/job-events.controller.js";
@@ -58,6 +61,7 @@ import {
 import { type SessionTokens } from "./application/session-tokens.js";
 
 export interface ApiComposition {
+  readonly analysis?: AnalysisReader;
   readonly jobEvents?: JobEventSubscriber;
   readonly inspectionJobs?: InspectionJobs;
   readonly projects: ProjectRepository;
@@ -102,12 +106,25 @@ export class AppModule {
         ProjectsController,
         UploadsController,
         MediaController,
+        ...(composition.analysis === undefined ? [] : [MediaAnalysisController]),
         ...(composition.inspectionJobs === undefined ? [] : [InspectionJobController]),
         ...(composition.jobEvents === undefined ? [] : [JobEventsController]),
         ...(composition.uploadSessions === undefined ? [] : [MultipartController]),
         ...(composition.auth === undefined ? [] : [AuthController]),
       ],
       providers: [
+        ...(composition.analysis === undefined
+          ? []
+          : [
+              {
+                provide: GetMediaAnalysis,
+                useValue: new GetMediaAnalysis(
+                  new GetMediaDetails(composition.projects, composition.media),
+                  composition.analysis,
+                  composition.media,
+                ),
+              },
+            ]),
         ...(composition.inspectionJobs === undefined
           ? []
           : [

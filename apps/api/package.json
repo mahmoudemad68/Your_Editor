@@ -11,6 +11,7 @@
   "dependencies": {
     "@aws-sdk/client-s3": "3.1144.0",
     "@aws-sdk/s3-request-presigner": "3.1144.0",
+    "@editagent/analysis-core": "workspace:*",
     "@editagent/domain": "workspace:*",
     "@editagent/job-queue": "workspace:*",
     "@editagent/shared": "workspace:*",

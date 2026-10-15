@@ -1,4 +1,5 @@
 import { PostgresInspectionJobs } from "./infrastructure/postgres-inspection-jobs.js";
+import { PostgresAnalysis } from "@editagent/analysis-core";
 import { RedisJobEventPublisher, RedisJobEventSubscriber } from "@editagent/job-queue";
 import { PostgresUploadSessionRepository } from "./infrastructure/postgres-upload-sessions.js";
 import { GetCurrentUser } from "./application/current-user.js";
@@ -84,6 +85,7 @@ export async function bootstrap(): Promise<void> {
   });
   const recovery = startPublicationRecovery(publication);
   const app = await createApiApplication({
+    analysis: new PostgresAnalysis(pool),
     jobEvents: new RedisJobEventSubscriber(config.redisUrl, logger),
     inspectionJobs: new PostgresInspectionJobs(
       pool,

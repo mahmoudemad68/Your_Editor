@@ -19,6 +19,7 @@ COPY packages/shared/package.json packages/shared/package.json
 COPY packages/tool-sdk/package.json packages/tool-sdk/package.json
 COPY packages/media-core/package.json packages/media-core/package.json
 COPY packages/job-queue/package.json packages/job-queue/package.json
+COPY packages/analysis-core/package.json packages/analysis-core/package.json
 COPY workers/agent-worker/package.json workers/agent-worker/package.json
 COPY workers/media-worker/package.json workers/media-worker/package.json
 COPY workers/render-worker/package.json workers/render-worker/package.json
@@ -39,6 +40,7 @@ COPY workers/ai-worker/src/editagent_ai_worker/contracts/media_analysis_v1_1_gen
 COPY packages/shared packages/shared
 COPY packages/media-core packages/media-core
 COPY packages/job-queue packages/job-queue
+COPY packages/analysis-core packages/analysis-core
 RUN pnpm --filter @editagent/media-worker... build \
     && find /app -type f \( -name '*.test.ts' -o -name '*.test.js' -o -name '*.test.js.map' -o -name '*.test.d.ts' -o -name '*.test.d.ts.map' \) -delete \
     && pnpm --filter @editagent/media-worker --prod deploy --legacy /out \

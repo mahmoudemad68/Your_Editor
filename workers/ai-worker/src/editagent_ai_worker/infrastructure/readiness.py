@@ -74,3 +74,32 @@ def _close_quietly(connection: object) -> None:
         close()
     except Exception:
         return
+
+
+def storage_ready(
+    endpoint: str, region: str, bucket: str, access_key: str, secret_key: str
+) -> bool:
+    """No cached success, no mutation and no request credential details in responses."""
+    import boto3  # type: ignore[import-untyped]
+    from botocore.config import Config  # type: ignore[import-untyped]
+
+    client = boto3.client(
+        "s3",
+        endpoint_url=endpoint,
+        region_name=region,
+        aws_access_key_id=access_key,
+        aws_secret_access_key=secret_key,
+        config=Config(
+            connect_timeout=1,
+            read_timeout=1,
+            retries={"max_attempts": 0},
+            s3={"addressing_style": "path"},
+        ),
+    )
+    try:
+        client.head_bucket(Bucket=bucket)
+        return True
+    except Exception:
+        return False
+    finally:
+        client.close()
