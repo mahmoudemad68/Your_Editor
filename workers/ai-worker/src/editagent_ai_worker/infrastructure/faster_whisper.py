@@ -16,7 +16,6 @@ from typing import Any
 import ctranslate2  # type: ignore[import-untyped]
 import numpy as np
 from faster_whisper import WhisperModel  # type: ignore[import-untyped]
-from faster_whisper.audio import pad_or_trim  # type: ignore[import-untyped]
 from faster_whisper.tokenizer import Tokenizer  # type: ignore[import-untyped]
 from faster_whisper.transcribe import merge_punctuations  # type: ignore[import-untyped]
 from faster_whisper.vad import VadOptions, get_speech_timestamps  # type: ignore[import-untyped]
@@ -40,7 +39,7 @@ from editagent_ai_worker.infrastructure.config import (
 )
 from editagent_ai_worker.infrastructure.vad_audio import verify_audio_file, wav_parameters
 
-ASR_ALGORITHM = "ct2-contextual-v11"
+ASR_ALGORITHM = "ct2-contextual-v12"
 
 
 def uncovered_speech(audio: Any, words: list[Any], options: Any) -> list[tuple[int, int]]:
@@ -427,14 +426,22 @@ class FasterWhisperAdapter:
         alignment_encodes = 0
         full_evidence: list[list[Any]] = []
 
-        def force(content: str, pcm: Any, retain: bool = False) -> list[Any] | None:
+        def force(
+            content: str, pcm: Any, retain: bool = False, reference: list[Any] | None = None
+        ) -> list[Any] | None:
             nonlocal alignment_encodes
             if check is not None:
                 check()
             alignment_encodes += 1
             if alignment_encodes > 32:
                 raise TranscriptionError("ASR trustworthy realignment resource bound exceeded")
-            encoded = self.model.encode(pad_or_trim(self.model.feature_extractor(pcm)))
+            # CT2 supports variable-length encoder input. Artificial 30s padding
+            # changes cross-attention evidence for short local speech and can
+            # collapse real lexical words into zero-length alignment bins.
+            # Align only the actual, bounded source features; no audio/time is
+            # invented to satisfy the word contract.
+            encoded = self.model.encode(self.model.feature_extractor(pcm))
+            evidence = []
             for width in (7, 5, 3, 1):
                 if check is not None:
                     check()
@@ -461,10 +468,17 @@ class FasterWhisperAdapter:
                     raise TranscriptionError("Alignment changed complete transcript text")
                 if retain:
                     full_evidence.append(result)
+                evidence.append(result)
                 if all(0 <= w.start < w.end <= len(pcm) / 16000 for w in result) and all(
                     a.end <= b.start for a, b in zip(result, result[1:], strict=False)
                 ):
                     return result
+            # Local attention windows can collapse different words at different
+            # filter widths too. Preserve their observed intervals until every
+            # candidate has been checked; a defect elsewhere must not discard
+            # an anchored, positive native interval for the word being repaired.
+            if reference is not None:
+                return merge_native_alignment_evidence(reference, evidence, len(pcm) / 16000)
             return None
 
         def repair_native() -> list[Any] | None:
@@ -499,7 +513,16 @@ class FasterWhisperAdapter:
                         if not lower < upper or upper - lower > 480000:
                             continue
                         content = "".join(w.word for w in repaired[left:right])
-                        part = force(content, audio[lower:upper])
+                        reference = [
+                            SimpleNamespace(
+                                word=w.word,
+                                start=w.start - lower / 16000,
+                                end=w.end - lower / 16000,
+                                probability=w.probability,
+                            )
+                            for w in repaired[left:right]
+                        ]
+                        part = force(content, audio[lower:upper], reference=reference)
                         if part is None or [w.word.strip() for w in part] != [
                             w.word.strip() for w in repaired[left:right]
                         ]:

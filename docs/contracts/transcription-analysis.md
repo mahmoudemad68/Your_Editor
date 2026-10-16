@@ -122,7 +122,10 @@ and [busy-wait spin count](https://gcc.gnu.org/onlinedocs/libgomp/GOMP_005fSPINC
 Native zero-length or overlapping lexical intervals are not valid output.
 Supported CTranslate2 forced alignment uses the original PCM and complete
 recognized text; unresolved intervals fail closed rather than dropping words or
-inventing epsilon durations. The bounded fallback first aligns complete context,
+inventing epsilon durations. Alignment encodes the actual source feature length
+through CT2's supported variable-length input, without artificial thirty-second
+padding. Real CPU regression evidence showed padded local contexts collapsing a
+lexical word to a zero-duration bin. The bounded fallback first aligns complete context,
 then complete segments with one-second context, then two-to-eight neighboring
 words with 400 ms, one-second or two-second original-PCM context. It retains complete lexical text and requires ordered
 outside anchors. A zero/overlapping native interval near a window's right edge may indicate an
@@ -136,13 +139,22 @@ no third primary recognition pass, synthetic padding or change to core ownership
 The exact algorithm and parameters contribute to the recorded
 configuration hash. At most 32 alignment encodes per window are permitted;
 cancellation/deadline checks run before each encode and alignment attempt.
-When attention-filter widths collapse different words, the fallback may combine
+When attention-filter widths collapse different words, including in local windows,
+the fallback may combine
 unchanged positive intervals from those actual native alignments. It requires an
 exact match of the complete indexed word sequence and overlapping temporal
 anchors on both available sides; repaired intervals must fit between untouched
 neighbors. It never estimates a duration or searches by lexical text alone.
 Unresolved or conflicting evidence still fails closed within the same encode bound.
-The `ct2-contextual-v11` identity also participates in durable admission identity,
+The offline regression suite includes the exact normalized first 600 seconds of
+`commons-148215183`, losslessly packed in `tests/fixtures/asr/en-original-ten-minute.flac`.
+The fixture manifest preserves the source license/identity, PCM digest and original
+WAV header/digest. Tests reconstruct and verify those exact bytes before running
+tiny and small separately with the ordinary default beam, thread and deadline
+settings. Per-run words, provenance, wall time and process peak RSS are retained.
+This checks long-recording integrity; there is no 600-second reference transcript
+and no accuracy claim for that fixture.
+The `ct2-contextual-v12` identity also participates in durable admission identity,
 so prior algorithm results cannot satisfy a new-algorithm task accidentally.
 The deferred PostgreSQL receipt fence checks the worker's actual algorithm
 acknowledgment and freezes its inference metadata together with the result.

@@ -523,3 +523,73 @@ def test_real_ten_minute_repeated_source_does_not_drop_chunk_content(
             )
     finally:
         adapter.model.model.unload_model()
+
+
+@pytest.mark.parametrize("model", ["tiny", "small"])
+def test_original_ten_minute_recording_preserves_complete_bounded_word_output(
+    tmp_path: Path, model: Literal["tiny", "small"]
+) -> None:
+    import resource
+    import time
+
+    from faster_whisper.audio import decode_audio  # type: ignore[import-untyped]
+
+    manifest = json.loads((ROOT / "tests/fixtures/asr/manifest.json").read_text())
+    entry = next(f for f in manifest["fixtures"] if f["file"] == "en-original-ten-minute.flac")
+    packed = ROOT / "tests/fixtures/asr" / entry["file"]
+    assert hashlib.sha256(packed.read_bytes()).hexdigest() == entry["sha256"]
+    audio = decode_audio(str(packed), sampling_rate=16000)
+    assert len(audio) == 600 * 16000
+    samples = (audio * 32768).astype("<i2").tobytes()
+    assert hashlib.sha256(samples).hexdigest() == entry["canonicalWav"]["pcmSha256"]
+    data = bytes.fromhex(entry["canonicalWav"]["headerHex"]) + samples
+    assert len(data) == entry["canonicalWav"]["sizeBytes"]
+    assert hashlib.sha256(data).hexdigest() == entry["canonicalWav"]["sha256"]
+    path = tmp_path / "original-ten-minute.wav"
+    path.write_bytes(data)
+    del audio, samples, data
+    source = AudioIdentity(
+        entry["sourceId"],
+        entry["sourceSha256"],
+        "original-600s-regression",
+        entry["canonicalWav"]["sha256"],
+        615428000,
+        0,
+        600000000,
+    )
+    adapter = FasterWhisperAdapter(
+        AsrSettings(model=model, model_root=ROOT / ".local/asr-models", cpu_threads=2)
+    )
+    start = time.monotonic()
+    try:
+        result = adapter.transcribe(str(path), source)
+        report(
+            f"{model}-original-ten-minute",
+            {
+                "transcript": dataclasses.asdict(result),
+                "provenance": adapter.provenance(source),
+                "inferenceParameters": adapter.parameters(),
+                "wallMs": (time.monotonic() - start) * 1000,
+                "peakProcessRssBytes": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+                * (1024 if sys.platform != "darwin" else 1),
+                "fixture": entry,
+                "accuracy": "NOT_MEASURED; no 600-second reference transcript",
+            },
+        )
+        assert len(result.words) > 600
+        assert result.words[-1].end_us > 590_000_000
+        assert all(0 <= w.start_us < w.end_us <= 600_000_000 for w in result.words)
+        assert all(
+            a.end_us <= b.start_us for a, b in zip(result.words, result.words[1:], strict=False)
+        )
+        for minute in range(10):
+            assert (
+                sum(
+                    minute * 60_000_000 <= w.start_us < (minute + 1) * 60_000_000
+                    for w in result.words
+                )
+                > 30
+            )
+        assert hashlib.sha256(path.read_bytes()).hexdigest() == source.audio_sha256
+    finally:
+        adapter.model.model.unload_model()

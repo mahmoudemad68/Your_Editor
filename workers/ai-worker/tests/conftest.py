@@ -12,6 +12,7 @@ import hashlib
 import importlib.metadata
 import json
 import math
+import os
 import platform
 from pathlib import Path
 from typing import Any
@@ -32,6 +33,12 @@ def _runtime_identity() -> dict[str, Any]:
             key, _, value = line.partition(":")
             if key.strip() in {"vendor_id", "model name", "flags"}:
                 cpu.setdefault(key.strip(), value.strip())
+    quota: dict[str, int | None] | None = None
+    try:
+        limit, period = Path("/sys/fs/cgroup/cpu.max").read_text().split()
+        quota = {"quotaUs": None if limit == "max" else int(limit), "periodUs": int(period)}
+    except (OSError, ValueError):
+        pass
     return {
         "python": platform.python_version(),
         "machine": platform.machine(),
@@ -39,6 +46,11 @@ def _runtime_identity() -> dict[str, Any]:
         "nativeCpuProfile": ASR_NATIVE_PROFILE,
         "nativeCpuEnvironment": dict(ASR_NATIVE_ENVIRONMENT),
         "cpu": cpu,
+        "logicalCpuCount": os.cpu_count(),
+        "cpuAffinity": sorted(os.sched_getaffinity(0))
+        if hasattr(os, "sched_getaffinity")
+        else None,
+        "cpuQuota": quota,
         "libraries": {
             name: importlib.metadata.version(name)
             for name in ("numpy", "ctranslate2", "faster-whisper")

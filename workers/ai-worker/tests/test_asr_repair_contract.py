@@ -226,6 +226,87 @@ def test_native_repair_cannot_reuse_word_outside_original_pcm(monkeypatch: Any) 
         adapter._aligned_chunk([segment], np.zeros(16000), "en")
 
 
+def test_forced_alignment_encodes_actual_source_features_without_artificial_padding(
+    monkeypatch: Any,
+) -> None:
+    monkeypatch.setattr(
+        whisper, "Tokenizer", lambda *args, **kwargs: SimpleNamespace(encode=lambda text: [1])
+    )
+    monkeypatch.setattr(whisper, "merge_punctuations", lambda *args: None)
+    features = np.zeros((80, 101), dtype=np.float32)
+
+    def encode(value: Any) -> None:
+        assert value is features
+
+    adapter = adapter_returning([])
+    adapter.model = SimpleNamespace(
+        hf_tokenizer=None,
+        model=SimpleNamespace(is_multilingual=True),
+        feature_extractor=lambda audio: features,
+        encode=encode,
+        find_alignment=lambda *args, **kwargs: [
+            [{"word": " word", "start": 0.2, "end": 0.5, "probability": 0.8}]
+        ],
+    )
+    segment = SimpleNamespace(
+        text=" word", start=0, end=1, words=[alignment_word(" word", 0.2, 0.2)]
+    )
+    result = adapter._aligned_chunk([segment], np.zeros(16000), "en")
+    assert [(w.word, w.start, w.end) for w in result] == [(" word", 0.2, 0.5)]
+
+
+def test_local_partial_native_evidence_is_not_discarded_for_an_unrelated_zero_word(
+    monkeypatch: Any,
+) -> None:
+    words = [alignment_word(f" a{i}", i * 0.2, i * 0.2 + 0.1) for i in range(10)]
+    words[3].end = words[3].start
+    segment = SimpleNamespace(text="".join(w.word for w in words), words=words, start=0, end=2)
+    requested = []
+
+    def alignment(_tokenizer: Any, tokens: Any, *args: Any, **kwargs: Any) -> Any:
+        names = tokens[0]
+        requested.append(names)
+        result = []
+        for name in names:
+            index = int(name[1:])
+            start = index * 0.2
+            # No single forced alignment is complete. Only the local candidate
+            # contains a positive observed a3; its a1 is collapsed instead.
+            valid = index != (1 if len(names) == 5 else 3)
+            result.append(
+                {
+                    "word": " " + name,
+                    "start": start,
+                    "end": start + (0.1 if valid else 0),
+                    "probability": 0.7,
+                }
+            )
+        return [result]
+
+    monkeypatch.setattr(
+        whisper, "Tokenizer", lambda *args, **kwargs: SimpleNamespace(encode=str.split)
+    )
+    monkeypatch.setattr(whisper, "merge_punctuations", lambda *args: None)
+    adapter = adapter_returning([])
+    adapter.model = SimpleNamespace(
+        hf_tokenizer=None,
+        model=SimpleNamespace(is_multilingual=True),
+        feature_extractor=lambda audio: np.zeros((80, 301), dtype=np.float32),
+        encode=lambda features: None,
+        find_alignment=alignment,
+    )
+    result = adapter._aligned_chunk([segment], np.zeros(48000), "en")
+    assert "".join(w.word for w in result) == segment.text
+    assert (result[3].start, result[3].end, result[3].probability) == (
+        0.6000000000000001,
+        0.7000000000000001,
+        0.7,
+    )
+    assert result[1].start == words[1].start and result[1].end == words[1].end
+    assert words[3].start == words[3].end
+    assert any(len(names) == 5 for names in requested)
+
+
 def test_original_pcm_reconciliation_recovers_unowned_recognized_word_without_guessing() -> None:
     from editagent_ai_worker.domain.analysis.transcription import Word
     from editagent_ai_worker.domain.analysis.voice_activity import AudioIdentity

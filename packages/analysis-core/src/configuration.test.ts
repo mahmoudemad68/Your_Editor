@@ -14,7 +14,7 @@ test("configuration identity includes model, schema and actual deployment parame
     configurationHash(analysisConfiguration({ EDITAGENT_VAD_PADDING_US: "200000" })),
   );
   assert.deepEqual(a, analysisConfiguration({}));
-  assert.equal(a.asrAlgorithm, "ct2-contextual-v11");
+  assert.equal(a.asrAlgorithm, "ct2-contextual-v12");
   assert.notEqual(
     configurationHash(a),
     configurationHash({ ...a, asrAlgorithm: "ct2-contextual-v6" }),
