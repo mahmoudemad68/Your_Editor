@@ -10,7 +10,7 @@ from editagent_ai_worker.domain.analysis.transcription import TranscriptionError
 from editagent_ai_worker.domain.analysis.voice_activity import VadModelError
 from editagent_ai_worker.infrastructure.analysis_workspace import recover_workspaces
 from editagent_ai_worker.infrastructure.asr_config import AsrSettings
-from editagent_ai_worker.infrastructure.asr_model import verify_asr_model
+from editagent_ai_worker.infrastructure.asr_model import required_models, verify_asr_model
 from editagent_ai_worker.infrastructure.config import (
     ConfigurationError,
     configure_asr_native_environment,
@@ -34,7 +34,8 @@ def main() -> None:
         recover_workspaces()
         _detector = build_voice_activity_detector(load_vad_settings())
         asr = AsrSettings()
-        verify_asr_model(asr.model_path, asr.model)
+        for model in required_models(asr.model):
+            verify_asr_model(asr.model_root / model, model)
     except (ConfigurationError, VadModelError, TranscriptionError, ValidationError) as exc:
         print(
             str(exc)

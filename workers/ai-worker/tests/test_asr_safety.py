@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import threading
 import wave
+from collections.abc import Iterator
 from pathlib import Path
 
 import numpy as np
@@ -23,8 +24,12 @@ ROOT = Path(__file__).resolve().parents[3]
 
 
 @pytest.fixture(scope="module")
-def adapter() -> FasterWhisperAdapter:
-    return FasterWhisperAdapter(AsrSettings(model="tiny", model_root=ROOT / ".local/asr-models"))
+def adapter() -> Iterator[FasterWhisperAdapter]:
+    value = FasterWhisperAdapter(AsrSettings(model="tiny", model_root=ROOT / ".local/asr-models"))
+    try:
+        yield value
+    finally:
+        value.close()
 
 
 @pytest.mark.parametrize("signal_kind", ["silence", "tone", "music"])

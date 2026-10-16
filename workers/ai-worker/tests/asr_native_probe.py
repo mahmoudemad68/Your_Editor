@@ -53,7 +53,7 @@ def main() -> None:
             assert observations
             print(json.dumps({"output": outputs[0], "completeNativeTextPreserved": True}))
     finally:
-        adapter.model.model.unload_model()
+        adapter.close()
 
 
 if __name__ == "__main__":

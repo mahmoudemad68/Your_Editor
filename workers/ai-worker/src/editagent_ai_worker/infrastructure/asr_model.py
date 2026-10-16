@@ -53,6 +53,20 @@ def files(model: str) -> dict[str, tuple[int, str]]:
     return {**COMMON, **MODELS[model]["files"]}  # type: ignore[dict-item]
 
 
+def model_identity(model: str) -> dict[str, Any]:
+    expected = files(model)
+    return {
+        "name": "faster-whisper-" + model,
+        "version": MODELS[model]["revision"],
+        "sha256": hashlib.sha256(json.dumps(expected, sort_keys=True).encode()).hexdigest(),
+    }
+
+
+def required_models(model: str) -> tuple[str, ...]:
+    files(model)
+    return ("tiny", "small") if model == "tiny" else (model,)
+
+
 def verify_asr_model(path: Path, model: str) -> dict[str, Any]:
     expected = files(model)
     if path.is_symlink() or not path.is_dir():
@@ -65,12 +79,7 @@ def verify_asr_model(path: Path, model: str) -> dict[str, Any]:
             if hashlib.file_digest(stream, "sha256").hexdigest() != digest:
                 raise TranscriptionError("Pinned ASR model checksum mismatch")
     # Model bundle identity covers tokenizer/configuration as well as weights.
-    bundle = hashlib.sha256(json.dumps(expected, sort_keys=True).encode()).hexdigest()
-    return {
-        "name": "faster-whisper-" + model,
-        "version": MODELS[model]["revision"],
-        "sha256": bundle,
-    }
+    return model_identity(model)
 
 
 def acquire(root: Path, model: str) -> None:
@@ -110,7 +119,8 @@ def main() -> int:
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--model", choices=tuple(MODELS), required=True)
     args = parser.parse_args()
-    acquire(args.root, args.model)
+    for model in required_models(args.model):
+        acquire(args.root, model)
     print(json.dumps(verify_asr_model(args.root / args.model, args.model), sort_keys=True))
     return 0
 

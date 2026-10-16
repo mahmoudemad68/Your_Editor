@@ -30,7 +30,7 @@ from editagent_ai_worker.domain.analysis.transcription import (
 from editagent_ai_worker.domain.analysis.voice_activity import AudioIdentity, Cancellation
 from editagent_ai_worker.infrastructure.asr_config import AsrSettings
 from editagent_ai_worker.infrastructure.asr_features import DeterministicFeatureExtractor
-from editagent_ai_worker.infrastructure.asr_model import verify_asr_model
+from editagent_ai_worker.infrastructure.asr_model import model_identity, verify_asr_model
 from editagent_ai_worker.infrastructure.config import (
     ASR_NATIVE_ENVIRONMENT,
     ASR_NATIVE_PROFILE,
@@ -39,7 +39,7 @@ from editagent_ai_worker.infrastructure.config import (
 )
 from editagent_ai_worker.infrastructure.vad_audio import verify_audio_file, wav_parameters
 
-ASR_ALGORITHM = "ct2-contextual-v12"
+ASR_ALGORITHM = "ct2-contextual-v13"
 
 
 def uncovered_speech(audio: Any, words: list[Any], options: Any) -> list[tuple[int, int]]:
@@ -235,6 +235,7 @@ class FasterWhisperAdapter:
         self.settings = settings
         ctranslate2.set_random_seed(settings.seed)
         self.model_identity = verify_asr_model(settings.model_path, settings.model)
+        self._alignment_model: Any = None
         self.device = settings.device
         self.compute_type = settings.compute_type
         try:
@@ -407,18 +408,119 @@ class FasterWhisperAdapter:
         language: str,
         check: Callable[[], None] | None = None,
     ) -> list[Any]:
+        try:
+            return self._primary_aligned_chunk(segments, audio, language, check)
+        except (TranscriptionCancelled, TranscriptionTimeout):
+            raise
+        except TranscriptionError as primary:
+            if self.settings.model != "tiny":
+                raise
+            try:
+                return self._fallback_alignment(segments, audio, language, check)
+            except (TranscriptionCancelled, TranscriptionTimeout):
+                raise
+            except TranscriptionError as fallback:
+                raise primary from fallback
+
+    def _fallback_alignment(
+        self,
+        segments: list[Any],
+        audio: Any,
+        language: str,
+        check: Callable[[], None] | None,
+    ) -> list[Any]:
+        """Bounded small-model alignment supplies anchored timings, never decoder text.
+
+        Tiny's attention can collapse a genuine word on supported CPU kernels.
+        The immutable small model is used only for forced alignment. Every
+        complete context must retain the exact indexed lexical sequence with
+        positive ordered native intervals. Decoder probabilities are preserved.
+        No small-model transcription or guessed duration occurs.
+        """
+        if check is not None:
+            check()
+        words, text, _, _ = self._alignment_state(segments, audio)
+        if not 0 < len(audio) <= 480000 or "".join(w.word for w in words).strip() != text.strip():
+            raise TranscriptionError("ASR fallback has no complete bounded lexical evidence")
+        if self._alignment_model is None:
+            path = self.settings.model_root / "small"
+            verify_asr_model(path, "small")
+            if check is not None:
+                check()
+            try:
+                model = WhisperModel(
+                    str(path.resolve()),
+                    device="cpu",
+                    compute_type="int8",
+                    cpu_threads=self.settings.cpu_threads,
+                    num_workers=1,
+                    local_files_only=True,
+                )
+                model.feature_extractor = DeterministicFeatureExtractor(
+                    feature_size=model.feature_extractor.mel_filters.shape[0]
+                )
+                self._alignment_model = model
+            except Exception as exc:
+                raise TranscriptionError("Pinned ASR alignment model is unavailable") from exc
+        if check is not None:
+            check()
+        candidate = self._primary_aligned_chunk(
+            segments,
+            audio,
+            language,
+            check,
+            alignment_model=self._alignment_model,
+            maximum_encodes=24,
+        )
+        _, _, valid, _ = self._alignment_state([SimpleNamespace(text=text, words=candidate)], audio)
+        if not valid or [w.word for w in candidate] != [w.word for w in words]:
+            raise TranscriptionError("ASR words require trustworthy realignment")
+        if check is not None:
+            check()
+        return [
+            SimpleNamespace(word=w.word, start=w.start, end=w.end, probability=original.probability)
+            for w, original in zip(candidate, words, strict=True)
+        ]
+
+    def close(self) -> None:
+        """Release both native models when an adapter outlives a single request."""
+        failures = []
+        for model in (self._alignment_model, self.model):
+            if model is not None:
+                try:
+                    model.model.unload_model()
+                except Exception as exc:
+                    failures.append(exc)
+        if failures:
+            raise TranscriptionError("ASR native model cleanup failed") from failures[0]
+        self._alignment_model = None
+
+    def _primary_aligned_chunk(
+        self,
+        segments: list[Any],
+        audio: Any,
+        language: str,
+        check: Callable[[], None] | None = None,
+        *,
+        alignment_model: Any = None,
+        maximum_encodes: int | None = None,
+    ) -> list[Any]:
         """Supported CT2 forced alignment preserves complete recognized text.
 
         Native zero/overlapping word intervals cannot be published. The bounded original PCM
         and complete segment text are re-aligned; no lexical words or positive boundaries are
         fabricated. Unresolved alignment still fails closed. Context is at most thirty seconds.
         """
+        if alignment_model is None:
+            alignment_model = self.model
+        if maximum_encodes is None:
+            maximum_encodes = 8 if self.settings.model == "tiny" else 32
         words, text, valid, _ = self._alignment_state(segments, audio)
         if valid:
             return words
         tokenizer = Tokenizer(
-            self.model.hf_tokenizer,
-            self.model.model.is_multilingual,
+            alignment_model.hf_tokenizer,
+            alignment_model.model.is_multilingual,
             task="transcribe",
             language=language,
         )
@@ -433,19 +535,19 @@ class FasterWhisperAdapter:
             if check is not None:
                 check()
             alignment_encodes += 1
-            if alignment_encodes > 32:
+            if alignment_encodes > maximum_encodes:
                 raise TranscriptionError("ASR trustworthy realignment resource bound exceeded")
             # CT2 supports variable-length encoder input. Artificial 30s padding
             # changes cross-attention evidence for short local speech and can
             # collapse real lexical words into zero-length alignment bins.
             # Align only the actual, bounded source features; no audio/time is
             # invented to satisfy the word contract.
-            encoded = self.model.encode(self.model.feature_extractor(pcm))
+            encoded = alignment_model.encode(alignment_model.feature_extractor(pcm))
             evidence = []
             for width in (7, 5, 3, 1):
                 if check is not None:
                     check()
-                alignment = self.model.find_alignment(
+                alignment = alignment_model.find_alignment(
                     tokenizer,
                     [tokenizer.encode(content)],
                     encoded,
@@ -930,6 +1032,19 @@ class FasterWhisperAdapter:
                 "recognitionContinuationMaxUs": self.settings.overlap_us,
                 "maximumRecognitionPassesPerWindow": 2,
                 "maximumAlignmentEncodesPerWindow": 32,
+                "maximumPrimaryAlignmentEncodesPerWindow": 8
+                if self.settings.model == "tiny"
+                else 32,
+                "maximumFallbackAlignmentEncodesPerWindow": 24
+                if self.settings.model == "tiny"
+                else 0,
+                "alignmentFallbackModel": model_identity("small")
+                if self.settings.model == "tiny"
+                else None,
+                "alignmentFallbackDevice": "cpu" if self.settings.model == "tiny" else None,
+                "alignmentFallbackComputeType": "int8" if self.settings.model == "tiny" else None,
+                "alignmentFallbackConfidence": "preserve-decoder-probabilities",
+                "alignmentFallbackEvidence": "complete-context-exact-index-native-alignment-v1",
                 "localAlignmentPaddingUs": 1000000,
                 "wordAlignmentPaddingUs": [400000, 1000000, 2000000],
                 "wordAlignmentNeighbours": [2, 3, 4, 6, 8],

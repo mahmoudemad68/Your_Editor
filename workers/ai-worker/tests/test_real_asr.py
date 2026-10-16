@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -16,8 +17,12 @@ ROOT = Path(__file__).resolve().parents[3]
 
 
 @pytest.fixture(scope="module")
-def real_adapter() -> FasterWhisperAdapter:
-    return FasterWhisperAdapter(AsrSettings(model="tiny", model_root=ROOT / ".local/asr-models"))
+def real_adapter() -> Iterator[FasterWhisperAdapter]:
+    value = FasterWhisperAdapter(AsrSettings(model="tiny", model_root=ROOT / ".local/asr-models"))
+    try:
+        yield value
+    finally:
+        value.close()
 
 
 @pytest.mark.parametrize("language", ["en", "ar"])

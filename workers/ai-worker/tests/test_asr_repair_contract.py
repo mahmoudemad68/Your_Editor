@@ -7,7 +7,11 @@ import numpy as np
 import pytest
 
 import editagent_ai_worker.infrastructure.faster_whisper as whisper
-from editagent_ai_worker.domain.analysis.transcription import TranscriptionError
+from editagent_ai_worker.domain.analysis.transcription import (
+    TranscriptionCancelled,
+    TranscriptionError,
+    TranscriptionTimeout,
+)
 from editagent_ai_worker.infrastructure.asr_config import AsrSettings
 from editagent_ai_worker.infrastructure.asr_features import DeterministicFeatureExtractor
 
@@ -82,6 +86,185 @@ def adapter_returning(segments: list[Any]) -> Any:
     adapter.settings = AsrSettings()
     adapter.model = SimpleNamespace(transcribe=lambda *args, **kwargs: (iter(segments), None))
     return adapter
+
+
+def fallback_adapter(monkeypatch: Any, defect: str | None = None) -> tuple[Any, list[int]]:
+    adapter = adapter_returning([])
+    adapter.settings = AsrSettings(model="tiny")
+    counts = []
+    native = [
+        alignment_word(" left", 0, 1),
+        alignment_word(" word", 1.2, 1.8),
+        alignment_word(" right", 2, 3),
+    ]
+    if defect == "text":
+        native[1].word = " replaced"
+    if defect == "zero":
+        native[1].end = native[1].start
+    if defect == "overlap":
+        native[1].start = 0.5
+    if defect == "outside":
+        native[1].end = 4
+    if defect == "order":
+        native[0].start, native[0].end = 1.9, 2.1
+    if defect == "nan":
+        native[1].start = float("nan")
+
+    def encode(value: Any) -> None:
+        counts.append(1)
+
+    adapter._alignment_model = SimpleNamespace(
+        hf_tokenizer=None,
+        model=SimpleNamespace(is_multilingual=True),
+        feature_extractor=lambda audio: None,
+        encode=encode,
+        find_alignment=lambda *args, **kwargs: [
+            [{"word": w.word, "start": w.start, "end": w.end, "probability": 0.01} for w in native]
+        ],
+    )
+    monkeypatch.setattr(
+        whisper, "Tokenizer", lambda *args, **kwargs: SimpleNamespace(encode=str.split)
+    )
+    monkeypatch.setattr(whisper, "merge_punctuations", lambda *args: None)
+
+    def failed(*args: Any, **kwargs: Any) -> Any:
+        if kwargs.get("alignment_model") is not None:
+            return whisper.FasterWhisperAdapter._primary_aligned_chunk(adapter, *args, **kwargs)
+        raise TranscriptionError("ASR words require trustworthy realignment")
+
+    adapter._primary_aligned_chunk = failed
+    return adapter, counts
+
+
+def test_small_timing_fallback_preserves_decoder_text_probabilities_and_valid_intervals(
+    monkeypatch: Any,
+) -> None:
+    adapter, counts = fallback_adapter(monkeypatch)
+    words = [
+        alignment_word(" left", 0, 1),
+        alignment_word(" word", 1, 1),
+        alignment_word(" right", 2, 3),
+    ]
+    segment = SimpleNamespace(text=" left word right", start=0, end=3, words=words)
+    result = adapter._aligned_chunk([segment], np.zeros(48000), "en")
+    assert [(w.word, w.start, w.end, w.probability) for w in result] == [
+        (" left", 0, 1, 0.8),
+        (" word", 1.2, 1.8, 0.8),
+        (" right", 2, 3, 0.8),
+    ]
+    assert counts == [1]
+    assert words[1].start == words[1].end
+
+
+@pytest.mark.parametrize("defect", ["text", "zero", "overlap", "outside", "order", "nan"])
+def test_small_timing_fallback_rejects_untrustworthy_evidence(
+    monkeypatch: Any, defect: str
+) -> None:
+    adapter, counts = fallback_adapter(monkeypatch, defect)
+    words = [
+        alignment_word(" left", 0, 1),
+        alignment_word(" word", 1, 1),
+        alignment_word(" right", 2, 3),
+    ]
+    with pytest.raises(TranscriptionError, match="trustworthy realignment"):
+        adapter._aligned_chunk(
+            [SimpleNamespace(text=" left word right", start=0, end=3, words=words)],
+            np.zeros(48000),
+            "en",
+        )
+    assert 1 <= len(counts) <= 24
+
+
+@pytest.mark.parametrize(
+    "error", [TranscriptionCancelled("cancelled"), TranscriptionTimeout("timeout")]
+)
+def test_alignment_fallback_cannot_mask_cancellation_or_timeout(
+    monkeypatch: Any, error: TranscriptionError
+) -> None:
+    adapter, _ = fallback_adapter(monkeypatch)
+
+    def failed(*args: Any, **kwargs: Any) -> None:
+        raise error
+
+    adapter._primary_aligned_chunk = failed
+    adapter._fallback_alignment = lambda *args: pytest.fail(
+        "Cancelled inference loaded an alignment model"
+    )
+    with pytest.raises(type(error)) as observed:
+        adapter._aligned_chunk([], np.zeros(16000), "en")
+    assert observed.value is error
+
+
+def test_alignment_models_are_both_released_even_if_one_cleanup_fails() -> None:
+    adapter = adapter_returning([])
+    cleaned = []
+
+    def failed() -> None:
+        cleaned.append("alignment")
+        raise RuntimeError("private adapter detail")
+
+    adapter._alignment_model = SimpleNamespace(model=SimpleNamespace(unload_model=failed))
+    adapter.model = SimpleNamespace(
+        model=SimpleNamespace(unload_model=lambda: cleaned.append("decoder"))
+    )
+    with pytest.raises(TranscriptionError, match="^ASR native model cleanup failed$"):
+        adapter.close()
+    assert cleaned == ["alignment", "decoder"]
+
+
+def test_setup_bundles_the_pinned_alignment_dependency_only_for_tiny(
+    tmp_path: Any,
+    monkeypatch: Any,
+    capsys: Any,
+) -> None:
+    import json
+    import sys
+
+    from editagent_ai_worker.infrastructure import asr_model
+
+    assert asr_model.required_models("tiny") == ("tiny", "small")
+    assert asr_model.required_models("small") == ("small",)
+    assert (
+        asr_model.model_identity("tiny")["sha256"]
+        == "83ba3102b2fb621cef33d905bb6f8dc7db9c383743bce3cf510d2f5574862281"
+    )
+    assert (
+        asr_model.model_identity("small")["sha256"]
+        == "4e456821bbeabf0923f07220a86c1c14a8820bc83e78ae638d4474207b70aedd"
+    )
+    acquired = []
+    monkeypatch.setattr(asr_model, "acquire", lambda root, name: acquired.append(name))
+    monkeypatch.setattr(
+        asr_model, "verify_asr_model", lambda root, name: asr_model.model_identity(name)
+    )
+    monkeypatch.setattr(sys, "argv", ["asr_model", "--root", str(tmp_path), "--model", "tiny"])
+    assert asr_model.main() == 0
+    assert acquired == ["tiny", "small"]
+    assert json.loads(capsys.readouterr().out) == asr_model.model_identity("tiny")
+
+
+def test_small_alignment_is_cancelled_before_returning_native_evidence(monkeypatch: Any) -> None:
+    adapter, counts = fallback_adapter(monkeypatch)
+    words = [
+        alignment_word(" left", 0, 1),
+        alignment_word(" word", 1, 1),
+        alignment_word(" right", 2, 3),
+    ]
+    checks = []
+
+    def cancelled() -> None:
+        checks.append(1)
+        if len(checks) == 4:
+            raise TranscriptionCancelled("cancelled")
+
+    with pytest.raises(TranscriptionCancelled):
+        adapter._aligned_chunk(
+            [SimpleNamespace(text=" left word right", start=0, end=3, words=words)],
+            np.zeros(48000),
+            "en",
+            cancelled,
+        )
+    assert counts == [1]
 
 
 def test_uncovered_vad_is_not_by_itself_a_missing_word_error(monkeypatch: Any) -> None:

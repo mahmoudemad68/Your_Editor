@@ -139,6 +139,27 @@ no third primary recognition pass, synthetic padding or change to core ownership
 The exact algorithm and parameters contribute to the recorded
 configuration hash. At most 32 alignment encodes per window are permitted;
 cancellation/deadline checks run before each encode and alignment attempt.
+Tiny allocates eight of those encodes to its primary timing repair and up to
+24 to a timing-only fallback using the
+already pinned small model on CPU/int8. It is invoked only if the primary
+alignment cannot validate its complete recognized text; primary tiny alignment
+is bounded to eight encodes. Small decoding retains its existing 32-encode bound.
+The fallback never transcribes replacement words: it aligns the same indexed
+lexical sequence against original PCM, and re-aligns the complete bounded context using positive ordered native
+intervals. Decoder text and probabilities remain unchanged; timings may change
+when that context requires realignment. Partial same-model repairs retain the
+existing two-anchor rule. Conflicting or invalid full-context evidence fails closed.
+Its model revision/SHA, device and compute type are recorded in the actual
+inference parameters/configuration identity. Timing-only fallback is part of
+`ct2-contextual-v13`; it is not a claim that tiny alone generated every timing.
+Tiny deployments therefore bundle both pinned models during setup/build and
+verify both before readiness. There is no inference-time acquisition. At most
+one decoder and one lazily loaded fallback model reside in an adapter; their
+native calls remain sequential and under the same job deadline and process
+limits. Reused adapters expose `close()` to unload both models. Production
+inference remains in an owned native process which is terminated/reaped on
+cancellation or timeout. Tiny performance/RSS measurements include any fallback
+work; the default small decoder does not load another model.
 When attention-filter widths collapse different words, including in local windows,
 the fallback may combine
 unchanged positive intervals from those actual native alignments. It requires an
@@ -154,7 +175,7 @@ tiny and small separately with the ordinary default beam, thread and deadline
 settings. Per-run words, provenance, wall time and process peak RSS are retained.
 This checks long-recording integrity; there is no 600-second reference transcript
 and no accuracy claim for that fixture.
-The `ct2-contextual-v12` identity also participates in durable admission identity,
+The `ct2-contextual-v13` identity also participates in durable admission identity,
 so prior algorithm results cannot satisfy a new-algorithm task accidentally.
 The deferred PostgreSQL receipt fence checks the worker's actual algorithm
 acknowledgment and freezes its inference metadata together with the result.
@@ -256,14 +277,15 @@ node tools/asr/long-input.mjs .local/evaluation --model small
 
 The service test uses real PostgreSQL, Redis/BullMQ, S3-compatible storage,
 US-128 extraction, CPU ASR, VAD and FFmpeg acoustic analysis. It requires Docker
-and sufficient scratch space. Model weights and evaluation media remain local,
-never committed. Source fixture licensing and exact hashes are recorded in
+and sufficient scratch space. Model weights and downloaded evaluation masters
+remain local; explicitly attributed bounded regression fixtures are committed.
+Source fixture licensing and exact hashes are recorded in
 `tests/fixtures/asr/manifest.json`. Existing Issues #50, #51, #54 and #58 remain
 separate; this batch does not change rendering isolation or Tool SDK accounting.
 Long-input commands produce separate per-model transcripts and evidence under
-`.local/asr-batch`. The permanent ten-minute CI composite repeats an attributed
-real excerpt; it is explicitly distinct from the original ten-minute Commons
-recording used for the model-specific performance evidence.
+`.local/asr-batch`. The permanent ten-minute CI cases include both a repeated
+attributed real excerpt and the exact original ten-minute Commons recording.
+These are distinct inputs; their reports and performance evidence are separate.
 
 Compose passes the same ASR settings to the media admission coordinator and AI
 worker, and builds the selected model into the image. Changing model selection

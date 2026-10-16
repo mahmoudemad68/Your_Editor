@@ -63,6 +63,77 @@ def report(name: str, value: Any) -> None:
 
 
 @pytest.mark.parametrize("threads", [1, 2])
+def test_real_pinned_fallback_repairs_captured_native_collapse_without_decoding_text(
+    threads: int,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    import numpy as np
+    from faster_whisper import WhisperModel  # type: ignore[import-untyped]
+
+    captured = json.loads((ROOT / "tests/fixtures/asr/tiny-collapsed-alignment.json").read_text())
+    assert captured["createdBy"] == "machine_generated"
+    path = ROOT / "tests/fixtures/asr" / captured["fixtureFile"]
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == captured["fixtureSha256"]
+    samples = pcm(captured["fixtureFile"])[captured["sampleStart"] * 2 : captured["sampleEnd"] * 2]
+    audio = np.frombuffer(samples, dtype="<i2").astype(np.float32) / 32768
+    assert hashlib.sha256(audio.tobytes()).hexdigest() == captured["float32PcmSha256"]
+    segments = [
+        SimpleNamespace(
+            text=s["text"],
+            start=s["start"],
+            end=s["end"],
+            words=[
+                SimpleNamespace(
+                    word=w["text"], start=w["start"], end=w["end"], probability=w["confidence"]
+                )
+                for w in s["words"]
+            ],
+        )
+        for s in captured["segments"]
+    ]
+    original = [w for s in segments for w in s.words]
+    assert len([w for w in original if w.start == w.end]) == 1
+    # Timing inference only. Ordinary real end-to-end tests independently
+    # exercise tiny's actual decoder, without this fault-injection boundary.
+    monkeypatch.setattr(
+        WhisperModel,
+        "transcribe",
+        lambda *args, **kwargs: pytest.fail("Fallback decoded replacement words"),
+    )
+    adapter = FasterWhisperAdapter(
+        AsrSettings(model="tiny", model_root=ROOT / ".local/asr-models", cpu_threads=threads)
+    )
+    native_outputs = []
+    original_alignment = adapter._primary_aligned_chunk
+
+    def observed(*args: Any, **kwargs: Any) -> Any:
+        result = original_alignment(*args, **kwargs)
+        assert kwargs["alignment_model"] is adapter._alignment_model
+        native_outputs.append([vars(w) for w in result])
+        return result
+
+    monkeypatch.setattr(adapter, "_primary_aligned_chunk", observed)
+    try:
+        outputs = [adapter._fallback_alignment(segments, audio, "en", None) for _ in range(3)]
+        serialized = [[vars(w) for w in output] for output in outputs]
+        assert serialized[0] == serialized[1] == serialized[2]
+        assert len(native_outputs) == 3
+        for word, before, native in zip(outputs[0], original, native_outputs[0], strict=True):
+            assert word.word == before.word and word.probability == before.probability
+            assert 0 <= word.start < word.end <= 28
+            assert (word.start, word.end) == (native["start"], native["end"])
+        assert all(a.end <= b.start for a, b in zip(outputs[0], outputs[0][1:], strict=False))
+        report(
+            f"tiny-captured-fallback-threads{threads}",
+            {"source": captured, "words": serialized, "inferenceParameters": adapter.parameters()},
+        )
+    finally:
+        adapter.close()
+
+
+@pytest.mark.parametrize("threads", [1, 2])
 def test_real_native_kernel_alignment_and_fresh_reused_state(threads: int) -> None:
     outputs = []
     environment = {
@@ -170,7 +241,7 @@ def test_real_coverage_drift_does_not_hide_missing_or_repeated_words(threads: in
             },
         )
     finally:
-        adapter.model.model.unload_model()
+        adapter.close()
 
 
 @pytest.mark.parametrize("model", ["tiny", "small"])
@@ -232,7 +303,7 @@ def test_real_multilingual_content_and_reused_process_determinism(
                 assert shifted == list(expected), (model, threads, name, script)
         assert all(0 <= w["start_us"] < w["end_us"] <= source.duration_us for w in words)
         assert all(a["end_us"] <= b["start_us"] for a, b in zip(words, words[1:], strict=False))
-    adapter.model.model.unload_model()
+    adapter.close()
 
 
 @pytest.mark.parametrize("threads", [1, 2])
@@ -429,7 +500,7 @@ def test_real_partial_context_uses_bounded_original_pcm_continuation(
         report(f"small-right-continuation-fresh-threads{threads}", fresh)
         assert_fresh_matches_reused(fresh, outputs[0])
     finally:
-        adapter.model.model.unload_model()
+        adapter.close()
 
 
 @pytest.mark.parametrize("threads", [1, 2])
@@ -468,7 +539,7 @@ def test_full_minute_languages_remain_identical_after_reusing_native_state(
             report(f"small-cross-mode-{language}-threads{threads}", fresh)
             assert_fresh_matches_reused(fresh, outputs[0])
     finally:
-        adapter.model.model.unload_model()
+        adapter.close()
 
 
 @pytest.mark.parametrize("model", ["tiny", "small"])
@@ -491,7 +562,7 @@ def test_original_long_recording_opening_alignment_and_repeatability(
         assert words[-1]["end_us"] > 25_000_000
         assert all(0 <= w["start_us"] < w["end_us"] <= 26_000_000 for w in words)
     finally:
-        adapter.model.model.unload_model()
+        adapter.close()
 
 
 @pytest.mark.parametrize("model", ["tiny", "small"])
@@ -522,7 +593,7 @@ def test_real_ten_minute_repeated_source_does_not_drop_chunk_content(
                 > 30
             )
     finally:
-        adapter.model.model.unload_model()
+        adapter.close()
 
 
 @pytest.mark.parametrize("model", ["tiny", "small"])
@@ -592,4 +663,4 @@ def test_original_ten_minute_recording_preserves_complete_bounded_word_output(
             )
         assert hashlib.sha256(path.read_bytes()).hexdigest() == source.audio_sha256
     finally:
-        adapter.model.model.unload_model()
+        adapter.close()
