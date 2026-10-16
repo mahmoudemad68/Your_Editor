@@ -72,6 +72,8 @@ def test_real_native_kernel_alignment_and_fresh_reused_state(threads: int) -> No
         "CT2_FORCE_CPU_ISA": "AVX2",
         "OPENBLAS_NUM_THREADS": "1",
         "OMP_NUM_THREADS": "1",
+        "OMP_WAIT_POLICY": "ACTIVE",
+        "GOMP_SPINCOUNT": "INFINITE",
     }
     # Conflicting inherited CPU-vendor/ISA settings must not select a different
     # backend than the admitted profile. Every real child establishes its
@@ -90,8 +92,11 @@ def test_real_native_kernel_alignment_and_fresh_reused_state(threads: int) -> No
         report(f"tiny-native-kernel-threads{threads}", outputs)
     assert outputs[0] == outputs[1]
     assert outputs[0]["completeNativeTextPreserved"] is True
-    assert outputs[0]["output"]["inferenceParameters"]["nativeCpuProfile"] == "mkl-native-v1"
+    assert outputs[0]["output"]["inferenceParameters"]["nativeCpuProfile"] == "mkl-passive-v2"
     assert outputs[0]["output"]["inferenceParameters"]["nativeCpuEnvironment"]["CT2_USE_MKL"] == "1"
+    environment = outputs[0]["output"]["inferenceParameters"]["nativeCpuEnvironment"]
+    assert environment["OMP_WAIT_POLICY"] == "PASSIVE"
+    assert environment["GOMP_SPINCOUNT"] == "0"
 
 
 @pytest.mark.parametrize("threads", [1, 2])

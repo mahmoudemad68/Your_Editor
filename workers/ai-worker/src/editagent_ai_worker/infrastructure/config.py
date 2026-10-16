@@ -19,13 +19,15 @@ class ConfigurationError(Exception):
     """Missing or invalid AI worker configuration."""
 
 
-ASR_NATIVE_PROFILE = "mkl-native-v1"
+ASR_NATIVE_PROFILE = "mkl-passive-v2"
 ASR_NATIVE_ENVIRONMENT = MappingProxyType(
     {
         "CT2_USE_MKL": "1",
         "CT2_PACKED_GEMM": "1",
         "OPENBLAS_NUM_THREADS": "1",
         "OMP_NUM_THREADS": "1",
+        "OMP_WAIT_POLICY": "PASSIVE",
+        "GOMP_SPINCOUNT": "0",
     }
 )
 ASR_NATIVE_RESERVED_ENVIRONMENT = (
@@ -49,7 +51,10 @@ def require_asr_native_environment() -> None:
 def configure_asr_native_environment() -> None:
     """Pin the supported CT2 BLAS backend before either library initializes.
 
-    CT2 otherwise chooses MKL versus oneDNN by CPU vendor. ISA selection in CT2
+    CT2 otherwise chooses MKL versus oneDNN by CPU vendor. Its GNU OpenMP
+    workers must block while idle instead of spending the job's CPU quota on
+    busy waiting between native calls and original-PCM preprocessing.
+    ISA selection in CT2
     alone does not constrain its BLAS backend. Never switch an already-imported
     native library into a profile its initialized state cannot establish.
     """
