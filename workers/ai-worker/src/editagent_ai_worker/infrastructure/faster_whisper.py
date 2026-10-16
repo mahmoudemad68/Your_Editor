@@ -34,7 +34,7 @@ from editagent_ai_worker.infrastructure.asr_features import DeterministicFeature
 from editagent_ai_worker.infrastructure.asr_model import verify_asr_model
 from editagent_ai_worker.infrastructure.vad_audio import verify_audio_file, wav_parameters
 
-ASR_ALGORITHM = "ct2-contextual-v8"
+ASR_ALGORITHM = "ct2-contextual-v9"
 
 
 def uncovered_speech(audio: Any, words: list[Any], options: Any) -> list[tuple[int, int]]:
@@ -97,6 +97,79 @@ def attach_boundary_punctuation(words: list[Any]) -> list[Any]:
         else:
             result.append(word)
     return result
+
+
+def merge_native_alignment_evidence(
+    words: list[Any], alignments: list[list[Any]], duration: float
+) -> list[Any] | None:
+    """Repair only from native intervals with exact lexical and temporal anchors.
+
+    Different attention-filter widths can collapse different words. A complete
+    alignment need not be thrown away just because a word outside the repair
+    has zero duration. Every replacement is an unchanged, positive native
+    interval, bounded by the untouched neighboring words. No clock or lexical
+    value is estimated, and repeated phrases keep their original word indices.
+    """
+    repaired = [
+        SimpleNamespace(
+            word=word.word,
+            start=float(word.start),
+            end=float(word.end),
+            probability=float(word.probability),
+        )
+        for word in words
+    ]
+    lexical = [word.word for word in repaired]
+    candidates = [candidate for candidate in alignments if [w.word for w in candidate] == lexical]
+
+    def valid(word: Any) -> bool:
+        return bool(0 <= word.start < word.end <= duration)
+
+    def anchored(candidate: Any, original: Any) -> bool:
+        return (
+            valid(candidate)
+            and valid(original)
+            and bool(max(candidate.start, original.start) < min(candidate.end, original.end))
+        )
+
+    for index, word in enumerate(repaired):
+        if valid(word) and (index == 0 or repaired[index - 1].end <= word.start):
+            continue
+        found = False
+        for radius in (0, 1, 2, 3, 4, 6, 8):
+            left, right = max(0, index - radius), min(len(repaired), index + radius + 1)
+            # Expanding a patch must not make an available anchor disappear.
+            # Source boundaries substitute only for a genuinely first/last word.
+            if (index > 0 and left == 0) or (index + 1 < len(repaired) and right == len(repaired)):
+                continue
+            for candidate in candidates:
+                patch = candidate[left:right]
+                if not all(valid(w) for w in patch) or any(
+                    a.end > b.start for a, b in zip(patch, patch[1:], strict=False)
+                ):
+                    continue
+                if left and (
+                    not anchored(candidate[left - 1], repaired[left - 1])
+                    or patch[0].start < repaired[left - 1].end
+                ):
+                    continue
+                if right < len(repaired) and (
+                    not anchored(candidate[right], repaired[right])
+                    or patch[-1].end > repaired[right].start
+                ):
+                    continue
+                repaired[left:right] = patch
+                found = True
+                break
+            if found:
+                break
+        if not found:
+            return None
+    if [word.word for word in repaired] != lexical or not all(valid(w) for w in repaired):
+        return None
+    if any(a.end > b.start for a, b in zip(repaired, repaired[1:], strict=False)):
+        return None
+    return repaired
 
 
 def merge_owned_words(
@@ -342,8 +415,9 @@ class FasterWhisperAdapter:
         )
 
         alignment_encodes = 0
+        full_evidence: list[list[Any]] = []
 
-        def force(content: str, pcm: Any) -> list[Any] | None:
+        def force(content: str, pcm: Any, retain: bool = False) -> list[Any] | None:
             nonlocal alignment_encodes
             if check is not None:
                 check()
@@ -375,6 +449,8 @@ class FasterWhisperAdapter:
                 result = attach_boundary_punctuation(result)
                 if "".join(w.word for w in result).strip() != content.strip():
                     raise TranscriptionError("Alignment changed complete transcript text")
+                if retain:
+                    full_evidence.append(result)
                 if all(0 <= w.start < w.end <= len(pcm) / 16000 for w in result) and all(
                     a.end <= b.start for a, b in zip(result, result[1:], strict=False)
                 ):
@@ -436,9 +512,13 @@ class FasterWhisperAdapter:
                 return repaired
             return None
 
-        result = force(text, audio)
+        result = force(text, audio, retain=True)
         if result is not None:
             return result
+        if "".join(w.word for w in words).strip() == text.strip():
+            result = merge_native_alignment_evidence(words, full_evidence, len(audio) / 16000)
+            if result is not None:
+                return result
         # Long-context attention can collapse a short word into one 20ms bin.
         # Re-align complete segment text using its original local PCM plus context,
         # never synthetic epsilon durations or a model-generated reference transcript.
@@ -819,6 +899,7 @@ class FasterWhisperAdapter:
                 "wordAlignmentPaddingUs": [400000, 1000000, 2000000],
                 "wordAlignmentNeighbours": [2, 3, 4, 6, 8],
                 "alignmentFilterWidths": [7, 5, 3, 1],
+                "alignmentEvidence": "exact-word-index-native-interval-two-anchor-v1",
             }
         )
         return settings

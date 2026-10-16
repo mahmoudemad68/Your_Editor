@@ -111,7 +111,13 @@ no third primary recognition pass, synthetic padding or change to core ownership
 The exact algorithm and parameters contribute to the recorded
 configuration hash. At most 32 alignment encodes per window are permitted;
 cancellation/deadline checks run before each encode and alignment attempt.
-The `ct2-contextual-v8` identity also participates in durable admission identity,
+When attention-filter widths collapse different words, the fallback may combine
+unchanged positive intervals from those actual native alignments. It requires an
+exact match of the complete indexed word sequence and overlapping temporal
+anchors on both available sides; repaired intervals must fit between untouched
+neighbors. It never estimates a duration or searches by lexical text alone.
+Unresolved or conflicting evidence still fails closed within the same encode bound.
+The `ct2-contextual-v9` identity also participates in durable admission identity,
 so prior algorithm results cannot satisfy a new-algorithm task accidentally.
 The deferred PostgreSQL receipt fence checks the worker's actual algorithm
 acknowledgment and freezes its inference metadata together with the result.

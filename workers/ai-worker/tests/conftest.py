@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import dataclasses
 import hashlib
+import importlib.metadata
 import json
 import math
 import platform
@@ -16,6 +17,33 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+
+
+def _runtime_identity() -> dict[str, Any]:
+    cpu: dict[str, str] = {}
+    if Path("/proc/cpuinfo").exists():
+        for line in Path("/proc/cpuinfo").read_text().splitlines():
+            key, _, value = line.partition(":")
+            if key.strip() in {"vendor_id", "model name", "flags"}:
+                cpu.setdefault(key.strip(), value.strip())
+    return {
+        "python": platform.python_version(),
+        "machine": platform.machine(),
+        "libc": platform.libc_ver(),
+        "cpu": cpu,
+        "libraries": {
+            name: importlib.metadata.version(name)
+            for name in ("numpy", "ctranslate2", "faster-whisper")
+        },
+    }
+
+
+def pytest_sessionstart(session: pytest.Session) -> None:
+    directory = Path(__file__).resolve().parents[3] / ".local/asr-batch"
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "native-runtime.json").write_text(
+        json.dumps(_runtime_identity(), sort_keys=True), encoding="utf-8"
+    )
 
 
 def _number(value: Any) -> float | str:
@@ -68,12 +96,6 @@ def pytest_exception_interact(
             frame["result"] = dataclasses.asdict(result)
         if len(frame) > 1:
             frames.append(frame)
-    cpu: dict[str, str] = {}
-    if Path("/proc/cpuinfo").exists():
-        for line in Path("/proc/cpuinfo").read_text().splitlines():
-            key, _, value = line.partition(":")
-            if key.strip() in {"vendor_id", "model name", "flags"}:
-                cpu.setdefault(key.strip(), value.strip())
     directory = Path(__file__).resolve().parents[3] / ".local/asr-batch"
     directory.mkdir(parents=True, exist_ok=True)
     identity = hashlib.sha256(node.nodeid.encode()).hexdigest()[:16]
@@ -82,9 +104,7 @@ def pytest_exception_interact(
             {
                 "kind": "licensed fixture failure diagnostics; not gold annotations",
                 "test": node.name,
-                "python": platform.python_version(),
-                "machine": platform.machine(),
-                "cpu": cpu,
+                **_runtime_identity(),
                 "frames": frames,
             },
             ensure_ascii=False,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -58,7 +59,7 @@ def test_real_chunk_edges_preserve_words_and_original_source_coordinates(
 
 
 def test_real_word_realignment_preserves_complete_recognized_text(
-    real_adapter: FasterWhisperAdapter,
+    real_adapter: FasterWhisperAdapter, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     path = ROOT / "tests/fixtures/asr/en-alignment.wav"
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
@@ -73,18 +74,31 @@ def test_real_word_realignment_preserves_complete_recognized_text(
     )
     # The second owned core uses original source 502s..530s and reproduces
     # native zero-length lexical alignment. Preserve it using genuine PCM.
+    original = real_adapter._aligned_chunk
+    complete_text: list[str] = []
+
+    def observed(segments: Any, audio: Any, language: str, check: Any = None) -> Any:
+        words = original(segments, audio, language, check)
+        expected = "".join(segment.text for segment in segments).strip()
+        assert "".join(word.word for word in words).strip() == expected
+        complete_text.append(expected)
+        return words
+
+    monkeypatch.setattr(real_adapter, "_aligned_chunk", observed)
     result = real_adapter.transcribe(str(path), source)
     assert len(result.words) > 70
     assert all(480000000 <= w.start_us < w.end_us <= 540000000 for w in result.words)
-    assert any(w.text.strip() == "example," for w in result.words)
+    # Native punctuation can differ across CPU backends; it is not hand-labelled
+    # reference text. Require the real lexical word and, above, byte-exact
+    # preservation of EVERY recognized word/punctuation in every alignment.
+    assert any(w.text.strip().rstrip(",.;:!?").casefold() == "example" for w in result.words)
+    assert complete_text
     assert all(a.end_us <= b.start_us for a, b in zip(result.words, result.words[1:], strict=False))
 
 
 def test_cuda_initialization_failure_falls_back_to_real_cpu_int8_inference(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from typing import Any
-
     original = FasterWhisperAdapter._load
 
     def unavailable_cuda(self: FasterWhisperAdapter, device: str, compute_type: str) -> Any:

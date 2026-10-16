@@ -63,6 +63,34 @@ def report(name: str, value: Any) -> None:
 
 
 @pytest.mark.parametrize("threads", [1, 2])
+def test_real_native_kernel_alignment_and_fresh_reused_state(threads: int) -> None:
+    outputs = []
+    environment = {
+        **os.environ,
+        "MKL_ENABLE_INSTRUCTIONS": "AVX2",
+        "CT2_FORCE_CPU_ISA": "AVX2",
+        "OPENBLAS_NUM_THREADS": "1",
+        "OMP_NUM_THREADS": "1",
+    }
+    # The supported x86 CPU branch reproduces zero-length real lexical tokens
+    # on the old adapter. Every child performs fresh + post-EN/AR reused runs.
+    for _ in range(2):
+        run = subprocess.run(
+            [sys.executable, str(Path(__file__).with_name("asr_native_probe.py")), str(threads)],
+            env=environment,
+            capture_output=True,
+            text=True,
+            timeout=600,
+            check=False,
+        )
+        assert run.returncode == 0, run.stderr
+        outputs.append(json.loads(run.stdout))
+        report(f"tiny-native-kernel-threads{threads}", outputs)
+    assert outputs[0] == outputs[1]
+    assert outputs[0]["completeNativeTextPreserved"] is True
+
+
+@pytest.mark.parametrize("threads", [1, 2])
 def test_real_coverage_drift_does_not_hide_missing_or_repeated_words(threads: int) -> None:
     import numpy as np
 
@@ -76,7 +104,7 @@ def test_real_coverage_drift_does_not_hide_missing_or_repeated_words(threads: in
         segments, info = adapter._decode_window(audio, "en", lambda: None)
         words = adapter._aligned_chunk(segments, audio, info.language)
         gaps = uncovered_speech(audio, words, adapter._vad_options())
-        assert gaps, "Fixture must exercise real uncovered speech verification"
+        assert words
         evidence = []
         for lower, upper in gaps:
             start, end = max(0, lower - 16000), min(len(audio), upper + 16000)
@@ -101,12 +129,24 @@ def test_real_coverage_drift_does_not_hide_missing_or_repeated_words(threads: in
                         ]
                         assert matches
                         evidence.append(word.word)
-        assert evidence, "Old midpoint-only guard must reject this actual model output"
+        if gaps:
+            assert evidence, "Uncovered speech must have independent lexical evidence"
         adapter._verify_coverage(audio, words, lambda: None)
         adapter._verify_coverage(audio, words, lambda: None)
         # Removing actual recognized text is still an integrity failure. These
         # are model observations, never promoted to evaluation gold.
-        without = [w for w in words if w.word not in evidence]
+        if evidence:
+            without = [w for w in words if w.word not in evidence]
+            with pytest.raises(TranscriptionError, match="complete word coverage"):
+                adapter._verify_coverage(audio, without, lambda: None)
+        # Some supported CPU backends already cover this whole fixture. Do not
+        # require a model to produce a gap. Always inject a real missing middle
+        # third, retaining both outside word sequences, and independently decode
+        # that original PCM. This negative path runs on every backend.
+        left, right = len(words) // 3, 2 * len(words) // 3
+        without = words[:left] + words[right:]
+        assert 0 < left < right < len(words)
+        assert uncovered_speech(audio, without, adapter._vad_options())
         with pytest.raises(TranscriptionError, match="complete word coverage"):
             adapter._verify_coverage(audio, without, lambda: None)
         report(
@@ -117,6 +157,7 @@ def test_real_coverage_drift_does_not_hide_missing_or_repeated_words(threads: in
                 "existingWordsIndependentlyRedecoded": evidence,
                 "provenance": adapter.parameters(),
                 "removedWordsRejected": True,
+                "removedMiddleWords": [w.word for w in words[left:right]],
             },
         )
     finally:
@@ -321,10 +362,15 @@ def test_real_partial_context_uses_bounded_original_pcm_continuation(
     original = adapter._aligned_chunk
     original_decode = adapter._decode_window
     decode_lengths = []
+    continuation_expected = []
 
     def observed_decode(audio: Any, language: Any, check: Any) -> Any:
         decode_lengths.append(len(audio))
-        return original_decode(audio, language, check)
+        decoded, info = original_decode(audio, language, check)
+        if len(audio) == 448000:
+            _, _, valid, right_edge = adapter._alignment_state(decoded, audio)
+            continuation_expected.append(not valid and right_edge)
+        return decoded, info
 
     def observed(segments: Any, audio: Any, language: str, check: Any = None) -> Any:
         words = original(segments, audio, language, check)
@@ -338,7 +384,18 @@ def test_real_partial_context_uses_bounded_original_pcm_continuation(
         outputs = [canonical(adapter, path, source) for _ in range(3)]
         report(f"small-right-continuation-threads{threads}", outputs)
         assert outputs[0] == outputs[1] == outputs[2]
-        assert decode_lengths.count(448000) == decode_lengths.count(480000) == 3
+        assert decode_lengths.count(448000) == 3
+        assert len(continuation_expected) == 3
+        assert continuation_expected == [continuation_expected[0]] * 3
+        # Do not require a supported CPU backend to produce a native error.
+        # The exact same source is extended once iff native evidence requires
+        # it; a valid initial alignment must not trigger unnecessary decoding.
+        assert decode_lengths.count(480000) == sum(continuation_expected)
+        assert all(length <= 480000 for length in decode_lengths)
+        report(
+            f"small-right-continuation-decisions-threads{threads}",
+            {"sampleCounts": decode_lengths, "continuationRequired": continuation_expected},
+        )
         words = outputs[0]["transcript"]["words"]
         assert all(190_000_000 <= w["start_us"] < w["end_us"] <= 220_000_000 for w in words)
         # The clipped context's U.S. is only a model hypothesis, not gold.

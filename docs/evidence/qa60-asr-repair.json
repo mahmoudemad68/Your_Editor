@@ -1,9 +1,9 @@
 {
   "kind": "QA60 repair execution evidence; model predictions, NOT evaluation annotations or human gold",
   "failedQaHead": "589546c1e82050989488509ea76fa636bdb097f5",
-  "algorithm": "ct2-contextual-v8",
+  "algorithm": "ct2-contextual-v9",
   "sourceCodeSha256": {
-    "faster_whisper.py": "64885a4fa3454fa954944ac73a8a2638813a05971aa1c68d69a9bdf90734e521",
+    "faster_whisper.py": "4f4564b41a756e46add76d5db1a6520498fbd0794175d30b62a54bea9387aab6",
     "asr_features.py": "fce7bba72f22a4da63c97cd166c2c07b7c735266341c84bd4bb2c021417a8596"
   },
   "sourceAttribution": [
@@ -62,9 +62,9 @@
   ],
   "productionTenMinuteRuns": [
     {
-      "runId": "bb6a5f34-997b-4af0-be75-0c8e40949870",
+      "runId": "753771ed-7c00-45ef-abd0-723728c32312",
       "model": "tiny",
-      "imageId": "sha256:040d46a57c510a23ba3f021c19d37b67bfeb911bb8f4e6b2f90cb1b45f167ba8",
+      "imageId": "sha256:6884321c4a648fd39ba1326b35b922cf4fb28f9919e9ed41ceed0664f1584b21",
       "sourceId": "commons-148215183",
       "sourceSha256": "793bade8dea8492b56d266f1d6fb2997f1c936cb01c0ff5c65fe449bbe59f0f1",
       "audioSha256": "e052e39e22cc39a054c272df81e5baa1ab317a761e8e950fea9f40b9d70d9126",
@@ -83,14 +83,14 @@
         "text": " Pay."
       },
       "detectedLanguage": "en",
-      "wallTimeMs": 164332.394,
-      "containerWallTimeMs": 175835,
-      "realTimeFactor": 0.2738873233333333,
-      "peakRssBytes": 363347968,
+      "wallTimeMs": 122283.067,
+      "containerWallTimeMs": 144357,
+      "realTimeFactor": 0.20380511166666665,
+      "peakRssBytes": 353447936,
       "provenance": {
         "analyzer": "faster-whisper",
         "analyzerVersion": "us201-v1",
-        "configurationSha256": "44b1b6c36fa4456dd7c1a9f4a8cc3d5e3f3998daaa2efce2af8940d402a95fd3",
+        "configurationSha256": "ae6681412d4f3fb259b591f90dbe6f39c1bf240db77ccf4f245bdd01a3aa2953",
         "inputArtifactId": "ten-minute-asr",
         "inputSha256": "e052e39e22cc39a054c272df81e5baa1ab317a761e8e950fea9f40b9d70d9126",
         "model": {
@@ -103,8 +103,9 @@
         "sourceSha256": "793bade8dea8492b56d266f1d6fb2997f1c936cb01c0ff5c65fe449bbe59f0f1"
       },
       "inferenceParameters": {
-        "alignmentAlgorithm": "ct2-contextual-v8",
+        "alignmentAlgorithm": "ct2-contextual-v9",
         "alignmentContextMaxUs": 30000000,
+        "alignmentEvidence": "exact-word-index-native-interval-two-anchor-v1",
         "alignmentFilterWidths": [7, 5, 3, 1],
         "beam_size": 5,
         "chunk_us": 24000000,
@@ -142,13 +143,13 @@
         "workers": 1,
         "zeroTimePunctuation": "append-to-exactly-touching-lexical-word"
       },
-      "transcriptSha256": "a4da3e7231f082f99d440e69158b35e517788c338e7a635355581e31aa22adf9",
+      "transcriptSha256": "df5cd424f7c4a1927340915b79d912d0249d671a564e18e7148f519de2bde508",
       "runtime": {
         "uid": 10001,
         "gid": 10001,
         "python": "3.11.17",
         "sourceSha256": {
-          "faster_whisper": "64885a4fa3454fa954944ac73a8a2638813a05971aa1c68d69a9bdf90734e521",
+          "faster_whisper": "4f4564b41a756e46add76d5db1a6520498fbd0794175d30b62a54bea9387aab6",
           "asr_features": "fce7bba72f22a4da63c97cd166c2c07b7c735266341c84bd4bb2c021417a8596"
         }
       },
@@ -168,9 +169,9 @@
       "wer": "NOT_MEASURED_NO_REFERENCE_FOR_THIS_SCOPE"
     },
     {
-      "runId": "2d506ea8-b605-4770-8133-68928be47f44",
+      "runId": "e53bbf79-9b79-443b-84a7-24a355ac3cb5",
       "model": "small",
-      "imageId": "sha256:510599020bb769bf07fd90c9b5e968d0f4921f193e12e58da36f77bf2fcaec5c",
+      "imageId": "sha256:41a8a9432ce13b86d5ebcbf43d9c5063ef899b445bc00bf979e7f7acecf59af5",
       "sourceId": "commons-148215183",
       "sourceSha256": "793bade8dea8492b56d266f1d6fb2997f1c936cb01c0ff5c65fe449bbe59f0f1",
       "audioSha256": "e052e39e22cc39a054c272df81e5baa1ab317a761e8e950fea9f40b9d70d9126",
@@ -189,14 +190,14 @@
         "text": " page."
       },
       "detectedLanguage": "en",
-      "wallTimeMs": 406423.525,
-      "containerWallTimeMs": 430405,
-      "realTimeFactor": 0.6773725416666667,
-      "peakRssBytes": 925609984,
+      "wallTimeMs": 399076.729,
+      "containerWallTimeMs": 430938,
+      "realTimeFactor": 0.6651278816666667,
+      "peakRssBytes": 928559104,
       "provenance": {
         "analyzer": "faster-whisper",
         "analyzerVersion": "us201-v1",
-        "configurationSha256": "3abd6a62e0c16ccdc69f7ce1e6c1a7af09cd08aadd1b97ea00fdf12b0407be7e",
+        "configurationSha256": "842cc03a9edafa40c117b9916651678b1570b597ed80ebad80aebe2ba222c1c7",
         "inputArtifactId": "ten-minute-asr",
         "inputSha256": "e052e39e22cc39a054c272df81e5baa1ab317a761e8e950fea9f40b9d70d9126",
         "model": {
@@ -209,8 +210,9 @@
         "sourceSha256": "793bade8dea8492b56d266f1d6fb2997f1c936cb01c0ff5c65fe449bbe59f0f1"
       },
       "inferenceParameters": {
-        "alignmentAlgorithm": "ct2-contextual-v8",
+        "alignmentAlgorithm": "ct2-contextual-v9",
         "alignmentContextMaxUs": 30000000,
+        "alignmentEvidence": "exact-word-index-native-interval-two-anchor-v1",
         "alignmentFilterWidths": [7, 5, 3, 1],
         "beam_size": 5,
         "chunk_us": 24000000,
@@ -248,13 +250,13 @@
         "workers": 1,
         "zeroTimePunctuation": "append-to-exactly-touching-lexical-word"
       },
-      "transcriptSha256": "7d38af19cdc8df353b15968c0b0d6e061d2bb8632e5152b1d03fdc0916117a55",
+      "transcriptSha256": "74d3f01e1c0071183f5ad0c516ad4b8550d313cd7a63386af07a48b60a203f4e",
       "runtime": {
         "uid": 10001,
         "gid": 10001,
         "python": "3.11.17",
         "sourceSha256": {
-          "faster_whisper": "64885a4fa3454fa954944ac73a8a2638813a05971aa1c68d69a9bdf90734e521",
+          "faster_whisper": "4f4564b41a756e46add76d5db1a6520498fbd0794175d30b62a54bea9387aab6",
           "asr_features": "fce7bba72f22a4da63c97cd166c2c07b7c735266341c84bd4bb2c021417a8596"
         }
       },
@@ -275,7 +277,7 @@
     }
   ],
   "evaluation": {
-    "runId": "0f9b5c6b-8ed8-4106-9d0b-c8e518db289c",
+    "runId": "94e2d46c-b99c-4abd-b6c0-1bd190b1bc88",
     "datasetVersion": "evaluation-dataset-v1",
     "ownerDecisionId": "us110-owner-generated-annotation-gold-v1",
     "independentHumanAccuracy": "NOT_PROVEN",
@@ -284,7 +286,7 @@
     "englishProjectGoldGate": "PASS_UNDER_OWNER_APPROVED_PROJECT_GOLD",
     "results": [
       {
-        "runId": "0f9b5c6b-8ed8-4106-9d0b-c8e518db289c",
+        "runId": "94e2d46c-b99c-4abd-b6c0-1bd190b1bc88",
         "sourceId": "commons-28956463",
         "language": "en",
         "detectedLanguage": "en",
@@ -297,7 +299,7 @@
         "modelProvenance": {
           "analyzer": "faster-whisper",
           "analyzerVersion": "us201-v1",
-          "configurationSha256": "3abd6a62e0c16ccdc69f7ce1e6c1a7af09cd08aadd1b97ea00fdf12b0407be7e",
+          "configurationSha256": "842cc03a9edafa40c117b9916651678b1570b597ed80ebad80aebe2ba222c1c7",
           "inputArtifactId": "commons-28956463-scoped-pcm",
           "inputSha256": "397ea603aede161467fb085f8b178c670752ce5e5f3c72c6ad2cdf744c3e58a1",
           "model": {
@@ -310,8 +312,9 @@
           "sourceSha256": "843d6c653030056f26018be17b933fd6c739ef59ce0e128152f385bf2b38d1f6"
         },
         "inferenceParameters": {
-          "alignmentAlgorithm": "ct2-contextual-v8",
+          "alignmentAlgorithm": "ct2-contextual-v9",
           "alignmentContextMaxUs": 30000000,
+          "alignmentEvidence": "exact-word-index-native-interval-two-anchor-v1",
           "alignmentFilterWidths": [7, 5, 3, 1],
           "beam_size": 5,
           "chunk_us": 24000000,
@@ -349,8 +352,8 @@
           "workers": 1,
           "zeroTimePunctuation": "append-to-exactly-touching-lexical-word"
         },
-        "wallTimeMs": 66683.424,
-        "peakRssBytes": 850935808,
+        "wallTimeMs": 48159.635,
+        "peakRssBytes": 858165248,
         "wordCount": 194,
         "recognizedText": " that the content can be flexibly reused. What do you mean with flexibly reusing the content? I mean, the content is there, you can just consume it, isn't that enough? Not quite. Flexible reuse is about finding it in the first place. If something is behind a wall where you have to reach it, it's not easily possible for search engines to find this piece of content. If you have a particular problem, you may not look for a whole course for solving your problem, but maybe just for the snippet of information that's relevant. Then second, if you find some piece of knowledge, you might want to reuse that. And our course is completely open. It's all hosted on Wikipedia. It's free for academic purposes. It's free for commercial purposes. So you really, you can take this content and use it for your own purposes. But this also means sorry to interrupt you that you can actually contribute to the MOOC if you are learning together with us. Absolutely, yeah. If you find something and it's incorrect, there might be a typo, or you have a question, or you think there might be...",
         "recognizedWords": [
@@ -1519,7 +1522,7 @@
             "text": " be..."
           }
         ],
-        "transcriptSha256": "cdd267060052e6e350c07dbad4a5b7262ea028413f8b7b817899f30526b4ef96",
+        "transcriptSha256": "34e81cf09b8b673c72d3c6c5f4f7afb5fb2c552b6ea0834afbec98f5485253af",
         "goldArtifactId": "commons-28956463-word-alignment",
         "goldSha256": "4a42f08f7eab4538c745ad01c2a32d42ada28a733b7d847fb691c0937b49fe0f",
         "goldDocumentSha256CanonicalJson": "18e653dcaa2ec1fa00096a97168068c239a123d5d2e11c2805b9b7551bf9fde9",
@@ -1533,7 +1536,7 @@
         }
       },
       {
-        "runId": "0f9b5c6b-8ed8-4106-9d0b-c8e518db289c",
+        "runId": "94e2d46c-b99c-4abd-b6c0-1bd190b1bc88",
         "sourceId": "commons-82236797",
         "language": "ar",
         "detectedLanguage": "ar",
@@ -1546,7 +1549,7 @@
         "modelProvenance": {
           "analyzer": "faster-whisper",
           "analyzerVersion": "us201-v1",
-          "configurationSha256": "3abd6a62e0c16ccdc69f7ce1e6c1a7af09cd08aadd1b97ea00fdf12b0407be7e",
+          "configurationSha256": "842cc03a9edafa40c117b9916651678b1570b597ed80ebad80aebe2ba222c1c7",
           "inputArtifactId": "commons-82236797-scoped-pcm",
           "inputSha256": "f00e74d3b739b32e8cc20d1cceee06968aa40c1f5a7f001c244ff0ad47a1c5f4",
           "model": {
@@ -1559,8 +1562,9 @@
           "sourceSha256": "5f3eff8e19d9ea508f875082f177bd7dfdad70f56c03e0a33b6c8e5a7a2c0426"
         },
         "inferenceParameters": {
-          "alignmentAlgorithm": "ct2-contextual-v8",
+          "alignmentAlgorithm": "ct2-contextual-v9",
           "alignmentContextMaxUs": 30000000,
+          "alignmentEvidence": "exact-word-index-native-interval-two-anchor-v1",
           "alignmentFilterWidths": [7, 5, 3, 1],
           "beam_size": 5,
           "chunk_us": 24000000,
@@ -1598,8 +1602,8 @@
           "workers": 1,
           "zeroTimePunctuation": "append-to-exactly-touching-lexical-word"
         },
-        "wallTimeMs": 55891.689,
-        "peakRssBytes": 856674304,
+        "wallTimeMs": 44283.862,
+        "peakRssBytes": 920981504,
         "wordCount": 95,
         "recognizedText": " انا اسمي ولاء عبدالمنع هم حرراء ادارية في موصولته في فيديو النسخة العربية اول ادارية على مستوى الوطن العربي وزم انا سأل بزبطة عدوك مجموعة التنوعة وصفير اكليمي في الارتبلس للفنه النسوية ومنظمة اغلب المسابقات النسوية للوقيمة في فيديو العربية الحمد لله من نظام أغلبها من 2015 تقريبا حب أعرفكم بس على صديقي خدر تاني مرة أحدة الوكيمانية أنا خمس مرة أحدة الوكيمانية أنا أول مر فهو بيشاركني المؤتمر أنا إزالتو حكتر مجموعة العمل كانت كانت المؤسسة كانت فتحين طلبات للتحجب من مجموعة العمل فكان هناك 8 مجموعة أنا خفرت مجموعة التنوى على اعتبار اني",
         "recognizedWords": [
@@ -2174,7 +2178,7 @@
             "text": " اني"
           }
         ],
-        "transcriptSha256": "55b0d1b60474dc8c52d6d3a3d36e14bd10219440dc6595e7b8d694e2323e0c12",
+        "transcriptSha256": "c521aa378fd824d1fcecb33851de0f24e13c86f84a75bb55b20504c33519ff7a",
         "goldArtifactId": "commons-82236797-word-alignment",
         "goldSha256": "342aa5a4d71c9ec0dac6263bfbe9139c58ab559c23245fb95093689d26f46f82",
         "goldDocumentSha256CanonicalJson": "310bdf83773e8e0c366e1da7618de1fba58258e764c2608799a09f243c99043e",
@@ -2188,7 +2192,7 @@
         }
       },
       {
-        "runId": "0f9b5c6b-8ed8-4106-9d0b-c8e518db289c",
+        "runId": "94e2d46c-b99c-4abd-b6c0-1bd190b1bc88",
         "sourceId": "commons-98650286",
         "language": "en",
         "detectedLanguage": "en",
@@ -2201,7 +2205,7 @@
         "modelProvenance": {
           "analyzer": "faster-whisper",
           "analyzerVersion": "us201-v1",
-          "configurationSha256": "3abd6a62e0c16ccdc69f7ce1e6c1a7af09cd08aadd1b97ea00fdf12b0407be7e",
+          "configurationSha256": "842cc03a9edafa40c117b9916651678b1570b597ed80ebad80aebe2ba222c1c7",
           "inputArtifactId": "commons-98650286-scoped-pcm",
           "inputSha256": "e9d7e1f6bc82c09896540f068c08581e07dcddf6af893e486c7413247ce74d5c",
           "model": {
@@ -2214,8 +2218,9 @@
           "sourceSha256": "86cf8af3ceb93561358aebe34c7a5ad39fc522660f695c8b8c667d453d6f7117"
         },
         "inferenceParameters": {
-          "alignmentAlgorithm": "ct2-contextual-v8",
+          "alignmentAlgorithm": "ct2-contextual-v9",
           "alignmentContextMaxUs": 30000000,
+          "alignmentEvidence": "exact-word-index-native-interval-two-anchor-v1",
           "alignmentFilterWidths": [7, 5, 3, 1],
           "beam_size": 5,
           "chunk_us": 24000000,
@@ -2253,8 +2258,8 @@
           "workers": 1,
           "zeroTimePunctuation": "append-to-exactly-touching-lexical-word"
         },
-        "wallTimeMs": 37332.986,
-        "peakRssBytes": 851025920,
+        "wallTimeMs": 37676.699,
+        "peakRssBytes": 917606400,
         "wordCount": 157,
         "recognizedText": " 20 this year, and of course many more in the years to come. So we're starting with 20 today and the good news is we're going to get to keep going, celebrating our 20th birthday for some time to come. I think about these past two decades and how far Wikipedia has come from this encyclopedia that anyone could edit this impossible, ambitious idea, this idealistic vision into something that is so real. This platform and this knowledge that is used by so many hundreds of millions of people across the planet. Speaking of numbers and hundreds of millions, the numbers are really incredible. Today, Wikipedia has more than 55 million articles across nearly 300 languages and over one and a half billion unique devices visit our projects every single month. That represents hundreds of millions of people from every continent on the globe, yes, including Antarctica, coming to our projects, seeking knowledge. That is an example.",
         "recognizedWords": [
@@ -3201,7 +3206,7 @@
             "text": " example."
           }
         ],
-        "transcriptSha256": "01037247b1db886cb92738442443ed17df6b8112c0a03f71ad0ba864db317b28",
+        "transcriptSha256": "de3919c31bec591cc2b638c8b104a1f8e8daebb9aa970b89d3918ff8cd659cb0",
         "goldArtifactId": "commons-98650286-word-alignment",
         "goldSha256": "89b0d1ece0f2353594342416fd4f3131d6bb30a069bc75b1b9e7a1e3e52a6494",
         "goldDocumentSha256CanonicalJson": "70abbc5a5e2e2692dbee8d7649054243c35bb5f4551f988b635ecda1fe1ab6f7",
@@ -3234,9 +3239,9 @@
   },
   "repeatability": {
     "runIds": [
-      "0f9b5c6b-8ed8-4106-9d0b-c8e518db289c",
-      "9a0cf637-5b7d-46da-876a-833ad41f8ec2",
-      "4da1fdb2-66bc-4bc6-bad8-8635e2ee2975"
+      "94e2d46c-b99c-4abd-b6c0-1bd190b1bc88",
+      "9a94d02a-c8ac-4910-ad02-d2310651c6b0",
+      "8aeec83b-b804-4d1e-813f-d0ea7b9079c4"
     ],
     "completeCanonicalRepeatability": true,
     "aggregate": {
@@ -3265,7 +3270,7 @@
     "unicodeVersion": "14.0.0",
     "runs": [
       {
-        "runId": "0f9b5c6b-8ed8-4106-9d0b-c8e518db289c",
+        "runId": "94e2d46c-b99c-4abd-b6c0-1bd190b1bc88",
         "results": [
           {
             "sourceId": "commons-28956463",
@@ -3277,7 +3282,7 @@
               "referenceWords": 200,
               "wer": 0.025
             },
-            "transcriptSha256": "cdd267060052e6e350c07dbad4a5b7262ea028413f8b7b817899f30526b4ef96"
+            "transcriptSha256": "34e81cf09b8b673c72d3c6c5f4f7afb5fb2c552b6ea0834afbec98f5485253af"
           },
           {
             "sourceId": "commons-82236797",
@@ -3289,7 +3294,7 @@
               "referenceWords": 98,
               "wer": 0.40816326530612246
             },
-            "transcriptSha256": "55b0d1b60474dc8c52d6d3a3d36e14bd10219440dc6595e7b8d694e2323e0c12"
+            "transcriptSha256": "c521aa378fd824d1fcecb33851de0f24e13c86f84a75bb55b20504c33519ff7a"
           },
           {
             "sourceId": "commons-98650286",
@@ -3301,12 +3306,12 @@
               "referenceWords": 157,
               "wer": 0.01910828025477707
             },
-            "transcriptSha256": "01037247b1db886cb92738442443ed17df6b8112c0a03f71ad0ba864db317b28"
+            "transcriptSha256": "de3919c31bec591cc2b638c8b104a1f8e8daebb9aa970b89d3918ff8cd659cb0"
           }
         ]
       },
       {
-        "runId": "9a0cf637-5b7d-46da-876a-833ad41f8ec2",
+        "runId": "9a94d02a-c8ac-4910-ad02-d2310651c6b0",
         "results": [
           {
             "sourceId": "commons-28956463",
@@ -3318,7 +3323,7 @@
               "referenceWords": 200,
               "wer": 0.025
             },
-            "transcriptSha256": "cdd267060052e6e350c07dbad4a5b7262ea028413f8b7b817899f30526b4ef96"
+            "transcriptSha256": "34e81cf09b8b673c72d3c6c5f4f7afb5fb2c552b6ea0834afbec98f5485253af"
           },
           {
             "sourceId": "commons-82236797",
@@ -3330,7 +3335,7 @@
               "referenceWords": 98,
               "wer": 0.40816326530612246
             },
-            "transcriptSha256": "55b0d1b60474dc8c52d6d3a3d36e14bd10219440dc6595e7b8d694e2323e0c12"
+            "transcriptSha256": "c521aa378fd824d1fcecb33851de0f24e13c86f84a75bb55b20504c33519ff7a"
           },
           {
             "sourceId": "commons-98650286",
@@ -3342,12 +3347,12 @@
               "referenceWords": 157,
               "wer": 0.01910828025477707
             },
-            "transcriptSha256": "01037247b1db886cb92738442443ed17df6b8112c0a03f71ad0ba864db317b28"
+            "transcriptSha256": "de3919c31bec591cc2b638c8b104a1f8e8daebb9aa970b89d3918ff8cd659cb0"
           }
         ]
       },
       {
-        "runId": "4da1fdb2-66bc-4bc6-bad8-8635e2ee2975",
+        "runId": "8aeec83b-b804-4d1e-813f-d0ea7b9079c4",
         "results": [
           {
             "sourceId": "commons-28956463",
@@ -3359,7 +3364,7 @@
               "referenceWords": 200,
               "wer": 0.025
             },
-            "transcriptSha256": "cdd267060052e6e350c07dbad4a5b7262ea028413f8b7b817899f30526b4ef96"
+            "transcriptSha256": "34e81cf09b8b673c72d3c6c5f4f7afb5fb2c552b6ea0834afbec98f5485253af"
           },
           {
             "sourceId": "commons-82236797",
@@ -3371,7 +3376,7 @@
               "referenceWords": 98,
               "wer": 0.40816326530612246
             },
-            "transcriptSha256": "55b0d1b60474dc8c52d6d3a3d36e14bd10219440dc6595e7b8d694e2323e0c12"
+            "transcriptSha256": "c521aa378fd824d1fcecb33851de0f24e13c86f84a75bb55b20504c33519ff7a"
           },
           {
             "sourceId": "commons-98650286",
@@ -3383,7 +3388,7 @@
               "referenceWords": 157,
               "wer": 0.01910828025477707
             },
-            "transcriptSha256": "01037247b1db886cb92738442443ed17df6b8112c0a03f71ad0ba864db317b28"
+            "transcriptSha256": "de3919c31bec591cc2b638c8b104a1f8e8daebb9aa970b89d3918ff8cd659cb0"
           }
         ]
       }

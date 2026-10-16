@@ -12,6 +12,58 @@ from editagent_ai_worker.infrastructure.asr_config import AsrSettings
 from editagent_ai_worker.infrastructure.asr_features import DeterministicFeatureExtractor
 
 
+def alignment_word(text: str, start: float, end: float) -> Any:
+    return SimpleNamespace(word=text, start=start, end=end, probability=0.8)
+
+
+def test_complementary_native_alignments_preserve_exact_intervals_and_all_text() -> None:
+    words = [
+        alignment_word(" lead", 0, 1),
+        alignment_word(" repeated", 1, 1),
+        alignment_word(" anchor", 2, 3),
+        alignment_word(" repeated", 3, 3),
+        alignment_word(" end.", 4, 5),
+    ]
+    first = [*words[:1], alignment_word(" repeated", 1.2, 1.8), *words[2:]]
+    second = [*words[:3], alignment_word(" repeated", 3.2, 3.8), *words[4:]]
+    repaired = whisper.merge_native_alignment_evidence(words, [first, second], 5)
+    assert repaired is not None
+    assert [w.word for w in repaired] == [w.word for w in words]
+    assert [(w.start, w.end) for w in repaired] == [(0, 1), (1.2, 1.8), (2, 3), (3.2, 3.8), (4, 5)]
+    assert repaired[1] is first[1] and repaired[3] is second[3]
+    assert words[1].start == words[1].end == 1
+    assert words[3].start == words[3].end == 3
+
+
+@pytest.mark.parametrize("defect", ["text", "anchor", "overlap", "nan", "zero", "outside"])
+def test_native_alignment_evidence_cannot_guess_or_move_words(defect: str) -> None:
+    words = [
+        alignment_word(" left", 0, 1),
+        alignment_word(" word", 1, 1),
+        alignment_word(" right", 2, 3),
+    ]
+    candidate = [
+        alignment_word(" left", 0, 1),
+        alignment_word(" word", 1.2, 1.8),
+        alignment_word(" right", 2, 3),
+    ]
+    if defect == "text":
+        candidate[1].word = " replaced"
+    elif defect == "anchor":
+        candidate[0].start, candidate[0].end = 1.1, 1.15
+        candidate[1].start, candidate[1].end = 1.3, 1.4
+        candidate[2].start, candidate[2].end = 1.5, 1.6
+    elif defect == "overlap":
+        candidate[1].start = 0.5
+    elif defect == "nan":
+        candidate[1].start = float("nan")
+    elif defect == "zero":
+        candidate[1].end = candidate[1].start
+    else:
+        candidate[1].end = 4
+    assert whisper.merge_native_alignment_evidence(words, [candidate], 3) is None
+
+
 def test_fixed_order_features_preserve_reference_definition_and_repeat_exactly() -> None:
     from faster_whisper.feature_extractor import FeatureExtractor  # type: ignore[import-untyped]
 
