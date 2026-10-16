@@ -5,6 +5,11 @@ import path from "node:path";
 import process from "node:process";
 import { URL } from "node:url";
 const root = path.resolve(import.meta.dirname, "../..");
+const modelIndex = process.argv.indexOf("--model");
+const model = modelIndex < 0 ? "tiny" : process.argv[modelIndex + 1];
+const buildOnly = process.argv.includes("--build-only");
+if (!["tiny", "small"].includes(model) || (model === "small" && !buildOnly))
+  throw new Error("Select tiny for queue verification, or --build-only --model small");
 async function run(args, env = process.env) {
   const child = spawn(args[0], args.slice(1), { cwd: root, env, stdio: "inherit" });
   const code = await new Promise((resolve, reject) => {
@@ -19,9 +24,9 @@ const args = [
   "-f",
   "workers/ai-worker/Dockerfile",
   "--build-arg",
-  "ASR_MODEL=tiny",
+  `ASR_MODEL=${model}`,
   "-t",
-  "editagent-ai-asr:test",
+  model === "tiny" ? "editagent-ai-asr:test" : "editagent-ai-asr:small-test",
 ];
 if (process.env.CODEX_PROXY_CERT) {
   args.push("--secret", "id=proxy_ca,src=/etc/ssl/certs/ca-certificates.crt");
@@ -33,7 +38,11 @@ if (process.env.CODEX_PROXY_CERT) {
 }
 args.push(".");
 await run(args);
-await run([process.execPath, "--test", "tests/integration/media-analysis-orchestration.test.mjs"], {
-  ...process.env,
-  EDITAGENT_TEST_ASR_CONTAINER: "1",
-});
+if (!buildOnly)
+  await run(
+    [process.execPath, "--test", "tests/integration/media-analysis-orchestration.test.mjs"],
+    {
+      ...process.env,
+      EDITAGENT_TEST_ASR_CONTAINER: "1",
+    },
+  );

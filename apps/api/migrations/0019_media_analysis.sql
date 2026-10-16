@@ -39,7 +39,9 @@ BEGIN
     OR NEW.deadline_at_ms IS DISTINCT FROM OLD.deadline_at_ms OR NEW.job_id IS DISTINCT FROM OLD.job_id THEN
     RAISE EXCEPTION 'Analysis intent is immutable' USING ERRCODE='23514';
   END IF;
-  IF OLD.result IS NOT NULL AND (NEW.result IS DISTINCT FROM OLD.result OR NEW.result_attempt IS DISTINCT FROM OLD.result_attempt) THEN
+  IF OLD.result IS NOT NULL AND (NEW.result IS DISTINCT FROM OLD.result
+    OR NEW.result_attempt IS DISTINCT FROM OLD.result_attempt
+    OR NEW.inference_parameters IS DISTINCT FROM OLD.inference_parameters) THEN
     RAISE EXCEPTION 'Analysis result is immutable' USING ERRCODE='23514';
   END IF;
   RETURN NEW;
@@ -50,6 +52,19 @@ CREATE TRIGGER analysis_result_fence BEFORE UPDATE ON analysis_tasks
 -- Check at COMMIT as well as in the worker: cancellation/revocation can race inference.
 CREATE FUNCTION analysis_result_admission() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
+  -- A previous worker may still receive a new algorithm's job during rollout.
+  -- Require acknowledgment of the admitted implementation at the durable
+  -- receipt boundary, not merely a matching model/configuration payload hash.
+  -- Recorded legacy documents remain readable; pending pre-repair intents
+  -- cannot acquire a new completion without a supported runtime identity.
+  IF NEW.result IS DISTINCT FROM OLD.result AND NEW.result IS NOT NULL
+    AND NEW.analyzer='transcript'
+    AND (jsonb_typeof(NEW.configuration->'asrAlgorithm') IS DISTINCT FROM 'string'
+      OR NEW.configuration->>'asrAlgorithm'=''
+      OR NEW.inference_parameters->'asr'->>'alignmentAlgorithm'
+        IS DISTINCT FROM NEW.configuration->>'asrAlgorithm') THEN
+    RAISE EXCEPTION 'Analysis runtime version mismatch' USING ERRCODE='23514';
+  END IF;
   IF NEW.result IS DISTINCT FROM OLD.result AND NEW.result IS NOT NULL AND NOT EXISTS (
     SELECT 1 FROM jobs j JOIN media_analyses a ON a.media_asset_id=NEW.media_asset_id
       JOIN media_assets m ON m.id=a.media_asset_id JOIN projects p ON p.id=a.project_id

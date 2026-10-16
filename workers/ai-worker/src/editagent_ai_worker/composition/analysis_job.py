@@ -32,7 +32,7 @@ from editagent_ai_worker.infrastructure.config import (
     analysis_workspace_root,
     load_ai_worker_settings,
 )
-from editagent_ai_worker.infrastructure.faster_whisper import FasterWhisperAdapter
+from editagent_ai_worker.infrastructure.faster_whisper import ASR_ALGORITHM, FasterWhisperAdapter
 
 
 def detect_speech(
@@ -199,6 +199,8 @@ def main() -> int:
                 if envelope["jobType"] == "analysis.speech.v1":
                     section = detect_speech(path, identity, configuration_parameters["vad"])
                 else:
+                    if configuration_parameters.get("asrAlgorithm") != ASR_ALGORITHM:
+                        raise TranscriptionError("Analysis algorithm identity mismatch")
                     deployment = AsrSettings()
                     adapter = FasterWhisperAdapter(
                         AsrSettings.model_validate(

@@ -1,0 +1,3401 @@
+{
+  "kind": "QA60 repair execution evidence; model predictions, NOT evaluation annotations or human gold",
+  "failedQaHead": "589546c1e82050989488509ea76fa636bdb097f5",
+  "algorithm": "ct2-contextual-v8",
+  "sourceCodeSha256": {
+    "faster_whisper.py": "64885a4fa3454fa954944ac73a8a2638813a05971aa1c68d69a9bdf90734e521",
+    "asr_features.py": "fce7bba72f22a4da63c97cd166c2c07b7c735266341c84bd4bb2c021417a8596"
+  },
+  "sourceAttribution": [
+    {
+      "id": "commons-28956463",
+      "sha256": "843d6c653030056f26018be17b933fd6c739ef59ce0e128152f385bf2b38d1f6",
+      "license": {
+        "id": "CC-BY-SA-3.0",
+        "name": "CC BY-SA 3.0",
+        "url": "https://creativecommons.org/licenses/by-sa/3.0",
+        "attribution": "What is a web science unMooc?.webm — Renepick; https://commons.wikimedia.org/wiki/File:What_is_a_web_science_unMooc%3F.webm; CC BY-SA 3.0 (https://creativecommons.org/licenses/by-sa/3.0). Acquired Wikimedia transcode; candidate reel is an excerpt/format adaptation.",
+        "allowedUseRationale": "Redistribution and adapted evaluation reels permitted with attribution and indication of changes. Adapted reels must retain this compatible ShareAlike license; attribution travels with every distributed reel.",
+        "rightsAssertion": "File page revision 1120319766 declares CC BY-SA 3.0; credited creator: Renepick. Source credit: Own work.",
+        "evidenceUrl": "https://commons.wikimedia.org/w/index.php?oldid=1120319766"
+      }
+    },
+    {
+      "id": "commons-82236797",
+      "sha256": "5f3eff8e19d9ea508f875082f177bd7dfdad70f56c03e0a33b6c8e5a7a2c0426",
+      "license": {
+        "id": "CC-BY-3.0",
+        "name": "CC BY 3.0",
+        "url": "https://creativecommons.org/licenses/by/3.0",
+        "attribution": "Wikimedia Strategy 2030 - Diversity - Interview Walaa Abdelmanaem (AR) - لقاء مع ولاء عبد المنعم.webm — Anass (WMF); https://commons.wikimedia.org/wiki/File:Wikimedia_Strategy_2030_-_Diversity_-_Interview_Walaa_Abdelmanaem_(AR)_-_%D9%84%D9%82%D8%A7%D8%A1_%D9%85%D8%B9_%D9%88%D9%84%D8%A7%D8%A1_%D8%B9%D8%A8%D8%AF_%D8%A7%D9%84%D9%85%D9%86%D8%B9%D9%85.webm; CC BY 3.0 (https://creativecommons.org/licenses/by/3.0). Acquired Wikimedia transcode; candidate reel is an excerpt/format adaptation.",
+        "allowedUseRationale": "Redistribution and adapted evaluation reels permitted with attribution and indication of changes.",
+        "rightsAssertion": "File page revision 1024089284 declares CC BY 3.0; credited creator: Anass (WMF). Source credit: YouTube : Wikimedia Strategy 2030 - Diversity - Interview Walaa Abdelmanaem (AR) - لقاء مع ولاء عبد المنعم – View/save archived versions on archive.org.",
+        "evidenceUrl": "https://commons.wikimedia.org/w/index.php?oldid=1024089284"
+      }
+    },
+    {
+      "id": "commons-98650286",
+      "sha256": "86cf8af3ceb93561358aebe34c7a5ad39fc522660f695c8b8c667d453d6f7117",
+      "license": {
+        "id": "CC0-1.0",
+        "name": "CC0",
+        "url": "https://creativecommons.org/publicdomain/zero/1.0/deed.en",
+        "attribution": "Katherine Maher's message on the occasion of Wikipedia 20.webm — Wikimedia Foundation; https://commons.wikimedia.org/wiki/File:Katherine_Maher%27s_message_on_the_occasion_of_Wikipedia_20.webm; CC0 (https://creativecommons.org/publicdomain/zero/1.0/deed.en). Acquired Wikimedia transcode; candidate reel is an excerpt/format adaptation.",
+        "allowedUseRationale": "CC0 permits copying and adaptation without copyright permission; source attribution retained for provenance.",
+        "rightsAssertion": "File page revision 606502845 declares CC0; credited creator: Wikimedia Foundation. Source credit: Wikimedia Foundation.",
+        "evidenceUrl": "https://commons.wikimedia.org/w/index.php?oldid=606502845"
+      }
+    },
+    {
+      "id": "commons-148215183",
+      "sha256": "793bade8dea8492b56d266f1d6fb2997f1c936cb01c0ff5c65fe449bbe59f0f1",
+      "license": {
+        "id": "CC-BY-SA-4.0",
+        "name": "CC BY-SA 4.0",
+        "url": "https://creativecommons.org/licenses/by-sa/4.0",
+        "attribution": "WikiSalon Wikidata Adding References.webm — Doreva Belfiore and the Philadelphia WikiSalon; https://commons.wikimedia.org/wiki/File:WikiSalon_Wikidata_Adding_References.webm; CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0). Acquired Wikimedia transcode; candidate reel is an excerpt/format adaptation.",
+        "allowedUseRationale": "Redistribution and adapted evaluation reels permitted with attribution and indication of changes. Adapted reels must retain this compatible ShareAlike license; attribution travels with every distributed reel.",
+        "rightsAssertion": "File page revision 1134023890 declares CC BY-SA 4.0; credited creator: Doreva Belfiore and the Philadelphia WikiSalon. Source credit: Vimeo : WikiSalon Wikidata Adding References ( view archived source ).",
+        "evidenceUrl": "https://commons.wikimedia.org/w/index.php?oldid=1134023890"
+      }
+    }
+  ],
+  "productionTenMinuteRuns": [
+    {
+      "runId": "bb6a5f34-997b-4af0-be75-0c8e40949870",
+      "model": "tiny",
+      "imageId": "sha256:040d46a57c510a23ba3f021c19d37b67bfeb911bb8f4e6b2f90cb1b45f167ba8",
+      "sourceId": "commons-148215183",
+      "sourceSha256": "793bade8dea8492b56d266f1d6fb2997f1c936cb01c0ff5c65fe449bbe59f0f1",
+      "audioSha256": "e052e39e22cc39a054c272df81e5baa1ab317a761e8e950fea9f40b9d70d9126",
+      "durationUs": "600000000",
+      "wordCount": 1160,
+      "firstWord": {
+        "confidence": 0.7607932686805725,
+        "endUs": "980000",
+        "startUs": "540000",
+        "text": " Hello"
+      },
+      "lastWord": {
+        "confidence": 0.5809062719345093,
+        "endUs": "599980000",
+        "startUs": "599620000",
+        "text": " Pay."
+      },
+      "detectedLanguage": "en",
+      "wallTimeMs": 164332.394,
+      "containerWallTimeMs": 175835,
+      "realTimeFactor": 0.2738873233333333,
+      "peakRssBytes": 363347968,
+      "provenance": {
+        "analyzer": "faster-whisper",
+        "analyzerVersion": "us201-v1",
+        "configurationSha256": "44b1b6c36fa4456dd7c1a9f4a8cc3d5e3f3998daaa2efce2af8940d402a95fd3",
+        "inputArtifactId": "ten-minute-asr",
+        "inputSha256": "e052e39e22cc39a054c272df81e5baa1ab317a761e8e950fea9f40b9d70d9126",
+        "model": {
+          "name": "faster-whisper-tiny",
+          "sha256": "83ba3102b2fb621cef33d905bb6f8dc7db9c383743bce3cf510d2f5574862281",
+          "version": "d90ca5fe260221311c53c58e660288d3deb8d356"
+        },
+        "runtime": "ctranslate2",
+        "runtimeVersion": "4.8.2",
+        "sourceSha256": "793bade8dea8492b56d266f1d6fb2997f1c936cb01c0ff5c65fe449bbe59f0f1"
+      },
+      "inferenceParameters": {
+        "alignmentAlgorithm": "ct2-contextual-v8",
+        "alignmentContextMaxUs": 30000000,
+        "alignmentFilterWidths": [7, 5, 3, 1],
+        "beam_size": 5,
+        "chunk_us": 24000000,
+        "compute_type": "int8",
+        "conditionOnPreviousText": false,
+        "cpu_fallback": true,
+        "cpu_threads": 2,
+        "device": "cpu",
+        "effectiveComputeType": "int8",
+        "effectiveDevice": "cpu",
+        "featureProjection": "frequency-ordered-float32-v1",
+        "languageDetection": "original-pcm-region-redetection-v1",
+        "languageDetectionEncoder": "native-unpadded-log-mel-v1",
+        "languageDetectionMinimumProbability": 0.5,
+        "languageDetectionWindowUs": 4000000,
+        "localAlignmentPaddingUs": 1000000,
+        "maximumAlignmentEncodesPerWindow": 32,
+        "maximumRecognitionPassesPerWindow": 2,
+        "min_silence_ms": 200,
+        "model": "tiny",
+        "negative_threshold": 0.35,
+        "overlapReconciliation": "two-temporal-anchors-original-pcm-v1",
+        "overlap_us": 2000000,
+        "recognitionContextMaxUs": 30000000,
+        "recognitionContinuation": "same-language-original-pcm-redecode-once-v1",
+        "recognitionContinuationMaxUs": 2000000,
+        "seed": 0,
+        "speechCoverage": "owned-word-union-temporal-lexical-decode-v3",
+        "speech_padding_ms": 100,
+        "speech_threshold": 0.5,
+        "temperature": 0,
+        "timeout_ms": 600000,
+        "wordAlignmentNeighbours": [2, 3, 4, 6, 8],
+        "wordAlignmentPaddingUs": [400000, 1000000, 2000000],
+        "workers": 1,
+        "zeroTimePunctuation": "append-to-exactly-touching-lexical-word"
+      },
+      "transcriptSha256": "a4da3e7231f082f99d440e69158b35e517788c338e7a635355581e31aa22adf9",
+      "runtime": {
+        "uid": 10001,
+        "gid": 10001,
+        "python": "3.11.17",
+        "sourceSha256": {
+          "faster_whisper": "64885a4fa3454fa954944ac73a8a2638813a05971aa1c68d69a9bdf90734e521",
+          "asr_features": "fce7bba72f22a4da63c97cd166c2c07b7c735266341c84bd4bb2c021417a8596"
+        }
+      },
+      "container": {
+        "user": "10001:10001",
+        "network": "none",
+        "readOnly": true,
+        "capDrop": ["ALL"],
+        "memory": 3221225472,
+        "pids": 128,
+        "nanoCpus": 2000000000,
+        "securityOpt": ["no-new-privileges:true"],
+        "privileged": false,
+        "oomKilled": false,
+        "exitCode": 0
+      },
+      "wer": "NOT_MEASURED_NO_REFERENCE_FOR_THIS_SCOPE"
+    },
+    {
+      "runId": "2d506ea8-b605-4770-8133-68928be47f44",
+      "model": "small",
+      "imageId": "sha256:510599020bb769bf07fd90c9b5e968d0f4921f193e12e58da36f77bf2fcaec5c",
+      "sourceId": "commons-148215183",
+      "sourceSha256": "793bade8dea8492b56d266f1d6fb2997f1c936cb01c0ff5c65fe449bbe59f0f1",
+      "audioSha256": "e052e39e22cc39a054c272df81e5baa1ab317a761e8e950fea9f40b9d70d9126",
+      "durationUs": "600000000",
+      "wordCount": 1170,
+      "firstWord": {
+        "confidence": 0.8967562913894653,
+        "endUs": "840000",
+        "startUs": "540000",
+        "text": " Hello"
+      },
+      "lastWord": {
+        "confidence": 0.9018380641937256,
+        "endUs": "599980000",
+        "startUs": "599580000",
+        "text": " page."
+      },
+      "detectedLanguage": "en",
+      "wallTimeMs": 406423.525,
+      "containerWallTimeMs": 430405,
+      "realTimeFactor": 0.6773725416666667,
+      "peakRssBytes": 925609984,
+      "provenance": {
+        "analyzer": "faster-whisper",
+        "analyzerVersion": "us201-v1",
+        "configurationSha256": "3abd6a62e0c16ccdc69f7ce1e6c1a7af09cd08aadd1b97ea00fdf12b0407be7e",
+        "inputArtifactId": "ten-minute-asr",
+        "inputSha256": "e052e39e22cc39a054c272df81e5baa1ab317a761e8e950fea9f40b9d70d9126",
+        "model": {
+          "name": "faster-whisper-small",
+          "sha256": "4e456821bbeabf0923f07220a86c1c14a8820bc83e78ae638d4474207b70aedd",
+          "version": "536b0662742c02347bc0e980a01041f333bce120"
+        },
+        "runtime": "ctranslate2",
+        "runtimeVersion": "4.8.2",
+        "sourceSha256": "793bade8dea8492b56d266f1d6fb2997f1c936cb01c0ff5c65fe449bbe59f0f1"
+      },
+      "inferenceParameters": {
+        "alignmentAlgorithm": "ct2-contextual-v8",
+        "alignmentContextMaxUs": 30000000,
+        "alignmentFilterWidths": [7, 5, 3, 1],
+        "beam_size": 5,
+        "chunk_us": 24000000,
+        "compute_type": "int8",
+        "conditionOnPreviousText": false,
+        "cpu_fallback": true,
+        "cpu_threads": 2,
+        "device": "cpu",
+        "effectiveComputeType": "int8",
+        "effectiveDevice": "cpu",
+        "featureProjection": "frequency-ordered-float32-v1",
+        "languageDetection": "original-pcm-region-redetection-v1",
+        "languageDetectionEncoder": "native-unpadded-log-mel-v1",
+        "languageDetectionMinimumProbability": 0.5,
+        "languageDetectionWindowUs": 4000000,
+        "localAlignmentPaddingUs": 1000000,
+        "maximumAlignmentEncodesPerWindow": 32,
+        "maximumRecognitionPassesPerWindow": 2,
+        "min_silence_ms": 200,
+        "model": "small",
+        "negative_threshold": 0.35,
+        "overlapReconciliation": "two-temporal-anchors-original-pcm-v1",
+        "overlap_us": 2000000,
+        "recognitionContextMaxUs": 30000000,
+        "recognitionContinuation": "same-language-original-pcm-redecode-once-v1",
+        "recognitionContinuationMaxUs": 2000000,
+        "seed": 0,
+        "speechCoverage": "owned-word-union-temporal-lexical-decode-v3",
+        "speech_padding_ms": 100,
+        "speech_threshold": 0.5,
+        "temperature": 0,
+        "timeout_ms": 600000,
+        "wordAlignmentNeighbours": [2, 3, 4, 6, 8],
+        "wordAlignmentPaddingUs": [400000, 1000000, 2000000],
+        "workers": 1,
+        "zeroTimePunctuation": "append-to-exactly-touching-lexical-word"
+      },
+      "transcriptSha256": "7d38af19cdc8df353b15968c0b0d6e061d2bb8632e5152b1d03fdc0916117a55",
+      "runtime": {
+        "uid": 10001,
+        "gid": 10001,
+        "python": "3.11.17",
+        "sourceSha256": {
+          "faster_whisper": "64885a4fa3454fa954944ac73a8a2638813a05971aa1c68d69a9bdf90734e521",
+          "asr_features": "fce7bba72f22a4da63c97cd166c2c07b7c735266341c84bd4bb2c021417a8596"
+        }
+      },
+      "container": {
+        "user": "10001:10001",
+        "network": "none",
+        "readOnly": true,
+        "capDrop": ["ALL"],
+        "memory": 3221225472,
+        "pids": 128,
+        "nanoCpus": 2000000000,
+        "securityOpt": ["no-new-privileges:true"],
+        "privileged": false,
+        "oomKilled": false,
+        "exitCode": 0
+      },
+      "wer": "NOT_MEASURED_NO_REFERENCE_FOR_THIS_SCOPE"
+    }
+  ],
+  "evaluation": {
+    "runId": "0f9b5c6b-8ed8-4106-9d0b-c8e518db289c",
+    "datasetVersion": "evaluation-dataset-v1",
+    "ownerDecisionId": "us110-owner-generated-annotation-gold-v1",
+    "independentHumanAccuracy": "NOT_PROVEN",
+    "cp2Status": "NOT_MET",
+    "englishThreshold": 0.12,
+    "englishProjectGoldGate": "PASS_UNDER_OWNER_APPROVED_PROJECT_GOLD",
+    "results": [
+      {
+        "runId": "0f9b5c6b-8ed8-4106-9d0b-c8e518db289c",
+        "sourceId": "commons-28956463",
+        "language": "en",
+        "detectedLanguage": "en",
+        "scope": {
+          "startUs": "30000000",
+          "endUs": "90000000",
+          "selection": "owner_confirmed"
+        },
+        "provenance": "owner_approved_generated",
+        "modelProvenance": {
+          "analyzer": "faster-whisper",
+          "analyzerVersion": "us201-v1",
+          "configurationSha256": "3abd6a62e0c16ccdc69f7ce1e6c1a7af09cd08aadd1b97ea00fdf12b0407be7e",
+          "inputArtifactId": "commons-28956463-scoped-pcm",
+          "inputSha256": "397ea603aede161467fb085f8b178c670752ce5e5f3c72c6ad2cdf744c3e58a1",
+          "model": {
+            "name": "faster-whisper-small",
+            "sha256": "4e456821bbeabf0923f07220a86c1c14a8820bc83e78ae638d4474207b70aedd",
+            "version": "536b0662742c02347bc0e980a01041f333bce120"
+          },
+          "runtime": "ctranslate2",
+          "runtimeVersion": "4.8.2",
+          "sourceSha256": "843d6c653030056f26018be17b933fd6c739ef59ce0e128152f385bf2b38d1f6"
+        },
+        "inferenceParameters": {
+          "alignmentAlgorithm": "ct2-contextual-v8",
+          "alignmentContextMaxUs": 30000000,
+          "alignmentFilterWidths": [7, 5, 3, 1],
+          "beam_size": 5,
+          "chunk_us": 24000000,
+          "compute_type": "int8",
+          "conditionOnPreviousText": false,
+          "cpu_fallback": true,
+          "cpu_threads": 2,
+          "device": "cpu",
+          "effectiveComputeType": "int8",
+          "effectiveDevice": "cpu",
+          "featureProjection": "frequency-ordered-float32-v1",
+          "languageDetection": "original-pcm-region-redetection-v1",
+          "languageDetectionEncoder": "native-unpadded-log-mel-v1",
+          "languageDetectionMinimumProbability": 0.5,
+          "languageDetectionWindowUs": 4000000,
+          "localAlignmentPaddingUs": 1000000,
+          "maximumAlignmentEncodesPerWindow": 32,
+          "maximumRecognitionPassesPerWindow": 2,
+          "min_silence_ms": 200,
+          "model": "small",
+          "negative_threshold": 0.35,
+          "overlapReconciliation": "two-temporal-anchors-original-pcm-v1",
+          "overlap_us": 2000000,
+          "recognitionContextMaxUs": 30000000,
+          "recognitionContinuation": "same-language-original-pcm-redecode-once-v1",
+          "recognitionContinuationMaxUs": 2000000,
+          "seed": 0,
+          "speechCoverage": "owned-word-union-temporal-lexical-decode-v3",
+          "speech_padding_ms": 100,
+          "speech_threshold": 0.5,
+          "temperature": 0,
+          "timeout_ms": 600000,
+          "wordAlignmentNeighbours": [2, 3, 4, 6, 8],
+          "wordAlignmentPaddingUs": [400000, 1000000, 2000000],
+          "workers": 1,
+          "zeroTimePunctuation": "append-to-exactly-touching-lexical-word"
+        },
+        "wallTimeMs": 66683.424,
+        "peakRssBytes": 850935808,
+        "wordCount": 194,
+        "recognizedText": " that the content can be flexibly reused. What do you mean with flexibly reusing the content? I mean, the content is there, you can just consume it, isn't that enough? Not quite. Flexible reuse is about finding it in the first place. If something is behind a wall where you have to reach it, it's not easily possible for search engines to find this piece of content. If you have a particular problem, you may not look for a whole course for solving your problem, but maybe just for the snippet of information that's relevant. Then second, if you find some piece of knowledge, you might want to reuse that. And our course is completely open. It's all hosted on Wikipedia. It's free for academic purposes. It's free for commercial purposes. So you really, you can take this content and use it for your own purposes. But this also means sorry to interrupt you that you can actually contribute to the MOOC if you are learning together with us. Absolutely, yeah. If you find something and it's incorrect, there might be a typo, or you have a question, or you think there might be...",
+        "recognizedWords": [
+          {
+            "confidence": 0.00018254259703098796,
+            "endUs": "30800000",
+            "startUs": "30000000",
+            "text": " that"
+          },
+          {
+            "confidence": 0.15896663325838745,
+            "endUs": "30940000",
+            "startUs": "30800000",
+            "text": " the"
+          },
+          {
+            "confidence": 0.9650057554244995,
+            "endUs": "31340000",
+            "startUs": "30940000",
+            "text": " content"
+          },
+          {
+            "confidence": 0.9151835441589355,
+            "endUs": "31720000",
+            "startUs": "31340000",
+            "text": " can"
+          },
+          {
+            "confidence": 0.9219039678573608,
+            "endUs": "31880000",
+            "startUs": "31720000",
+            "text": " be"
+          },
+          {
+            "confidence": 0.9562528133392334,
+            "endUs": "32560000",
+            "startUs": "31880000",
+            "text": " flexibly"
+          },
+          {
+            "confidence": 0.9605303406715393,
+            "endUs": "33120000",
+            "startUs": "32560000",
+            "text": " reused."
+          },
+          {
+            "confidence": 0.6488118767738342,
+            "endUs": "33600000",
+            "startUs": "33440000",
+            "text": " What"
+          },
+          {
+            "confidence": 0.9613969922065735,
+            "endUs": "33700000",
+            "startUs": "33600000",
+            "text": " do"
+          },
+          {
+            "confidence": 0.9956001043319702,
+            "endUs": "33760000",
+            "startUs": "33700000",
+            "text": " you"
+          },
+          {
+            "confidence": 0.9926607608795166,
+            "endUs": "33920000",
+            "startUs": "33760000",
+            "text": " mean"
+          },
+          {
+            "confidence": 0.7554419040679932,
+            "endUs": "34080000",
+            "startUs": "33920000",
+            "text": " with"
+          },
+          {
+            "confidence": 0.8248988091945648,
+            "endUs": "34720000",
+            "startUs": "34080000",
+            "text": " flexibly"
+          },
+          {
+            "confidence": 0.9934171736240387,
+            "endUs": "35500000",
+            "startUs": "34720000",
+            "text": " reusing"
+          },
+          {
+            "confidence": 0.4270003200508654,
+            "endUs": "35680000",
+            "startUs": "35500000",
+            "text": " the"
+          },
+          {
+            "confidence": 0.9948042035102844,
+            "endUs": "35960000",
+            "startUs": "35680000",
+            "text": " content?"
+          },
+          {
+            "confidence": 0.9093979001045227,
+            "endUs": "36140000",
+            "startUs": "36100000",
+            "text": " I"
+          },
+          {
+            "confidence": 0.9974602460861206,
+            "endUs": "36320000",
+            "startUs": "36140000",
+            "text": " mean,"
+          },
+          {
+            "confidence": 0.5048005785793066,
+            "endUs": "36760000",
+            "startUs": "36640000",
+            "text": " the"
+          },
+          {
+            "confidence": 0.9919303059577942,
+            "endUs": "37040000",
+            "startUs": "36760000",
+            "text": " content"
+          },
+          {
+            "confidence": 0.9712746739387512,
+            "endUs": "37260000",
+            "startUs": "37040000",
+            "text": " is"
+          },
+          {
+            "confidence": 0.438087098300457,
+            "endUs": "37640000",
+            "startUs": "37260000",
+            "text": " there,"
+          },
+          {
+            "confidence": 0.8975520133972168,
+            "endUs": "38100000",
+            "startUs": "38000000",
+            "text": " you"
+          },
+          {
+            "confidence": 0.8715699315071106,
+            "endUs": "38280000",
+            "startUs": "38100000",
+            "text": " can"
+          },
+          {
+            "confidence": 0.9063094258308411,
+            "endUs": "38540000",
+            "startUs": "38280000",
+            "text": " just"
+          },
+          {
+            "confidence": 0.471211314201355,
+            "endUs": "39520000",
+            "startUs": "38540000",
+            "text": " consume"
+          },
+          {
+            "confidence": 0.8138274550437927,
+            "endUs": "39840000",
+            "startUs": "39520000",
+            "text": " it,"
+          },
+          {
+            "confidence": 0.9419223070144653,
+            "endUs": "40480000",
+            "startUs": "40200000",
+            "text": " isn't"
+          },
+          {
+            "confidence": 0.5160840805619955,
+            "endUs": "40580000",
+            "startUs": "40480000",
+            "text": " that"
+          },
+          {
+            "confidence": 0.9691776633262634,
+            "endUs": "40840000",
+            "startUs": "40580000",
+            "text": " enough?"
+          },
+          {
+            "confidence": 0.9539661407470703,
+            "endUs": "41780000",
+            "startUs": "41620000",
+            "text": " Not"
+          },
+          {
+            "confidence": 0.9764614105224609,
+            "endUs": "42040000",
+            "startUs": "41780000",
+            "text": " quite."
+          },
+          {
+            "confidence": 0.5409771949052811,
+            "endUs": "43640000",
+            "startUs": "43080000",
+            "text": " Flexible"
+          },
+          {
+            "confidence": 0.5103745460510254,
+            "endUs": "43880000",
+            "startUs": "43640000",
+            "text": " reuse"
+          },
+          {
+            "confidence": 0.8188339471817017,
+            "endUs": "44080000",
+            "startUs": "43880000",
+            "text": " is"
+          },
+          {
+            "confidence": 0.7630754709243774,
+            "endUs": "44280000",
+            "startUs": "44080000",
+            "text": " about"
+          },
+          {
+            "confidence": 0.9510220885276794,
+            "endUs": "44720000",
+            "startUs": "44280000",
+            "text": " finding"
+          },
+          {
+            "confidence": 0.6949867606163025,
+            "endUs": "44920000",
+            "startUs": "44720000",
+            "text": " it"
+          },
+          {
+            "confidence": 0.8500388264656067,
+            "endUs": "45020000",
+            "startUs": "44920000",
+            "text": " in"
+          },
+          {
+            "confidence": 0.5083596967160702,
+            "endUs": "45120000",
+            "startUs": "45020000",
+            "text": " the"
+          },
+          {
+            "confidence": 0.9947018027305603,
+            "endUs": "45300000",
+            "startUs": "45120000",
+            "text": " first"
+          },
+          {
+            "confidence": 0.9975774884223938,
+            "endUs": "45620000",
+            "startUs": "45300000",
+            "text": " place."
+          },
+          {
+            "confidence": 0.8895641565322876,
+            "endUs": "46080000",
+            "startUs": "46020000",
+            "text": " If"
+          },
+          {
+            "confidence": 0.8696379661560059,
+            "endUs": "46320000",
+            "startUs": "46080000",
+            "text": " something"
+          },
+          {
+            "confidence": 0.6895542144775391,
+            "endUs": "46480000",
+            "startUs": "46320000",
+            "text": " is"
+          },
+          {
+            "confidence": 0.7931820750236511,
+            "endUs": "46760000",
+            "startUs": "46480000",
+            "text": " behind"
+          },
+          {
+            "confidence": 0.7975842356681824,
+            "endUs": "46960000",
+            "startUs": "46760000",
+            "text": " a"
+          },
+          {
+            "confidence": 0.6574193239212036,
+            "endUs": "47200000",
+            "startUs": "46960000",
+            "text": " wall"
+          },
+          {
+            "confidence": 0.07383611798286438,
+            "endUs": "47400000",
+            "startUs": "47200000",
+            "text": " where"
+          },
+          {
+            "confidence": 0.7233614325523376,
+            "endUs": "47460000",
+            "startUs": "47400000",
+            "text": " you"
+          },
+          {
+            "confidence": 0.9467737078666687,
+            "endUs": "47580000",
+            "startUs": "47460000",
+            "text": " have"
+          },
+          {
+            "confidence": 0.03756788105238229,
+            "endUs": "47620000",
+            "startUs": "47580000",
+            "text": " to"
+          },
+          {
+            "confidence": 0.19627244770526886,
+            "endUs": "47820000",
+            "startUs": "47620000",
+            "text": " reach"
+          },
+          {
+            "confidence": 0.0759507566690445,
+            "endUs": "48020000",
+            "startUs": "47820000",
+            "text": " it,"
+          },
+          {
+            "confidence": 0.7458845674991608,
+            "endUs": "48760000",
+            "startUs": "48100000",
+            "text": " it's"
+          },
+          {
+            "confidence": 0.8690990209579468,
+            "endUs": "48920000",
+            "startUs": "48760000",
+            "text": " not"
+          },
+          {
+            "confidence": 0.5634860992431641,
+            "endUs": "49140000",
+            "startUs": "48920000",
+            "text": " easily"
+          },
+          {
+            "confidence": 0.5476329326629639,
+            "endUs": "49540000",
+            "startUs": "49140000",
+            "text": " possible"
+          },
+          {
+            "confidence": 0.8889024257659912,
+            "endUs": "49780000",
+            "startUs": "49540000",
+            "text": " for"
+          },
+          {
+            "confidence": 0.7867866158485413,
+            "endUs": "50000000",
+            "startUs": "49780000",
+            "text": " search"
+          },
+          {
+            "confidence": 0.8631098866462708,
+            "endUs": "50420000",
+            "startUs": "50000000",
+            "text": " engines"
+          },
+          {
+            "confidence": 0.5476602241396904,
+            "endUs": "50600000",
+            "startUs": "50420000",
+            "text": " to"
+          },
+          {
+            "confidence": 0.9749184846878052,
+            "endUs": "50800000",
+            "startUs": "50600000",
+            "text": " find"
+          },
+          {
+            "confidence": 0.40123941691126674,
+            "endUs": "50980000",
+            "startUs": "50800000",
+            "text": " this"
+          },
+          {
+            "confidence": 0.9924148917198181,
+            "endUs": "51160000",
+            "startUs": "50980000",
+            "text": " piece"
+          },
+          {
+            "confidence": 0.9941155910491943,
+            "endUs": "51280000",
+            "startUs": "51160000",
+            "text": " of"
+          },
+          {
+            "confidence": 0.981770932674408,
+            "endUs": "51560000",
+            "startUs": "51280000",
+            "text": " content."
+          },
+          {
+            "confidence": 0.9674476385116577,
+            "endUs": "52140000",
+            "startUs": "51980000",
+            "text": " If"
+          },
+          {
+            "confidence": 0.9680203795433044,
+            "endUs": "52240000",
+            "startUs": "52140000",
+            "text": " you"
+          },
+          {
+            "confidence": 0.940873920917511,
+            "endUs": "52360000",
+            "startUs": "52240000",
+            "text": " have"
+          },
+          {
+            "confidence": 0.960064172744751,
+            "endUs": "52460000",
+            "startUs": "52360000",
+            "text": " a"
+          },
+          {
+            "confidence": 0.3587108254432678,
+            "endUs": "52660000",
+            "startUs": "52460000",
+            "text": " particular"
+          },
+          {
+            "confidence": 0.7540020942687988,
+            "endUs": "53180000",
+            "startUs": "52660000",
+            "text": " problem,"
+          },
+          {
+            "confidence": 0.9052845239639282,
+            "endUs": "53420000",
+            "startUs": "53360000",
+            "text": " you"
+          },
+          {
+            "confidence": 0.7941758632659912,
+            "endUs": "53540000",
+            "startUs": "53420000",
+            "text": " may"
+          },
+          {
+            "confidence": 0.8234081268310547,
+            "endUs": "53660000",
+            "startUs": "53540000",
+            "text": " not"
+          },
+          {
+            "confidence": 0.7315672636032104,
+            "endUs": "53820000",
+            "startUs": "53660000",
+            "text": " look"
+          },
+          {
+            "confidence": 0.7759788632392883,
+            "endUs": "54000000",
+            "startUs": "53820000",
+            "text": " for"
+          },
+          {
+            "confidence": 0.9479156732559204,
+            "endUs": "54100000",
+            "startUs": "54020000",
+            "text": " a"
+          },
+          {
+            "confidence": 0.9915440082550049,
+            "endUs": "54220000",
+            "startUs": "54100000",
+            "text": " whole"
+          },
+          {
+            "confidence": 0.9912899732589722,
+            "endUs": "54680000",
+            "startUs": "54220000",
+            "text": " course"
+          },
+          {
+            "confidence": 0.9009113311767578,
+            "endUs": "55340000",
+            "startUs": "54680000",
+            "text": " for"
+          },
+          {
+            "confidence": 0.9977745413780212,
+            "endUs": "55600000",
+            "startUs": "55340000",
+            "text": " solving"
+          },
+          {
+            "confidence": 0.8767392635345459,
+            "endUs": "55760000",
+            "startUs": "55600000",
+            "text": " your"
+          },
+          {
+            "confidence": 0.9896514415740967,
+            "endUs": "56020000",
+            "startUs": "55760000",
+            "text": " problem,"
+          },
+          {
+            "confidence": 0.9843034744262695,
+            "endUs": "56220000",
+            "startUs": "56120000",
+            "text": " but"
+          },
+          {
+            "confidence": 0.9367368817329407,
+            "endUs": "56420000",
+            "startUs": "56220000",
+            "text": " maybe"
+          },
+          {
+            "confidence": 0.980480432510376,
+            "endUs": "56620000",
+            "startUs": "56420000",
+            "text": " just"
+          },
+          {
+            "confidence": 0.985715925693512,
+            "endUs": "56800000",
+            "startUs": "56620000",
+            "text": " for"
+          },
+          {
+            "confidence": 0.9509170651435852,
+            "endUs": "56920000",
+            "startUs": "56800000",
+            "text": " the"
+          },
+          {
+            "confidence": 0.995690256357193,
+            "endUs": "57400000",
+            "startUs": "56920000",
+            "text": " snippet"
+          },
+          {
+            "confidence": 0.9940422177314758,
+            "endUs": "57900000",
+            "startUs": "57580000",
+            "text": " of"
+          },
+          {
+            "confidence": 0.8194364905357361,
+            "endUs": "58240000",
+            "startUs": "57900000",
+            "text": " information"
+          },
+          {
+            "confidence": 0.9533311426639557,
+            "endUs": "58740000",
+            "startUs": "58240000",
+            "text": " that's"
+          },
+          {
+            "confidence": 0.9981346130371094,
+            "endUs": "58980000",
+            "startUs": "58740000",
+            "text": " relevant."
+          },
+          {
+            "confidence": 0.8792640566825867,
+            "endUs": "60070000",
+            "startUs": "59990000",
+            "text": " Then"
+          },
+          {
+            "confidence": 0.80801922082901,
+            "endUs": "60390000",
+            "startUs": "60070000",
+            "text": " second,"
+          },
+          {
+            "confidence": 0.993285596370697,
+            "endUs": "61470000",
+            "startUs": "61110000",
+            "text": " if"
+          },
+          {
+            "confidence": 0.9992488026618958,
+            "endUs": "61930000",
+            "startUs": "61470000",
+            "text": " you"
+          },
+          {
+            "confidence": 0.9961530566215515,
+            "endUs": "62280000",
+            "startUs": "61980000",
+            "text": " find"
+          },
+          {
+            "confidence": 0.9953403472900391,
+            "endUs": "62560000",
+            "startUs": "62280000",
+            "text": " some"
+          },
+          {
+            "confidence": 0.9910674691200256,
+            "endUs": "62860000",
+            "startUs": "62560000",
+            "text": " piece"
+          },
+          {
+            "confidence": 0.9995664954185486,
+            "endUs": "63020000",
+            "startUs": "62860000",
+            "text": " of"
+          },
+          {
+            "confidence": 0.9930328130722046,
+            "endUs": "63320000",
+            "startUs": "63020000",
+            "text": " knowledge,"
+          },
+          {
+            "confidence": 0.9976617097854614,
+            "endUs": "63880000",
+            "startUs": "63780000",
+            "text": " you"
+          },
+          {
+            "confidence": 0.997908353805542,
+            "endUs": "64060000",
+            "startUs": "63880000",
+            "text": " might"
+          },
+          {
+            "confidence": 0.9980247020721436,
+            "endUs": "64380000",
+            "startUs": "64060000",
+            "text": " want"
+          },
+          {
+            "confidence": 0.9992902278900146,
+            "endUs": "64680000",
+            "startUs": "64380000",
+            "text": " to"
+          },
+          {
+            "confidence": 0.969607412815094,
+            "endUs": "64960000",
+            "startUs": "64680000",
+            "text": " reuse"
+          },
+          {
+            "confidence": 0.9982459545135498,
+            "endUs": "65360000",
+            "startUs": "64960000",
+            "text": " that."
+          },
+          {
+            "confidence": 0.9338617324829102,
+            "endUs": "66190000",
+            "startUs": "66110000",
+            "text": " And"
+          },
+          {
+            "confidence": 0.9955476522445679,
+            "endUs": "66490000",
+            "startUs": "66190000",
+            "text": " our"
+          },
+          {
+            "confidence": 0.9861607551574707,
+            "endUs": "66790000",
+            "startUs": "66490000",
+            "text": " course"
+          },
+          {
+            "confidence": 0.9975293278694153,
+            "endUs": "66950000",
+            "startUs": "66790000",
+            "text": " is"
+          },
+          {
+            "confidence": 0.9984903335571289,
+            "endUs": "67330000",
+            "startUs": "66950000",
+            "text": " completely"
+          },
+          {
+            "confidence": 0.986922562122345,
+            "endUs": "67770000",
+            "startUs": "67330000",
+            "text": " open."
+          },
+          {
+            "confidence": 0.9901555478572845,
+            "endUs": "68090000",
+            "startUs": "67990000",
+            "text": " It's"
+          },
+          {
+            "confidence": 0.9933244585990906,
+            "endUs": "68190000",
+            "startUs": "68090000",
+            "text": " all"
+          },
+          {
+            "confidence": 0.9055978655815125,
+            "endUs": "68490000",
+            "startUs": "68190000",
+            "text": " hosted"
+          },
+          {
+            "confidence": 0.4668504595756531,
+            "endUs": "68630000",
+            "startUs": "68490000",
+            "text": " on"
+          },
+          {
+            "confidence": 0.9930722117424011,
+            "endUs": "68770000",
+            "startUs": "68630000",
+            "text": " Wikipedia."
+          },
+          {
+            "confidence": 0.9958633780479431,
+            "endUs": "69550000",
+            "startUs": "69430000",
+            "text": " It's"
+          },
+          {
+            "confidence": 0.9969953298568726,
+            "endUs": "69830000",
+            "startUs": "69550000",
+            "text": " free"
+          },
+          {
+            "confidence": 0.9960458874702454,
+            "endUs": "70130000",
+            "startUs": "69830000",
+            "text": " for"
+          },
+          {
+            "confidence": 0.997405469417572,
+            "endUs": "70690000",
+            "startUs": "70130000",
+            "text": " academic"
+          },
+          {
+            "confidence": 0.9984778761863708,
+            "endUs": "71190000",
+            "startUs": "70690000",
+            "text": " purposes."
+          },
+          {
+            "confidence": 0.9981136918067932,
+            "endUs": "71510000",
+            "startUs": "71430000",
+            "text": " It's"
+          },
+          {
+            "confidence": 0.9985104203224182,
+            "endUs": "71690000",
+            "startUs": "71510000",
+            "text": " free"
+          },
+          {
+            "confidence": 0.9986629486083984,
+            "endUs": "71850000",
+            "startUs": "71690000",
+            "text": " for"
+          },
+          {
+            "confidence": 0.9972255825996399,
+            "endUs": "72290000",
+            "startUs": "71850000",
+            "text": " commercial"
+          },
+          {
+            "confidence": 0.9989385008811951,
+            "endUs": "73070000",
+            "startUs": "72290000",
+            "text": " purposes."
+          },
+          {
+            "confidence": 0.9833785891532898,
+            "endUs": "73730000",
+            "startUs": "73630000",
+            "text": " So"
+          },
+          {
+            "confidence": 0.41550248861312866,
+            "endUs": "73950000",
+            "startUs": "73730000",
+            "text": " you"
+          },
+          {
+            "confidence": 0.8866240382194519,
+            "endUs": "74170000",
+            "startUs": "73950000",
+            "text": " really,"
+          },
+          {
+            "confidence": 0.9973359704017639,
+            "endUs": "74350000",
+            "startUs": "74190000",
+            "text": " you"
+          },
+          {
+            "confidence": 0.997821569442749,
+            "endUs": "74550000",
+            "startUs": "74350000",
+            "text": " can"
+          },
+          {
+            "confidence": 0.9983775615692139,
+            "endUs": "75060000",
+            "startUs": "74640000",
+            "text": " take"
+          },
+          {
+            "confidence": 0.9980059266090393,
+            "endUs": "75260000",
+            "startUs": "75060000",
+            "text": " this"
+          },
+          {
+            "confidence": 0.9985054731369019,
+            "endUs": "75700000",
+            "startUs": "75260000",
+            "text": " content"
+          },
+          {
+            "confidence": 0.9350575804710388,
+            "endUs": "76480000",
+            "startUs": "75700000",
+            "text": " and"
+          },
+          {
+            "confidence": 0.9987280964851379,
+            "endUs": "76840000",
+            "startUs": "76480000",
+            "text": " use"
+          },
+          {
+            "confidence": 0.9993583559989929,
+            "endUs": "76980000",
+            "startUs": "76840000",
+            "text": " it"
+          },
+          {
+            "confidence": 0.99947589635849,
+            "endUs": "77220000",
+            "startUs": "76980000",
+            "text": " for"
+          },
+          {
+            "confidence": 0.998633086681366,
+            "endUs": "77400000",
+            "startUs": "77220000",
+            "text": " your"
+          },
+          {
+            "confidence": 0.9968500733375549,
+            "endUs": "77540000",
+            "startUs": "77400000",
+            "text": " own"
+          },
+          {
+            "confidence": 0.9987027645111084,
+            "endUs": "78000000",
+            "startUs": "77540000",
+            "text": " purposes."
+          },
+          {
+            "confidence": 0.5738620162010193,
+            "endUs": "78680000",
+            "startUs": "78600000",
+            "text": " But"
+          },
+          {
+            "confidence": 0.0013135441922713653,
+            "endUs": "79340000",
+            "startUs": "78680000",
+            "text": " this"
+          },
+          {
+            "confidence": 0.9667688608169556,
+            "endUs": "79580000",
+            "startUs": "79340000",
+            "text": " also"
+          },
+          {
+            "confidence": 0.9766004085540771,
+            "endUs": "79740000",
+            "startUs": "79580000",
+            "text": " means"
+          },
+          {
+            "confidence": 0.6808767914772034,
+            "endUs": "80000000",
+            "startUs": "79740000",
+            "text": " sorry"
+          },
+          {
+            "confidence": 0.1351377238461282,
+            "endUs": "80120000",
+            "startUs": "80000000",
+            "text": " to"
+          },
+          {
+            "confidence": 0.9897764921188354,
+            "endUs": "80420000",
+            "startUs": "80120000",
+            "text": " interrupt"
+          },
+          {
+            "confidence": 0.9766486287117004,
+            "endUs": "80780000",
+            "startUs": "80420000",
+            "text": " you"
+          },
+          {
+            "confidence": 0.3653499009087682,
+            "endUs": "81360000",
+            "startUs": "80780000",
+            "text": " that"
+          },
+          {
+            "confidence": 0.9905869364738464,
+            "endUs": "81500000",
+            "startUs": "81360000",
+            "text": " you"
+          },
+          {
+            "confidence": 0.9849002361297607,
+            "endUs": "81660000",
+            "startUs": "81500000",
+            "text": " can"
+          },
+          {
+            "confidence": 0.8858916163444519,
+            "endUs": "81960000",
+            "startUs": "81660000",
+            "text": " actually"
+          },
+          {
+            "confidence": 0.9680545330047607,
+            "endUs": "82400000",
+            "startUs": "81960000",
+            "text": " contribute"
+          },
+          {
+            "confidence": 0.48453165125101805,
+            "endUs": "82620000",
+            "startUs": "82400000",
+            "text": " to"
+          },
+          {
+            "confidence": 0.3981973397312686,
+            "endUs": "82740000",
+            "startUs": "82620000",
+            "text": " the"
+          },
+          {
+            "confidence": 0.9929471015930176,
+            "endUs": "82980000",
+            "startUs": "82740000",
+            "text": " MOOC"
+          },
+          {
+            "confidence": 0.740165650844574,
+            "endUs": "83140000",
+            "startUs": "82980000",
+            "text": " if"
+          },
+          {
+            "confidence": 0.9700890183448792,
+            "endUs": "83280000",
+            "startUs": "83140000",
+            "text": " you"
+          },
+          {
+            "confidence": 0.7197920083999634,
+            "endUs": "83360000",
+            "startUs": "83280000",
+            "text": " are"
+          },
+          {
+            "confidence": 0.49646881222724915,
+            "endUs": "83620000",
+            "startUs": "83360000",
+            "text": " learning"
+          },
+          {
+            "confidence": 0.5244013468424479,
+            "endUs": "83960000",
+            "startUs": "83620000",
+            "text": " together"
+          },
+          {
+            "confidence": 0.9199117422103882,
+            "endUs": "84220000",
+            "startUs": "83960000",
+            "text": " with"
+          },
+          {
+            "confidence": 0.9328445196151733,
+            "endUs": "84360000",
+            "startUs": "84220000",
+            "text": " us."
+          },
+          {
+            "confidence": 0.42552345991134644,
+            "endUs": "84600000",
+            "startUs": "84580000",
+            "text": " Absolutely,"
+          },
+          {
+            "confidence": 0.37510818243026733,
+            "endUs": "84780000",
+            "startUs": "84660000",
+            "text": " yeah."
+          },
+          {
+            "confidence": 0.6045628786087036,
+            "endUs": "84840000",
+            "startUs": "84820000",
+            "text": " If"
+          },
+          {
+            "confidence": 0.9711423516273499,
+            "endUs": "84920000",
+            "startUs": "84840000",
+            "text": " you"
+          },
+          {
+            "confidence": 0.9148824214935303,
+            "endUs": "85180000",
+            "startUs": "84920000",
+            "text": " find"
+          },
+          {
+            "confidence": 0.9406000375747681,
+            "endUs": "85580000",
+            "startUs": "85180000",
+            "text": " something"
+          },
+          {
+            "confidence": 0.4836146831512451,
+            "endUs": "85840000",
+            "startUs": "85580000",
+            "text": " and"
+          },
+          {
+            "confidence": 0.8830815851688385,
+            "endUs": "86120000",
+            "startUs": "85840000",
+            "text": " it's"
+          },
+          {
+            "confidence": 0.6539024114608765,
+            "endUs": "86940000",
+            "startUs": "86120000",
+            "text": " incorrect,"
+          },
+          {
+            "confidence": 0.48569123074412346,
+            "endUs": "87300000",
+            "startUs": "87220000",
+            "text": " there"
+          },
+          {
+            "confidence": 0.9900631308555603,
+            "endUs": "87420000",
+            "startUs": "87300000",
+            "text": " might"
+          },
+          {
+            "confidence": 0.9363456964492798,
+            "endUs": "87580000",
+            "startUs": "87420000",
+            "text": " be"
+          },
+          {
+            "confidence": 0.9856552481651306,
+            "endUs": "87700000",
+            "startUs": "87580000",
+            "text": " a"
+          },
+          {
+            "confidence": 0.22348323204399398,
+            "endUs": "88040000",
+            "startUs": "87700000",
+            "text": " typo,"
+          },
+          {
+            "confidence": 0.9421043395996094,
+            "endUs": "88220000",
+            "startUs": "88160000",
+            "text": " or"
+          },
+          {
+            "confidence": 0.9503963589668274,
+            "endUs": "88360000",
+            "startUs": "88220000",
+            "text": " you"
+          },
+          {
+            "confidence": 0.9868276119232178,
+            "endUs": "88460000",
+            "startUs": "88360000",
+            "text": " have"
+          },
+          {
+            "confidence": 0.964024007320404,
+            "endUs": "88540000",
+            "startUs": "88460000",
+            "text": " a"
+          },
+          {
+            "confidence": 0.9248315691947937,
+            "endUs": "88960000",
+            "startUs": "88540000",
+            "text": " question,"
+          },
+          {
+            "confidence": 0.9371104836463928,
+            "endUs": "89180000",
+            "startUs": "89100000",
+            "text": " or"
+          },
+          {
+            "confidence": 0.9784471392631531,
+            "endUs": "89340000",
+            "startUs": "89180000",
+            "text": " you"
+          },
+          {
+            "confidence": 0.5256123300641775,
+            "endUs": "89460000",
+            "startUs": "89340000",
+            "text": " think"
+          },
+          {
+            "confidence": 0.5164185259491205,
+            "endUs": "89620000",
+            "startUs": "89460000",
+            "text": " there"
+          },
+          {
+            "confidence": 0.9875274300575256,
+            "endUs": "89760000",
+            "startUs": "89620000",
+            "text": " might"
+          },
+          {
+            "confidence": 0.5651468336582184,
+            "endUs": "89980000",
+            "startUs": "89760000",
+            "text": " be..."
+          }
+        ],
+        "transcriptSha256": "cdd267060052e6e350c07dbad4a5b7262ea028413f8b7b817899f30526b4ef96",
+        "goldArtifactId": "commons-28956463-word-alignment",
+        "goldSha256": "4a42f08f7eab4538c745ad01c2a32d42ada28a733b7d847fb691c0937b49fe0f",
+        "goldDocumentSha256CanonicalJson": "18e653dcaa2ec1fa00096a97168068c239a123d5d2e11c2805b9b7551bf9fde9",
+        "scores": {
+          "deletions": 1,
+          "insertions": 2,
+          "referenceWords": 200,
+          "substitutions": 2,
+          "unicodeVersion": "14.0.0",
+          "wer": 0.025
+        }
+      },
+      {
+        "runId": "0f9b5c6b-8ed8-4106-9d0b-c8e518db289c",
+        "sourceId": "commons-82236797",
+        "language": "ar",
+        "detectedLanguage": "ar",
+        "scope": {
+          "startUs": "30000000",
+          "endUs": "90000000",
+          "selection": "owner_confirmed"
+        },
+        "provenance": "owner_approved_generated",
+        "modelProvenance": {
+          "analyzer": "faster-whisper",
+          "analyzerVersion": "us201-v1",
+          "configurationSha256": "3abd6a62e0c16ccdc69f7ce1e6c1a7af09cd08aadd1b97ea00fdf12b0407be7e",
+          "inputArtifactId": "commons-82236797-scoped-pcm",
+          "inputSha256": "f00e74d3b739b32e8cc20d1cceee06968aa40c1f5a7f001c244ff0ad47a1c5f4",
+          "model": {
+            "name": "faster-whisper-small",
+            "sha256": "4e456821bbeabf0923f07220a86c1c14a8820bc83e78ae638d4474207b70aedd",
+            "version": "536b0662742c02347bc0e980a01041f333bce120"
+          },
+          "runtime": "ctranslate2",
+          "runtimeVersion": "4.8.2",
+          "sourceSha256": "5f3eff8e19d9ea508f875082f177bd7dfdad70f56c03e0a33b6c8e5a7a2c0426"
+        },
+        "inferenceParameters": {
+          "alignmentAlgorithm": "ct2-contextual-v8",
+          "alignmentContextMaxUs": 30000000,
+          "alignmentFilterWidths": [7, 5, 3, 1],
+          "beam_size": 5,
+          "chunk_us": 24000000,
+          "compute_type": "int8",
+          "conditionOnPreviousText": false,
+          "cpu_fallback": true,
+          "cpu_threads": 2,
+          "device": "cpu",
+          "effectiveComputeType": "int8",
+          "effectiveDevice": "cpu",
+          "featureProjection": "frequency-ordered-float32-v1",
+          "languageDetection": "original-pcm-region-redetection-v1",
+          "languageDetectionEncoder": "native-unpadded-log-mel-v1",
+          "languageDetectionMinimumProbability": 0.5,
+          "languageDetectionWindowUs": 4000000,
+          "localAlignmentPaddingUs": 1000000,
+          "maximumAlignmentEncodesPerWindow": 32,
+          "maximumRecognitionPassesPerWindow": 2,
+          "min_silence_ms": 200,
+          "model": "small",
+          "negative_threshold": 0.35,
+          "overlapReconciliation": "two-temporal-anchors-original-pcm-v1",
+          "overlap_us": 2000000,
+          "recognitionContextMaxUs": 30000000,
+          "recognitionContinuation": "same-language-original-pcm-redecode-once-v1",
+          "recognitionContinuationMaxUs": 2000000,
+          "seed": 0,
+          "speechCoverage": "owned-word-union-temporal-lexical-decode-v3",
+          "speech_padding_ms": 100,
+          "speech_threshold": 0.5,
+          "temperature": 0,
+          "timeout_ms": 600000,
+          "wordAlignmentNeighbours": [2, 3, 4, 6, 8],
+          "wordAlignmentPaddingUs": [400000, 1000000, 2000000],
+          "workers": 1,
+          "zeroTimePunctuation": "append-to-exactly-touching-lexical-word"
+        },
+        "wallTimeMs": 55891.689,
+        "peakRssBytes": 856674304,
+        "wordCount": 95,
+        "recognizedText": " انا اسمي ولاء عبدالمنع هم حرراء ادارية في موصولته في فيديو النسخة العربية اول ادارية على مستوى الوطن العربي وزم انا سأل بزبطة عدوك مجموعة التنوعة وصفير اكليمي في الارتبلس للفنه النسوية ومنظمة اغلب المسابقات النسوية للوقيمة في فيديو العربية الحمد لله من نظام أغلبها من 2015 تقريبا حب أعرفكم بس على صديقي خدر تاني مرة أحدة الوكيمانية أنا خمس مرة أحدة الوكيمانية أنا أول مر فهو بيشاركني المؤتمر أنا إزالتو حكتر مجموعة العمل كانت كانت المؤسسة كانت فتحين طلبات للتحجب من مجموعة العمل فكان هناك 8 مجموعة أنا خفرت مجموعة التنوى على اعتبار اني",
+        "recognizedWords": [
+          {
+            "confidence": 0.09603714570403099,
+            "endUs": "31190000",
+            "startUs": "30190000",
+            "text": " انا"
+          },
+          {
+            "confidence": 0.8811629414558411,
+            "endUs": "31590000",
+            "startUs": "31190000",
+            "text": " اسمي"
+          },
+          {
+            "confidence": 0.41952353219191235,
+            "endUs": "31810000",
+            "startUs": "31590000",
+            "text": " ولاء"
+          },
+          {
+            "confidence": 0.8331136226654052,
+            "endUs": "32290000",
+            "startUs": "31810000",
+            "text": " عبدالمنع"
+          },
+          {
+            "confidence": 0.41514451056718826,
+            "endUs": "32430000",
+            "startUs": "32290000",
+            "text": " هم"
+          },
+          {
+            "confidence": 0.5604084581136703,
+            "endUs": "32830000",
+            "startUs": "32430000",
+            "text": " حرراء"
+          },
+          {
+            "confidence": 0.6596551835536957,
+            "endUs": "33310000",
+            "startUs": "32830000",
+            "text": " ادارية"
+          },
+          {
+            "confidence": 0.8729997873306274,
+            "endUs": "33590000",
+            "startUs": "33310000",
+            "text": " في"
+          },
+          {
+            "confidence": 0.5489032447338105,
+            "endUs": "34030000",
+            "startUs": "33590000",
+            "text": " موصولته"
+          },
+          {
+            "confidence": 0.9263725280761719,
+            "endUs": "34150000",
+            "startUs": "34030000",
+            "text": " في"
+          },
+          {
+            "confidence": 0.7096125781536102,
+            "endUs": "34310000",
+            "startUs": "34150000",
+            "text": " فيديو"
+          },
+          {
+            "confidence": 0.861027404665947,
+            "endUs": "34650000",
+            "startUs": "34310000",
+            "text": " النسخة"
+          },
+          {
+            "confidence": 0.9878645936648051,
+            "endUs": "35450000",
+            "startUs": "34650000",
+            "text": " العربية"
+          },
+          {
+            "confidence": 0.5145076140761375,
+            "endUs": "36760000",
+            "startUs": "35760000",
+            "text": " اول"
+          },
+          {
+            "confidence": 0.9636081755161285,
+            "endUs": "38340000",
+            "startUs": "36760000",
+            "text": " ادارية"
+          },
+          {
+            "confidence": 0.47543442249298096,
+            "endUs": "38420000",
+            "startUs": "38340000",
+            "text": " على"
+          },
+          {
+            "confidence": 0.8502508997917175,
+            "endUs": "38740000",
+            "startUs": "38420000",
+            "text": " مستوى"
+          },
+          {
+            "confidence": 0.94596266746521,
+            "endUs": "39020000",
+            "startUs": "38740000",
+            "text": " الوطن"
+          },
+          {
+            "confidence": 0.9435592293739319,
+            "endUs": "39500000",
+            "startUs": "39020000",
+            "text": " العربي"
+          },
+          {
+            "confidence": 0.4219655195871989,
+            "endUs": "40800000",
+            "startUs": "39500000",
+            "text": " وزم"
+          },
+          {
+            "confidence": 0.6452591717243195,
+            "endUs": "41650000",
+            "startUs": "41430000",
+            "text": " انا"
+          },
+          {
+            "confidence": 0.7714442412058512,
+            "endUs": "41910000",
+            "startUs": "41650000",
+            "text": " سأل"
+          },
+          {
+            "confidence": 0.47360647916793824,
+            "endUs": "42290000",
+            "startUs": "41910000",
+            "text": " بزبطة"
+          },
+          {
+            "confidence": 0.6720277592539787,
+            "endUs": "42510000",
+            "startUs": "42290000",
+            "text": " عدوك"
+          },
+          {
+            "confidence": 0.9274038791656494,
+            "endUs": "42890000",
+            "startUs": "42510000",
+            "text": " مجموعة"
+          },
+          {
+            "confidence": 0.5819820240139961,
+            "endUs": "43930000",
+            "startUs": "42890000",
+            "text": " التنوعة"
+          },
+          {
+            "confidence": 0.7991670221090317,
+            "endUs": "45190000",
+            "startUs": "43930000",
+            "text": " وصفير"
+          },
+          {
+            "confidence": 0.8002186238765716,
+            "endUs": "46230000",
+            "startUs": "45310000",
+            "text": " اكليمي"
+          },
+          {
+            "confidence": 0.6709529161453247,
+            "endUs": "46470000",
+            "startUs": "46350000",
+            "text": " في"
+          },
+          {
+            "confidence": 0.6672850598891577,
+            "endUs": "47370000",
+            "startUs": "46470000",
+            "text": " الارتبلس"
+          },
+          {
+            "confidence": 0.6549605093896389,
+            "endUs": "48450000",
+            "startUs": "47950000",
+            "text": " للفنه"
+          },
+          {
+            "confidence": 0.8398022204637527,
+            "endUs": "49110000",
+            "startUs": "48450000",
+            "text": " النسوية"
+          },
+          {
+            "confidence": 0.7512258589267731,
+            "endUs": "50170000",
+            "startUs": "49110000",
+            "text": " ومنظمة"
+          },
+          {
+            "confidence": 0.6247356136639913,
+            "endUs": "50970000",
+            "startUs": "50170000",
+            "text": " اغلب"
+          },
+          {
+            "confidence": 0.8074612021446228,
+            "endUs": "51550000",
+            "startUs": "50970000",
+            "text": " المسابقات"
+          },
+          {
+            "confidence": 0.9313128590583801,
+            "endUs": "52130000",
+            "startUs": "51550000",
+            "text": " النسوية"
+          },
+          {
+            "confidence": 0.6138179406523705,
+            "endUs": "52950000",
+            "startUs": "52130000",
+            "text": " للوقيمة"
+          },
+          {
+            "confidence": 0.8616370558738708,
+            "endUs": "53150000",
+            "startUs": "52950000",
+            "text": " في"
+          },
+          {
+            "confidence": 0.9850766460100809,
+            "endUs": "53770000",
+            "startUs": "53150000",
+            "text": " فيديو"
+          },
+          {
+            "confidence": 0.9753967523574829,
+            "endUs": "54510000",
+            "startUs": "53770000",
+            "text": " العربية"
+          },
+          {
+            "confidence": 0.9629426995913187,
+            "endUs": "55380000",
+            "startUs": "54640000",
+            "text": " الحمد"
+          },
+          {
+            "confidence": 0.6954355239868164,
+            "endUs": "55560000",
+            "startUs": "55380000",
+            "text": " لله"
+          },
+          {
+            "confidence": 0.1726648062467575,
+            "endUs": "55760000",
+            "startUs": "55560000",
+            "text": " من"
+          },
+          {
+            "confidence": 0.6080024540424347,
+            "endUs": "56440000",
+            "startUs": "55760000",
+            "text": " نظام"
+          },
+          {
+            "confidence": 0.9097560495138168,
+            "endUs": "56860000",
+            "startUs": "56440000",
+            "text": " أغلبها"
+          },
+          {
+            "confidence": 0.4961152970790863,
+            "endUs": "57300000",
+            "startUs": "57020000",
+            "text": " من"
+          },
+          {
+            "confidence": 0.3179679811000824,
+            "endUs": "58140000",
+            "startUs": "57300000",
+            "text": " 2015"
+          },
+          {
+            "confidence": 0.8600602865219116,
+            "endUs": "59560000",
+            "startUs": "58140000",
+            "text": " تقريبا"
+          },
+          {
+            "confidence": 0.71247398853302,
+            "endUs": "61010000",
+            "startUs": "60230000",
+            "text": " حب"
+          },
+          {
+            "confidence": 0.699648130685091,
+            "endUs": "62060000",
+            "startUs": "61700000",
+            "text": " أعرفكم"
+          },
+          {
+            "confidence": 0.6671199947595596,
+            "endUs": "62260000",
+            "startUs": "62060000",
+            "text": " بس"
+          },
+          {
+            "confidence": 0.9390444755554199,
+            "endUs": "62460000",
+            "startUs": "62260000",
+            "text": " على"
+          },
+          {
+            "confidence": 0.9438316424687704,
+            "endUs": "62960000",
+            "startUs": "62460000",
+            "text": " صديقي"
+          },
+          {
+            "confidence": 0.7683997054894766,
+            "endUs": "63660000",
+            "startUs": "62960000",
+            "text": " خدر"
+          },
+          {
+            "confidence": 0.6279491533835729,
+            "endUs": "64220000",
+            "startUs": "63660000",
+            "text": " تاني"
+          },
+          {
+            "confidence": 0.8622290194034576,
+            "endUs": "64400000",
+            "startUs": "64220000",
+            "text": " مرة"
+          },
+          {
+            "confidence": 0.5390203247467676,
+            "endUs": "64680000",
+            "startUs": "64400000",
+            "text": " أحدة"
+          },
+          {
+            "confidence": 0.7507499357064565,
+            "endUs": "65100000",
+            "startUs": "64680000",
+            "text": " الوكيمانية"
+          },
+          {
+            "confidence": 0.22714290022850037,
+            "endUs": "65910000",
+            "startUs": "65630000",
+            "text": " أنا"
+          },
+          {
+            "confidence": 0.6425032814343771,
+            "endUs": "66290000",
+            "startUs": "65910000",
+            "text": " خمس"
+          },
+          {
+            "confidence": 0.9553854763507843,
+            "endUs": "66430000",
+            "startUs": "66290000",
+            "text": " مرة"
+          },
+          {
+            "confidence": 0.9902381896972656,
+            "endUs": "66690000",
+            "startUs": "66430000",
+            "text": " أحدة"
+          },
+          {
+            "confidence": 0.990391880273819,
+            "endUs": "67210000",
+            "startUs": "66690000",
+            "text": " الوكيمانية"
+          },
+          {
+            "confidence": 0.8322283029556274,
+            "endUs": "67310000",
+            "startUs": "67210000",
+            "text": " أنا"
+          },
+          {
+            "confidence": 0.9623007774353027,
+            "endUs": "67570000",
+            "startUs": "67310000",
+            "text": " أول"
+          },
+          {
+            "confidence": 0.7575676739215851,
+            "endUs": "67870000",
+            "startUs": "67570000",
+            "text": " مر"
+          },
+          {
+            "confidence": 0.7369015216827393,
+            "endUs": "69780000",
+            "startUs": "68180000",
+            "text": " فهو"
+          },
+          {
+            "confidence": 0.7111643155415853,
+            "endUs": "71250000",
+            "startUs": "70830000",
+            "text": " بيشاركني"
+          },
+          {
+            "confidence": 0.841632142663002,
+            "endUs": "71750000",
+            "startUs": "71250000",
+            "text": " المؤتمر"
+          },
+          {
+            "confidence": 0.8867437243461609,
+            "endUs": "72340000",
+            "startUs": "71940000",
+            "text": " أنا"
+          },
+          {
+            "confidence": 0.4518196702003479,
+            "endUs": "72800000",
+            "startUs": "72340000",
+            "text": " إزالتو"
+          },
+          {
+            "confidence": 0.537420853972435,
+            "endUs": "73140000",
+            "startUs": "72800000",
+            "text": " حكتر"
+          },
+          {
+            "confidence": 0.9172269463539123,
+            "endUs": "73500000",
+            "startUs": "73140000",
+            "text": " مجموعة"
+          },
+          {
+            "confidence": 0.9644845426082611,
+            "endUs": "74100000",
+            "startUs": "73500000",
+            "text": " العمل"
+          },
+          {
+            "confidence": 0.7509120404720306,
+            "endUs": "76770000",
+            "startUs": "74650000",
+            "text": " كانت"
+          },
+          {
+            "confidence": 0.4478386715054512,
+            "endUs": "77810000",
+            "startUs": "76770000",
+            "text": " كانت"
+          },
+          {
+            "confidence": 0.6408318608999253,
+            "endUs": "79250000",
+            "startUs": "77810000",
+            "text": " المؤسسة"
+          },
+          {
+            "confidence": 0.3883991166949272,
+            "endUs": "79450000",
+            "startUs": "79250000",
+            "text": " كانت"
+          },
+          {
+            "confidence": 0.4911523647606373,
+            "endUs": "80010000",
+            "startUs": "79450000",
+            "text": " فتحين"
+          },
+          {
+            "confidence": 0.7520864605903625,
+            "endUs": "81940000",
+            "startUs": "80180000",
+            "text": " طلبات"
+          },
+          {
+            "confidence": 0.7322449594736099,
+            "endUs": "82480000",
+            "startUs": "81940000",
+            "text": " للتحجب"
+          },
+          {
+            "confidence": 0.5355694890022278,
+            "endUs": "82560000",
+            "startUs": "82480000",
+            "text": " من"
+          },
+          {
+            "confidence": 0.8886252641677856,
+            "endUs": "82960000",
+            "startUs": "82560000",
+            "text": " مجموعة"
+          },
+          {
+            "confidence": 0.9600805640220642,
+            "endUs": "83360000",
+            "startUs": "82960000",
+            "text": " العمل"
+          },
+          {
+            "confidence": 0.5667803883552551,
+            "endUs": "83960000",
+            "startUs": "83360000",
+            "text": " فكان"
+          },
+          {
+            "confidence": 0.6321640163660049,
+            "endUs": "84480000",
+            "startUs": "83960000",
+            "text": " هناك"
+          },
+          {
+            "confidence": 0.4919492304325104,
+            "endUs": "84740000",
+            "startUs": "84480000",
+            "text": " 8"
+          },
+          {
+            "confidence": 0.8301557838916779,
+            "endUs": "86160000",
+            "startUs": "84740000",
+            "text": " مجموعة"
+          },
+          {
+            "confidence": 0.0557553730905056,
+            "endUs": "86340000",
+            "startUs": "86160000",
+            "text": " أنا"
+          },
+          {
+            "confidence": 0.5794293681780497,
+            "endUs": "86640000",
+            "startUs": "86340000",
+            "text": " خفرت"
+          },
+          {
+            "confidence": 0.9486557602882385,
+            "endUs": "87060000",
+            "startUs": "86640000",
+            "text": " مجموعة"
+          },
+          {
+            "confidence": 0.5881714299321175,
+            "endUs": "87660000",
+            "startUs": "87060000",
+            "text": " التنوى"
+          },
+          {
+            "confidence": 0.8731676340103149,
+            "endUs": "88250000",
+            "startUs": "87910000",
+            "text": " على"
+          },
+          {
+            "confidence": 0.8644887208938599,
+            "endUs": "88730000",
+            "startUs": "88250000",
+            "text": " اعتبار"
+          },
+          {
+            "confidence": 0.6528603136539459,
+            "endUs": "89210000",
+            "startUs": "88730000",
+            "text": " اني"
+          }
+        ],
+        "transcriptSha256": "55b0d1b60474dc8c52d6d3a3d36e14bd10219440dc6595e7b8d694e2323e0c12",
+        "goldArtifactId": "commons-82236797-word-alignment",
+        "goldSha256": "342aa5a4d71c9ec0dac6263bfbe9139c58ab559c23245fb95093689d26f46f82",
+        "goldDocumentSha256CanonicalJson": "310bdf83773e8e0c366e1da7618de1fba58258e764c2608799a09f243c99043e",
+        "scores": {
+          "deletions": 4,
+          "insertions": 1,
+          "referenceWords": 98,
+          "substitutions": 35,
+          "unicodeVersion": "14.0.0",
+          "wer": 0.40816326530612246
+        }
+      },
+      {
+        "runId": "0f9b5c6b-8ed8-4106-9d0b-c8e518db289c",
+        "sourceId": "commons-98650286",
+        "language": "en",
+        "detectedLanguage": "en",
+        "scope": {
+          "startUs": "30000000",
+          "endUs": "90000000",
+          "selection": "owner_confirmed"
+        },
+        "provenance": "owner_approved_generated",
+        "modelProvenance": {
+          "analyzer": "faster-whisper",
+          "analyzerVersion": "us201-v1",
+          "configurationSha256": "3abd6a62e0c16ccdc69f7ce1e6c1a7af09cd08aadd1b97ea00fdf12b0407be7e",
+          "inputArtifactId": "commons-98650286-scoped-pcm",
+          "inputSha256": "e9d7e1f6bc82c09896540f068c08581e07dcddf6af893e486c7413247ce74d5c",
+          "model": {
+            "name": "faster-whisper-small",
+            "sha256": "4e456821bbeabf0923f07220a86c1c14a8820bc83e78ae638d4474207b70aedd",
+            "version": "536b0662742c02347bc0e980a01041f333bce120"
+          },
+          "runtime": "ctranslate2",
+          "runtimeVersion": "4.8.2",
+          "sourceSha256": "86cf8af3ceb93561358aebe34c7a5ad39fc522660f695c8b8c667d453d6f7117"
+        },
+        "inferenceParameters": {
+          "alignmentAlgorithm": "ct2-contextual-v8",
+          "alignmentContextMaxUs": 30000000,
+          "alignmentFilterWidths": [7, 5, 3, 1],
+          "beam_size": 5,
+          "chunk_us": 24000000,
+          "compute_type": "int8",
+          "conditionOnPreviousText": false,
+          "cpu_fallback": true,
+          "cpu_threads": 2,
+          "device": "cpu",
+          "effectiveComputeType": "int8",
+          "effectiveDevice": "cpu",
+          "featureProjection": "frequency-ordered-float32-v1",
+          "languageDetection": "original-pcm-region-redetection-v1",
+          "languageDetectionEncoder": "native-unpadded-log-mel-v1",
+          "languageDetectionMinimumProbability": 0.5,
+          "languageDetectionWindowUs": 4000000,
+          "localAlignmentPaddingUs": 1000000,
+          "maximumAlignmentEncodesPerWindow": 32,
+          "maximumRecognitionPassesPerWindow": 2,
+          "min_silence_ms": 200,
+          "model": "small",
+          "negative_threshold": 0.35,
+          "overlapReconciliation": "two-temporal-anchors-original-pcm-v1",
+          "overlap_us": 2000000,
+          "recognitionContextMaxUs": 30000000,
+          "recognitionContinuation": "same-language-original-pcm-redecode-once-v1",
+          "recognitionContinuationMaxUs": 2000000,
+          "seed": 0,
+          "speechCoverage": "owned-word-union-temporal-lexical-decode-v3",
+          "speech_padding_ms": 100,
+          "speech_threshold": 0.5,
+          "temperature": 0,
+          "timeout_ms": 600000,
+          "wordAlignmentNeighbours": [2, 3, 4, 6, 8],
+          "wordAlignmentPaddingUs": [400000, 1000000, 2000000],
+          "workers": 1,
+          "zeroTimePunctuation": "append-to-exactly-touching-lexical-word"
+        },
+        "wallTimeMs": 37332.986,
+        "peakRssBytes": 851025920,
+        "wordCount": 157,
+        "recognizedText": " 20 this year, and of course many more in the years to come. So we're starting with 20 today and the good news is we're going to get to keep going, celebrating our 20th birthday for some time to come. I think about these past two decades and how far Wikipedia has come from this encyclopedia that anyone could edit this impossible, ambitious idea, this idealistic vision into something that is so real. This platform and this knowledge that is used by so many hundreds of millions of people across the planet. Speaking of numbers and hundreds of millions, the numbers are really incredible. Today, Wikipedia has more than 55 million articles across nearly 300 languages and over one and a half billion unique devices visit our projects every single month. That represents hundreds of millions of people from every continent on the globe, yes, including Antarctica, coming to our projects, seeking knowledge. That is an example.",
+        "recognizedWords": [
+          {
+            "confidence": 0.38531410694122314,
+            "endUs": "30520000",
+            "startUs": "30000000",
+            "text": " 20"
+          },
+          {
+            "confidence": 0.9068728089332581,
+            "endUs": "30840000",
+            "startUs": "30520000",
+            "text": " this"
+          },
+          {
+            "confidence": 0.9990405440330505,
+            "endUs": "31120000",
+            "startUs": "30840000",
+            "text": " year,"
+          },
+          {
+            "confidence": 0.9934364557266235,
+            "endUs": "31380000",
+            "startUs": "31360000",
+            "text": " and"
+          },
+          {
+            "confidence": 0.8750730752944946,
+            "endUs": "31560000",
+            "startUs": "31380000",
+            "text": " of"
+          },
+          {
+            "confidence": 0.9995287656784058,
+            "endUs": "31860000",
+            "startUs": "31560000",
+            "text": " course"
+          },
+          {
+            "confidence": 0.6647017598152161,
+            "endUs": "32560000",
+            "startUs": "31860000",
+            "text": " many"
+          },
+          {
+            "confidence": 0.9993433356285095,
+            "endUs": "32960000",
+            "startUs": "32560000",
+            "text": " more"
+          },
+          {
+            "confidence": 0.993598222732544,
+            "endUs": "33220000",
+            "startUs": "32960000",
+            "text": " in"
+          },
+          {
+            "confidence": 0.9983966946601868,
+            "endUs": "33320000",
+            "startUs": "33220000",
+            "text": " the"
+          },
+          {
+            "confidence": 0.9978252649307251,
+            "endUs": "33520000",
+            "startUs": "33320000",
+            "text": " years"
+          },
+          {
+            "confidence": 0.9993509650230408,
+            "endUs": "33760000",
+            "startUs": "33520000",
+            "text": " to"
+          },
+          {
+            "confidence": 0.9996248483657837,
+            "endUs": "34040000",
+            "startUs": "33760000",
+            "text": " come."
+          },
+          {
+            "confidence": 0.9413942694664001,
+            "endUs": "34380000",
+            "startUs": "34280000",
+            "text": " So"
+          },
+          {
+            "confidence": 0.8933596909046173,
+            "endUs": "34660000",
+            "startUs": "34380000",
+            "text": " we're"
+          },
+          {
+            "confidence": 0.9990122318267822,
+            "endUs": "35020000",
+            "startUs": "34660000",
+            "text": " starting"
+          },
+          {
+            "confidence": 0.9957748055458069,
+            "endUs": "35240000",
+            "startUs": "35020000",
+            "text": " with"
+          },
+          {
+            "confidence": 0.9675289988517761,
+            "endUs": "35500000",
+            "startUs": "35240000",
+            "text": " 20"
+          },
+          {
+            "confidence": 0.9923853874206543,
+            "endUs": "35800000",
+            "startUs": "35500000",
+            "text": " today"
+          },
+          {
+            "confidence": 0.5753702521324158,
+            "endUs": "36160000",
+            "startUs": "35800000",
+            "text": " and"
+          },
+          {
+            "confidence": 0.9785812497138977,
+            "endUs": "36300000",
+            "startUs": "36160000",
+            "text": " the"
+          },
+          {
+            "confidence": 0.9985408782958984,
+            "endUs": "36620000",
+            "startUs": "36300000",
+            "text": " good"
+          },
+          {
+            "confidence": 0.9967531561851501,
+            "endUs": "36800000",
+            "startUs": "36620000",
+            "text": " news"
+          },
+          {
+            "confidence": 0.9965088963508606,
+            "endUs": "36980000",
+            "startUs": "36800000",
+            "text": " is"
+          },
+          {
+            "confidence": 0.9744521975517273,
+            "endUs": "37160000",
+            "startUs": "36980000",
+            "text": " we're"
+          },
+          {
+            "confidence": 0.6805697083473206,
+            "endUs": "37280000",
+            "startUs": "37160000",
+            "text": " going"
+          },
+          {
+            "confidence": 0.9947668313980103,
+            "endUs": "37340000",
+            "startUs": "37280000",
+            "text": " to"
+          },
+          {
+            "confidence": 0.9633064866065979,
+            "endUs": "37420000",
+            "startUs": "37340000",
+            "text": " get"
+          },
+          {
+            "confidence": 0.9985781908035278,
+            "endUs": "37540000",
+            "startUs": "37420000",
+            "text": " to"
+          },
+          {
+            "confidence": 0.9972297549247742,
+            "endUs": "37800000",
+            "startUs": "37540000",
+            "text": " keep"
+          },
+          {
+            "confidence": 0.9039415121078491,
+            "endUs": "38100000",
+            "startUs": "37800000",
+            "text": " going,"
+          },
+          {
+            "confidence": 0.9974290728569031,
+            "endUs": "38880000",
+            "startUs": "38560000",
+            "text": " celebrating"
+          },
+          {
+            "confidence": 0.9434385895729065,
+            "endUs": "39160000",
+            "startUs": "38880000",
+            "text": " our"
+          },
+          {
+            "confidence": 0.9853969812393188,
+            "endUs": "39640000",
+            "startUs": "39160000",
+            "text": " 20th"
+          },
+          {
+            "confidence": 0.9963880777359009,
+            "endUs": "39980000",
+            "startUs": "39640000",
+            "text": " birthday"
+          },
+          {
+            "confidence": 0.9321141839027405,
+            "endUs": "40220000",
+            "startUs": "39980000",
+            "text": " for"
+          },
+          {
+            "confidence": 0.9210721254348755,
+            "endUs": "40500000",
+            "startUs": "40220000",
+            "text": " some"
+          },
+          {
+            "confidence": 0.9996410608291626,
+            "endUs": "40820000",
+            "startUs": "40500000",
+            "text": " time"
+          },
+          {
+            "confidence": 0.9919413328170776,
+            "endUs": "41060000",
+            "startUs": "40820000",
+            "text": " to"
+          },
+          {
+            "confidence": 0.9994693398475647,
+            "endUs": "41360000",
+            "startUs": "41060000",
+            "text": " come."
+          },
+          {
+            "confidence": 0.991981029510498,
+            "endUs": "42470000",
+            "startUs": "42370000",
+            "text": " I"
+          },
+          {
+            "confidence": 0.9991998076438904,
+            "endUs": "42610000",
+            "startUs": "42470000",
+            "text": " think"
+          },
+          {
+            "confidence": 0.9988214373588562,
+            "endUs": "42790000",
+            "startUs": "42610000",
+            "text": " about"
+          },
+          {
+            "confidence": 0.9959308505058289,
+            "endUs": "43010000",
+            "startUs": "42790000",
+            "text": " these"
+          },
+          {
+            "confidence": 0.9956910014152527,
+            "endUs": "43430000",
+            "startUs": "43010000",
+            "text": " past"
+          },
+          {
+            "confidence": 0.975762665271759,
+            "endUs": "43990000",
+            "startUs": "43430000",
+            "text": " two"
+          },
+          {
+            "confidence": 0.9991403818130493,
+            "endUs": "44290000",
+            "startUs": "43990000",
+            "text": " decades"
+          },
+          {
+            "confidence": 0.9088638424873352,
+            "endUs": "44670000",
+            "startUs": "44290000",
+            "text": " and"
+          },
+          {
+            "confidence": 0.9994065761566162,
+            "endUs": "44910000",
+            "startUs": "44670000",
+            "text": " how"
+          },
+          {
+            "confidence": 0.9986855387687683,
+            "endUs": "45270000",
+            "startUs": "44910000",
+            "text": " far"
+          },
+          {
+            "confidence": 0.8928982019424438,
+            "endUs": "45590000",
+            "startUs": "45270000",
+            "text": " Wikipedia"
+          },
+          {
+            "confidence": 0.9982330799102783,
+            "endUs": "46170000",
+            "startUs": "45590000",
+            "text": " has"
+          },
+          {
+            "confidence": 0.9983382225036621,
+            "endUs": "46510000",
+            "startUs": "46170000",
+            "text": " come"
+          },
+          {
+            "confidence": 0.905099093914032,
+            "endUs": "46890000",
+            "startUs": "46510000",
+            "text": " from"
+          },
+          {
+            "confidence": 0.9792253971099854,
+            "endUs": "47110000",
+            "startUs": "46890000",
+            "text": " this"
+          },
+          {
+            "confidence": 0.9474208156267802,
+            "endUs": "47750000",
+            "startUs": "47110000",
+            "text": " encyclopedia"
+          },
+          {
+            "confidence": 0.9920902252197266,
+            "endUs": "48070000",
+            "startUs": "47750000",
+            "text": " that"
+          },
+          {
+            "confidence": 0.9973624348640442,
+            "endUs": "48390000",
+            "startUs": "48070000",
+            "text": " anyone"
+          },
+          {
+            "confidence": 0.9215473532676697,
+            "endUs": "48670000",
+            "startUs": "48390000",
+            "text": " could"
+          },
+          {
+            "confidence": 0.9415485262870789,
+            "endUs": "48910000",
+            "startUs": "48670000",
+            "text": " edit"
+          },
+          {
+            "confidence": 0.22254234552383423,
+            "endUs": "49190000",
+            "startUs": "48910000",
+            "text": " this"
+          },
+          {
+            "confidence": 0.9705908298492432,
+            "endUs": "50230000",
+            "startUs": "49190000",
+            "text": " impossible,"
+          },
+          {
+            "confidence": 0.9934957027435303,
+            "endUs": "51490000",
+            "startUs": "50390000",
+            "text": " ambitious"
+          },
+          {
+            "confidence": 0.969394862651825,
+            "endUs": "52250000",
+            "startUs": "51490000",
+            "text": " idea,"
+          },
+          {
+            "confidence": 0.9953755140304565,
+            "endUs": "52510000",
+            "startUs": "52430000",
+            "text": " this"
+          },
+          {
+            "confidence": 0.9977676570415497,
+            "endUs": "53350000",
+            "startUs": "52510000",
+            "text": " idealistic"
+          },
+          {
+            "confidence": 0.9990382194519043,
+            "endUs": "53770000",
+            "startUs": "53350000",
+            "text": " vision"
+          },
+          {
+            "confidence": 0.7628340125083923,
+            "endUs": "54310000",
+            "startUs": "53770000",
+            "text": " into"
+          },
+          {
+            "confidence": 0.9988600015640259,
+            "endUs": "54670000",
+            "startUs": "54310000",
+            "text": " something"
+          },
+          {
+            "confidence": 0.9993613362312317,
+            "endUs": "54930000",
+            "startUs": "54670000",
+            "text": " that"
+          },
+          {
+            "confidence": 0.9990612864494324,
+            "endUs": "55070000",
+            "startUs": "54930000",
+            "text": " is"
+          },
+          {
+            "confidence": 0.9974623918533325,
+            "endUs": "55290000",
+            "startUs": "55070000",
+            "text": " so"
+          },
+          {
+            "confidence": 0.9987298846244812,
+            "endUs": "55610000",
+            "startUs": "55290000",
+            "text": " real."
+          },
+          {
+            "confidence": 0.9958698153495789,
+            "endUs": "56240000",
+            "startUs": "56120000",
+            "text": " This"
+          },
+          {
+            "confidence": 0.9982205033302307,
+            "endUs": "56760000",
+            "startUs": "56240000",
+            "text": " platform"
+          },
+          {
+            "confidence": 0.9371681213378906,
+            "endUs": "57260000",
+            "startUs": "56760000",
+            "text": " and"
+          },
+          {
+            "confidence": 0.9950894713401794,
+            "endUs": "57460000",
+            "startUs": "57260000",
+            "text": " this"
+          },
+          {
+            "confidence": 0.9985800981521606,
+            "endUs": "57920000",
+            "startUs": "57460000",
+            "text": " knowledge"
+          },
+          {
+            "confidence": 0.9862500429153442,
+            "endUs": "58200000",
+            "startUs": "57920000",
+            "text": " that"
+          },
+          {
+            "confidence": 0.9924163818359375,
+            "endUs": "58360000",
+            "startUs": "58200000",
+            "text": " is"
+          },
+          {
+            "confidence": 0.994809627532959,
+            "endUs": "58660000",
+            "startUs": "58360000",
+            "text": " used"
+          },
+          {
+            "confidence": 0.9983502626419067,
+            "endUs": "58900000",
+            "startUs": "58660000",
+            "text": " by"
+          },
+          {
+            "confidence": 0.9985439777374268,
+            "endUs": "59220000",
+            "startUs": "58900000",
+            "text": " so"
+          },
+          {
+            "confidence": 0.9992444515228271,
+            "endUs": "59440000",
+            "startUs": "59220000",
+            "text": " many"
+          },
+          {
+            "confidence": 0.9870703220367432,
+            "endUs": "59880000",
+            "startUs": "59440000",
+            "text": " hundreds"
+          },
+          {
+            "confidence": 0.9981368780136108,
+            "endUs": "60160000",
+            "startUs": "59880000",
+            "text": " of"
+          },
+          {
+            "confidence": 0.9983507394790649,
+            "endUs": "60500000",
+            "startUs": "60160000",
+            "text": " millions"
+          },
+          {
+            "confidence": 0.9993531107902527,
+            "endUs": "60840000",
+            "startUs": "60500000",
+            "text": " of"
+          },
+          {
+            "confidence": 0.9996752738952637,
+            "endUs": "61120000",
+            "startUs": "60840000",
+            "text": " people"
+          },
+          {
+            "confidence": 0.9987133741378784,
+            "endUs": "61480000",
+            "startUs": "61120000",
+            "text": " across"
+          },
+          {
+            "confidence": 0.9997135996818542,
+            "endUs": "61780000",
+            "startUs": "61480000",
+            "text": " the"
+          },
+          {
+            "confidence": 0.9968360662460327,
+            "endUs": "62140000",
+            "startUs": "61780000",
+            "text": " planet."
+          },
+          {
+            "confidence": 0.9937964677810669,
+            "endUs": "63140000",
+            "startUs": "62800000",
+            "text": " Speaking"
+          },
+          {
+            "confidence": 0.9990623593330383,
+            "endUs": "63440000",
+            "startUs": "63140000",
+            "text": " of"
+          },
+          {
+            "confidence": 0.9948261380195618,
+            "endUs": "63840000",
+            "startUs": "63440000",
+            "text": " numbers"
+          },
+          {
+            "confidence": 0.5148835182189941,
+            "endUs": "64120000",
+            "startUs": "63840000",
+            "text": " and"
+          },
+          {
+            "confidence": 0.9952691197395325,
+            "endUs": "64460000",
+            "startUs": "64120000",
+            "text": " hundreds"
+          },
+          {
+            "confidence": 0.9980080723762512,
+            "endUs": "64660000",
+            "startUs": "64460000",
+            "text": " of"
+          },
+          {
+            "confidence": 0.9980352520942688,
+            "endUs": "64980000",
+            "startUs": "64660000",
+            "text": " millions,"
+          },
+          {
+            "confidence": 0.9975258708000183,
+            "endUs": "65300000",
+            "startUs": "65260000",
+            "text": " the"
+          },
+          {
+            "confidence": 0.9988300204277039,
+            "endUs": "65620000",
+            "startUs": "65300000",
+            "text": " numbers"
+          },
+          {
+            "confidence": 0.9988177418708801,
+            "endUs": "65920000",
+            "startUs": "65620000",
+            "text": " are"
+          },
+          {
+            "confidence": 0.9991199374198914,
+            "endUs": "66300000",
+            "startUs": "65920000",
+            "text": " really"
+          },
+          {
+            "confidence": 0.9987342953681946,
+            "endUs": "66960000",
+            "startUs": "66300000",
+            "text": " incredible."
+          },
+          {
+            "confidence": 0.9946693778038025,
+            "endUs": "68190000",
+            "startUs": "67890000",
+            "text": " Today,"
+          },
+          {
+            "confidence": 0.9959995746612549,
+            "endUs": "68550000",
+            "startUs": "68350000",
+            "text": " Wikipedia"
+          },
+          {
+            "confidence": 0.9956057667732239,
+            "endUs": "69130000",
+            "startUs": "68550000",
+            "text": " has"
+          },
+          {
+            "confidence": 0.9971656203269958,
+            "endUs": "69250000",
+            "startUs": "69130000",
+            "text": " more"
+          },
+          {
+            "confidence": 0.9981794357299805,
+            "endUs": "69410000",
+            "startUs": "69250000",
+            "text": " than"
+          },
+          {
+            "confidence": 0.9794573187828064,
+            "endUs": "69990000",
+            "startUs": "69410000",
+            "text": " 55"
+          },
+          {
+            "confidence": 0.9902121424674988,
+            "endUs": "70990000",
+            "startUs": "69990000",
+            "text": " million"
+          },
+          {
+            "confidence": 0.9983969330787659,
+            "endUs": "71610000",
+            "startUs": "70990000",
+            "text": " articles"
+          },
+          {
+            "confidence": 0.9528659582138062,
+            "endUs": "72070000",
+            "startUs": "71610000",
+            "text": " across"
+          },
+          {
+            "confidence": 0.9095415472984314,
+            "endUs": "72410000",
+            "startUs": "72070000",
+            "text": " nearly"
+          },
+          {
+            "confidence": 0.9946610331535339,
+            "endUs": "73030000",
+            "startUs": "72410000",
+            "text": " 300"
+          },
+          {
+            "confidence": 0.9987925291061401,
+            "endUs": "73910000",
+            "startUs": "73030000",
+            "text": " languages"
+          },
+          {
+            "confidence": 0.49243155121803284,
+            "endUs": "74670000",
+            "startUs": "74330000",
+            "text": " and"
+          },
+          {
+            "confidence": 0.9966290593147278,
+            "endUs": "74910000",
+            "startUs": "74670000",
+            "text": " over"
+          },
+          {
+            "confidence": 0.6802035570144653,
+            "endUs": "75290000",
+            "startUs": "74910000",
+            "text": " one"
+          },
+          {
+            "confidence": 0.9494598507881165,
+            "endUs": "75470000",
+            "startUs": "75290000",
+            "text": " and"
+          },
+          {
+            "confidence": 0.9832452535629272,
+            "endUs": "75570000",
+            "startUs": "75470000",
+            "text": " a"
+          },
+          {
+            "confidence": 0.9959203004837036,
+            "endUs": "75850000",
+            "startUs": "75570000",
+            "text": " half"
+          },
+          {
+            "confidence": 0.9962965846061707,
+            "endUs": "76490000",
+            "startUs": "75850000",
+            "text": " billion"
+          },
+          {
+            "confidence": 0.9925714135169983,
+            "endUs": "77090000",
+            "startUs": "76490000",
+            "text": " unique"
+          },
+          {
+            "confidence": 0.996336817741394,
+            "endUs": "77610000",
+            "startUs": "77090000",
+            "text": " devices"
+          },
+          {
+            "confidence": 0.9829205870628357,
+            "endUs": "77990000",
+            "startUs": "77610000",
+            "text": " visit"
+          },
+          {
+            "confidence": 0.9914767146110535,
+            "endUs": "78290000",
+            "startUs": "77990000",
+            "text": " our"
+          },
+          {
+            "confidence": 0.9817424416542053,
+            "endUs": "78730000",
+            "startUs": "78290000",
+            "text": " projects"
+          },
+          {
+            "confidence": 0.9920498728752136,
+            "endUs": "79150000",
+            "startUs": "78730000",
+            "text": " every"
+          },
+          {
+            "confidence": 0.9968383312225342,
+            "endUs": "79450000",
+            "startUs": "79150000",
+            "text": " single"
+          },
+          {
+            "confidence": 0.9900680780410767,
+            "endUs": "79770000",
+            "startUs": "79450000",
+            "text": " month."
+          },
+          {
+            "confidence": 0.9854852557182312,
+            "endUs": "79950000",
+            "startUs": "79930000",
+            "text": " That"
+          },
+          {
+            "confidence": 0.9952410459518433,
+            "endUs": "80370000",
+            "startUs": "79950000",
+            "text": " represents"
+          },
+          {
+            "confidence": 0.9963274598121643,
+            "endUs": "80830000",
+            "startUs": "80370000",
+            "text": " hundreds"
+          },
+          {
+            "confidence": 0.998145580291748,
+            "endUs": "81070000",
+            "startUs": "80830000",
+            "text": " of"
+          },
+          {
+            "confidence": 0.9987494945526123,
+            "endUs": "81310000",
+            "startUs": "81070000",
+            "text": " millions"
+          },
+          {
+            "confidence": 0.9993034601211548,
+            "endUs": "81530000",
+            "startUs": "81310000",
+            "text": " of"
+          },
+          {
+            "confidence": 0.9991809725761414,
+            "endUs": "81730000",
+            "startUs": "81530000",
+            "text": " people"
+          },
+          {
+            "confidence": 0.9867736101150513,
+            "endUs": "82290000",
+            "startUs": "81730000",
+            "text": " from"
+          },
+          {
+            "confidence": 0.9984172582626343,
+            "endUs": "82730000",
+            "startUs": "82290000",
+            "text": " every"
+          },
+          {
+            "confidence": 0.9982677698135376,
+            "endUs": "83230000",
+            "startUs": "82730000",
+            "text": " continent"
+          },
+          {
+            "confidence": 0.9903608560562134,
+            "endUs": "83590000",
+            "startUs": "83230000",
+            "text": " on"
+          },
+          {
+            "confidence": 0.9992449283599854,
+            "endUs": "83690000",
+            "startUs": "83590000",
+            "text": " the"
+          },
+          {
+            "confidence": 0.9992285966873169,
+            "endUs": "83950000",
+            "startUs": "83690000",
+            "text": " globe,"
+          },
+          {
+            "confidence": 0.936819314956665,
+            "endUs": "84290000",
+            "startUs": "84150000",
+            "text": " yes,"
+          },
+          {
+            "confidence": 0.9982231259346008,
+            "endUs": "84810000",
+            "startUs": "84670000",
+            "text": " including"
+          },
+          {
+            "confidence": 0.9946491122245789,
+            "endUs": "85390000",
+            "startUs": "84810000",
+            "text": " Antarctica,"
+          },
+          {
+            "confidence": 0.9956348538398743,
+            "endUs": "86130000",
+            "startUs": "85890000",
+            "text": " coming"
+          },
+          {
+            "confidence": 0.9991095662117004,
+            "endUs": "86450000",
+            "startUs": "86130000",
+            "text": " to"
+          },
+          {
+            "confidence": 0.9984435439109802,
+            "endUs": "86670000",
+            "startUs": "86450000",
+            "text": " our"
+          },
+          {
+            "confidence": 0.9951772689819336,
+            "endUs": "87210000",
+            "startUs": "86670000",
+            "text": " projects,"
+          },
+          {
+            "confidence": 0.5091721415519714,
+            "endUs": "87910000",
+            "startUs": "87210000",
+            "text": " seeking"
+          },
+          {
+            "confidence": 0.9765382409095764,
+            "endUs": "88710000",
+            "startUs": "87910000",
+            "text": " knowledge."
+          },
+          {
+            "confidence": 0.8992676734924316,
+            "endUs": "89370000",
+            "startUs": "89130000",
+            "text": " That"
+          },
+          {
+            "confidence": 0.9945470094680786,
+            "endUs": "89570000",
+            "startUs": "89370000",
+            "text": " is"
+          },
+          {
+            "confidence": 0.39597591757774353,
+            "endUs": "89850000",
+            "startUs": "89570000",
+            "text": " an"
+          },
+          {
+            "confidence": 0.13759386539459229,
+            "endUs": "89970000",
+            "startUs": "89850000",
+            "text": " example."
+          }
+        ],
+        "transcriptSha256": "01037247b1db886cb92738442443ed17df6b8112c0a03f71ad0ba864db317b28",
+        "goldArtifactId": "commons-98650286-word-alignment",
+        "goldSha256": "89b0d1ece0f2353594342416fd4f3131d6bb30a069bc75b1b9e7a1e3e52a6494",
+        "goldDocumentSha256CanonicalJson": "70abbc5a5e2e2692dbee8d7649054243c35bb5f4551f988b635ecda1fe1ab6f7",
+        "scores": {
+          "deletions": 0,
+          "insertions": 2,
+          "referenceWords": 157,
+          "substitutions": 1,
+          "unicodeVersion": "14.0.0",
+          "wer": 0.01910828025477707
+        }
+      }
+    ],
+    "aggregate": {
+      "en": {
+        "substitutions": 3,
+        "deletions": 1,
+        "insertions": 4,
+        "referenceWords": 357,
+        "wer": 0.022408963585434174
+      },
+      "ar": {
+        "substitutions": 35,
+        "deletions": 4,
+        "insertions": 1,
+        "referenceWords": 98,
+        "wer": 0.40816326530612246
+      }
+    }
+  },
+  "repeatability": {
+    "runIds": [
+      "0f9b5c6b-8ed8-4106-9d0b-c8e518db289c",
+      "9a0cf637-5b7d-46da-876a-833ad41f8ec2",
+      "4da1fdb2-66bc-4bc6-bad8-8635e2ee2975"
+    ],
+    "completeCanonicalRepeatability": true,
+    "aggregate": {
+      "en": {
+        "substitutions": 3,
+        "deletions": 1,
+        "insertions": 4,
+        "referenceWords": 357,
+        "wer": 0.022408963585434174
+      },
+      "ar": {
+        "substitutions": 35,
+        "deletions": 4,
+        "insertions": 1,
+        "referenceWords": 98,
+        "wer": 0.40816326530612246
+      }
+    },
+    "ownerDecisionId": "us110-owner-generated-annotation-gold-v1",
+    "datasetVersion": "evaluation-dataset-v1",
+    "independentHumanAccuracy": "NOT_PROVEN",
+    "cp2Status": "NOT_MET"
+  },
+  "independentMetricVerification": {
+    "method": "independent full-matrix traceback; unchanged NFC/casefold/Arabic/punctuation/decimal normalization and midpoint scope",
+    "unicodeVersion": "14.0.0",
+    "runs": [
+      {
+        "runId": "0f9b5c6b-8ed8-4106-9d0b-c8e518db289c",
+        "results": [
+          {
+            "sourceId": "commons-28956463",
+            "goldSha256": "4a42f08f7eab4538c745ad01c2a32d42ada28a733b7d847fb691c0937b49fe0f",
+            "score": {
+              "substitutions": 2,
+              "deletions": 1,
+              "insertions": 2,
+              "referenceWords": 200,
+              "wer": 0.025
+            },
+            "transcriptSha256": "cdd267060052e6e350c07dbad4a5b7262ea028413f8b7b817899f30526b4ef96"
+          },
+          {
+            "sourceId": "commons-82236797",
+            "goldSha256": "342aa5a4d71c9ec0dac6263bfbe9139c58ab559c23245fb95093689d26f46f82",
+            "score": {
+              "substitutions": 35,
+              "deletions": 4,
+              "insertions": 1,
+              "referenceWords": 98,
+              "wer": 0.40816326530612246
+            },
+            "transcriptSha256": "55b0d1b60474dc8c52d6d3a3d36e14bd10219440dc6595e7b8d694e2323e0c12"
+          },
+          {
+            "sourceId": "commons-98650286",
+            "goldSha256": "89b0d1ece0f2353594342416fd4f3131d6bb30a069bc75b1b9e7a1e3e52a6494",
+            "score": {
+              "substitutions": 1,
+              "deletions": 0,
+              "insertions": 2,
+              "referenceWords": 157,
+              "wer": 0.01910828025477707
+            },
+            "transcriptSha256": "01037247b1db886cb92738442443ed17df6b8112c0a03f71ad0ba864db317b28"
+          }
+        ]
+      },
+      {
+        "runId": "9a0cf637-5b7d-46da-876a-833ad41f8ec2",
+        "results": [
+          {
+            "sourceId": "commons-28956463",
+            "goldSha256": "4a42f08f7eab4538c745ad01c2a32d42ada28a733b7d847fb691c0937b49fe0f",
+            "score": {
+              "substitutions": 2,
+              "deletions": 1,
+              "insertions": 2,
+              "referenceWords": 200,
+              "wer": 0.025
+            },
+            "transcriptSha256": "cdd267060052e6e350c07dbad4a5b7262ea028413f8b7b817899f30526b4ef96"
+          },
+          {
+            "sourceId": "commons-82236797",
+            "goldSha256": "342aa5a4d71c9ec0dac6263bfbe9139c58ab559c23245fb95093689d26f46f82",
+            "score": {
+              "substitutions": 35,
+              "deletions": 4,
+              "insertions": 1,
+              "referenceWords": 98,
+              "wer": 0.40816326530612246
+            },
+            "transcriptSha256": "55b0d1b60474dc8c52d6d3a3d36e14bd10219440dc6595e7b8d694e2323e0c12"
+          },
+          {
+            "sourceId": "commons-98650286",
+            "goldSha256": "89b0d1ece0f2353594342416fd4f3131d6bb30a069bc75b1b9e7a1e3e52a6494",
+            "score": {
+              "substitutions": 1,
+              "deletions": 0,
+              "insertions": 2,
+              "referenceWords": 157,
+              "wer": 0.01910828025477707
+            },
+            "transcriptSha256": "01037247b1db886cb92738442443ed17df6b8112c0a03f71ad0ba864db317b28"
+          }
+        ]
+      },
+      {
+        "runId": "4da1fdb2-66bc-4bc6-bad8-8635e2ee2975",
+        "results": [
+          {
+            "sourceId": "commons-28956463",
+            "goldSha256": "4a42f08f7eab4538c745ad01c2a32d42ada28a733b7d847fb691c0937b49fe0f",
+            "score": {
+              "substitutions": 2,
+              "deletions": 1,
+              "insertions": 2,
+              "referenceWords": 200,
+              "wer": 0.025
+            },
+            "transcriptSha256": "cdd267060052e6e350c07dbad4a5b7262ea028413f8b7b817899f30526b4ef96"
+          },
+          {
+            "sourceId": "commons-82236797",
+            "goldSha256": "342aa5a4d71c9ec0dac6263bfbe9139c58ab559c23245fb95093689d26f46f82",
+            "score": {
+              "substitutions": 35,
+              "deletions": 4,
+              "insertions": 1,
+              "referenceWords": 98,
+              "wer": 0.40816326530612246
+            },
+            "transcriptSha256": "55b0d1b60474dc8c52d6d3a3d36e14bd10219440dc6595e7b8d694e2323e0c12"
+          },
+          {
+            "sourceId": "commons-98650286",
+            "goldSha256": "89b0d1ece0f2353594342416fd4f3131d6bb30a069bc75b1b9e7a1e3e52a6494",
+            "score": {
+              "substitutions": 1,
+              "deletions": 0,
+              "insertions": 2,
+              "referenceWords": 157,
+              "wer": 0.01910828025477707
+            },
+            "transcriptSha256": "01037247b1db886cb92738442443ed17df6b8112c0a03f71ad0ba864db317b28"
+          }
+        ]
+      }
+    ],
+    "agreement": true,
+    "humanAccuracy": "NOT_PROVEN",
+    "cp2": "NOT_MET"
+  },
+  "limitations": [
+    "Owner-approved machine-generated project gold; independent human transcription accuracy NOT_PROVEN; CP2 NOT_MET.",
+    "No WER gold for the original 600-second scope; ten-minute results are bounded inference/integrity and performance evidence only.",
+    "Determinism is tested on pinned CPU/runtime configurations, not a cross-hardware or GPU bitwise guarantee.",
+    "VAD/secondary lexical checks detect evidenced omissions; they do not establish perfect human speech coverage."
+  ]
+}

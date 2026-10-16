@@ -25,7 +25,11 @@ export function runWorkerPython(
         "editagent_ai_worker.composition." + module,
         ...args,
       ],
-      { env, detached: true, stdio: ["pipe", "pipe", "inherit"] },
+      {
+        env: { ...env, OPENBLAS_NUM_THREADS: "1", OMP_NUM_THREADS: "1" },
+        detached: true,
+        stdio: ["pipe", "pipe", "inherit"],
+      },
     );
     let size = 0;
     const chunks = [];

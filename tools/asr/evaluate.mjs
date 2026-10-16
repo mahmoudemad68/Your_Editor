@@ -2,9 +2,10 @@
 import process from "node:process";
 import console from "node:console";
 import { URL } from "node:url";
-import { createReadStream, mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { createReadStream, mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
+import { createHash, randomUUID } from "node:crypto";
 import { runWorkerPython } from "./process.mjs";
 import { loadDataset, validateDataset } from "../evaluation/validate.mjs";
 import { scopedMetricInputs } from "../evaluation/scoped-inputs.mjs";
@@ -32,7 +33,7 @@ export function selectWordClips(dataset, requireHuman = false) {
       dataset.manifest.ownerDecision ?? null,
     );
     if (!requireHuman || scoped.provenance === "human_created")
-      clips.push({ source, gold, scoped });
+      clips.push({ source, gold, scoped, artifact });
   }
   if (clips.length < 3)
     throw new Error(
@@ -51,8 +52,11 @@ export async function evaluate(
     clips = selectWordClips(dataset, requireHuman);
   const temp = mkdtempSync(join(tmpdir(), "editagent-asr-evaluation-"));
   const results = [];
+  const runId = randomUUID();
+  const runDirectory = resolve(repository, ".local/asr-batch/evaluations", runId);
+  mkdirSync(runDirectory, { recursive: true });
   try {
-    for (const { source, gold, scoped } of clips) {
+    for (const { source, gold, scoped, artifact } of clips) {
       console.error(JSON.stringify({ event: "asr.evaluation.clip", sourceId: source.id }));
       const original = await hashStream(
         createReadStream(resolve(root, `${source.id}.${source.extension}`)),
@@ -89,6 +93,13 @@ export async function evaluate(
       );
       if (output.section?.status !== "completed")
         throw new Error("Transcription did not produce complete validated word intervals.");
+      // Keep every real recognized output before scoring the next clip. A later
+      // failure must not erase the successful runs needed to diagnose variance.
+      writeFileSync(
+        join(runDirectory, `${source.id}-recognized.json`),
+        JSON.stringify({ runId, sourceId: source.id, goldSha256: artifact.sha256, ...output }),
+        { flag: "wx" },
+      );
       const words = output.section.data.segments.flatMap((s) => s.words);
       const inputs = scopedMetricInputs(
         "word_alignment",
@@ -105,6 +116,7 @@ export async function evaluate(
         }),
       );
       results.push({
+        runId,
         sourceId: source.id,
         language: source.language,
         detectedLanguage: output.section.data.language,
@@ -115,6 +127,14 @@ export async function evaluate(
         wallTimeMs: output.wallTimeMs,
         peakRssBytes: output.peakRssBytes,
         wordCount: words.length,
+        recognizedText: words.map((word) => word.text).join(""),
+        recognizedWords: words,
+        transcriptSha256: createHash("sha256").update(JSON.stringify(output.section)).digest("hex"),
+        goldArtifactId: artifact.id,
+        goldSha256: artifact.sha256,
+        goldDocumentSha256CanonicalJson: createHash("sha256")
+          .update(JSON.stringify(gold))
+          .digest("hex"),
         scores,
       });
     }
@@ -133,7 +153,8 @@ export async function evaluate(
         ? (total.substitutions + total.deletions + total.insertions) / total.referenceWords
         : null;
     const independent = results.every((r) => r.provenance === "human_created");
-    return {
+    const report = {
+      runId,
       datasetVersion: dataset.manifest.datasetVersion,
       ownerDecisionId: dataset.manifest.ownerDecision?.id ?? null,
       independentHumanAccuracy: independent ? "MEASURED" : "NOT_PROVEN",
@@ -148,6 +169,10 @@ export async function evaluate(
       results,
       aggregate,
     };
+    writeFileSync(join(runDirectory, "report.json"), JSON.stringify(report, null, 2), {
+      flag: "wx",
+    });
+    return report;
   } finally {
     rmSync(temp, { recursive: true, force: true });
   }

@@ -573,6 +573,44 @@ asyncio.run(run())`,
         )
       ).rows[0].job_id;
       const crashJob = await store.retry(asset, project, "transcript", priorTranscript, owner);
+      // A rolling-upgrade worker must not acknowledge a new-algorithm intent
+      // with absent or old implementation metadata, even if the section itself
+      // is otherwise valid. Exercise the actual deferred PostgreSQL fence.
+      for (const parameters of [
+        null,
+        { asr: { alignmentAlgorithm: "ct2-contextual-v5" } },
+        { asr: { alignmentAlgorithm: "ct2-contextual-v6" } },
+        { asr: { alignmentAlgorithm: "ct2-contextual-v7" } },
+      ]) {
+        const connection = await pool.connect();
+        try {
+          await connection.query("BEGIN");
+          await connection.query("UPDATE jobs SET status='Running',attempt_count=1 WHERE id=$1", [
+            crashJob,
+          ]);
+          await connection.query(
+            "UPDATE analysis_tasks SET result=$2,result_attempt=1,inference_parameters=$3 WHERE job_id=$1",
+            [crashJob, document.sections.transcript, parameters],
+          );
+          await assert.rejects(
+            connection.query("COMMIT"),
+            (error) =>
+              error.code === "23514" && error.message === "Analysis runtime version mismatch",
+          );
+        } finally {
+          await connection.query("ROLLBACK");
+          connection.release();
+        }
+        const fenced = (
+          await pool.query(
+            "SELECT j.status,t.result,t.inference_parameters FROM jobs j JOIN analysis_tasks t ON t.job_id=j.id WHERE j.id=$1",
+            [crashJob],
+          )
+        ).rows[0];
+        assert.equal(fenced.status, "Queued");
+        assert.equal(fenced.result, null);
+        assert.equal(fenced.inference_parameters, null);
+      }
       await store.recover(queue);
       const crashing = consumer(env, "transcript");
       const childInfo = await until(() => {
@@ -606,7 +644,7 @@ asyncio.run(run())`,
       );
       const crashState = (
         await pool.query(
-          "SELECT j.status,j.attempt_count,t.result_attempt,t.result FROM jobs j JOIN analysis_tasks t ON t.job_id=j.id WHERE j.id=$1",
+          "SELECT j.status,j.attempt_count,t.result_attempt,t.result,t.inference_parameters FROM jobs j JOIN analysis_tasks t ON t.job_id=j.id WHERE j.id=$1",
           [crashJob],
         )
       ).rows[0];
@@ -614,6 +652,16 @@ asyncio.run(run())`,
       assert.equal(crashState.attempt_count, 2);
       assert.equal(crashState.result_attempt, 2);
       assert.ok(crashState.result);
+      // The production image and the restarted real native consumer must retain
+      // every canonical word, timestamp, confidence and provenance field.
+      assert.deepEqual(crashState.result, document.sections.transcript);
+      await assert.rejects(
+        pool.query("UPDATE analysis_tasks SET inference_parameters=$2 WHERE job_id=$1", [
+          crashJob,
+          { asr: { alignmentAlgorithm: "ct2-contextual-v5" } },
+        ]),
+        (error) => error.code === "23514" && error.message === "Analysis result is immutable",
+      );
       await store.recover(queue);
       // Cancellation through the real queue path while native ASR is active.
       const cancelJob = await store.retry(asset, project, "transcript", crashJob, owner);
@@ -639,10 +687,11 @@ asyncio.run(run())`,
       // Deferred admission must reject a late receipt and a terminal write must
       // remain distinguishable; no stale worker can resurrect this cancellation.
       await assert.rejects(
-        pool.query("UPDATE analysis_tasks SET result=$2,result_attempt=1 WHERE job_id=$1", [
-          cancelJob,
-          crashState.result,
-        ]),
+        pool.query(
+          "UPDATE analysis_tasks SET result=$2,result_attempt=1,inference_parameters=$3 WHERE job_id=$1",
+          [cancelJob, crashState.result, crashState.inference_parameters],
+        ),
+        (error) => error.code === "23514" && error.message === "Analysis result admission fenced",
       );
       assert.equal(
         (await pool.query("UPDATE jobs SET status='Running' WHERE id=$1", [cancelJob])).rowCount,
