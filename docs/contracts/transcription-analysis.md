@@ -94,6 +94,22 @@ of English/Arabic speech and repeated phrases. Test reports and remaining
 platform limitations belong to the exact-head evidence, not an unconditional
 cross-hardware numerical reproducibility claim.
 
+The supported x86-64 CPU runtime explicitly selects MKL with the official
+`CT2_USE_MKL=1` control and its default packed GEMM API (`CT2_PACKED_GEMM=1`).
+CTranslate2 otherwise chooses MKL versus oneDNN automatically by CPU vendor;
+pinning its thread count alone does not establish the same numerical backend.
+The `mkl-native-v1` profile is established before native imports by service startup,
+the isolated job entrypoint and the evaluation CLI. Inherited ISA/CBWR/debug
+overrides are removed; startup rejects an already-imported native runtime even
+when environment values match, because they cannot attest earlier initialization.
+Native instruction dispatch remains enabled, without
+introducing an AVX2/AVX512 hardware restriction. The profile and bounded thread
+environment are recorded in inference parameters and their configuration hash.
+CI archives CPU/library identity separately. This is not a cross-hardware
+bitwise-equivalence guarantee. Unsupported CPU architectures fail startup;
+CUDA and other architectures require separate measured validation.
+See the [official CTranslate2 environment-variable contract](https://opennmt.net/CTranslate2/environment_variables.html).
+
 Native zero-length or overlapping lexical intervals are not valid output.
 Supported CTranslate2 forced alignment uses the original PCM and complete
 recognized text; unresolved intervals fail closed rather than dropping words or
@@ -117,7 +133,7 @@ exact match of the complete indexed word sequence and overlapping temporal
 anchors on both available sides; repaired intervals must fit between untouched
 neighbors. It never estimates a duration or searches by lexical text alone.
 Unresolved or conflicting evidence still fails closed within the same encode bound.
-The `ct2-contextual-v9` identity also participates in durable admission identity,
+The `ct2-contextual-v10` identity also participates in durable admission identity,
 so prior algorithm results cannot satisfy a new-algorithm task accidentally.
 The deferred PostgreSQL receipt fence checks the worker's actual algorithm
 acknowledgment and freezes its inference metadata together with the result.

@@ -14,7 +14,10 @@ from editagent_ai_worker.contracts.media_analysis_generated import Transcript as
 from editagent_ai_worker.domain.analysis.transcription import TranscriptionError
 from editagent_ai_worker.domain.analysis.voice_activity import AudioIdentity
 from editagent_ai_worker.infrastructure.asr_config import AsrSettings
-from editagent_ai_worker.infrastructure.faster_whisper import FasterWhisperAdapter
+from editagent_ai_worker.infrastructure.config import (
+    ConfigurationError,
+    configure_asr_native_environment,
+)
 
 
 def main() -> int:
@@ -24,6 +27,9 @@ def main() -> int:
     args = parser.parse_args()
     started = time.monotonic()
     try:
+        configure_asr_native_environment()
+        from editagent_ai_worker.infrastructure.faster_whisper import FasterWhisperAdapter
+
         identity = AudioIdentity(**json.loads(args.identity.read_text()))
         adapter = FasterWhisperAdapter(AsrSettings())
         transcript = adapter.transcribe(str(args.audio), identity)
@@ -71,7 +77,7 @@ def main() -> int:
             )
         )
         return 0
-    except (TranscriptionError, ValueError, OSError, TypeError) as error:
+    except (TranscriptionError, ConfigurationError, ValueError, OSError, TypeError) as error:
         print(
             json.dumps(
                 {

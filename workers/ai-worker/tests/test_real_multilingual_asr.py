@@ -67,13 +67,15 @@ def test_real_native_kernel_alignment_and_fresh_reused_state(threads: int) -> No
     outputs = []
     environment = {
         **os.environ,
+        "CT2_USE_MKL": "0",
         "MKL_ENABLE_INSTRUCTIONS": "AVX2",
         "CT2_FORCE_CPU_ISA": "AVX2",
         "OPENBLAS_NUM_THREADS": "1",
         "OMP_NUM_THREADS": "1",
     }
-    # The supported x86 CPU branch reproduces zero-length real lexical tokens
-    # on the old adapter. Every child performs fresh + post-EN/AR reused runs.
+    # Conflicting inherited CPU-vendor/ISA settings must not select a different
+    # backend than the admitted profile. Every real child establishes its
+    # profile before import and performs fresh + post-EN/AR reused runs.
     for _ in range(2):
         run = subprocess.run(
             [sys.executable, str(Path(__file__).with_name("asr_native_probe.py")), str(threads)],
@@ -88,6 +90,8 @@ def test_real_native_kernel_alignment_and_fresh_reused_state(threads: int) -> No
         report(f"tiny-native-kernel-threads{threads}", outputs)
     assert outputs[0] == outputs[1]
     assert outputs[0]["completeNativeTextPreserved"] is True
+    assert outputs[0]["output"]["inferenceParameters"]["nativeCpuProfile"] == "mkl-native-v1"
+    assert outputs[0]["output"]["inferenceParameters"]["nativeCpuEnvironment"]["CT2_USE_MKL"] == "1"
 
 
 @pytest.mark.parametrize("threads", [1, 2])

@@ -11,7 +11,11 @@ from editagent_ai_worker.domain.analysis.voice_activity import VadModelError
 from editagent_ai_worker.infrastructure.analysis_workspace import recover_workspaces
 from editagent_ai_worker.infrastructure.asr_config import AsrSettings
 from editagent_ai_worker.infrastructure.asr_model import verify_asr_model
-from editagent_ai_worker.infrastructure.config import ConfigurationError, load_ai_worker_settings
+from editagent_ai_worker.infrastructure.config import (
+    ConfigurationError,
+    configure_asr_native_environment,
+    load_ai_worker_settings,
+)
 from editagent_ai_worker.infrastructure.health_server import start_health_server
 from editagent_ai_worker.infrastructure.lifecycle import READY_FILE_PATH
 from editagent_ai_worker.infrastructure.logging import configure_logging
@@ -23,6 +27,7 @@ from editagent_ai_worker.infrastructure.vad_config import load_vad_settings
 def main() -> None:
     try:
         settings = load_ai_worker_settings()
+        configure_asr_native_environment()
         # Reject missing deployment configuration before importing native runtimes.
         from editagent_ai_worker.composition.vad import build_voice_activity_detector
 

@@ -18,6 +18,12 @@ from typing import Any
 
 import pytest
 
+from editagent_ai_worker.infrastructure.config import (
+    ASR_NATIVE_ENVIRONMENT,
+    ASR_NATIVE_PROFILE,
+    configure_asr_native_environment,
+)
+
 
 def _runtime_identity() -> dict[str, Any]:
     cpu: dict[str, str] = {}
@@ -30,6 +36,8 @@ def _runtime_identity() -> dict[str, Any]:
         "python": platform.python_version(),
         "machine": platform.machine(),
         "libc": platform.libc_ver(),
+        "nativeCpuProfile": ASR_NATIVE_PROFILE,
+        "nativeCpuEnvironment": dict(ASR_NATIVE_ENVIRONMENT),
         "cpu": cpu,
         "libraries": {
             name: importlib.metadata.version(name)
@@ -39,6 +47,7 @@ def _runtime_identity() -> dict[str, Any]:
 
 
 def pytest_sessionstart(session: pytest.Session) -> None:
+    configure_asr_native_environment()
     directory = Path(__file__).resolve().parents[3] / ".local/asr-batch"
     directory.mkdir(parents=True, exist_ok=True)
     (directory / "native-runtime.json").write_text(
@@ -56,7 +65,11 @@ def _word(word: Any) -> dict[str, Any]:
         "text": getattr(word, "word", getattr(word, "text", "")),
         "start": _number(getattr(word, "start", getattr(word, "start_us", 0))),
         "end": _number(getattr(word, "end", getattr(word, "end_us", 0))),
-        "confidence": _number(getattr(word, "probability", getattr(word, "confidence", 0))),
+        "confidence": (
+            _number(getattr(word, "probability", getattr(word, "confidence", 0)))
+            if hasattr(word, "probability") or hasattr(word, "confidence")
+            else None
+        ),
     }
 
 
@@ -71,7 +84,16 @@ def pytest_exception_interact(
     for entry in call.excinfo.traceback:
         values = entry.frame.f_locals
         frame: dict[str, Any] = {"function": entry.frame.code.name}
-        for key in ("core", "end", "lower", "upper", "start_sample", "end_sample", "region_end"):
+        for key in (
+            "core",
+            "end",
+            "lower",
+            "upper",
+            "start_sample",
+            "end_sample",
+            "region_end",
+            "alignment_encodes",
+        ):
             if type(values.get(key)) is int:
                 frame[key] = values[key]
         if "audio" in values:
@@ -88,6 +110,11 @@ def pytest_exception_interact(
                     "words": [_word(word) for word in segment.words or []],
                 }
                 for segment in values["segments"][:100]
+            ]
+        if isinstance(values.get("full_evidence"), list):
+            frame["nativeAlignmentEvidence"] = [
+                [_word(word) for word in candidate[:512]]
+                for candidate in values["full_evidence"][:4]
             ]
         if isinstance(values.get("words"), list):
             frame["words"] = [_word(word) for word in values["words"][:1000]]

@@ -9,11 +9,14 @@ from pathlib import Path
 from typing import Any
 
 from editagent_ai_worker.infrastructure.asr_config import AsrSettings
-from editagent_ai_worker.infrastructure.faster_whisper import FasterWhisperAdapter
-from test_real_multilingual_asr import ROOT, canonical, fixture, pcm
+from editagent_ai_worker.infrastructure.config import configure_asr_native_environment
 
 
 def main() -> None:
+    configure_asr_native_environment()
+    from editagent_ai_worker.infrastructure.faster_whisper import FasterWhisperAdapter
+    from test_real_multilingual_asr import ROOT, canonical, fixture, pcm
+
     threads = int(sys.argv[1])
     assert threads in (1, 2)
     adapter = FasterWhisperAdapter(

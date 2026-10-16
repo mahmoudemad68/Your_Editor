@@ -5,7 +5,10 @@ application code do not read the environment.
 """
 
 import os
+import platform
+import sys
 from pathlib import Path
+from types import MappingProxyType
 from typing import Literal
 
 from pydantic import AnyHttpUrl, Field, PostgresDsn, RedisDsn, ValidationError
@@ -16,13 +19,61 @@ class ConfigurationError(Exception):
     """Missing or invalid AI worker configuration."""
 
 
+ASR_NATIVE_PROFILE = "mkl-native-v1"
+ASR_NATIVE_ENVIRONMENT = MappingProxyType(
+    {
+        "CT2_USE_MKL": "1",
+        "CT2_PACKED_GEMM": "1",
+        "OPENBLAS_NUM_THREADS": "1",
+        "OMP_NUM_THREADS": "1",
+    }
+)
+ASR_NATIVE_RESERVED_ENVIRONMENT = (
+    "CT2_FORCE_CPU_ISA",
+    "MKL_ENABLE_INSTRUCTIONS",
+    "MKL_CBWR",
+    "MKL_DEBUG_CPU_TYPE",
+    "ONEDNN_MAX_CPU_ISA",
+    "DNNL_MAX_CPU_ISA",
+)
+
+
+def require_asr_native_environment() -> None:
+    """Reject an unrecorded CPU backend; callers configure before native import."""
+    if any(os.environ.get(key) != value for key, value in ASR_NATIVE_ENVIRONMENT.items()):
+        raise ConfigurationError("ASR native execution profile is not configured.")
+    if any(key in os.environ for key in ASR_NATIVE_RESERVED_ENVIRONMENT):
+        raise ConfigurationError("ASR native execution profile has unsupported dispatch overrides.")
+
+
+def configure_asr_native_environment() -> None:
+    """Pin the supported CT2 BLAS backend before either library initializes.
+
+    CT2 otherwise chooses MKL versus oneDNN by CPU vendor. ISA selection in CT2
+    alone does not constrain its BLAS backend. Never switch an already-imported
+    native library into a profile its initialized state cannot establish.
+    """
+    if "ctranslate2" in sys.modules or "faster_whisper" in sys.modules:
+        raise ConfigurationError(
+            "ASR native runtime is already imported; this startup profile is not configured."
+        )
+    if platform.machine().lower() not in {"x86_64", "amd64"}:
+        raise ConfigurationError("ASR CPU execution requires the supported x86-64 MKL runtime.")
+    for key in ASR_NATIVE_RESERVED_ENVIRONMENT:
+        os.environ.pop(key, None)
+    os.environ.update(ASR_NATIVE_ENVIRONMENT)
+
+
 def analysis_child_environment(workspace: str) -> dict[str, str]:
     """Internal supervisor-owned process configuration; never supplied by a job."""
     return {
-        **os.environ,
+        **{
+            key: value
+            for key, value in os.environ.items()
+            if key not in ASR_NATIVE_RESERVED_ENVIRONMENT
+        },
+        **ASR_NATIVE_ENVIRONMENT,
         "EDITAGENT_ANALYSIS_TEMP": workspace,
-        "OPENBLAS_NUM_THREADS": "1",
-        "OMP_NUM_THREADS": "1",
     }
 
 

@@ -18,6 +18,9 @@ def main() -> None:
         raise SystemExit(1)
     if ctypes.CDLL("libc.so.6").prctl(1, signal.SIGKILL) != 0 or os.getppid() != parent:
         raise SystemExit(1)
+    from editagent_ai_worker.infrastructure.config import configure_asr_native_environment
+
+    configure_asr_native_environment()
     runpy.run_module("editagent_ai_worker.composition.analysis_job", run_name="__main__")
 
 

@@ -32,9 +32,15 @@ from editagent_ai_worker.domain.analysis.voice_activity import AudioIdentity, Ca
 from editagent_ai_worker.infrastructure.asr_config import AsrSettings
 from editagent_ai_worker.infrastructure.asr_features import DeterministicFeatureExtractor
 from editagent_ai_worker.infrastructure.asr_model import verify_asr_model
+from editagent_ai_worker.infrastructure.config import (
+    ASR_NATIVE_ENVIRONMENT,
+    ASR_NATIVE_PROFILE,
+    ConfigurationError,
+    require_asr_native_environment,
+)
 from editagent_ai_worker.infrastructure.vad_audio import verify_audio_file, wav_parameters
 
-ASR_ALGORITHM = "ct2-contextual-v9"
+ASR_ALGORITHM = "ct2-contextual-v10"
 
 
 def uncovered_speech(audio: Any, words: list[Any], options: Any) -> list[tuple[int, int]]:
@@ -223,6 +229,10 @@ def merge_owned_words(
 
 class FasterWhisperAdapter:
     def __init__(self, settings: AsrSettings) -> None:
+        try:
+            require_asr_native_environment()
+        except ConfigurationError as exc:
+            raise TranscriptionError("ASR native execution profile is invalid") from exc
         self.settings = settings
         ctranslate2.set_random_seed(settings.seed)
         self.model_identity = verify_asr_model(settings.model_path, settings.model)
@@ -881,6 +891,8 @@ class FasterWhisperAdapter:
                 "conditionOnPreviousText": False,
                 "workers": 1,
                 "alignmentAlgorithm": ASR_ALGORITHM,
+                "nativeCpuProfile": ASR_NATIVE_PROFILE,
+                "nativeCpuEnvironment": dict(ASR_NATIVE_ENVIRONMENT),
                 "featureProjection": "frequency-ordered-float32-v1",
                 "languageDetectionWindowUs": 4000000,
                 "languageDetectionMinimumProbability": 0.5,
