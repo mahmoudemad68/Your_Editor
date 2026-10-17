@@ -15,10 +15,28 @@ x-object-storage: &object-storage
   S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-${MINIO_ROOT_PASSWORD:-editagent-dev-secret}}
   S3_REGION: ${S3_REGION:-us-east-1}
 
+# The media admission coordinator and inference worker share the same immutable
+# operator configuration. A rerun retains the configuration stored on its job.
+x-analysis-environment: &analysis-environment
+  EDITAGENT_ASR_MODEL: ${EDITAGENT_ASR_MODEL:-small}
+  EDITAGENT_ASR_DEVICE: ${EDITAGENT_ASR_DEVICE:-cpu}
+  EDITAGENT_ASR_COMPUTE_TYPE: ${EDITAGENT_ASR_COMPUTE_TYPE:-int8}
+  EDITAGENT_ASR_CPU_FALLBACK: ${EDITAGENT_ASR_CPU_FALLBACK:-true}
+  EDITAGENT_ASR_CPU_THREADS: ${EDITAGENT_ASR_CPU_THREADS:-2}
+  EDITAGENT_ASR_BEAM_SIZE: ${EDITAGENT_ASR_BEAM_SIZE:-5}
+  EDITAGENT_ASR_SEED: ${EDITAGENT_ASR_SEED:-0}
+  EDITAGENT_ASR_TIMEOUT_MS: ${EDITAGENT_ASR_TIMEOUT_MS:-600000}
+  EDITAGENT_ASR_CHUNK_US: ${EDITAGENT_ASR_CHUNK_US:-24000000}
+  EDITAGENT_ASR_OVERLAP_US: ${EDITAGENT_ASR_OVERLAP_US:-2000000}
+  EDITAGENT_ASR_SPEECH_THRESHOLD: ${EDITAGENT_ASR_SPEECH_THRESHOLD:-0.5}
+  EDITAGENT_ASR_NEGATIVE_THRESHOLD: ${EDITAGENT_ASR_NEGATIVE_THRESHOLD:-0.35}
+  EDITAGENT_ASR_MIN_SILENCE_MS: ${EDITAGENT_ASR_MIN_SILENCE_MS:-200}
+  EDITAGENT_ASR_SPEECH_PADDING_MS: ${EDITAGENT_ASR_SPEECH_PADDING_MS:-100}
+
 x-ai-environment: &ai-environment
   DATABASE_URL: *database-url
   REDIS_URL: redis://redis:6379/0
-  <<: *object-storage
+  <<: [*object-storage, *analysis-environment]
   EDITAGENT_AI_DEVICE: cpu
 
 services:
@@ -335,7 +353,7 @@ services:
     environment:
       DATABASE_URL: *database-url
       REDIS_URL: redis://redis:6379/0
-      <<: *object-storage
+      <<: [*object-storage, *analysis-environment]
     depends_on:
       postgres:
         condition: service_healthy
@@ -447,7 +465,20 @@ services:
     build:
       context: .
       dockerfile: workers/ai-worker/Dockerfile
+      args:
+        ASR_MODEL: ${EDITAGENT_ASR_MODEL:-small}
     image: editagent-ai-worker:local
+    user: "10001:10001"
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    cpus: 2
+    mem_limit: 3g
+    memswap_limit: 3g
+    pids_limit: 128
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=128m,mode=1777
     container_name: editagent-ai-worker
     environment: *ai-environment
     depends_on:
@@ -466,7 +497,7 @@ services:
           "import urllib.request; urllib.request.urlopen('http://127.0.0.1:3200/ready', timeout=3).close()",
         ]
       interval: 5s
-      timeout: 3s
+      timeout: 5s
       retries: 20
       start_period: 10s
     restart: "no"
@@ -480,7 +511,20 @@ services:
     build:
       context: .
       dockerfile: workers/ai-worker/Dockerfile
+      args:
+        ASR_MODEL: ${EDITAGENT_ASR_MODEL:-small}
     container_name: editagent-ai-worker-gpu
+    user: "10001:10001"
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    cpus: 2
+    mem_limit: 3g
+    memswap_limit: 3g
+    pids_limit: 128
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=128m,mode=1777
     deploy:
       resources:
         reservations:

@@ -9,9 +9,12 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import os
 import signal
 import sys
+import time
+from collections.abc import Awaitable, Callable
 from typing import Any
 from uuid import uuid4
 
@@ -20,6 +23,8 @@ from bullmq import Worker  # type: ignore[import-untyped]
 from bullmq.custom_errors import UnrecoverableError  # type: ignore[import-untyped]
 from jsonschema import ValidationError
 
+from editagent_ai_worker.infrastructure.analysis_workspace import create_workspace
+from editagent_ai_worker.infrastructure.config import analysis_child_environment
 from editagent_ai_worker.infrastructure.job_envelope import load_job_envelope_schema
 from editagent_ai_worker.infrastructure.job_history import JobHistory
 
@@ -33,10 +38,21 @@ async def _noop(_job: Any, _token: str) -> None:
 
 
 class BullMqConsumer:
-    def __init__(self, redis_url: str, database_url: str, queue_name: str, lock_ms: int) -> None:
+    def __init__(
+        self,
+        redis_url: str,
+        database_url: str,
+        queue_name: str,
+        lock_ms: int,
+        handler: Callable[
+            [dict[str, Any], list[asyncio.subprocess.Process]], Awaitable[str | tuple[str, str]]
+        ]
+        | None = None,
+    ) -> None:
         self._history = JobHistory(database_url)
         self._lock_ms = lock_ms
         self._processes: list[asyncio.subprocess.Process] = []
+        self._handler = handler
         self._worker = Worker(
             queue_name,
             _noop,
@@ -72,9 +88,14 @@ class BullMqConsumer:
         job_id = str(job.id)
         renew_task = asyncio.create_task(self._renew(job_id, token))
         try:
+            durable_deadline_ms = None
             try:
                 envelope = _envelope(job.data, int(getattr(job, "attemptsStarted", 0) or 0))
-            except (ValidationError, QueueProtocolError):
+                if self._handler is not None:
+                    durable_deadline_ms = await asyncio.to_thread(
+                        self._history.validate_analysis, envelope
+                    )
+            except (ValidationError, QueueProtocolError, ValueError):
                 await self._settle_invalid(job, token, job_id)
                 return {"result": "failed", "jobId": job_id, "status": "Failed"}
             if await self._lost(renew_task):
@@ -83,16 +104,17 @@ class BullMqConsumer:
             if phase in {"Completed", "Cancelled", "Failed"}:
                 await self._ack_terminal(job, token, job_id, phase)
                 return {"result": phase.lower(), "jobId": job_id, "status": phase}
-            started, _attempt_number = await asyncio.to_thread(
-                self._history.begin, job_id, envelope
-            )
+            started, attempt_number = await asyncio.to_thread(self._history.begin, job_id, envelope)
             if await self._lost(renew_task):
                 return {"result": "lock-lost", "jobId": job_id}
             if started == "exhausted":
                 if await self._owns(job_id, token):
                     await job.moveToFailed(UnrecoverableError("worker failed"), token, False)
                 return {"result": "failed", "jobId": job_id, "status": "Failed"}
-            return await self._run_guarded(job, token, job_id, envelope, renew_task)
+            envelope["attempt"] = attempt_number
+            return await self._run_guarded(
+                job, token, job_id, envelope, renew_task, durable_deadline_ms
+            )
         finally:
             if not renew_task.done():
                 renew_task.cancel()
@@ -108,9 +130,12 @@ class BullMqConsumer:
         job_id: str,
         envelope: dict[str, Any],
         renew_task: asyncio.Task[None],
+        durable_deadline_ms: int | None = None,
     ) -> dict[str, Any]:
         execute_task = asyncio.create_task(self._execute(envelope))
-        guard_task = asyncio.create_task(self._guard(job_id, int(envelope["timeoutMs"])))
+        guard_task = asyncio.create_task(
+            self._guard(job_id, int(envelope["timeoutMs"]), durable_deadline_ms)
+        )
         try:
             await asyncio.wait(
                 {execute_task, renew_task, guard_task},
@@ -125,39 +150,68 @@ class BullMqConsumer:
                 if not await self._owns(job_id, token):
                     return {"result": "lock-lost", "jobId": job_id}
                 if isinstance(reason, _CancelRequested):
-                    await asyncio.to_thread(self._history.cancel, job_id)
-                    await job.moveToCompleted("cancelled", token, False)
-                    return {"result": "cancelled", "jobId": job_id, "status": "Cancelled"}
+                    await asyncio.to_thread(self._history.cancel, job_id, int(envelope["attempt"]))
+                    return await self._settled(job, token, job_id, "Cancelled", "cancelled")
                 attempt = int(envelope["attempt"])
                 max_attempts = int(envelope["maxAttempts"])
-                if attempt < max_attempts:
-                    await asyncio.to_thread(self._history.retry, job_id, "timed out")
-                    await job.moveToFailed(RuntimeError("timed out"), token, False)
-                    return {"result": "retrying", "jobId": job_id, "status": "Retrying"}
-                await asyncio.to_thread(self._history.fail, job_id, "timed out", envelope)
-                await job.moveToFailed(UnrecoverableError("timed out"), token, False)
-                return {"result": "failed", "jobId": job_id, "status": "Failed"}
+                admission_expired = (
+                    durable_deadline_ms is not None and time.time() * 1000 >= durable_deadline_ms
+                )
+                if attempt < max_attempts and not admission_expired:
+                    await asyncio.to_thread(
+                        self._history.retry, job_id, "timed out", int(envelope["attempt"])
+                    )
+                    return await self._settled(job, token, job_id, "Retrying", "timed out")
+                await asyncio.to_thread(
+                    self._history.fail, job_id, "timed out", envelope, int(envelope["attempt"])
+                )
+                return await self._settled(job, token, job_id, "Failed", "timed out")
             guard_task.cancel()
             outcome = execute_task.result()
             if not await self._owns(job_id, token):
                 return {"result": "lock-lost", "jobId": job_id}
             if outcome == "complete":
-                await asyncio.to_thread(self._history.complete, job_id)
-                await job.moveToCompleted("completed", token, False)
-                return {"result": "completed", "jobId": job_id, "status": "Completed"}
+                await asyncio.to_thread(self._history.complete, job_id, int(envelope["attempt"]))
+                return await self._settled(job, token, job_id, "Completed", "completed")
             if outcome[0] == "retry":
-                await asyncio.to_thread(self._history.retry, job_id, outcome[1])
-                await job.moveToFailed(RuntimeError(outcome[1]), token, False)
-                return {"result": "retrying", "jobId": job_id, "status": "Retrying"}
-            await asyncio.to_thread(self._history.fail, job_id, outcome[1], envelope)
-            await job.moveToFailed(UnrecoverableError(outcome[1]), token, False)
-            return {"result": "failed", "jobId": job_id, "status": "Failed"}
+                await asyncio.to_thread(
+                    self._history.retry, job_id, outcome[1], int(envelope["attempt"])
+                )
+                return await self._settled(job, token, job_id, "Retrying", outcome[1])
+            await asyncio.to_thread(
+                self._history.fail, job_id, outcome[1], envelope, int(envelope["attempt"])
+            )
+            return await self._settled(job, token, job_id, "Failed", outcome[1])
         finally:
             await self._halt(execute_task, guard_task)
 
-    async def _guard(self, job_id: str, timeout_ms: int) -> None:
+    async def _settled(
+        self, job: Any, token: str, job_id: str, expected: str, reason: str
+    ) -> dict[str, Any]:
+        phase = await asyncio.to_thread(self._history.read_status, job_id)
+        if not await self._owns(job_id, token):
+            return {"result": "lock-lost", "jobId": job_id, "status": phase}
+        if phase != expected:
+            if phase in {"Completed", "Cancelled", "Failed"}:
+                await self._ack_terminal(job, token, job_id, phase)
+                return {"result": phase.lower(), "jobId": job_id, "status": phase}
+            return {"result": "fenced", "jobId": job_id, "status": phase}
+        if phase == "Retrying":
+            await job.moveToFailed(RuntimeError(reason), token, False)
+        elif phase == "Failed":
+            await job.moveToFailed(UnrecoverableError(reason), token, False)
+        else:
+            await job.moveToCompleted(phase.lower(), token, False)
+        return {"result": phase.lower(), "jobId": job_id, "status": phase}
+
+    async def _guard(
+        self, job_id: str, timeout_ms: int, durable_deadline_ms: int | None = None
+    ) -> None:
         loop = asyncio.get_running_loop()
-        deadline = loop.time() + (timeout_ms / 1000)
+        remaining = timeout_ms / 1000
+        if durable_deadline_ms is not None:
+            remaining = min(remaining, durable_deadline_ms / 1000 - time.time())
+        deadline = loop.time() + remaining
         while True:
             remaining = deadline - loop.time()
             if remaining <= 0:
@@ -167,12 +221,19 @@ class BullMqConsumer:
                 raise _CancelRequested()
 
     async def _cancel_requested(self, job_id: str) -> bool:
-        raw = await self._worker.client.get(f"editagent:job-cancel:{job_id}")
+        try:
+            raw = await asyncio.wait_for(
+                self._worker.client.get(f"editagent:job-cancel:{job_id}"), timeout=0.25
+            )
+        except TimeoutError:
+            return False
         return bool(raw == "1")
 
     async def _owns(self, job_id: str, token: str) -> bool:
         try:
-            extended = await self._worker.backend.extendLock(job_id, token, self._lock_ms)
+            extended = await asyncio.wait_for(
+                self._worker.backend.extendLock(job_id, token, self._lock_ms), timeout=1
+            )
         except Exception:
             return False
         return int(extended) == 1
@@ -221,11 +282,26 @@ class BullMqConsumer:
     async def _renew(self, job_id: str, token: str) -> None:
         while True:
             await asyncio.sleep(max(0.05, self._lock_ms / 2000))
-            extended = await self._worker.backend.extendLock(job_id, token, self._lock_ms)
+            extended = await asyncio.wait_for(
+                self._worker.backend.extendLock(job_id, token, self._lock_ms), timeout=1
+            )
             if int(extended) != 1:
                 raise QueueProtocolError(f"lost lock for {job_id}")
 
     async def _execute(self, envelope: dict[str, Any]) -> str | tuple[str, str]:
+        if self._handler is not None:
+            try:
+                return await self._handler(envelope, self._processes)
+            except Exception:
+                # Handler cleanup/staging infrastructure failures must not bypass
+                # durable settlement or expose adapter details. A committed
+                # receipt is safely reused by a subsequent fenced attempt.
+                return (
+                    "retry"
+                    if int(envelope["attempt"]) < int(envelope["maxAttempts"])
+                    else "permanent",
+                    "Analysis resources are unavailable",
+                )
         payload = envelope.get("payload")
         if not isinstance(payload, dict):
             return ("permanent", "job payload must be an object")
@@ -334,3 +410,72 @@ if marker:
     with open(marker, "a", encoding="utf-8") as handle:
         handle.write(f"done {delay_ms}\\n")
 """
+
+
+async def run_analysis_handler(
+    envelope: dict[str, Any], processes: list[asyncio.subprocess.Process]
+) -> str | tuple[str, str]:
+    if envelope.get("jobType") not in {"analysis.transcript.v1", "analysis.speech.v1"}:
+        return ("permanent", "Unsupported analysis job")
+    temporary = create_workspace()
+    creation = asyncio.create_task(
+        asyncio.create_subprocess_exec(
+            sys.executable,
+            "-m",
+            "editagent_ai_worker.composition.analysis_entry",
+            str(os.getpid()),
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=None,
+            start_new_session=True,
+            env=analysis_child_environment(temporary.name),
+        )
+    )
+    try:
+        # A cancellation between OS spawn and Process registration must not lose
+        # ownership of a live child. Finish registration, then kill/reap it.
+        process = await asyncio.shield(creation)
+    except asyncio.CancelledError:
+        try:
+            while not creation.done():
+                try:
+                    await asyncio.shield(creation)
+                except asyncio.CancelledError:
+                    continue
+                except Exception:
+                    break
+            if not creation.cancelled() and creation.exception() is None:
+                child = creation.result()
+                _kill_process_group(child.pid)
+                await child.wait()
+        finally:
+            temporary.cleanup()
+        raise
+    except BaseException:
+        temporary.cleanup()
+        raise
+    processes.append(process)
+    try:
+        output, _ = await process.communicate(json.dumps(envelope, separators=(",", ":")).encode())
+        if len(output) > 4096:
+            return ("permanent", "Invalid analysis response")
+        if process.returncode == 0:
+            return "complete"
+        try:
+            reply = json.loads(output)
+        except (ValueError, TypeError):
+            return ("permanent", "Analysis failed")
+        if reply.get("mode") == "retry" and int(envelope["attempt"]) < int(envelope["maxAttempts"]):
+            return ("retry", "Analyzer is unavailable")
+        if reply.get("error") == "Analysis timed out.":
+            return ("permanent", "timed out")
+        return ("permanent", "Analysis failed")
+    finally:
+        # A cancelled communicate does not mean the native model process has stopped.
+        if process.returncode is None:
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(process.pid, 9)
+            await process.wait()
+        if process in processes:
+            processes.remove(process)
+        temporary.cleanup()

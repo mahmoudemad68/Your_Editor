@@ -1,0 +1,201 @@
+{
+  "schemaVersion": 1,
+  "fixtures": [
+    {
+      "file": "en.wav",
+      "language": "en",
+      "sha256": "c375fcd7041c66cecd7bac197e108e1d1f597edfff32c9942e49579b6243af97",
+      "sourceId": "commons-98650286",
+      "sourceSha256": "86cf8af3ceb93561358aebe34c7a5ad39fc522660f695c8b8c667d453d6f7117",
+      "sourceScopeUs": {
+        "startUs": "40000000",
+        "endUs": "48000000"
+      },
+      "license": {
+        "id": "CC0-1.0",
+        "name": "CC0",
+        "url": "https://creativecommons.org/publicdomain/zero/1.0/deed.en",
+        "attribution": "Katherine Maher's message on the occasion of Wikipedia 20.webm — Wikimedia Foundation; https://commons.wikimedia.org/wiki/File:Katherine_Maher%27s_message_on_the_occasion_of_Wikipedia_20.webm; CC0 (https://creativecommons.org/publicdomain/zero/1.0/deed.en). Acquired Wikimedia transcode; candidate reel is an excerpt/format adaptation.",
+        "allowedUseRationale": "CC0 permits copying and adaptation without copyright permission; source attribution retained for provenance.",
+        "rightsAssertion": "File page revision 606502845 declares CC0; credited creator: Wikimedia Foundation. Source credit: Wikimedia Foundation.",
+        "evidenceUrl": "https://commons.wikimedia.org/w/index.php?oldid=606502845"
+      },
+      "adaptation": "8-second excerpt; deterministic mono PCM16LE, 16000 Hz; no reference transcript or hand labels fabricated."
+    },
+    {
+      "file": "ar.wav",
+      "language": "ar",
+      "sha256": "59dbca9b613a6252eac3e9d4716c6f5efa4fbf5d40d6ea2fad9e2aae99ecd654",
+      "sourceId": "commons-82236797",
+      "sourceSha256": "5f3eff8e19d9ea508f875082f177bd7dfdad70f56c03e0a33b6c8e5a7a2c0426",
+      "sourceScopeUs": {
+        "startUs": "40000000",
+        "endUs": "48000000"
+      },
+      "license": {
+        "id": "CC-BY-3.0",
+        "name": "CC BY 3.0",
+        "url": "https://creativecommons.org/licenses/by/3.0",
+        "attribution": "Wikimedia Strategy 2030 - Diversity - Interview Walaa Abdelmanaem (AR) - لقاء مع ولاء عبد المنعم.webm — Anass (WMF); https://commons.wikimedia.org/wiki/File:Wikimedia_Strategy_2030_-_Diversity_-_Interview_Walaa_Abdelmanaem_(AR)_-_%D9%84%D9%82%D8%A7%D8%A1_%D9%85%D8%B9_%D9%88%D9%84%D8%A7%D8%A1_%D8%B9%D8%A8%D8%AF_%D8%A7%D9%84%D9%85%D9%86%D8%B9%D9%85.webm; CC BY 3.0 (https://creativecommons.org/licenses/by/3.0). Acquired Wikimedia transcode; candidate reel is an excerpt/format adaptation.",
+        "allowedUseRationale": "Redistribution and adapted evaluation reels permitted with attribution and indication of changes.",
+        "rightsAssertion": "File page revision 1024089284 declares CC BY 3.0; credited creator: Anass (WMF). Source credit: YouTube : Wikimedia Strategy 2030 - Diversity - Interview Walaa Abdelmanaem (AR) - لقاء مع ولاء عبد المنعم – View/save archived versions on archive.org.",
+        "evidenceUrl": "https://commons.wikimedia.org/w/index.php?oldid=1024089284"
+      },
+      "adaptation": "8-second excerpt; deterministic mono PCM16LE, 16000 Hz; no reference transcript or hand labels fabricated."
+    },
+    {
+      "file": "en-chunks.wav",
+      "language": "en",
+      "sha256": "8686fa55c9a1dd06b886ea8bf06ebebfb787a160c617392d42d93caeb96f8ea0",
+      "sourceId": "commons-148215183",
+      "sourceSha256": "793bade8dea8492b56d266f1d6fb2997f1c936cb01c0ff5c65fe449bbe59f0f1",
+      "sourceScopeUs": {
+        "startUs": "96000000",
+        "endUs": "156000000"
+      },
+      "license": {
+        "id": "CC-BY-SA-4.0",
+        "name": "CC BY-SA 4.0",
+        "url": "https://creativecommons.org/licenses/by-sa/4.0",
+        "attribution": "WikiSalon Wikidata Adding References.webm — Doreva Belfiore and the Philadelphia WikiSalon; https://commons.wikimedia.org/wiki/File:WikiSalon_Wikidata_Adding_References.webm; CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0). Acquired Wikimedia transcode; candidate reel is an excerpt/format adaptation.",
+        "allowedUseRationale": "Redistribution and adapted evaluation reels permitted with attribution and indication of changes. Adapted reels must retain this compatible ShareAlike license; attribution travels with every distributed reel.",
+        "rightsAssertion": "File page revision 1134023890 declares CC BY-SA 4.0; credited creator: Doreva Belfiore and the Philadelphia WikiSalon. Source credit: Vimeo : WikiSalon Wikidata Adding References ( view archived source ).",
+        "evidenceUrl": "https://commons.wikimedia.org/w/index.php?oldid=1134023890"
+      },
+      "adaptation": "60-second excerpt; deterministic mono PCM16LE 16000 Hz; CC BY-SA 4.0 retained. Chunk-edge regression only; no human labels or evaluation gold."
+    },
+    {
+      "file": "en-alignment.wav",
+      "language": "en",
+      "sha256": "20889d626103e3b88523356bda163d899142e9b8885fbd4eae5e5ea80091ef11",
+      "sourceId": "commons-148215183",
+      "sourceSha256": "793bade8dea8492b56d266f1d6fb2997f1c936cb01c0ff5c65fe449bbe59f0f1",
+      "sourceScopeUs": {
+        "startUs": "480000000",
+        "endUs": "540000000"
+      },
+      "license": {
+        "id": "CC-BY-SA-4.0",
+        "name": "CC BY-SA 4.0",
+        "url": "https://creativecommons.org/licenses/by-sa/4.0",
+        "attribution": "WikiSalon Wikidata Adding References.webm — Doreva Belfiore and the Philadelphia WikiSalon; https://commons.wikimedia.org/wiki/File:WikiSalon_Wikidata_Adding_References.webm; CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0). Acquired Wikimedia transcode; candidate reel is an excerpt/format adaptation.",
+        "allowedUseRationale": "Redistribution and adapted evaluation reels permitted with attribution and indication of changes. Adapted reels must retain this compatible ShareAlike license; attribution travels with every distributed reel.",
+        "rightsAssertion": "File page revision 1134023890 declares CC BY-SA 4.0; credited creator: Doreva Belfiore and the Philadelphia WikiSalon. Source credit: Vimeo : WikiSalon Wikidata Adding References ( view archived source ).",
+        "evidenceUrl": "https://commons.wikimedia.org/w/index.php?oldid=1134023890"
+      },
+      "adaptation": "60-second excerpt; deterministic mono PCM16LE 16000 Hz; CC BY-SA 4.0 retained. Original-PCM word realignment regression only; no human labels or evaluation gold."
+    },
+    {
+      "file": "en-long-opening.wav",
+      "language": "en",
+      "sha256": "4e54161336ae1d8db470a6b2c8a687567b4ab5018173aef22c0a7fd04c886078",
+      "sourceId": "commons-148215183",
+      "sourceSha256": "793bade8dea8492b56d266f1d6fb2997f1c936cb01c0ff5c65fe449bbe59f0f1",
+      "sourceScopeUs": {
+        "startUs": "0",
+        "endUs": "26000000"
+      },
+      "license": {
+        "id": "CC-BY-SA-4.0",
+        "name": "CC BY-SA 4.0",
+        "url": "https://creativecommons.org/licenses/by-sa/4.0",
+        "attribution": "WikiSalon Wikidata Adding References.webm — Doreva Belfiore and the Philadelphia WikiSalon; https://commons.wikimedia.org/wiki/File:WikiSalon_Wikidata_Adding_References.webm; CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0). Acquired Wikimedia transcode; candidate reel is an excerpt/format adaptation.",
+        "allowedUseRationale": "Redistribution and adapted evaluation reels permitted with attribution and indication of changes. Adapted reels must retain this compatible ShareAlike license; attribution travels with every distributed reel.",
+        "rightsAssertion": "File page revision 1134023890 declares CC BY-SA 4.0; credited creator: Doreva Belfiore and the Philadelphia WikiSalon. Source credit: Vimeo : WikiSalon Wikidata Adding References ( view archived source ).",
+        "evidenceUrl": "https://commons.wikimedia.org/w/index.php?oldid=1134023890"
+      },
+      "adaptation": "Opening 26-second excerpt; deterministic mono PCM16LE 16000 Hz; CC BY-SA 4.0 retained. QA60-H3 original opening/alignment regression, including the first 24-second core and two-second context. No reference transcript or human gold created."
+    },
+    {
+      "file": "ar-long.wav",
+      "language": "ar",
+      "sha256": "f00e74d3b739b32e8cc20d1cceee06968aa40c1f5a7f001c244ff0ad47a1c5f4",
+      "sourceId": "commons-82236797",
+      "sourceSha256": "5f3eff8e19d9ea508f875082f177bd7dfdad70f56c03e0a33b6c8e5a7a2c0426",
+      "sourceScopeUs": {
+        "startUs": "30000000",
+        "endUs": "90000000"
+      },
+      "license": {
+        "id": "CC-BY-3.0",
+        "name": "CC BY 3.0",
+        "url": "https://creativecommons.org/licenses/by/3.0",
+        "attribution": "Wikimedia Strategy 2030 - Diversity - Interview Walaa Abdelmanaem (AR) - لقاء مع ولاء عبد المنعم.webm — Anass (WMF); https://commons.wikimedia.org/wiki/File:Wikimedia_Strategy_2030_-_Diversity_-_Interview_Walaa_Abdelmanaem_(AR)_-_%D9%84%D9%82%D8%A7%D8%A1_%D9%85%D8%B9_%D9%88%D9%84%D8%A7%D8%A1_%D8%B9%D8%A8%D8%AF_%D8%A7%D9%84%D9%85%D9%86%D8%B9%D9%85.webm; CC BY 3.0 (https://creativecommons.org/licenses/by/3.0). Acquired Wikimedia transcode; candidate reel is an excerpt/format adaptation.",
+        "allowedUseRationale": "Redistribution and adapted evaluation reels permitted with attribution and indication of changes.",
+        "rightsAssertion": "File page revision 1024089284 declares CC BY 3.0; credited creator: Anass (WMF). Source credit: YouTube : Wikimedia Strategy 2030 - Diversity - Interview Walaa Abdelmanaem (AR) - لقاء مع ولاء عبد المنعم – View/save archived versions on archive.org.",
+        "evidenceUrl": "https://commons.wikimedia.org/w/index.php?oldid=1024089284"
+      },
+      "adaptation": "60-second licensed mono PCM16LE 16000 Hz input, copied byte-for-byte from the existing pinned scoped PCM artifact. Full canonical fresh/reused-process determinism regression only; no annotations or human gold created."
+    },
+    {
+      "file": "en-window-tail.wav",
+      "language": "en",
+      "sha256": "9e8b444a995be8de83f41b96bf83c4197609b78a48cefb9b807bfed5e43a9e21",
+      "sourceId": "commons-148215183",
+      "sourceSha256": "793bade8dea8492b56d266f1d6fb2997f1c936cb01c0ff5c65fe449bbe59f0f1",
+      "sourceScopeUs": {
+        "startUs": "190000000",
+        "endUs": "220000000"
+      },
+      "license": {
+        "id": "CC-BY-SA-4.0",
+        "name": "CC BY-SA 4.0",
+        "url": "https://creativecommons.org/licenses/by-sa/4.0",
+        "attribution": "WikiSalon Wikidata Adding References.webm — Doreva Belfiore and the Philadelphia WikiSalon; https://commons.wikimedia.org/wiki/File:WikiSalon_Wikidata_Adding_References.webm; CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0). Acquired Wikimedia transcode; candidate reel is an excerpt/format adaptation.",
+        "allowedUseRationale": "Redistribution and adapted evaluation reels permitted with attribution and indication of changes. Adapted reels must retain this compatible ShareAlike license; attribution travels with every distributed reel.",
+        "rightsAssertion": "File page revision 1134023890 declares CC BY-SA 4.0; credited creator: Doreva Belfiore and the Philadelphia WikiSalon. Source credit: Vimeo : WikiSalon Wikidata Adding References ( view archived source ).",
+        "evidenceUrl": "https://commons.wikimedia.org/w/index.php?oldid=1134023890"
+      },
+      "adaptation": "30-second original-PCM excerpt; deterministic mono PCM16LE 16000 Hz; CC BY-SA 4.0 retained. Real partial right-context token regression from the original ten-minute recording. No annotation or evaluation gold created."
+    },
+    {
+      "file": "en-coverage-boundary.wav",
+      "language": "en",
+      "sha256": "545ab0d422c83435f8eae6ef87d842a6f9353494550f41aad6669705f61caa73",
+      "sourceId": "commons-148215183",
+      "sourceSha256": "793bade8dea8492b56d266f1d6fb2997f1c936cb01c0ff5c65fe449bbe59f0f1",
+      "sourceScopeUs": {
+        "startUs": "214000000",
+        "endUs": "242000000"
+      },
+      "license": {
+        "id": "CC-BY-SA-4.0",
+        "name": "CC BY-SA 4.0",
+        "url": "https://creativecommons.org/licenses/by-sa/4.0",
+        "attribution": "WikiSalon Wikidata Adding References.webm — Doreva Belfiore and the Philadelphia WikiSalon; https://commons.wikimedia.org/wiki/File:WikiSalon_Wikidata_Adding_References.webm; CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0). Acquired Wikimedia transcode; candidate reel is an excerpt/format adaptation.",
+        "allowedUseRationale": "Redistribution and adapted evaluation reels permitted with attribution and indication of changes. Adapted reels must retain this compatible ShareAlike license; attribution travels with every distributed reel.",
+        "rightsAssertion": "File page revision 1134023890 declares CC BY-SA 4.0; credited creator: Doreva Belfiore and the Philadelphia WikiSalon. Source credit: Vimeo : WikiSalon Wikidata Adding References ( view archived source ).",
+        "evidenceUrl": "https://commons.wikimedia.org/w/index.php?oldid=1134023890"
+      },
+      "adaptation": "28-second original-PCM excerpt; deterministic mono PCM16LE 16000 Hz; CC BY-SA 4.0 retained. Actual short-context word-alignment drift and completeness regression. No annotation or evaluation gold created."
+    },
+    {
+      "file": "en-original-ten-minute.flac",
+      "language": "en",
+      "sha256": "aa0a62613c6a2512e7aaa6d8c9d976171946aa8df97beea532d987ac5b2d9f79",
+      "sourceId": "commons-148215183",
+      "sourceSha256": "793bade8dea8492b56d266f1d6fb2997f1c936cb01c0ff5c65fe449bbe59f0f1",
+      "sourceScopeUs": {
+        "startUs": "0",
+        "endUs": "600000000"
+      },
+      "license": {
+        "id": "CC-BY-SA-4.0",
+        "name": "CC BY-SA 4.0",
+        "url": "https://creativecommons.org/licenses/by-sa/4.0",
+        "attribution": "WikiSalon Wikidata Adding References.webm — Doreva Belfiore and the Philadelphia WikiSalon; https://commons.wikimedia.org/wiki/File:WikiSalon_Wikidata_Adding_References.webm; CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0). Acquired Wikimedia transcode; candidate reel is an excerpt/format adaptation.",
+        "allowedUseRationale": "Redistribution and adapted evaluation reels permitted with attribution and indication of changes. Adapted reels must retain this compatible ShareAlike license; attribution travels with every distributed reel.",
+        "rightsAssertion": "File page revision 1134023890 declares CC BY-SA 4.0; credited creator: Doreva Belfiore and the Philadelphia WikiSalon. Source credit: Vimeo : WikiSalon Wikidata Adding References ( view archived source ).",
+        "evidenceUrl": "https://commons.wikimedia.org/w/index.php?oldid=1134023890"
+      },
+      "adaptation": "First 600 seconds of the approved source, deterministically normalized mono PCM16LE at 16000 Hz, then losslessly FLAC encoded for offline regression. Exact original normalized WAV is reconstructed and checksum verified. No transcript or gold labels generated.",
+      "canonicalWav": {
+        "sha256": "e052e39e22cc39a054c272df81e5baa1ab317a761e8e950fea9f40b9d70d9126",
+        "sizeBytes": 19200078,
+        "headerHex": "5249464646f8240157415645666d74201000000001000100803e0000007d0000020010004c4953541a000000494e464f495346540d0000004c61766636312e372e31303300006461746100f82401",
+        "pcmSha256": "fa04c41794fd34b8a1932d05ec523298ec998c316092eed69972aefeabc67efd",
+        "pcmBytes": 19200000
+      }
+    }
+  ]
+}

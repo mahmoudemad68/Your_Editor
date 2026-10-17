@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://editagent.local/schemas/analysis-job/1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "analysisVersion": { "const": "us210-v1" },
+    "analyzer": { "enum": ["transcript", "audio", "speech"] },
+    "mediaAssetId": { "$ref": "#/$defs/Uuid" },
+    "inputArtifactId": { "$ref": "#/$defs/Uuid" },
+    "configurationSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$(?![\\s\\S])" },
+    "generation": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 }
+  },
+  "required": [
+    "schemaVersion",
+    "analysisVersion",
+    "analyzer",
+    "mediaAssetId",
+    "inputArtifactId",
+    "configurationSha256",
+    "generation"
+  ],
+  "$defs": {
+    "Uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$(?![\\s\\S])"
+    }
+  }
+}

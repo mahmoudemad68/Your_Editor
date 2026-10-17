@@ -179,6 +179,9 @@ jobs:
       - name: Test
         run: pnpm test
 
+      - name: Real non-root CPU ASR, S3 readiness and crash recovery
+        run: pnpm asr:container
+
       - name: Real production render, cancellation and timeline golden frames
         run: pnpm render:test
 
@@ -188,7 +191,9 @@ jobs:
         with:
           name: render-evidence-${{ github.sha }}
           if-no-files-found: ignore
-          path: .local/render-batch/
+          path: |
+            .local/render-batch/
+            .local/asr-batch/
 
       - name: Upload coverage reports
         if: ${{ !cancelled() }}

@@ -8,7 +8,7 @@
   },
   "scripts": {
     "build": "pnpm schemas:check && turbo run build",
-    "test": "turbo run test && pnpm --filter @editagent/web check:api-client && node tools/test/run-node-tests.mjs tests/architecture/*.test.mjs tests/integration/*.test.mjs && node tools/test/require-coverage.mjs && pnpm --filter @editagent/web test:e2e",
+    "test": "turbo run test --log-order=stream && pnpm --filter @editagent/web check:api-client && node tools/test/run-node-tests.mjs tests/architecture/*.test.mjs tests/integration/*.test.mjs && node tools/test/require-coverage.mjs && pnpm --filter @editagent/web test:e2e",
     "lint": "node tools/architecture/ffmpeg-boundary.mjs && eslint . --max-warnings=0 && prettier --check . && depcruise --config .dependency-cruiser.cjs apps packages workers && turbo run lint",
     "typecheck": "turbo run typecheck",
     "format": "prettier --write .",
@@ -41,12 +41,16 @@
     "schemas:test": "node --test tests/integration/media-analysis.test.mjs",
     "audio:evaluate": "node tools/audio/evaluate.mjs",
     "audio:acceptance": "node tools/audio/acceptance.mjs",
-    "render:test": "node tools/render/integration.mjs"
+    "render:test": "node tools/render/integration.mjs",
+    "asr:evaluate": "node tools/asr/evaluate.mjs",
+    "asr:setup": "uv run --project workers/ai-worker python -m editagent_ai_worker.infrastructure.asr_model",
+    "asr:container": "node tools/asr/container.mjs"
   },
   "devDependencies": {
     "@aws-sdk/client-s3": "3.1018.0",
     "@commitlint/cli": "21.2.3",
     "@commitlint/config-conventional": "21.2.3",
+    "@editagent/analysis-core": "workspace:*",
     "@eslint/js": "10.0.1",
     "@vitest/coverage-v8": "5.0.3",
     "dependency-cruiser": "18.4.0",

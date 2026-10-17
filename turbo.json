@@ -6,7 +6,13 @@
     "UV_PYTHON",
     "UV_PYTHON_INSTALL_DIR",
     "UV_TOOL_BIN_DIR",
-    "UV_TOOL_DIR"
+    "UV_TOOL_DIR",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "NO_PROXY",
+    "SSL_CERT_FILE",
+    "REQUESTS_CA_BUNDLE",
+    "PIP_CERT"
   ],
   "tasks": {
     "build": {
@@ -37,6 +43,10 @@
         "FFPROBE_TIMEOUT_MS",
         "PROBE_TMPDIR"
       ]
+    },
+    "@editagent/ai-worker#test": {
+      "dependsOn": ["build", "@editagent/api#test"],
+      "cache": false
     }
   },
   "globalDependencies": ["tools/test/vitest.config.mts"]

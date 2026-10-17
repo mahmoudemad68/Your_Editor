@@ -93,6 +93,13 @@ test("real Redis subscriber TCP outage closes SSE and reconciles production-work
     expect(completed.status).toBe("Completed");
     const durable = await (await request.get("http://127.0.0.1:3032/job-evidence")).json();
     expect(durable.jobs).toHaveLength(2);
+    expect(
+      durable.jobs.every((job: { job_type: string }) => job.job_type === "media.inspect"),
+    ).toBe(true);
+    expect(new Set(durable.jobs.map((job: { subject_id: string }) => job.subject_id)).size).toBe(2);
+    expect(durable.jobs.map((job: { id: string }) => job.id).sort()).toEqual(
+      completed.jobIds.sort(),
+    );
     expect(durable.jobs.every((job: { status: string }) => job.status === "Completed")).toBe(true);
     await expect(panel(page).getByText("Waiting to start")).toBeVisible();
     await control(request, "job-revoke-membership", {
@@ -146,6 +153,7 @@ test("real Redis subscriber TCP outage closes SSE and reconciles production-work
       crossProjectEvents: crossProject,
       revokedProjectReconnectStatus: 404,
       durableJobs: durable.jobs,
+      backgroundJobs: durable.backgroundJobs,
     };
     // Same reconnect engine must refresh expired access rather than stop or loop.
     await other.close();

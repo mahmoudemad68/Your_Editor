@@ -4,6 +4,11 @@ The process entry point calls ``load_ai_worker_settings`` once. Domain and
 application code do not read the environment.
 """
 
+import os
+import platform
+import sys
+from pathlib import Path
+from types import MappingProxyType
 from typing import Literal
 
 from pydantic import AnyHttpUrl, Field, PostgresDsn, RedisDsn, ValidationError
@@ -12,6 +17,104 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class ConfigurationError(Exception):
     """Missing or invalid AI worker configuration."""
+
+
+ASR_NATIVE_PROFILE = "onednn-avx2-strict-v4"
+ASR_NATIVE_ENVIRONMENT = MappingProxyType(
+    {
+        "CT2_USE_MKL": "0",
+        "CT2_PACKED_GEMM": "0",
+        "CT2_FORCE_CPU_ISA": "AVX2",
+        "ONEDNN_MAX_CPU_ISA": "AVX2",
+        "DNNL_MAX_CPU_ISA": "AVX2",
+        "ONEDNN_DEFAULT_FPMATH_MODE": "strict",
+        "DNNL_DEFAULT_FPMATH_MODE": "strict",
+        "MKL_DYNAMIC": "FALSE",
+        "OMP_DYNAMIC": "FALSE",
+        "OPENBLAS_NUM_THREADS": "1",
+        "OMP_NUM_THREADS": "1",
+        "OMP_WAIT_POLICY": "PASSIVE",
+        "GOMP_SPINCOUNT": "0",
+    }
+)
+ASR_NATIVE_RESERVED_ENVIRONMENT = (
+    "MKL_CBWR",
+    "MKL_ENABLE_INSTRUCTIONS",
+    "MKL_DEBUG_CPU_TYPE",
+)
+
+
+def require_asr_native_environment() -> None:
+    """Reject an unrecorded CPU backend; callers configure before native import."""
+    if any(os.environ.get(key) != value for key, value in ASR_NATIVE_ENVIRONMENT.items()):
+        raise ConfigurationError("ASR native execution profile is not configured.")
+    if any(key in os.environ for key in ASR_NATIVE_RESERVED_ENVIRONMENT):
+        raise ConfigurationError("ASR native execution profile has unsupported dispatch overrides.")
+
+
+def configure_asr_native_environment() -> None:
+    """Pin CT2 and its separate convolution/GEMM dispatch before native import.
+
+    CT2 otherwise chooses MKL versus oneDNN by CPU vendor. Its float32 CPU
+    convolution uses oneDNN even when its GEMM uses MKL. Constraining only MKL
+    leaves the encoder and CT2's own kernels independently dispatched. Select
+    oneDNN on both Intel and AMD, cap both dispatchers at verified AVX2, and
+    retain strict float32 math instead of hardware-dependent reduced precision.
+    Its GNU OpenMP
+    workers must block while idle instead of spending the job's CPU quota on
+    busy waiting between native calls and original-PCM preprocessing.
+    ISA selection in CT2
+    alone does not constrain its BLAS backend. Never switch an already-imported
+    native library into a profile its initialized state cannot establish.
+    """
+    if "ctranslate2" in sys.modules or "faster_whisper" in sys.modules:
+        raise ConfigurationError(
+            "ASR native runtime is already imported; this startup profile is not configured."
+        )
+    if platform.machine().lower() not in {"x86_64", "amd64"}:
+        raise ConfigurationError("ASR CPU execution requires the supported x86-64 runtime.")
+    try:
+        with Path("/proc/cpuinfo").open(encoding="ascii") as stream:
+            description = stream.read(65536)
+        flags = next(
+            line.partition(":")[2].split()
+            for line in description.splitlines()
+            if line.partition(":")[0].strip() == "flags"
+        )
+    except (OSError, UnicodeError, StopIteration) as exc:
+        raise ConfigurationError("ASR CPU instruction support cannot be verified.") from exc
+    if not {"avx2", "fma"}.issubset(flags):
+        raise ConfigurationError("ASR CPU execution requires verified AVX2 and FMA support.")
+    for key in ASR_NATIVE_RESERVED_ENVIRONMENT:
+        os.environ.pop(key, None)
+    os.environ.update(ASR_NATIVE_ENVIRONMENT)
+
+
+def analysis_child_environment(workspace: str) -> dict[str, str]:
+    """Internal supervisor-owned process configuration; never supplied by a job."""
+    return {
+        **{
+            key: value
+            for key, value in os.environ.items()
+            if key not in ASR_NATIVE_RESERVED_ENVIRONMENT
+        },
+        **ASR_NATIVE_ENVIRONMENT,
+        "EDITAGENT_ANALYSIS_TEMP": workspace,
+    }
+
+
+def analysis_workspace_root() -> Path:
+    raw = os.environ.get("EDITAGENT_ANALYSIS_TEMP", "")
+    value = Path(raw)
+    if (
+        not raw
+        or "\0" in raw
+        or not value.is_absolute()
+        or not value.is_dir()
+        or value.is_symlink()
+    ):
+        raise ConfigurationError("Invalid analysis child configuration.")
+    return value
 
 
 class AiWorkerSettings(BaseSettings):

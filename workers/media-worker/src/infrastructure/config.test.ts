@@ -61,6 +61,7 @@ test("media-worker configuration accepts a complete development environment", ()
   assert.equal(config.probeTmpDir, null);
   assert.equal(config.mediaInspectQueue, "media");
   assert.equal(config.healthPort, 3200);
+  assert.equal(config.analysis.asr.model, "small");
   const configured = loadMediaWorkerConfig({
     DATABASE_URL: databaseUrl,
     REDIS_URL: redisUrl,
@@ -72,10 +73,12 @@ test("media-worker configuration accepts a complete development environment", ()
     FFPROBE_PATH: "/usr/bin/ffprobe",
     FFPROBE_TIMEOUT_MS: "15000",
     PROBE_TMPDIR: "/tmp/editagent-probe",
+    EDITAGENT_ASR_MODEL: "tiny",
   });
   assert.equal(configured.ffprobePath, "/usr/bin/ffprobe");
   assert.equal(configured.ffprobeTimeoutMs, 15_000);
   assert.equal(configured.probeTmpDir, "/tmp/editagent-probe");
+  assert.equal(configured.analysis.asr.model, "tiny");
   assert.throws(
     () =>
       loadMediaWorkerConfig({

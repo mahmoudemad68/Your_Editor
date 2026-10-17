@@ -157,6 +157,56 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/media/{mediaId}/analysis/{analyzer}/retry": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations["MediaAnalysisController_retry"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/media/{mediaId}/analysis": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Read authorized MediaAnalysis using the persisted asset's project identity. */
+    get: operations["MediaAnalysisController_getByAsset"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/projects/{projectId}/media/{mediaId}/analysis": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Read versioned MediaAnalysis for an authorized project asset. */
+    get: operations["MediaAnalysisController_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/projects/{projectId}/media/{mediaAssetId}/inspection-job": {
     parameters: {
       query?: never;
@@ -1091,6 +1141,65 @@ export interface operations {
       };
       /** @description The MediaAsset is not visible to the caller. */
       404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  MediaAnalysisController_retry: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        mediaId: string;
+        analyzer: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  MediaAnalysisController_getByAsset: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        mediaId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  MediaAnalysisController_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        projectId: string;
+        mediaId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
         headers: {
           [name: string]: unknown;
         };

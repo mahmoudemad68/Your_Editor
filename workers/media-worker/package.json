@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-s3": "3.1144.0",
+    "@editagent/analysis-core": "workspace:*",
     "@editagent/domain": "workspace:*",
     "@editagent/job-queue": "workspace:*",
     "@editagent/media-core": "workspace:*",
