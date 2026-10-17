@@ -126,3 +126,47 @@ sys.exit(1)
         timeout=20,
     )
     assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize("flags", ["", "flags : sse4_1", "flags : avx2", "flags : fma"])
+def test_unverified_instruction_support_fails_before_native_import(flags: str) -> None:
+    program = """
+import io,sys
+from pathlib import Path
+from unittest.mock import patch
+from editagent_ai_worker.infrastructure.config import (
+    ConfigurationError, configure_asr_native_environment
+)
+with patch.object(Path,'open',return_value=io.StringIO(sys.stdin.read())):
+    try:
+        configure_asr_native_environment()
+    except ConfigurationError:
+        assert 'ctranslate2' not in sys.modules and 'faster_whisper' not in sys.modules
+        sys.exit(0)
+sys.exit(1)
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", program], input=flags, text=True, capture_output=True, timeout=20
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_unreadable_cpu_metadata_is_a_safe_startup_failure() -> None:
+    program = """
+import sys
+from pathlib import Path
+from unittest.mock import patch
+from editagent_ai_worker.infrastructure.config import (
+    ConfigurationError, configure_asr_native_environment
+)
+with patch.object(Path,'open',side_effect=OSError('private-host-detail')):
+    try:
+        configure_asr_native_environment()
+    except ConfigurationError as error:
+        assert str(error)=='ASR CPU instruction support cannot be verified.'
+        assert 'ctranslate2' not in sys.modules and 'faster_whisper' not in sys.modules
+        sys.exit(0)
+sys.exit(1)
+"""
+    result = subprocess.run([sys.executable, "-c", program], capture_output=True, timeout=20)
+    assert result.returncode == 0, result.stderr

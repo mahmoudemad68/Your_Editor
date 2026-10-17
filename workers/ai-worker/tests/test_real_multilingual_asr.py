@@ -145,6 +145,9 @@ def test_real_native_kernel_alignment_and_fresh_reused_state(threads: int) -> No
         "OMP_NUM_THREADS": "1",
         "OMP_WAIT_POLICY": "ACTIVE",
         "GOMP_SPINCOUNT": "INFINITE",
+        "MKL_CBWR": "AUTO",
+        "MKL_DYNAMIC": "TRUE",
+        "OMP_DYNAMIC": "TRUE",
     }
     # Conflicting inherited CPU-vendor/ISA settings must not select a different
     # backend than the admitted profile. Every real child establishes its
@@ -163,11 +166,14 @@ def test_real_native_kernel_alignment_and_fresh_reused_state(threads: int) -> No
         report(f"tiny-native-kernel-threads{threads}", outputs)
     assert outputs[0] == outputs[1]
     assert outputs[0]["completeNativeTextPreserved"] is True
-    assert outputs[0]["output"]["inferenceParameters"]["nativeCpuProfile"] == "mkl-passive-v2"
+    assert outputs[0]["output"]["inferenceParameters"]["nativeCpuProfile"] == "mkl-avx2-cnr-v3"
     assert outputs[0]["output"]["inferenceParameters"]["nativeCpuEnvironment"]["CT2_USE_MKL"] == "1"
     environment = outputs[0]["output"]["inferenceParameters"]["nativeCpuEnvironment"]
     assert environment["OMP_WAIT_POLICY"] == "PASSIVE"
     assert environment["GOMP_SPINCOUNT"] == "0"
+    assert environment["MKL_CBWR"] == "AVX2"
+    assert environment["MKL_DYNAMIC"] == "FALSE"
+    assert environment["OMP_DYNAMIC"] == "FALSE"
 
 
 @pytest.mark.parametrize("threads", [1, 2])
@@ -252,58 +258,60 @@ def test_real_multilingual_content_and_reused_process_determinism(
     adapter = FasterWhisperAdapter(
         AsrSettings(model=model, model_root=ROOT / ".local/asr-models", cpu_threads=threads)
     )
-    en, ar = pcm("en.wav"), pcm("ar.wav")
-    cases = {
-        "english": (en, [(0, 8, "latin")]),
-        "arabic": (ar, [(0, 8, "arabic")]),
-        "mixed-en-ar": (en + ar, [(0, 8, "latin"), (8, 16, "arabic")]),
-        "codeswitch-boundary": (
-            pcm("en-chunks.wav")[: 20 * 32000] + ar + en,
-            [(0, 20, "latin"), (20, 28, "arabic"), (28, 36, "latin")],
-        ),
-        "repeated-phrases": (en + en, [(0, 8, "latin"), (8, 16, "latin")]),
-    }
-    components: dict[str, Any] = {}
-    for name, (samples, ranges) in cases.items():
-        path = tmp_path / (name + ".wav")
-        source = fixture(path, samples)
-        outputs = [canonical(adapter, path, source) for _ in range(3)]
-        report(f"{model}-threads{threads}-{name}", outputs)
-        assert outputs[0] == outputs[1] == outputs[2], (model, threads, name)
-        words = outputs[0]["transcript"]["words"]
-        if name in ("english", "arabic"):
-            components[name] = words
-        for lower, upper, script in ranges:
-            owned = [
-                word
-                for word in words
-                if lower * 2_000_000 <= word["start_us"] + word["end_us"] < upper * 2_000_000
-            ]
-            # These licensed excerpts contain substantial known speech. Script
-            # checks reject translation/transliteration as well as empty tails.
-            assert len(owned) >= (5 if script == "arabic" else 10), (model, threads, name)
-            text = "".join(word["text"] for word in owned)
-            if script == "arabic":
-                assert sum("\u0600" <= c <= "\u06ff" for c in text) >= 15
-            else:
-                assert sum("a" <= c.lower() <= "z" for c in text) >= 25
-            if name == "mixed-en-ar" or (name == "codeswitch-boundary" and lower > 0):
-                # Complete real standalone recognition must survive composition
-                # with another language: no missing, replaced or reordered words,
-                # no changed probabilities, no invented/clipped boundaries.
-                expected = components["arabic" if script == "arabic" else "english"]
-                shifted = [
-                    {
-                        **word,
-                        "start_us": word["start_us"] - lower * 1_000_000,
-                        "end_us": word["end_us"] - lower * 1_000_000,
-                    }
-                    for word in owned
+    try:
+        en, ar = pcm("en.wav"), pcm("ar.wav")
+        cases = {
+            "english": (en, [(0, 8, "latin")]),
+            "arabic": (ar, [(0, 8, "arabic")]),
+            "mixed-en-ar": (en + ar, [(0, 8, "latin"), (8, 16, "arabic")]),
+            "codeswitch-boundary": (
+                pcm("en-chunks.wav")[: 20 * 32000] + ar + en,
+                [(0, 20, "latin"), (20, 28, "arabic"), (28, 36, "latin")],
+            ),
+            "repeated-phrases": (en + en, [(0, 8, "latin"), (8, 16, "latin")]),
+        }
+        components: dict[str, Any] = {}
+        for name, (samples, ranges) in cases.items():
+            path = tmp_path / (name + ".wav")
+            source = fixture(path, samples)
+            outputs = [canonical(adapter, path, source) for _ in range(3)]
+            report(f"{model}-threads{threads}-{name}", outputs)
+            assert outputs[0] == outputs[1] == outputs[2], (model, threads, name)
+            words = outputs[0]["transcript"]["words"]
+            if name in ("english", "arabic"):
+                components[name] = words
+            for lower, upper, script in ranges:
+                owned = [
+                    word
+                    for word in words
+                    if lower * 2_000_000 <= word["start_us"] + word["end_us"] < upper * 2_000_000
                 ]
-                assert shifted == list(expected), (model, threads, name, script)
-        assert all(0 <= w["start_us"] < w["end_us"] <= source.duration_us for w in words)
-        assert all(a["end_us"] <= b["start_us"] for a, b in zip(words, words[1:], strict=False))
-    adapter.close()
+                # These licensed excerpts contain substantial known speech. Script
+                # checks reject translation/transliteration as well as empty tails.
+                assert len(owned) >= (5 if script == "arabic" else 10), (model, threads, name)
+                text = "".join(word["text"] for word in owned)
+                if script == "arabic":
+                    assert sum("\u0600" <= c <= "\u06ff" for c in text) >= 15
+                else:
+                    assert sum("a" <= c.lower() <= "z" for c in text) >= 25
+                if name == "mixed-en-ar" or (name == "codeswitch-boundary" and lower > 0):
+                    # Complete real standalone recognition must survive composition
+                    # with another language: no missing, replaced or reordered words,
+                    # no changed probabilities, no invented/clipped boundaries.
+                    expected = components["arabic" if script == "arabic" else "english"]
+                    shifted = [
+                        {
+                            **word,
+                            "start_us": word["start_us"] - lower * 1_000_000,
+                            "end_us": word["end_us"] - lower * 1_000_000,
+                        }
+                        for word in owned
+                    ]
+                    assert shifted == list(expected), (model, threads, name, script)
+            assert all(0 <= w["start_us"] < w["end_us"] <= source.duration_us for w in words)
+            assert all(a["end_us"] <= b["start_us"] for a, b in zip(words, words[1:], strict=False))
+    finally:
+        adapter.close()
 
 
 @pytest.mark.parametrize("threads", [1, 2])

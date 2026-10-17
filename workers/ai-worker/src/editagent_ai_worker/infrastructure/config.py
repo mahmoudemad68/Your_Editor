@@ -19,11 +19,14 @@ class ConfigurationError(Exception):
     """Missing or invalid AI worker configuration."""
 
 
-ASR_NATIVE_PROFILE = "mkl-passive-v2"
+ASR_NATIVE_PROFILE = "mkl-avx2-cnr-v3"
 ASR_NATIVE_ENVIRONMENT = MappingProxyType(
     {
         "CT2_USE_MKL": "1",
         "CT2_PACKED_GEMM": "1",
+        "MKL_CBWR": "AVX2",
+        "MKL_DYNAMIC": "FALSE",
+        "OMP_DYNAMIC": "FALSE",
         "OPENBLAS_NUM_THREADS": "1",
         "OMP_NUM_THREADS": "1",
         "OMP_WAIT_POLICY": "PASSIVE",
@@ -33,7 +36,6 @@ ASR_NATIVE_ENVIRONMENT = MappingProxyType(
 ASR_NATIVE_RESERVED_ENVIRONMENT = (
     "CT2_FORCE_CPU_ISA",
     "MKL_ENABLE_INSTRUCTIONS",
-    "MKL_CBWR",
     "MKL_DEBUG_CPU_TYPE",
     "ONEDNN_MAX_CPU_ISA",
     "DNNL_MAX_CPU_ISA",
@@ -64,6 +66,18 @@ def configure_asr_native_environment() -> None:
         )
     if platform.machine().lower() not in {"x86_64", "amd64"}:
         raise ConfigurationError("ASR CPU execution requires the supported x86-64 MKL runtime.")
+    try:
+        with Path("/proc/cpuinfo").open(encoding="ascii") as stream:
+            description = stream.read(65536)
+        flags = next(
+            line.partition(":")[2].split()
+            for line in description.splitlines()
+            if line.partition(":")[0].strip() == "flags"
+        )
+    except (OSError, UnicodeError, StopIteration) as exc:
+        raise ConfigurationError("ASR CPU instruction support cannot be verified.") from exc
+    if not {"avx2", "fma"}.issubset(flags):
+        raise ConfigurationError("ASR CPU execution requires verified AVX2 and FMA support.")
     for key in ASR_NATIVE_RESERVED_ENVIRONMENT:
         os.environ.pop(key, None)
     os.environ.update(ASR_NATIVE_ENVIRONMENT)

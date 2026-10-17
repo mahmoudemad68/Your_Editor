@@ -98,13 +98,21 @@ The supported x86-64 CPU runtime explicitly selects MKL with the official
 `CT2_USE_MKL=1` control and its default packed GEMM API (`CT2_PACKED_GEMM=1`).
 CTranslate2 otherwise chooses MKL versus oneDNN automatically by CPU vendor;
 pinning its thread count alone does not establish the same numerical backend.
-The `mkl-passive-v2` profile is established before native imports by service startup,
-the isolated job entrypoint and the evaluation CLI. Inherited ISA/CBWR/debug
-overrides are removed; startup rejects an already-imported native runtime even
-when environment values match, because they cannot attest earlier initialization.
-Native instruction dispatch remains enabled, without
-introducing an AVX2/AVX512 hardware restriction. The profile and bounded thread
-environment are recorded in inference parameters and their configuration hash.
+The `mkl-avx2-cnr-v3` profile is established before native imports by service startup,
+the isolated job entrypoint and the evaluation CLI. It pins the official MKL
+conditional numerical reproducibility branch with `MKL_CBWR=AVX2` and disables
+dynamic thread-team selection with `MKL_DYNAMIC=FALSE` and `OMP_DYNAMIC=FALSE`.
+Previously, CT2 reported AVX2 while its independently dispatched BLAS selected
+AVX512 with CNR disabled and dynamic teams enabled. That profile did not establish
+the fixed numerical execution needed for reproducibility. Native verbose probes
+of the new profile report `CNR:AVX2 Dyn:0` with the configured thread count.
+This deployment requires Linux x86-64 with AVX2/FMA; startup verifies those flags
+from bounded trusted CPU metadata and fails closed if support cannot be established.
+Inherited conflicting ISA/debug overrides are removed; startup rejects an already-imported
+native runtime even when environment values match, because they cannot attest earlier
+initialization. The profile and bounded thread environment are recorded in inference
+parameters and their configuration hash. CNR is conditional on the documented runtime
+and thread configuration; this is not a claim of universal cross-hardware equivalence.
 The pinned CTranslate2 wheel links GNU OpenMP. `OMP_WAIT_POLICY=PASSIVE` and
 `GOMP_SPINCOUNT=0` make idle native workers block instead of consuming a bounded
 container's CPU quota between inference and PCM preprocessing. These are supported
@@ -116,6 +124,7 @@ CI archives CPU/library identity separately. This is not a cross-hardware
 bitwise-equivalence guarantee. Unsupported CPU architectures fail startup;
 CUDA and other architectures require separate measured validation.
 See the [official CTranslate2 environment-variable contract](https://opennmt.net/CTranslate2/environment_variables.html).
+Intel documents [conditional numerical reproducibility](https://www.intel.com/content/www/us/en/docs/onemkl/developer-guide-linux/2024-1/get-started-with-conditional-num-reproducibility.html).
 GNU documents the [OpenMP wait policy](https://gcc.gnu.org/onlinedocs/libgomp/OMP_005fWAIT_005fPOLICY.html)
 and [busy-wait spin count](https://gcc.gnu.org/onlinedocs/libgomp/GOMP_005fSPINCOUNT.html).
 
@@ -151,7 +160,7 @@ when that context requires realignment. Partial same-model repairs retain the
 existing two-anchor rule. Conflicting or invalid full-context evidence fails closed.
 Its model revision/SHA, device and compute type are recorded in the actual
 inference parameters/configuration identity. Timing-only fallback is part of
-`ct2-contextual-v13`; it is not a claim that tiny alone generated every timing.
+`ct2-contextual-v14`; it is not a claim that tiny alone generated every timing.
 Tiny deployments therefore bundle both pinned models during setup/build and
 verify both before readiness. There is no inference-time acquisition. At most
 one decoder and one lazily loaded fallback model reside in an adapter; their
@@ -175,7 +184,7 @@ tiny and small separately with the ordinary default beam, thread and deadline
 settings. Per-run words, provenance, wall time and process peak RSS are retained.
 This checks long-recording integrity; there is no 600-second reference transcript
 and no accuracy claim for that fixture.
-The `ct2-contextual-v13` identity also participates in durable admission identity,
+The `ct2-contextual-v14` identity also participates in durable admission identity,
 so prior algorithm results cannot satisfy a new-algorithm task accidentally.
 The deferred PostgreSQL receipt fence checks the worker's actual algorithm
 acknowledgment and freezes its inference metadata together with the result.
