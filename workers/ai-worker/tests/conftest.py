@@ -92,6 +92,13 @@ def pytest_exception_interact(
         return
     if call.excinfo is None or not report.failed:
         return
+    # A long native suite may reach the outer CI job limit before pytest's
+    # end-of-session traceback. Emit bounded diagnostics immediately as well as
+    # the durable fixture artifact, without depending on successful teardown.
+    terminal = node.config.pluginmanager.getplugin("terminalreporter")
+    if terminal is not None:
+        terminal.write_sep("=", "real ASR fixture failure")
+        terminal.write_line(report.longreprtext[:12000])
     frames: list[dict[str, Any]] = []
     for entry in call.excinfo.traceback:
         values = entry.frame.f_locals
