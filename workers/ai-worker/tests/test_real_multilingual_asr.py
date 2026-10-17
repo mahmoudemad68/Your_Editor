@@ -672,3 +672,72 @@ def test_original_ten_minute_recording_preserves_complete_bounded_word_output(
         assert hashlib.sha256(path.read_bytes()).hexdigest() == source.audio_sha256
     finally:
         adapter.close()
+
+
+@pytest.mark.parametrize("threads", [1, 2])
+def test_real_native_alignment_repairs_captured_ci_boundary_without_decoding(
+    threads: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from faster_whisper import WhisperModel
+
+    from editagent_ai_worker.domain.analysis.transcription import Word
+    from editagent_ai_worker.infrastructure.faster_whisper import merge_owned_words
+
+    captured = json.loads((ROOT / "tests/fixtures/asr/chunk-boundary-conflict.json").read_text())
+    assert captured["createdBy"] == "machine_generated"
+    path = ROOT / "tests/fixtures/asr" / captured["fixtureFile"]
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == captured["fixtureSha256"]
+
+    def words(key: str) -> tuple[Word, ...]:
+        return tuple(
+            Word(w["text"], int(w["startUs"]), int(w["endUs"]), w["confidence"])
+            for w in captured[key]
+        )
+
+    lower, boundary, upper = captured["scopeStartUs"], captured["boundaryUs"], 144_000_000
+    left, right = words("observedLeftPrefix"), words("observedRightContext")
+    chunks = [(lower, boundary, left), (boundary, upper, right)]
+    source = AudioIdentity(
+        captured["sourceId"],
+        "793bade8dea8492b56d266f1d6fb2997f1c936cb01c0ff5c65fe449bbe59f0f1",
+        "native-boundary-regression",
+        captured["fixtureSha256"],
+        615_428_000,
+        lower,
+        captured["scopeEndUs"],
+    )
+    # The previously published greedy merge must fail on the exact captured
+    # native timings, independent of this machine's next decoder hypothesis.
+    with pytest.raises(TranscriptionError, match="boundary"):
+        merge_owned_words(chunks, source)
+    expected = [w.text for w in left if 2 * lower <= w.start_us + w.end_us < 2 * boundary]
+    expected += [w.text for w in right if 2 * boundary <= w.start_us + w.end_us < 2 * upper]
+    monkeypatch.setattr(
+        WhisperModel,
+        "transcribe",
+        lambda *args, **kwargs: pytest.fail("Boundary repair decoded replacement text"),
+    )
+    adapter = FasterWhisperAdapter(
+        AsrSettings(model="tiny", model_root=ROOT / ".local/asr-models", cpu_threads=threads)
+    )
+    try:
+        with wave.open(str(path), "rb") as audio:
+            repaired = adapter._reconcile_overlaps(
+                chunks, ["en", "en"], audio, source, lambda: None
+            )
+        result = merge_owned_words(repaired, source)
+        assert [w.text for w in result] == expected
+        assert all(lower <= w.start_us < w.end_us <= upper for w in result)
+        assert all(a.end_us <= b.start_us for a, b in zip(result, result[1:], strict=False))
+        assert hashlib.sha256(path.read_bytes()).hexdigest() == captured["fixtureSha256"]
+        report(
+            f"captured-ci-boundary-threads{threads}",
+            {
+                "words": [dataclasses.asdict(w) for w in result],
+                "expectedDecoderText": expected,
+                "captured": captured,
+                "inferenceParameters": adapter.parameters(),
+            },
+        )
+    finally:
+        adapter.close()

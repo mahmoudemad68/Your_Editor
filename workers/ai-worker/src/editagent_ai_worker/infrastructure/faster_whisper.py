@@ -39,7 +39,7 @@ from editagent_ai_worker.infrastructure.config import (
 )
 from editagent_ai_worker.infrastructure.vad_audio import verify_audio_file, wav_parameters
 
-ASR_ALGORITHM = "ct2-contextual-v14"
+ASR_ALGORITHM = "ct2-contextual-v15"
 
 
 def uncovered_speech(audio: Any, words: list[Any], options: Any) -> list[tuple[int, int]]:
@@ -692,11 +692,11 @@ class FasterWhisperAdapter:
     ) -> list[tuple[int, int, tuple[Word, ...]]]:
         """Recover recognized boundary words using two shared temporal anchors.
 
-        A context can recognize a word whose midpoint belongs to the next core,
-        while that core omits it. A maximal suffix/prefix match of at least two
-        overlapping lexical anchors establishes sequence ownership. Re-align
-        the complete joined text on original PCM; never insert guessed spans,
-        replace differing text, or discard an unresolved recognized word.
+        A context can omit an owned word or disagree about its positive timing.
+        At least two exact lexical and intersecting temporal anchors establish
+        the shared sequence. Only unowned right context may precede those
+        anchors; every owned lexical token remains in the joined text. Re-align
+        on bounded original PCM, never guessed spans or replacement recognition.
         """
         chunks = list(chunks)
         for index in range(1, len(chunks)):
@@ -712,18 +712,35 @@ class FasterWhisperAdapter:
             if not li or not ri:
                 continue
             tail, head = left[li[0] : li[-1] + 1], right[ri[0] : ri[-1] + 1]
-            matches = [
-                count
-                for count in range(2, min(len(tail), len(head)) + 1)
-                if all(
-                    a.text.strip() == b.text.strip()
-                    and max(a.start_us, b.start_us) < min(a.end_us, b.end_us)
-                    for a, b in zip(tail[-count:], head[:count], strict=True)
-                )
-            ]
+            matches = []
+            # Leading context belongs to the previous core. Its independently
+            # decoded capitalization/spelling must not prevent two later exact
+            # temporal anchors from establishing the shared sequence. Never
+            # skip an owned word or normalize the selected decoder text.
+            for head_offset in range(len(head)):
+                check()
+                if (
+                    head_offset
+                    and head[head_offset - 1].start_us + head[head_offset - 1].end_us
+                    >= 2 * boundary
+                ):
+                    break
+                for count in range(2, min(len(tail), len(head) - head_offset) + 1):
+                    if all(
+                        a.text.strip() == b.text.strip()
+                        and max(a.start_us, b.start_us) < min(a.end_us, b.end_us)
+                        for a, b in zip(
+                            tail[-count:], head[head_offset : head_offset + count], strict=True
+                        )
+                    ):
+                        matches.append((count, head_offset))
             if not matches:
                 continue
-            count = max(matches)
+            count = max(item[0] for item in matches)
+            offsets = [offset for size, offset in matches if size == count]
+            if len(offsets) != 1:
+                raise TranscriptionError("ASR overlap has ambiguous temporal anchors")
+            head = head[offsets[0] :]
             prefix = tail[:-count]
             missing = [
                 w
@@ -735,19 +752,31 @@ class FasterWhisperAdapter:
                     for other in head
                 )
             ]
-            if not missing:
+            owned_left = [
+                w for w in tail if 2 * chunks[index - 1][0] <= w.start_us + w.end_us < 2 * boundary
+            ]
+            owned_right = [
+                w for w in head if 2 * boundary <= w.start_us + w.end_us < 2 * chunks[index][1]
+            ]
+            collision = bool(
+                owned_left and owned_right and owned_left[-1].end_us > owned_right[0].start_us
+            )
+            if not missing and not collision:
                 continue
             combined = [*prefix, *head]
+            padding = 0 if collision else 1_000_000
             first = max(
                 0,
-                (min(w.start_us for w in combined) - source.scope_start_us - 1_000_000)
+                (min(w.start_us for w in combined) - source.scope_start_us - padding)
                 * 16000
                 // 1_000_000,
             )
             last = min(
                 wav.getnframes(),
-                (max(w.end_us for w in combined) - source.scope_start_us + 1_000_000)
-                * 16000
+                (
+                    (max(w.end_us for w in combined) - source.scope_start_us + padding) * 16000
+                    + 999999
+                )
                 // 1_000_000,
             )
             if not first < last or last - first > 480000:
@@ -774,6 +803,8 @@ class FasterWhisperAdapter:
                 end=len(audio) / 16000,
             )
             aligned = self._aligned_chunk([segment], audio, languages[index], check)
+            if [w.word for w in aligned] != [w.text for w in combined]:
+                raise TranscriptionError("ASR boundary alignment changed indexed decoder text")
             repaired = tuple(
                 Word(
                     w.word,

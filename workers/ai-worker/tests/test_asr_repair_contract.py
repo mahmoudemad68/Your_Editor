@@ -695,3 +695,138 @@ def test_partial_context_recognition_is_bounded_and_aligns_only_final_model_text
             (28_000_000, 29_000_000),
         ]
         assert calls == [448000, 480000, 96000]
+
+
+def test_colliding_owned_words_use_one_anchored_native_view_not_greedy_alternatives() -> None:
+    from editagent_ai_worker.domain.analysis.transcription import Word
+    from editagent_ai_worker.domain.analysis.voice_activity import AudioIdentity
+
+    def word(text: str, start: float, end: float) -> Word:
+        return Word(text, int(start * 1_000_000), int(end * 1_000_000), 0.8)
+
+    left = (word(" lead", 1, 1.5), word(" of", 4.7, 5.1), word(" 24", 5.1, 5.7))
+    right = (word(" of", 4.5, 4.9), word(" 24", 4.9, 5.5), word(" February", 5.5, 5.9))
+    chunks: list[tuple[int, int, tuple[Word, ...]]] = [
+        (0, 5_000_000, left),
+        (5_000_000, 10_000_000, right),
+    ]
+    source = AudioIdentity("fixture", "a" * 64, "audio", "b" * 64, 10_000_000, 0, 10_000_000)
+    with pytest.raises(TranscriptionError, match="boundary"):
+        whisper.merge_owned_words(chunks, source)
+    adapter = adapter_returning([])
+    wav = PcmReader(10)
+    repaired = adapter._reconcile_overlaps(chunks, ["en", "en"], wav, source, lambda: None)
+    merged = whisper.merge_owned_words(repaired, source)
+    assert [w.text for w in merged] == [" lead", " of", " 24", " February"]
+    assert merged[1:] == right
+    assert chunks[0][2] == left and chunks[1][2] == right
+
+
+def test_boundary_context_prefix_can_differ_but_owned_text_cannot_be_replaced() -> None:
+    from editagent_ai_worker.domain.analysis.transcription import Word
+    from editagent_ai_worker.domain.analysis.voice_activity import AudioIdentity
+
+    def word(text: str, start: float, end: float) -> Word:
+        return Word(text, int(start * 1_000_000), int(end * 1_000_000), 0.8)
+
+    left = (
+        word(" with", 3.8, 4.0),
+        word(" a", 4.0, 4.2),
+        word(" value", 4.2, 4.5),
+        word(" of", 4.5, 5.1),
+        word(" 24", 5.1, 5.7),
+    )
+    right = (
+        word(" With", 3.6, 3.8),
+        word(" a", 3.8, 4.1),
+        word(" value", 4.1, 4.4),
+        word(" of", 4.4, 4.9),
+        word(" 24", 4.9, 5.5),
+        word(" February", 5.5, 5.9),
+    )
+    chunks: list[tuple[int, int, tuple[Word, ...]]] = [
+        (0, 5_000_000, left),
+        (5_000_000, 10_000_000, right),
+    ]
+    source = AudioIdentity("fixture", "a" * 64, "audio", "b" * 64, 10_000_000, 0, 10_000_000)
+    adapter = adapter_returning([])
+    calls = []
+
+    def align(segments: Any, audio: Any, language: str, check: Any) -> Any:
+        calls.append(segments[0].text)
+        assert len(audio) == 33600
+        return [
+            alignment_word(text, start, end)
+            for text, start, end in [
+                (" with", 0, 0.2),
+                (" a", 0.2, 0.4),
+                (" value", 0.4, 0.7),
+                (" of", 0.7, 1.1),
+                (" 24", 1.1, 1.7),
+                (" February", 1.7, 2.1),
+            ]
+        ]
+
+    adapter._aligned_chunk = align
+    repaired = adapter._reconcile_overlaps(
+        chunks, ["en", "en"], PcmReader(10), source, lambda: None
+    )
+    merged = whisper.merge_owned_words(repaired, source)
+    assert [w.text for w in merged] == [" with", " a", " value", " of", " 24", " February"]
+    assert calls == [" with a value of 24 February"]
+    assert all(a.end_us <= b.start_us for a, b in zip(merged, merged[1:], strict=False))
+
+
+def test_boundary_search_never_skips_an_owned_right_word() -> None:
+    from editagent_ai_worker.domain.analysis.transcription import Word
+    from editagent_ai_worker.domain.analysis.voice_activity import AudioIdentity
+
+    def word(text: str, start: float, end: float) -> Word:
+        return Word(text, int(start * 1_000_000), int(end * 1_000_000), 0.8)
+
+    left = (word(" missing", 5.1, 5.3), word(" a", 5.6, 5.9), word(" b", 5.9, 6.2))
+    right = (word(" keep", 5.0, 5.5), word(" a", 5.6, 5.9), word(" b", 5.9, 6.2))
+    chunks: list[tuple[int, int, tuple[Word, ...]]] = [
+        (0, 5_000_000, left),
+        (5_000_000, 10_000_000, right),
+    ]
+    source = AudioIdentity("fixture", "a" * 64, "audio", "b" * 64, 10_000_000, 0, 10_000_000)
+    adapter = adapter_returning([])
+    assert (
+        adapter._reconcile_overlaps(chunks, ["en", "en"], PcmReader(10), source, lambda: None)
+        == chunks
+    )
+
+
+@pytest.mark.parametrize("defect", ["replace", "omit", "reorder"])
+def test_boundary_realigner_cannot_change_indexed_decoder_text(defect: str) -> None:
+    from editagent_ai_worker.domain.analysis.transcription import Word
+    from editagent_ai_worker.domain.analysis.voice_activity import AudioIdentity
+
+    left = (Word(" of", 4_700_000, 5_100_000, 0.8), Word(" 24", 5_100_000, 5_700_000, 0.8))
+    right = (
+        Word(" of", 4_500_000, 4_900_000, 0.8),
+        Word(" 24", 4_900_000, 5_500_000, 0.8),
+        Word(" February", 5_500_000, 5_900_000, 0.8),
+    )
+    chunks: list[tuple[int, int, tuple[Word, ...]]] = [
+        (0, 5_000_000, left),
+        (5_000_000, 10_000_000, right),
+    ]
+    source = AudioIdentity("fixture", "a" * 64, "audio", "b" * 64, 10_000_000, 0, 10_000_000)
+    adapter = adapter_returning([])
+    result = [
+        alignment_word(" of", 0, 0.4),
+        alignment_word(" 24", 0.4, 1),
+        alignment_word(" February", 1, 1.4),
+    ]
+    if defect == "replace":
+        result[1].word = " replacement"
+    elif defect == "omit":
+        result.pop(1)
+    else:
+        result.reverse()
+    adapter._aligned_chunk = lambda *args: result
+    with pytest.raises(TranscriptionError, match="indexed decoder text"):
+        adapter._reconcile_overlaps(chunks, ["en", "en"], PcmReader(10), source, lambda: None)
+    assert chunks[0][2] == left and chunks[1][2] == right

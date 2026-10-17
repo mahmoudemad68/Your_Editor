@@ -1,0 +1,685 @@
+{
+  "createdBy": "machine_generated",
+  "purpose": "Captured native merge prefix for regression only; not evaluation gold or a full first-chunk transcript",
+  "failedHead": "ebb5e124539363ed09487b999546ddceebb045ec",
+  "workflowRun": 38999272214,
+  "jobId": 117298539377,
+  "sourceId": "commons-148215183",
+  "fixtureFile": "en-chunks.wav",
+  "fixtureSha256": "8686fa55c9a1dd06b886ea8bf06ebebfb787a160c617392d42d93caeb96f8ea0",
+  "scopeStartUs": 96000000,
+  "scopeEndUs": 156000000,
+  "boundaryUs": 120000000,
+  "rightContextStartUs": 118000000,
+  "observedLeftPrefix": [
+    {
+      "text": " In",
+      "startUs": "96000000",
+      "endUs": "97360000",
+      "confidence": 0.9440659880638123
+    },
+    {
+      "text": " Wikidata,",
+      "startUs": "97360000",
+      "endUs": "98100000",
+      "confidence": 0.6712803790966669
+    },
+    {
+      "text": " references",
+      "startUs": "98260000",
+      "endUs": "98660000",
+      "confidence": 0.686373233795166
+    },
+    {
+      "text": " provide",
+      "startUs": "98660000",
+      "endUs": "99360000",
+      "confidence": 0.6828118562698364
+    },
+    {
+      "text": " source",
+      "startUs": "99360000",
+      "endUs": "99820000",
+      "confidence": 0.9625051617622375
+    },
+    {
+      "text": " information",
+      "startUs": "99820000",
+      "endUs": "100480000",
+      "confidence": 0.9990187883377075
+    },
+    {
+      "text": " that",
+      "startUs": "100480000",
+      "endUs": "101160000",
+      "confidence": 0.0031286293420578204
+    },
+    {
+      "text": " shows",
+      "startUs": "101160000",
+      "endUs": "101660000",
+      "confidence": 0.9912789463996887
+    },
+    {
+      "text": " where",
+      "startUs": "101660000",
+      "endUs": "102140000",
+      "confidence": 0.9025023579597473
+    },
+    {
+      "text": " the",
+      "startUs": "102140000",
+      "endUs": "102340000",
+      "confidence": 0.058539942119750776
+    },
+    {
+      "text": " information",
+      "startUs": "102340000",
+      "endUs": "102700000",
+      "confidence": 0.9947622418403625
+    },
+    {
+      "text": " for",
+      "startUs": "102700000",
+      "endUs": "103200000",
+      "confidence": 0.9797570109367371
+    },
+    {
+      "text": " a",
+      "startUs": "103200000",
+      "endUs": "103340000",
+      "confidence": 0.9820970892906189
+    },
+    {
+      "text": " particular",
+      "startUs": "103340000",
+      "endUs": "103700000",
+      "confidence": 0.9569959044456482
+    },
+    {
+      "text": " statement",
+      "startUs": "103700000",
+      "endUs": "104340000",
+      "confidence": 0.9766362309455872
+    },
+    {
+      "text": " originated.",
+      "startUs": "104340000",
+      "endUs": "105120000",
+      "confidence": 0.9704551100730896
+    },
+    {
+      "text": " They",
+      "startUs": "106280000",
+      "endUs": "106380000",
+      "confidence": 0.9690612554550171
+    },
+    {
+      "text": " are",
+      "startUs": "106380000",
+      "endUs": "106600000",
+      "confidence": 0.9876085519790649
+    },
+    {
+      "text": " created",
+      "startUs": "106600000",
+      "endUs": "107200000",
+      "confidence": 0.9563875198364258
+    },
+    {
+      "text": " inside",
+      "startUs": "107200000",
+      "endUs": "108040000",
+      "confidence": 0.8713928461074829
+    },
+    {
+      "text": " of",
+      "startUs": "108040000",
+      "endUs": "108380000",
+      "confidence": 0.8428211212158203
+    },
+    {
+      "text": " a",
+      "startUs": "108380000",
+      "endUs": "108500000",
+      "confidence": 0.9763379693031311
+    },
+    {
+      "text": " statement",
+      "startUs": "108500000",
+      "endUs": "108780000",
+      "confidence": 0.9612094163894653
+    },
+    {
+      "text": " group",
+      "startUs": "108780000",
+      "endUs": "109320000",
+      "confidence": 0.9824459552764893
+    },
+    {
+      "text": " by",
+      "startUs": "109320000",
+      "endUs": "109880000",
+      "confidence": 0.9174532294273376
+    },
+    {
+      "text": " clicking",
+      "startUs": "109880000",
+      "endUs": "110300000",
+      "confidence": 0.9850134253501892
+    },
+    {
+      "text": " on",
+      "startUs": "110300000",
+      "endUs": "110840000",
+      "confidence": 0.9650366306304932
+    },
+    {
+      "text": " plus",
+      "startUs": "110840000",
+      "endUs": "111200000",
+      "confidence": 0.2984868586063385
+    },
+    {
+      "text": " add",
+      "startUs": "111200000",
+      "endUs": "111820000",
+      "confidence": 0.5990145206451416
+    },
+    {
+      "text": " reference.",
+      "startUs": "111820000",
+      "endUs": "112440000",
+      "confidence": 0.9786246418952942
+    },
+    {
+      "text": " So",
+      "startUs": "113460000",
+      "endUs": "113620000",
+      "confidence": 0.9024571180343628
+    },
+    {
+      "text": " in",
+      "startUs": "113620000",
+      "endUs": "113700000",
+      "confidence": 0.7462666034698486
+    },
+    {
+      "text": " this",
+      "startUs": "113700000",
+      "endUs": "114020000",
+      "confidence": 0.07627153827343136
+    },
+    {
+      "text": " example,",
+      "startUs": "114020000",
+      "endUs": "114660000",
+      "confidence": 0.969645082950592
+    },
+    {
+      "text": " we",
+      "startUs": "115380000",
+      "endUs": "115460000",
+      "confidence": 0.9658934473991394
+    },
+    {
+      "text": " have",
+      "startUs": "115460000",
+      "endUs": "115780000",
+      "confidence": 0.9915211200714111
+    },
+    {
+      "text": " the",
+      "startUs": "115780000",
+      "endUs": "116000000",
+      "confidence": 0.24404969811439514
+    },
+    {
+      "text": " date",
+      "startUs": "116000000",
+      "endUs": "116200000",
+      "confidence": 0.787650465965271
+    },
+    {
+      "text": " of",
+      "startUs": "116200000",
+      "endUs": "116440000",
+      "confidence": 0.9833378195762634
+    },
+    {
+      "text": " death",
+      "startUs": "116440000",
+      "endUs": "116760000",
+      "confidence": 0.9636304974555969
+    },
+    {
+      "text": " of",
+      "startUs": "116760000",
+      "endUs": "117060000",
+      "confidence": 0.9873219132423401
+    },
+    {
+      "text": " Catherine",
+      "startUs": "117060000",
+      "endUs": "117440000",
+      "confidence": 0.3507079780101776
+    },
+    {
+      "text": " Johnson,",
+      "startUs": "117440000",
+      "endUs": "118060000",
+      "confidence": 0.91943359375
+    },
+    {
+      "text": " with",
+      "startUs": "118960000",
+      "endUs": "119080000",
+      "confidence": 0.944635272026062
+    },
+    {
+      "text": " a",
+      "startUs": "119080000",
+      "endUs": "119260000",
+      "confidence": 0.8239336609840393
+    },
+    {
+      "text": " value",
+      "startUs": "119260000",
+      "endUs": "119620000",
+      "confidence": 0.9667490124702454
+    },
+    {
+      "text": " of",
+      "startUs": "119620000",
+      "endUs": "120220000",
+      "confidence": 0.9698570370674133
+    },
+    {
+      "text": " 24",
+      "startUs": "120220000",
+      "endUs": "121060000",
+      "confidence": 0.5934799909591675
+    }
+  ],
+  "observedRightContext": [
+    {
+      "text": " With",
+      "startUs": "118000000",
+      "endUs": "118960000",
+      "confidence": 0.3653355836868286
+    },
+    {
+      "text": " a",
+      "startUs": "118960000",
+      "endUs": "119120000",
+      "confidence": 0.4428768754005432
+    },
+    {
+      "text": " value",
+      "startUs": "119120000",
+      "endUs": "119480000",
+      "confidence": 0.9811471700668335
+    },
+    {
+      "text": " of",
+      "startUs": "119480000",
+      "endUs": "120020000",
+      "confidence": 0.9958280920982361
+    },
+    {
+      "text": " 24",
+      "startUs": "120020000",
+      "endUs": "120940000",
+      "confidence": 0.9342744946479797
+    },
+    {
+      "text": " February",
+      "startUs": "120940000",
+      "endUs": "121560000",
+      "confidence": 0.9030792117118835
+    },
+    {
+      "text": " 2020,",
+      "startUs": "121560000",
+      "endUs": "122920000",
+      "confidence": 0.9672597050666809
+    },
+    {
+      "text": " there",
+      "startUs": "123580000",
+      "endUs": "124520000",
+      "confidence": 0.9691855311393738
+    },
+    {
+      "text": " are",
+      "startUs": "124520000",
+      "endUs": "124740000",
+      "confidence": 0.9965416789054871
+    },
+    {
+      "text": " three",
+      "startUs": "124740000",
+      "endUs": "125320000",
+      "confidence": 0.8959939479827881
+    },
+    {
+      "text": " references",
+      "startUs": "125320000",
+      "endUs": "126080000",
+      "confidence": 0.9921644926071167
+    },
+    {
+      "text": " for",
+      "startUs": "126080000",
+      "endUs": "126920000",
+      "confidence": 0.98502117395401
+    },
+    {
+      "text": " this",
+      "startUs": "126920000",
+      "endUs": "127260000",
+      "confidence": 0.9965083003044128
+    },
+    {
+      "text": " information,",
+      "startUs": "127260000",
+      "endUs": "127980000",
+      "confidence": 0.9974464178085327
+    },
+    {
+      "text": " and",
+      "startUs": "128900000",
+      "endUs": "129220000",
+      "confidence": 0.9824972748756409
+    },
+    {
+      "text": " shown",
+      "startUs": "129220000",
+      "endUs": "129560000",
+      "confidence": 0.96249920129776
+    },
+    {
+      "text": " here",
+      "startUs": "129560000",
+      "endUs": "129920000",
+      "confidence": 0.997090220451355
+    },
+    {
+      "text": " we",
+      "startUs": "129920000",
+      "endUs": "130260000",
+      "confidence": 0.7399430871009827
+    },
+    {
+      "text": " have",
+      "startUs": "130260000",
+      "endUs": "130540000",
+      "confidence": 0.9987710118293762
+    },
+    {
+      "text": " the",
+      "startUs": "130540000",
+      "endUs": "131020000",
+      "confidence": 0.9674919247627258
+    },
+    {
+      "text": " first",
+      "startUs": "131020000",
+      "endUs": "131360000",
+      "confidence": 0.9928147792816162
+    },
+    {
+      "text": " one",
+      "startUs": "131360000",
+      "endUs": "131680000",
+      "confidence": 0.9971897006034851
+    },
+    {
+      "text": " as",
+      "startUs": "131680000",
+      "endUs": "132120000",
+      "confidence": 0.9002928137779236
+    },
+    {
+      "text": " a",
+      "startUs": "132120000",
+      "endUs": "132280000",
+      "confidence": 0.9771208763122559
+    },
+    {
+      "text": " reference",
+      "startUs": "132280000",
+      "endUs": "132740000",
+      "confidence": 0.9785099029541016
+    },
+    {
+      "text": " URL",
+      "startUs": "132740000",
+      "endUs": "133580000",
+      "confidence": 0.9319611191749573
+    },
+    {
+      "text": " to",
+      "startUs": "133580000",
+      "endUs": "134520000",
+      "confidence": 0.9426558613777161
+    },
+    {
+      "text": " a",
+      "startUs": "134520000",
+      "endUs": "134740000",
+      "confidence": 0.9715738892555237
+    },
+    {
+      "text": " NASA",
+      "startUs": "134740000",
+      "endUs": "135000000",
+      "confidence": 0.9071656465530396
+    },
+    {
+      "text": " website.",
+      "startUs": "135000000",
+      "endUs": "135660000",
+      "confidence": 0.9795238375663757
+    },
+    {
+      "text": " In",
+      "startUs": "136740000",
+      "endUs": "137200000",
+      "confidence": 0.9948429465293884
+    },
+    {
+      "text": " the",
+      "startUs": "137200000",
+      "endUs": "137300000",
+      "confidence": 0.9973681569099426
+    },
+    {
+      "text": " second",
+      "startUs": "137300000",
+      "endUs": "137640000",
+      "confidence": 0.9913883805274963
+    },
+    {
+      "text": " reference,",
+      "startUs": "137640000",
+      "endUs": "138060000",
+      "confidence": 0.9953752160072327
+    },
+    {
+      "text": " we",
+      "startUs": "138660000",
+      "endUs": "138940000",
+      "confidence": 0.9977438449859619
+    },
+    {
+      "text": " have",
+      "startUs": "138940000",
+      "endUs": "139160000",
+      "confidence": 0.9983501434326172
+    },
+    {
+      "text": " a",
+      "startUs": "139160000",
+      "endUs": "139340000",
+      "confidence": 0.9888483285903931
+    },
+    {
+      "text": " listing",
+      "startUs": "139340000",
+      "endUs": "139660000",
+      "confidence": 0.9897850155830383
+    },
+    {
+      "text": " for",
+      "startUs": "139660000",
+      "endUs": "140320000",
+      "confidence": 0.9964032173156738
+    },
+    {
+      "text": " the",
+      "startUs": "140320000",
+      "endUs": "140860000",
+      "confidence": 0.9624646306037903
+    },
+    {
+      "text": " Daily",
+      "startUs": "140860000",
+      "endUs": "141260000",
+      "confidence": 0.8553205728530884
+    },
+    {
+      "text": " Mail,",
+      "startUs": "141260000",
+      "endUs": "141640000",
+      "confidence": 0.9696133732795715
+    },
+    {
+      "text": " a",
+      "startUs": "142240000",
+      "endUs": "142400000",
+      "confidence": 0.977999746799469
+    },
+    {
+      "text": " newspaper.",
+      "startUs": "142400000",
+      "endUs": "142740000",
+      "confidence": 0.9771531820297241
+    },
+    {
+      "text": " So",
+      "startUs": "143780000",
+      "endUs": "144340000",
+      "confidence": 0.96161288022995
+    },
+    {
+      "text": " how",
+      "startUs": "144340000",
+      "endUs": "144640000",
+      "confidence": 0.844966471195221
+    },
+    {
+      "text": " do",
+      "startUs": "144640000",
+      "endUs": "144740000",
+      "confidence": 0.9975801706314087
+    },
+    {
+      "text": " you",
+      "startUs": "144740000",
+      "endUs": "144860000",
+      "confidence": 0.9981185793876648
+    },
+    {
+      "text": " add",
+      "startUs": "144860000",
+      "endUs": "145180000",
+      "confidence": 0.9980471134185791
+    },
+    {
+      "text": " a",
+      "startUs": "145180000",
+      "endUs": "145320000",
+      "confidence": 0.9929050803184509
+    },
+    {
+      "text": " reference",
+      "startUs": "145320000",
+      "endUs": "145660000",
+      "confidence": 0.9982478618621826
+    },
+    {
+      "text": " to...",
+      "startUs": "145660000",
+      "endUs": "145980000",
+      "confidence": 0.5947703421115875
+    }
+  ],
+  "rightTimingEvidence": {
+    "kind": "Actual pinned Small forced alignment of captured Tiny decoder text; not gold",
+    "inferenceParameters": {
+      "alignmentAlgorithm": "ct2-contextual-v14",
+      "alignmentContextMaxUs": 30000000,
+      "alignmentEvidence": "exact-word-index-native-interval-two-anchor-v1",
+      "alignmentFallbackComputeType": "int8",
+      "alignmentFallbackConfidence": "preserve-decoder-probabilities",
+      "alignmentFallbackDevice": "cpu",
+      "alignmentFallbackEvidence": "complete-context-exact-index-native-alignment-v1",
+      "alignmentFallbackModel": {
+        "name": "faster-whisper-small",
+        "sha256": "4e456821bbeabf0923f07220a86c1c14a8820bc83e78ae638d4474207b70aedd",
+        "version": "536b0662742c02347bc0e980a01041f333bce120"
+      },
+      "alignmentFilterWidths": [7, 5, 3, 1],
+      "beam_size": 5,
+      "chunk_us": 24000000,
+      "compute_type": "int8",
+      "conditionOnPreviousText": false,
+      "cpu_fallback": true,
+      "cpu_threads": 2,
+      "device": "cpu",
+      "effectiveComputeType": "int8",
+      "effectiveDevice": "cpu",
+      "featureProjection": "frequency-ordered-float32-v1",
+      "languageDetection": "original-pcm-region-redetection-v1",
+      "languageDetectionEncoder": "native-unpadded-log-mel-v1",
+      "languageDetectionMinimumProbability": 0.5,
+      "languageDetectionWindowUs": 4000000,
+      "localAlignmentPaddingUs": 1000000,
+      "maximumAlignmentEncodesPerWindow": 32,
+      "maximumFallbackAlignmentEncodesPerWindow": 24,
+      "maximumPrimaryAlignmentEncodesPerWindow": 8,
+      "maximumRecognitionPassesPerWindow": 2,
+      "min_silence_ms": 200,
+      "model": "tiny",
+      "nativeCpuEnvironment": {
+        "CT2_PACKED_GEMM": "1",
+        "CT2_USE_MKL": "1",
+        "GOMP_SPINCOUNT": "0",
+        "MKL_CBWR": "AVX2",
+        "MKL_DYNAMIC": "FALSE",
+        "OMP_DYNAMIC": "FALSE",
+        "OMP_NUM_THREADS": "1",
+        "OMP_WAIT_POLICY": "PASSIVE",
+        "OPENBLAS_NUM_THREADS": "1"
+      },
+      "nativeCpuProfile": "mkl-avx2-cnr-v3",
+      "negative_threshold": 0.35,
+      "overlapReconciliation": "two-temporal-anchors-original-pcm-v1",
+      "overlap_us": 2000000,
+      "recognitionContextMaxUs": 30000000,
+      "recognitionContinuation": "same-language-original-pcm-redecode-once-v1",
+      "recognitionContinuationMaxUs": 2000000,
+      "seed": 0,
+      "speechCoverage": "owned-word-union-temporal-lexical-decode-v3",
+      "speech_padding_ms": 100,
+      "speech_threshold": 0.5,
+      "temperature": 0,
+      "timeout_ms": 600000,
+      "wordAlignmentNeighbours": [2, 3, 4, 6, 8],
+      "wordAlignmentPaddingUs": [400000, 1000000, 2000000],
+      "workers": 1,
+      "zeroTimePunctuation": "append-to-exactly-touching-lexical-word"
+    }
+  }
+}

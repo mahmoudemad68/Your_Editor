@@ -160,7 +160,7 @@ when that context requires realignment. Partial same-model repairs retain the
 existing two-anchor rule. Conflicting or invalid full-context evidence fails closed.
 Its model revision/SHA, device and compute type are recorded in the actual
 inference parameters/configuration identity. Timing-only fallback is part of
-`ct2-contextual-v14`; it is not a claim that tiny alone generated every timing.
+`ct2-contextual-v15`; it is not a claim that tiny alone generated every timing.
 Tiny deployments therefore bundle both pinned models during setup/build and
 verify both before readiness. There is no inference-time acquisition. At most
 one decoder and one lazily loaded fallback model reside in an adapter; their
@@ -184,14 +184,26 @@ tiny and small separately with the ordinary default beam, thread and deadline
 settings. Per-run words, provenance, wall time and process peak RSS are retained.
 This checks long-recording integrity; there is no 600-second reference transcript
 and no accuracy claim for that fixture.
-The `ct2-contextual-v14` identity also participates in durable admission identity,
+The `ct2-contextual-v15` identity also participates in durable admission identity,
 so prior algorithm results cannot satisfy a new-algorithm task accidentally.
 The deferred PostgreSQL receipt fence checks the worker's actual algorithm
 acknowledgment and freezes its inference metadata together with the result.
 During rollout an old worker's missing/old acknowledgment is rejected, rather
 than accepting its old implementation under a new task fingerprint.
 Whole words are owned by their midpoint in disjoint
-chunk cores. When two matching, temporally overlapping lexical anchors establish
+chunk cores. Independently aligned neighboring views may give a word positive
+but conflicting timings. A greedy switch to the previous view can then overlap
+the following word. Reconciliation chooses one coherent joined sequence using at
+least two exact lexical and intersecting temporal anchors. Only unowned leading
+right context may precede those anchors; owned text is never skipped or normalized.
+For a collision the alignment input uses the existing word extents in original PCM,
+without extra context padding that could absorb an outside word. Every native
+interval remains positive, ordered and source-bounded, indexed decoder text is
+preserved, and untouched outside boundaries remain strict. Unresolved or ambiguous
+evidence fails closed. The captured CI regression is machine-generated diagnostic
+evidence, explicitly not evaluation gold. Real one/two-thread tests forbid any
+replacement decoding while aligning those captured hypotheses against the actual
+licensed source PCM. When two matching, temporally overlapping lexical anchors establish
 a boundary sequence, original-PCM realignment retains a recognized prefix that
 would otherwise fall into an owning core which omitted it. Different languages
 or conflicting/unresolved text never justify guessed words or durations.

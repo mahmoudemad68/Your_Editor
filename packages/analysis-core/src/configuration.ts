@@ -30,7 +30,7 @@ export type AnalysisConfiguration = {
   schemaVersion: "1.1.0";
   modelRevision: string;
   fasterWhisperVersion: "1.2.1";
-  asrAlgorithm: "ct2-contextual-v14";
+  asrAlgorithm: "ct2-contextual-v15";
   vad: typeof VAD_DEFAULTS;
 };
 
@@ -117,7 +117,7 @@ export function analysisConfiguration(
         ? "d90ca5fe260221311c53c58e660288d3deb8d356"
         : "536b0662742c02347bc0e980a01041f333bce120",
     fasterWhisperVersion: "1.2.1",
-    asrAlgorithm: "ct2-contextual-v14",
+    asrAlgorithm: "ct2-contextual-v15",
     asr: asr as typeof ASR_DEFAULTS,
     version: "us210-v1",
     audioVersion: "us204-v1",
