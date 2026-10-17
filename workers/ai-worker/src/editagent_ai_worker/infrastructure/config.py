@@ -19,12 +19,16 @@ class ConfigurationError(Exception):
     """Missing or invalid AI worker configuration."""
 
 
-ASR_NATIVE_PROFILE = "mkl-avx2-cnr-v3"
+ASR_NATIVE_PROFILE = "onednn-avx2-strict-v4"
 ASR_NATIVE_ENVIRONMENT = MappingProxyType(
     {
-        "CT2_USE_MKL": "1",
-        "CT2_PACKED_GEMM": "1",
-        "MKL_CBWR": "AVX2",
+        "CT2_USE_MKL": "0",
+        "CT2_PACKED_GEMM": "0",
+        "CT2_FORCE_CPU_ISA": "AVX2",
+        "ONEDNN_MAX_CPU_ISA": "AVX2",
+        "DNNL_MAX_CPU_ISA": "AVX2",
+        "ONEDNN_DEFAULT_FPMATH_MODE": "strict",
+        "DNNL_DEFAULT_FPMATH_MODE": "strict",
         "MKL_DYNAMIC": "FALSE",
         "OMP_DYNAMIC": "FALSE",
         "OPENBLAS_NUM_THREADS": "1",
@@ -34,11 +38,9 @@ ASR_NATIVE_ENVIRONMENT = MappingProxyType(
     }
 )
 ASR_NATIVE_RESERVED_ENVIRONMENT = (
-    "CT2_FORCE_CPU_ISA",
+    "MKL_CBWR",
     "MKL_ENABLE_INSTRUCTIONS",
     "MKL_DEBUG_CPU_TYPE",
-    "ONEDNN_MAX_CPU_ISA",
-    "DNNL_MAX_CPU_ISA",
 )
 
 
@@ -51,9 +53,14 @@ def require_asr_native_environment() -> None:
 
 
 def configure_asr_native_environment() -> None:
-    """Pin the supported CT2 BLAS backend before either library initializes.
+    """Pin CT2 and its separate convolution/GEMM dispatch before native import.
 
-    CT2 otherwise chooses MKL versus oneDNN by CPU vendor. Its GNU OpenMP
+    CT2 otherwise chooses MKL versus oneDNN by CPU vendor. Its float32 CPU
+    convolution uses oneDNN even when its GEMM uses MKL. Constraining only MKL
+    leaves the encoder and CT2's own kernels independently dispatched. Select
+    oneDNN on both Intel and AMD, cap both dispatchers at verified AVX2, and
+    retain strict float32 math instead of hardware-dependent reduced precision.
+    Its GNU OpenMP
     workers must block while idle instead of spending the job's CPU quota on
     busy waiting between native calls and original-PCM preprocessing.
     ISA selection in CT2
@@ -65,7 +72,7 @@ def configure_asr_native_environment() -> None:
             "ASR native runtime is already imported; this startup profile is not configured."
         )
     if platform.machine().lower() not in {"x86_64", "amd64"}:
-        raise ConfigurationError("ASR CPU execution requires the supported x86-64 MKL runtime.")
+        raise ConfigurationError("ASR CPU execution requires the supported x86-64 runtime.")
     try:
         with Path("/proc/cpuinfo").open(encoding="ascii") as stream:
             description = stream.read(65536)

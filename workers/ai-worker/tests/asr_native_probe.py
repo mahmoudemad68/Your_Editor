@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 import tempfile
@@ -22,6 +23,29 @@ def main() -> None:
     adapter = FasterWhisperAdapter(
         AsrSettings(model="tiny", model_root=ROOT / ".local/asr-models", cpu_threads=threads)
     )
+    import numpy as np
+
+    # CT2 has its own ISA dispatch; its convolution and GEMM backend dispatch
+    # independently. A stable log-Mel input must produce bit-identical encoded
+    # tensors even after requests with other shapes/languages. Retain those
+    # hashes alongside the complete decoder/alignment output, not instead of it.
+    native_features: list[tuple[str, Any]] = []
+    encoder_hashes: dict[str, str] = {}
+
+    def inspect_encoder() -> None:
+        if not native_features:
+            for name in ("en.wav", "ar.wav", "en-chunks.wav"):
+                audio = np.frombuffer(pcm(name), dtype="<i2").astype(np.float32) / 32768
+                for samples in (64000, 128000, 448000):
+                    if len(audio) >= samples:
+                        native_features.append(
+                            (f"{name}:{samples}", adapter.model.feature_extractor(audio[:samples]))
+                        )
+        for name, features in native_features:
+            encoded = np.asarray(adapter.model.encode(features))
+            digest = hashlib.sha256(encoded.tobytes()).hexdigest()
+            assert encoder_hashes.setdefault(name, digest) == digest, name
+
     original = adapter._aligned_chunk
     observations: list[str] = []
 
@@ -36,6 +60,7 @@ def main() -> None:
 
     adapter._aligned_chunk = observed  # type: ignore[method-assign]
     try:
+        inspect_encoder()
         with tempfile.TemporaryDirectory(prefix="asr-kernel-") as directory:
             path = Path(directory) / "original.wav"
             source = fixture(path, pcm("en-chunks.wav"))
@@ -48,10 +73,19 @@ def main() -> None:
                 canonical(adapter, warm, warm_source)
                 canonical(adapter, warm, warm_source)
             outputs.extend(canonical(adapter, path, source) for _ in range(3))
+            inspect_encoder()
             assert outputs[0] == outputs[1] == outputs[2] == outputs[3]
             assert len(outputs[0]["transcript"]["words"]) > 100
             assert observations
-            print(json.dumps({"output": outputs[0], "completeNativeTextPreserved": True}))
+            print(
+                json.dumps(
+                    {
+                        "output": outputs[0],
+                        "completeNativeTextPreserved": True,
+                        "encoderHashes": encoder_hashes,
+                    }
+                )
+            )
     finally:
         adapter.close()
 

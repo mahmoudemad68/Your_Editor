@@ -586,6 +586,7 @@ asyncio.run(run())`,
         { asr: { alignmentAlgorithm: "ct2-contextual-v12" } },
         { asr: { alignmentAlgorithm: "ct2-contextual-v13" } },
         { asr: { alignmentAlgorithm: "ct2-contextual-v14" } },
+        { asr: { alignmentAlgorithm: "ct2-contextual-v15" } },
       ]) {
         const connection = await pool.connect();
         try {

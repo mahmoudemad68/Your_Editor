@@ -138,9 +138,10 @@ def test_real_native_kernel_alignment_and_fresh_reused_state(threads: int) -> No
     outputs = []
     environment = {
         **os.environ,
-        "CT2_USE_MKL": "0",
+        "CT2_USE_MKL": "1",
+        "CT2_PACKED_GEMM": "1",
         "MKL_ENABLE_INSTRUCTIONS": "AVX2",
-        "CT2_FORCE_CPU_ISA": "AVX2",
+        "CT2_FORCE_CPU_ISA": "AVX512",
         "OPENBLAS_NUM_THREADS": "1",
         "OMP_NUM_THREADS": "1",
         "OMP_WAIT_POLICY": "ACTIVE",
@@ -148,6 +149,10 @@ def test_real_native_kernel_alignment_and_fresh_reused_state(threads: int) -> No
         "MKL_CBWR": "AUTO",
         "MKL_DYNAMIC": "TRUE",
         "OMP_DYNAMIC": "TRUE",
+        "ONEDNN_MAX_CPU_ISA": "AVX512_CORE_AMX",
+        "DNNL_MAX_CPU_ISA": "AVX512_CORE_AMX",
+        "ONEDNN_DEFAULT_FPMATH_MODE": "bf16",
+        "DNNL_DEFAULT_FPMATH_MODE": "bf16",
     }
     # Conflicting inherited CPU-vendor/ISA settings must not select a different
     # backend than the admitted profile. Every real child establishes its
@@ -166,12 +171,22 @@ def test_real_native_kernel_alignment_and_fresh_reused_state(threads: int) -> No
         report(f"tiny-native-kernel-threads{threads}", outputs)
     assert outputs[0] == outputs[1]
     assert outputs[0]["completeNativeTextPreserved"] is True
-    assert outputs[0]["output"]["inferenceParameters"]["nativeCpuProfile"] == "mkl-avx2-cnr-v3"
-    assert outputs[0]["output"]["inferenceParameters"]["nativeCpuEnvironment"]["CT2_USE_MKL"] == "1"
+    assert (
+        outputs[0]["output"]["inferenceParameters"]["nativeCpuProfile"] == "onednn-avx2-strict-v4"
+    )
+    assert len(outputs[0]["encoderHashes"]) == 7
     environment = outputs[0]["output"]["inferenceParameters"]["nativeCpuEnvironment"]
     assert environment["OMP_WAIT_POLICY"] == "PASSIVE"
     assert environment["GOMP_SPINCOUNT"] == "0"
-    assert environment["MKL_CBWR"] == "AVX2"
+    assert environment["CT2_USE_MKL"] == "0"
+    assert environment["CT2_PACKED_GEMM"] == "0"
+    assert environment["CT2_FORCE_CPU_ISA"] == "AVX2"
+    assert environment["ONEDNN_MAX_CPU_ISA"] == environment["DNNL_MAX_CPU_ISA"] == "AVX2"
+    assert (
+        environment["ONEDNN_DEFAULT_FPMATH_MODE"]
+        == environment["DNNL_DEFAULT_FPMATH_MODE"]
+        == "strict"
+    )
     assert environment["MKL_DYNAMIC"] == "FALSE"
     assert environment["OMP_DYNAMIC"] == "FALSE"
 
@@ -675,15 +690,18 @@ def test_original_ten_minute_recording_preserves_complete_bounded_word_output(
 
 
 @pytest.mark.parametrize("threads", [1, 2])
+@pytest.mark.parametrize(
+    "capture", ["chunk-boundary-conflict.json", "chunk-boundary-punctuation.json"]
+)
 def test_real_native_alignment_repairs_captured_ci_boundary_without_decoding(
-    threads: int, monkeypatch: pytest.MonkeyPatch
+    threads: int, capture: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from faster_whisper import WhisperModel
 
     from editagent_ai_worker.domain.analysis.transcription import Word
     from editagent_ai_worker.infrastructure.faster_whisper import merge_owned_words
 
-    captured = json.loads((ROOT / "tests/fixtures/asr/chunk-boundary-conflict.json").read_text())
+    captured = json.loads((ROOT / "tests/fixtures/asr" / capture).read_text())
     assert captured["createdBy"] == "machine_generated"
     path = ROOT / "tests/fixtures/asr" / captured["fixtureFile"]
     assert hashlib.sha256(path.read_bytes()).hexdigest() == captured["fixtureSha256"]
@@ -731,7 +749,7 @@ def test_real_native_alignment_repairs_captured_ci_boundary_without_decoding(
         assert all(a.end_us <= b.start_us for a, b in zip(result, result[1:], strict=False))
         assert hashlib.sha256(path.read_bytes()).hexdigest() == captured["fixtureSha256"]
         report(
-            f"captured-ci-boundary-threads{threads}",
+            f"captured-{Path(capture).stem}-threads{threads}",
             {
                 "words": [dataclasses.asdict(w) for w in result],
                 "expectedDecoderText": expected,

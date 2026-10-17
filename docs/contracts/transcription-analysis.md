@@ -94,25 +94,35 @@ of English/Arabic speech and repeated phrases. Test reports and remaining
 platform limitations belong to the exact-head evidence, not an unconditional
 cross-hardware numerical reproducibility claim.
 
-The supported x86-64 CPU runtime explicitly selects MKL with the official
-`CT2_USE_MKL=1` control and its default packed GEMM API (`CT2_PACKED_GEMM=1`).
-CTranslate2 otherwise chooses MKL versus oneDNN automatically by CPU vendor;
-pinning its thread count alone does not establish the same numerical backend.
-The `mkl-avx2-cnr-v3` profile is established before native imports by service startup,
-the isolated job entrypoint and the evaluation CLI. It pins the official MKL
-conditional numerical reproducibility branch with `MKL_CBWR=AVX2` and disables
-dynamic thread-team selection with `MKL_DYNAMIC=FALSE` and `OMP_DYNAMIC=FALSE`.
-Previously, CT2 reported AVX2 while its independently dispatched BLAS selected
-AVX512 with CNR disabled and dynamic teams enabled. That profile did not establish
-the fixed numerical execution needed for reproducibility. Native verbose probes
-of the new profile report `CNR:AVX2 Dyn:0` with the configured thread count.
+The supported x86-64 CPU runtime explicitly selects oneDNN with the official
+`CT2_USE_MKL=0` control and disables MKL weight packing (`CT2_PACKED_GEMM=0`).
+CTranslate2 otherwise chooses its GEMM backend by CPU vendor. Its float32 CPU
+convolution uses oneDNN even when GEMM uses MKL, and its own kernels have separate
+ISA dispatch. Constraining MKL alone therefore leaves other encoder operations
+independently dispatched. The preceding MKL-only profile passed local Intel
+repeatability but failed Tiny Arabic inference on an AMD CI runner; it is not
+accepted as a portable deterministic profile.
+
+The `onednn-avx2-strict-v4` profile is established before native imports by service
+startup, the isolated job entrypoint and evaluation CLI. `CT2_FORCE_CPU_ISA=AVX2`
+and both `ONEDNN_MAX_CPU_ISA`/`DNNL_MAX_CPU_ISA=AVX2` constrain the separate
+dispatchers. Both oneDNN default-fpmath aliases are set to `strict`, retaining
+float32 rather than permitting hardware-dependent reduced precision. Dynamic
+OpenMP teams are disabled. These controls use the installed runtime's supported
+interfaces; no runtime library is patched or vendored. Relevant pinned upstream
+sources: [CT2 environment controls](https://github.com/OpenNMT/CTranslate2/blob/v4.8.2/docs/environment_variables.md),
+[GEMM backend selection](https://github.com/OpenNMT/CTranslate2/blob/v4.8.2/src/cpu/backend.cc),
+[CPU convolution](https://github.com/OpenNMT/CTranslate2/blob/v4.8.2/src/ops/conv1d_cpu.cc).
 This deployment requires Linux x86-64 with AVX2/FMA; startup verifies those flags
 from bounded trusted CPU metadata and fails closed if support cannot be established.
 Inherited conflicting ISA/debug overrides are removed; startup rejects an already-imported
 native runtime even when environment values match, because they cannot attest earlier
 initialization. The profile and bounded thread environment are recorded in inference
-parameters and their configuration hash. CNR is conditional on the documented runtime
-and thread configuration; this is not a claim of universal cross-hardware equivalence.
+parameters and their configuration hash. Tests compare encoded tensors after
+different input shapes as well as complete recognized words, native timings,
+confidence and provenance across fresh/reused processes. Qualification remains
+conditional on the measured runtime and thread configuration, not a claim of
+universal cross-hardware equivalence.
 The pinned CTranslate2 wheel links GNU OpenMP. `OMP_WAIT_POLICY=PASSIVE` and
 `GOMP_SPINCOUNT=0` make idle native workers block instead of consuming a bounded
 container's CPU quota between inference and PCM preprocessing. These are supported
@@ -160,7 +170,7 @@ when that context requires realignment. Partial same-model repairs retain the
 existing two-anchor rule. Conflicting or invalid full-context evidence fails closed.
 Its model revision/SHA, device and compute type are recorded in the actual
 inference parameters/configuration identity. Timing-only fallback is part of
-`ct2-contextual-v15`; it is not a claim that tiny alone generated every timing.
+`ct2-contextual-v16`; it is not a claim that tiny alone generated every timing.
 Tiny deployments therefore bundle both pinned models during setup/build and
 verify both before readiness. There is no inference-time acquisition. At most
 one decoder and one lazily loaded fallback model reside in an adapter; their
@@ -184,7 +194,7 @@ tiny and small separately with the ordinary default beam, thread and deadline
 settings. Per-run words, provenance, wall time and process peak RSS are retained.
 This checks long-recording integrity; there is no 600-second reference transcript
 and no accuracy claim for that fixture.
-The `ct2-contextual-v15` identity also participates in durable admission identity,
+The `ct2-contextual-v16` identity also participates in durable admission identity,
 so prior algorithm results cannot satisfy a new-algorithm task accidentally.
 The deferred PostgreSQL receipt fence checks the worker's actual algorithm
 acknowledgment and freezes its inference metadata together with the result.
@@ -195,7 +205,9 @@ chunk cores. Independently aligned neighboring views may give a word positive
 but conflicting timings. A greedy switch to the previous view can then overlap
 the following word. Reconciliation chooses one coherent joined sequence using at
 least two exact lexical and intersecting temporal anchors. Only unowned leading
-right context may precede those anchors; owned text is never skipped or normalized.
+right context and trailing left context may be excluded from anchor search;
+owned text is never skipped or normalized. For example, an unowned left-context
+`February.` must not block earlier exact anchors to the right-owned `February`.
 For a collision the alignment input uses the existing word extents in original PCM,
 without extra context padding that could absorb an outside word. Every native
 interval remains positive, ordered and source-bounded, indexed decoder text is

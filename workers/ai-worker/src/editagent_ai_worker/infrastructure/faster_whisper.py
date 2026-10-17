@@ -39,7 +39,7 @@ from editagent_ai_worker.infrastructure.config import (
 )
 from editagent_ai_worker.infrastructure.vad_audio import verify_audio_file, wav_parameters
 
-ASR_ALGORITHM = "ct2-contextual-v15"
+ASR_ALGORITHM = "ct2-contextual-v16"
 
 
 def uncovered_speech(audio: Any, words: list[Any], options: Any) -> list[tuple[int, int]]:
@@ -694,7 +694,7 @@ class FasterWhisperAdapter:
 
         A context can omit an owned word or disagree about its positive timing.
         At least two exact lexical and intersecting temporal anchors establish
-        the shared sequence. Only unowned right context may precede those
+        the shared sequence. Only unowned right/left context may surround those
         anchors; every owned lexical token remains in the joined text. Re-align
         on bounded original PCM, never guessed spans or replacement recognition.
         """
@@ -717,31 +717,43 @@ class FasterWhisperAdapter:
             # decoded capitalization/spelling must not prevent two later exact
             # temporal anchors from establishing the shared sequence. Never
             # skip an owned word or normalize the selected decoder text.
-            for head_offset in range(len(head)):
-                check()
+            for tail_end in range(len(tail), 1, -1):
+                # The left decoder can punctuate an unfinished context word
+                # differently. Only trailing words owned by the RIGHT core may
+                # be excluded from anchor search; retain every left-owned word.
                 if (
-                    head_offset
-                    and head[head_offset - 1].start_us + head[head_offset - 1].end_us
-                    >= 2 * boundary
+                    tail_end < len(tail)
+                    and tail[tail_end].start_us + tail[tail_end].end_us < 2 * boundary
                 ):
                     break
-                for count in range(2, min(len(tail), len(head) - head_offset) + 1):
-                    if all(
-                        a.text.strip() == b.text.strip()
-                        and max(a.start_us, b.start_us) < min(a.end_us, b.end_us)
-                        for a, b in zip(
-                            tail[-count:], head[head_offset : head_offset + count], strict=True
-                        )
+                for head_offset in range(len(head)):
+                    check()
+                    if (
+                        head_offset
+                        and head[head_offset - 1].start_us + head[head_offset - 1].end_us
+                        >= 2 * boundary
                     ):
-                        matches.append((count, head_offset))
+                        break
+                    for count in range(2, min(tail_end, len(head) - head_offset) + 1):
+                        if all(
+                            a.text.strip() == b.text.strip()
+                            and max(a.start_us, b.start_us) < min(a.end_us, b.end_us)
+                            for a, b in zip(
+                                tail[tail_end - count : tail_end],
+                                head[head_offset : head_offset + count],
+                                strict=True,
+                            )
+                        ):
+                            matches.append((count, head_offset, tail_end))
             if not matches:
                 continue
             count = max(item[0] for item in matches)
-            offsets = [offset for size, offset in matches if size == count]
+            offsets = [(offset, end) for size, offset, end in matches if size == count]
             if len(offsets) != 1:
                 raise TranscriptionError("ASR overlap has ambiguous temporal anchors")
-            head = head[offsets[0] :]
-            prefix = tail[:-count]
+            head_offset, tail_end = offsets[0]
+            head = head[head_offset:]
+            prefix = tail[: tail_end - count]
             missing = [
                 w
                 for w in prefix

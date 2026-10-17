@@ -722,20 +722,25 @@ def test_colliding_owned_words_use_one_anchored_native_view_not_greedy_alternati
     assert chunks[0][2] == left and chunks[1][2] == right
 
 
-def test_boundary_context_prefix_can_differ_but_owned_text_cannot_be_replaced() -> None:
+@pytest.mark.parametrize("left_suffix", [False, True])
+def test_boundary_context_prefix_can_differ_but_owned_text_cannot_be_replaced(
+    left_suffix: bool,
+) -> None:
     from editagent_ai_worker.domain.analysis.transcription import Word
     from editagent_ai_worker.domain.analysis.voice_activity import AudioIdentity
 
     def word(text: str, start: float, end: float) -> Word:
         return Word(text, int(start * 1_000_000), int(end * 1_000_000), 0.8)
 
-    left = (
+    left: tuple[Word, ...] = (
         word(" with", 3.8, 4.0),
         word(" a", 4.0, 4.2),
         word(" value", 4.2, 4.5),
         word(" of", 4.5, 5.1),
         word(" 24", 5.1, 5.7),
     )
+    if left_suffix:
+        left = (*left, word(" February.", 5.7, 5.9))
     right = (
         word(" With", 3.6, 3.8),
         word(" a", 3.8, 4.1),
@@ -796,6 +801,38 @@ def test_boundary_search_never_skips_an_owned_right_word() -> None:
         adapter._reconcile_overlaps(chunks, ["en", "en"], PcmReader(10), source, lambda: None)
         == chunks
     )
+
+
+def test_boundary_search_never_skips_an_owned_left_word() -> None:
+    from editagent_ai_worker.domain.analysis.transcription import Word
+    from editagent_ai_worker.domain.analysis.voice_activity import AudioIdentity
+
+    left = (
+        Word(" a", 4_000_000, 4_200_000, 0.8),
+        Word(" b", 4_200_000, 4_400_000, 0.8),
+        Word(" keep", 4_400_000, 5_200_000, 0.8),
+    )
+    right = (
+        *left[:2],
+        Word(" following", 4_900_000, 5_300_000, 0.8),
+    )
+    chunks: list[tuple[int, int, tuple[Word, ...]]] = [
+        (0, 5_000_000, left),
+        (5_000_000, 10_000_000, right),
+    ]
+    source = AudioIdentity("fixture", "a" * 64, "audio", "b" * 64, 10_000_000, 0, 10_000_000)
+    adapter = adapter_returning([])
+
+    def forbidden(*args: Any, **kwargs: Any) -> Any:
+        pytest.fail("Owned left text was discarded to manufacture shared anchors")
+
+    adapter._aligned_chunk = forbidden
+    assert (
+        adapter._reconcile_overlaps(chunks, ["en", "en"], PcmReader(10), source, lambda: None)
+        == chunks
+    )
+    with pytest.raises(TranscriptionError, match="boundary"):
+        whisper.merge_owned_words(chunks, source)
 
 
 @pytest.mark.parametrize("defect", ["replace", "omit", "reorder"])

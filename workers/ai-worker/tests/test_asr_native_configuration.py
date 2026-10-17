@@ -47,12 +47,12 @@ print(json.dumps({key: os.environ[key] for key in ASR_NATIVE_ENVIRONMENT}))
 def test_child_profile_overrides_inherited_backend_without_mutating_parent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("CT2_USE_MKL", "0")
+    monkeypatch.setenv("CT2_USE_MKL", "1")
     monkeypatch.setenv("CT2_FORCE_CPU_ISA", "AVX512")
     result = analysis_child_environment("/tmp/trusted-analysis-workspace")
     assert all(result[key] == value for key, value in ASR_NATIVE_ENVIRONMENT.items())
     assert all(key not in result for key in ASR_NATIVE_RESERVED_ENVIRONMENT)
-    assert os.environ["CT2_USE_MKL"] == "0"
+    assert os.environ["CT2_USE_MKL"] == "1"
     assert os.environ["CT2_FORCE_CPU_ISA"] == "AVX512"
 
 
@@ -60,7 +60,7 @@ def test_late_conflicting_native_initialization_fails_without_changing_environme
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setitem(sys.modules, "ctranslate2", SimpleNamespace())
-    monkeypatch.setenv("CT2_USE_MKL", "0")
+    monkeypatch.setenv("CT2_USE_MKL", "1")
     before = {key: os.environ.get(key) for key in ASR_NATIVE_ENVIRONMENT}
     with pytest.raises(ConfigurationError, match="not configured"):
         configure_asr_native_environment()
