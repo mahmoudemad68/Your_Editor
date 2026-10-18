@@ -12,7 +12,12 @@ import conftest as reporting
 
 
 @pytest.mark.parametrize(
-    "filename", ["test_real_multilingual_asr.py", "test_asr_native_configuration.py"]
+    "filename",
+    [
+        "test_real_multilingual_asr.py",
+        "test_real_model_reuse.py",
+        "test_asr_native_configuration.py",
+    ],
 )
 def test_real_failure_reporting_preserves_private_traceback_without_publishing_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, filename: str
@@ -62,3 +67,36 @@ def test_ci_artifact_allowlist_excludes_raw_native_evidence() -> None:
     assert "            .local/asr-public/test-summary.json\n" in workflow
     assert "            .local/asr-batch/container-evidence.json\n" not in workflow
     assert "            .local/render-batch/\n" not in workflow
+
+
+@pytest.mark.parametrize(
+    "message,expected",
+    [
+        ("ASR words require trustworthy realignment", "alignment_unverified"),
+        ("ASR recognized speech lacks complete word coverage", "speech_coverage"),
+        ("ASR words require trustworthy realignment private-input", "transcription"),
+        ("unknown-private-input", "transcription"),
+    ],
+)
+def test_failure_categories_never_publish_unknown_exception_details(
+    message: str, expected: str
+) -> None:
+    from editagent_ai_worker.domain.analysis.transcription import TranscriptionError
+
+    call = SimpleNamespace(excinfo=SimpleNamespace(value=TranscriptionError(message)))
+    assert reporting._failure_category(call) == expected
+
+
+@pytest.mark.parametrize(
+    "path,expected",
+    [
+        ("untrusted-prefix/test_real_model_reuse.py", "test_real_model_reuse.py:11"),
+        ("untrusted-prefix/faster_whisper.py", "faster_whisper.py:11"),
+        ("untrusted-prefix/untrusted-key.py", "unavailable"),
+    ],
+)
+def test_failure_location_never_exports_untrusted_path_components(path: str, expected: str) -> None:
+    call = SimpleNamespace(
+        excinfo=SimpleNamespace(traceback=[SimpleNamespace(path=path, lineno=10)])
+    )
+    assert reporting._failure_location(call) == expected
