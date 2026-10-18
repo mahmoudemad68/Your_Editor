@@ -39,7 +39,7 @@ from editagent_ai_worker.infrastructure.config import (
 )
 from editagent_ai_worker.infrastructure.vad_audio import verify_audio_file, wav_parameters
 
-ASR_ALGORITHM = "ct2-contextual-v16"
+ASR_ALGORITHM = "ct2-contextual-v18"
 
 
 def uncovered_speech(audio: Any, words: list[Any], options: Any) -> list[tuple[int, int]]:
@@ -74,6 +74,20 @@ def microseconds(value: Any, sample_offset: int = 0) -> int:
     # Round once after adding the exact 16 kHz sample offset (62.5 us/sample).
     total = n * 1_000_000 + Decimal(sample_offset) * 1_000_000 / 16000
     return int(total.quantize(Decimal(1), rounding=ROUND_HALF_UP))
+
+
+def same_context_word(left: str, right: str) -> bool:
+    """Anchor identity tolerates ASCII capitalization, never changes output text.
+
+    A new context may start with a capitalized proper name. Wider Unicode
+    case-folding (for example sharp-s to ss), punctuation and spelling changes
+    do not establish the same lexical anchor.
+    """
+
+    def key(text: str) -> str:
+        return "".join(chr(ord(c) + 32) if "A" <= c <= "Z" else c for c in text.strip())
+
+    return key(left) == key(right)
 
 
 def attach_boundary_punctuation(words: list[Any]) -> list[Any]:
@@ -326,7 +340,12 @@ class FasterWhisperAdapter:
         return regions
 
     def _decode_window(
-        self, audio: Any, language: str | None, check: Callable[[], None]
+        self,
+        audio: Any,
+        language: str | None,
+        check: Callable[[], None],
+        *,
+        stitch_speech: bool = True,
     ) -> tuple[list[Any], Any]:
         check()
         segments, info = self.model.transcribe(
@@ -336,7 +355,7 @@ class FasterWhisperAdapter:
             beam_size=self.settings.beam_size,
             temperature=0.0,
             condition_on_previous_text=False,
-            vad_filter=True,
+            vad_filter=stitch_speech,
             vad_parameters={
                 "threshold": self.settings.speech_threshold,
                 "neg_threshold": self.settings.negative_threshold,
@@ -542,7 +561,14 @@ class FasterWhisperAdapter:
             # collapse real lexical words into zero-length alignment bins.
             # Align only the actual, bounded source features; no audio/time is
             # invented to satisfy the word contract.
-            encoded = alignment_model.encode(alignment_model.feature_extractor(pcm))
+            features = alignment_model.feature_extractor(pcm)
+            # Faster-Whisper's 160-sample end padding adds one feature column
+            # at exactly 30 seconds. Match its decoder's model-length trim:
+            # retain the complete source window, excluding only that overflow
+            # column. Short alignment windows remain unpadded and unchanged.
+            if features.shape[-1] > 3000:
+                features = features[..., :3000]
+            encoded = alignment_model.encode(features)
             evidence = []
             for width in (7, 5, 3, 1):
                 if check is not None:
@@ -690,13 +716,14 @@ class FasterWhisperAdapter:
         source: AudioIdentity,
         check: Callable[[], None],
     ) -> list[tuple[int, int, tuple[Word, ...]]]:
-        """Recover recognized boundary words using two shared temporal anchors.
+        """Recover recognized boundary words using bounded native evidence.
 
         A context can omit an owned word or disagree about its positive timing.
-        At least two exact lexical and intersecting temporal anchors establish
-        the shared sequence. Only unowned right/left context may surround those
-        anchors; every owned lexical token remains in the joined text. Re-align
-        on bounded original PCM, never guessed spans or replacement recognition.
+        Normally two spelling-preserving lexical/temporal anchors establish the
+        shared sequence without replacing owned text. A unique-anchor fallback
+        can select a strictly dominant, more complete prefix of the SAME audio;
+        unrelated owned text is never skipped. Re-align on bounded original PCM,
+        never guessed spans or replacement recognition.
         """
         chunks = list(chunks)
         for index in range(1, len(chunks)):
@@ -714,7 +741,7 @@ class FasterWhisperAdapter:
             tail, head = left[li[0] : li[-1] + 1], right[ri[0] : ri[-1] + 1]
             matches = []
             # Leading context belongs to the previous core. Its independently
-            # decoded capitalization/spelling must not prevent two later exact
+            # decoded capitalization must not prevent two later lexical
             # temporal anchors from establishing the shared sequence. Never
             # skip an owned word or normalize the selected decoder text.
             for tail_end in range(len(tail), 1, -1):
@@ -736,7 +763,7 @@ class FasterWhisperAdapter:
                         break
                     for count in range(2, min(tail_end, len(head) - head_offset) + 1):
                         if all(
-                            a.text.strip() == b.text.strip()
+                            same_context_word(a.text, b.text)
                             and max(a.start_us, b.start_us) < min(a.end_us, b.end_us)
                             for a, b in zip(
                                 tail[tail_end - count : tail_end],
@@ -744,16 +771,55 @@ class FasterWhisperAdapter:
                                 strict=True,
                             )
                         ):
-                            matches.append((count, head_offset, tail_end))
+                            matches.append(
+                                (
+                                    count,
+                                    head_offset,
+                                    tail_end,
+                                    all(
+                                        a.text.strip() == b.text.strip()
+                                        for a, b in zip(
+                                            tail[tail_end - count : tail_end],
+                                            head[head_offset : head_offset + count],
+                                            strict=True,
+                                        )
+                                    ),
+                                )
+                            )
             if not matches:
-                continue
+                # Two contexts may disagree about the same spoken prefix,
+                # rather than merely omit a word. Do not throw away a more
+                # complete, strictly stronger native hypothesis just because
+                # the shorter decoder replaced two words with one. This path
+                # accepts ONLY a unique exact temporal anchor, complete time
+                # coverage of the competing prefix, and strict confidence
+                # dominance for EVERY replacement word. It cannot skip an
+                # unrelated owned word or choose between repeated anchors.
+                dominant = self._dominant_boundary_prefix(tail, head, boundary)
+                if dominant is None:
+                    continue
+                matches = [(1, dominant[0], dominant[1], True)]
+            # Existing exact anchors are stronger evidence than case-only
+            # aliases. Use the latter only when no exact pair is available;
+            # never create ambiguity in an already established exact sequence.
+            if any(item[3] for item in matches):
+                matches = [item for item in matches if item[3]]
             count = max(item[0] for item in matches)
-            offsets = [(offset, end) for size, offset, end in matches if size == count]
+            offsets = [(offset, end) for size, offset, end, _ in matches if size == count]
             if len(offsets) != 1:
                 raise TranscriptionError("ASR overlap has ambiguous temporal anchors")
             head_offset, tail_end = offsets[0]
             head = head[head_offset:]
             prefix = tail[: tail_end - count]
+            # Keep the owning left decoder's original spelling/capitalization
+            # for shared left-owned anchors. No case normalization is emitted.
+            head = (
+                tuple(
+                    a if a.start_us + a.end_us < 2 * boundary and a.text != b.text else b
+                    for a, b in zip(tail[tail_end - count : tail_end], head[:count], strict=True)
+                )
+                + head[count:]
+            )
             missing = [
                 w
                 for w in prefix
@@ -791,6 +857,22 @@ class FasterWhisperAdapter:
                 )
                 // 1_000_000,
             )
+            # Context padding must not bring an untouched neighboring word
+            # into this alignment hypothesis. Bound actual PCM at its existing
+            # outside anchors before native inference, rather than clipping or
+            # shifting the inferred word intervals afterwards. Round inward to
+            # whole samples so no read crosses either immutable time boundary.
+            if li[0]:
+                first = max(
+                    first,
+                    ((left[li[0] - 1].end_us - source.scope_start_us) * 16000 + 999999)
+                    // 1_000_000,
+                )
+            if ri[-1] + 1 < len(right):
+                last = min(
+                    last,
+                    (right[ri[-1] + 1].start_us - source.scope_start_us) * 16000 // 1_000_000,
+                )
             if not first < last or last - first > 480000:
                 raise TranscriptionError("ASR boundary alignment context is invalid")
             wav.setpos(first)
@@ -839,13 +921,105 @@ class FasterWhisperAdapter:
             chunks[index] = (*chunks[index][:2], (*right[: ri[0]], *repaired, *right[ri[-1] + 1 :]))
         return chunks
 
-    def _verify_coverage(self, audio: Any, words: list[Any], check: Callable[[], None]) -> None:
+    @staticmethod
+    def _dominant_boundary_prefix(
+        tail: tuple[Word, ...], head: tuple[Word, ...], boundary: int
+    ) -> tuple[int, int] | None:
+        """Select a strictly dominant native hypothesis for the SAME audio.
+
+        Confidence is relative decoder evidence, not statistical certainty.
+        No text or timestamp is invented. Original-PCM/outside-anchor checks in
+        the caller still apply. Ordinary two-anchor reconciliation takes priority.
+        """
+        anchors = [
+            (i, j)
+            for i, a in enumerate(tail)
+            for j, b in enumerate(head)
+            if a.text.strip() == b.text.strip()
+            and max(a.start_us, b.start_us) < min(a.end_us, b.end_us)
+        ]
+        if len(anchors) != 1:
+            return None
+        i, j = anchors[0]
+        anchor = head[j]
+        if (
+            i != len(tail) - 1
+            or sum(w.text.strip() == anchor.text.strip() for w in tail) != 1
+            or sum(w.text.strip() == anchor.text.strip() for w in head) != 1
+        ):
+            return None
+        replacement = [w for w in tail[:i] if w.start_us + w.end_us >= 2 * boundary]
+        competing = [w for w in head[:j] if w.start_us + w.end_us >= 2 * boundary]
+        if not competing or len(replacement) <= len(competing):
+            return None
+        if min(w.confidence for w in replacement) <= max(w.confidence for w in competing):
+            return None
+        # Require full interval coverage, not merely intersecting midpoints.
+        # A different non-overlapping word must never be discarded to find an
+        # anchor. Either existing alignment of the same shared word supplies
+        # coverage evidence; emitted spelling/timing still follows ownership.
+        evidence = sorted([*replacement, tail[i], anchor], key=lambda w: w.start_us)
+        for word in competing:
+            cursor = word.start_us
+            for observed in evidence:
+                if observed.end_us <= cursor:
+                    continue
+                if observed.start_us > cursor:
+                    return None
+                cursor = max(cursor, observed.end_us)
+                if cursor >= word.end_us:
+                    break
+            if cursor < word.end_us:
+                return None
+        return j, i + 1
+
+    @staticmethod
+    def _unrepresented_words(
+        candidates: list[Any],
+        words: list[Any],
+        start: int,
+        lower: int,
+        upper: int,
+        last_match: int = -1,
+        *,
+        intersect_gap: bool = False,
+    ) -> tuple[list[int], int]:
+        """Ordered lexical AND original-PCM evidence, including repeated words."""
+        missing = []
+        for index, word in enumerate(candidates):
+            text = word.word.strip()
+            if not text:
+                continue
+            first = Decimal(start) / 16000 + Decimal(str(word.start))
+            last = Decimal(start) / 16000 + Decimal(str(word.end))
+            matches = [
+                position
+                for position, represented in enumerate(words)
+                if position > last_match
+                and represented.word.strip() == text
+                and max(first, Decimal(str(represented.start)))
+                < min(last, Decimal(str(represented.end)))
+            ]
+            if matches:
+                last_match = matches[0]
+            elif (
+                max(first * 16000, Decimal(lower)) < min(last * 16000, Decimal(upper))
+                if intersect_gap
+                else Decimal(lower) <= (first + last) * 8000 < Decimal(upper)
+            ):
+                missing.append(index)
+        return missing, last_match
+
+    def _coverage_evidence(
+        self, audio: Any, words: list[Any], check: Callable[[], None]
+    ) -> list[tuple[int, int, int, int, Any, str]]:
+        evidence = []
         for lower, upper in uncovered_speech(audio, words, self._vad_options()):
             check()
             start = max(0, lower - 16000)
             end = min(len(audio), upper + 16000)
             # Every original window is <=30 seconds; no unbounded second pass.
-            segments, _ = self.model.transcribe(
+            segments, info = self.model.transcribe(
                 audio[start:end],
                 language=None,
                 word_timestamps=True,
@@ -861,32 +1035,116 @@ class FasterWhisperAdapter:
                 # lexical speech was omitted. Do not publish a partial result.
                 if segment.avg_logprob < -1.0 or segment.no_speech_prob >= 0.6:
                     continue
-                for word in segment.words or []:
-                    text = word.word.strip()
-                    if not text:
-                        continue
-                    first = Decimal(start) / 16000 + Decimal(str(word.start))
-                    last = Decimal(start) / 16000 + Decimal(str(word.end))
-                    # Independent short-context alignment can extend an already
-                    # represented word into the apparent gap. Require BOTH exact
-                    # lexical identity and intersecting original-PCM intervals;
-                    # matching text elsewhere is not evidence. Ordered one-to-one
-                    # matching cannot hide an additional repeated word.
-                    matches = [
-                        index
-                        for index, represented in enumerate(words)
-                        if index > last_match
-                        and represented.word.strip() == text
-                        and max(first, Decimal(str(represented.start)))
-                        < min(last, Decimal(str(represented.end)))
-                    ]
-                    if matches:
-                        last_match = matches[0]
-                        continue
-                    if Decimal(lower) <= (first + last) * 8000 < Decimal(upper):
-                        raise TranscriptionError(
-                            "ASR recognized speech lacks complete word coverage"
+                missing, last_match = self._unrepresented_words(
+                    segment.words or [], words, start, lower, upper, last_match
+                )
+                if missing:
+                    evidence.append((start, end, lower, upper, segment, str(info.language)))
+        return evidence
+
+    def _recover_coverage(
+        self, audio: Any, words: list[Any], check: Callable[[], None]
+    ) -> list[Any]:
+        """One bounded source-backed recovery pass; never infer durations or text.
+
+        Short independent decodes can recover a disfluent/repeated utterance
+        absent from the long-context hypothesis. Keep only native lexical
+        observations owned by an uncovered speech interval. The entire decoded
+        segment must have trustworthy alignment; existing words are immutable
+        outside anchors. Ambiguous overlap still fails closed. The ordinary
+        independent completeness check runs again after these additions.
+        """
+        represented = list(words)
+        additions = []
+        for start, end, lower, upper, segment, language in self._coverage_evidence(
+            audio, words, check
+        ):
+            check()
+            aligned, _, valid, _ = self._alignment_state([segment], audio[start:end])
+            if not valid:
+                raise TranscriptionError("ASR coverage hypothesis has no trustworthy native timing")
+            # Retain whole native words crossing a VAD edge too. Midpoint-only
+            # recovery could drop the first lexical word in a recovered phrase.
+            # Existing outside anchors still forbid overlap or guessed timing.
+            missing, _ = self._unrepresented_words(
+                aligned, represented, start, lower, upper, intersect_gap=True
+            )
+            if not missing:
+                continue
+            selected = [aligned[index] for index in missing]
+            origin = Decimal(start) / 16000
+            first_midpoint = (
+                origin + (Decimal(str(selected[0].start)) + Decimal(str(selected[0].end))) / 2
+            )
+            last_midpoint = (
+                origin + (Decimal(str(selected[-1].start)) + Decimal(str(selected[-1].end))) / 2
+            )
+            left = [w for w in represented if Decimal(str(w.end)) <= first_midpoint]
+            right = [w for w in represented if Decimal(str(w.start)) >= last_midpoint]
+            if len(left) + len(right) != len(represented):
+                raise TranscriptionError("ASR coverage repair crosses existing word evidence")
+            # Independently decoded neighbors can overlap at a short-context
+            # edge. Bound the ORIGINAL PCM by immutable outside words, then
+            # align the complete missing phrase, rather than clipping inferred
+            # intervals or discarding its first word.
+            first_sample, last_sample = start, end
+            if left:
+                first_sample = max(
+                    first_sample,
+                    int(
+                        (Decimal(str(left[-1].end)) * 16000).to_integral_value(
+                            rounding="ROUND_CEILING"
                         )
+                    ),
+                )
+            if right:
+                last_sample = min(
+                    last_sample,
+                    int(
+                        (Decimal(str(right[0].start)) * 16000).to_integral_value(
+                            rounding="ROUND_FLOOR"
+                        )
+                    ),
+                )
+            if not first_sample < last_sample:
+                raise TranscriptionError("ASR coverage repair has no bounded source context")
+            patch_origin = Decimal(first_sample) / 16000
+            segment = SimpleNamespace(
+                text="".join(w.word for w in selected),
+                start=0,
+                end=(last_sample - first_sample) / 16000,
+                words=[
+                    SimpleNamespace(
+                        word=w.word,
+                        start=float(origin + Decimal(str(w.start)) - patch_origin),
+                        end=float(origin + Decimal(str(w.end)) - patch_origin),
+                        probability=float(w.probability),
+                    )
+                    for w in selected
+                ],
+            )
+            patch = self._aligned_chunk([segment], audio[first_sample:last_sample], language, check)
+            if [w.word for w in patch] != [w.word for w in selected]:
+                raise TranscriptionError("ASR coverage alignment changed complete missing text")
+            for word, original in zip(patch, selected, strict=True):
+                first = patch_origin + Decimal(str(word.start))
+                last = patch_origin + Decimal(str(word.end))
+                if any(
+                    max(first, Decimal(str(w.start))) < min(last, Decimal(str(w.end)))
+                    for w in represented
+                ):
+                    raise TranscriptionError("ASR coverage repair violates outside anchors")
+                candidate = SimpleNamespace(
+                    word=word.word, start=first, end=last, probability=float(original.probability)
+                )
+                additions.append(candidate)
+                represented.append(candidate)
+                represented.sort(key=lambda w: (w.start, w.end))
+        return additions
+
+    def _verify_coverage(self, audio: Any, words: list[Any], check: Callable[[], None]) -> None:
+        if self._coverage_evidence(audio, words, check):
+            raise TranscriptionError("ASR recognized speech lacks complete word coverage")
 
     def transcribe(
         self,
@@ -956,19 +1214,39 @@ class FasterWhisperAdapter:
                 try:
                     decoded, info = self._decode_window(audio, detected_language, check)
                     _, _, valid, right_edge_failure = self._alignment_state(decoded, audio)
+                    retried = False
                     if not valid and right_edge_failure:
                         continued = self._continued_pcm(
                             wav, start_sample, end_sample, region_end, audio, check
                         )
                         if continued is not None:
-                            # A clipped context can hypothesize an unfinished word.
-                            # Re-recognize actual additional source once, instead of
-                            # assigning invented durations to that early hypothesis.
-                            # Alignment below retains ALL final recognized text.
                             audio = continued
-                            decoded, info = self._decode_window(audio, detected_language, check)
+                            decoded, info = self._decode_window(
+                                audio, detected_language, check, stitch_speech=False
+                            )
+                            retried = True
                     candidates = []
-                    aligned = self._aligned_chunk(decoded, audio, str(info.language), check)
+                    try:
+                        aligned = self._aligned_chunk(decoded, audio, str(info.language), check)
+                    except (TranscriptionCancelled, TranscriptionTimeout):
+                        raise
+                    except TranscriptionError as alignment_failure:
+                        if retried:
+                            raise
+                        # Exhaust trustworthy timing evidence before replacing
+                        # a recoverable hypothesis. VAD stitching can collapse
+                        # an entire terminal phrase. One actual contiguous-PCM
+                        # decode may provide a valid complete native hypothesis;
+                        # never post-filter tokens or invent positive timing.
+                        decoded, info = self._decode_window(
+                            audio, detected_language, check, stitch_speech=False
+                        )
+                        _, _, retry_valid, _ = self._alignment_state(decoded, audio)
+                        if not retry_valid:
+                            raise alignment_failure
+                        # Native-valid timing requires zero additional encodes,
+                        # preserving the existing total alignment resource bound.
+                        aligned = self._aligned_chunk(decoded, audio, str(info.language), check)
                     for word in aligned:
                         check()
                         candidates.append(
@@ -1038,6 +1316,27 @@ class FasterWhisperAdapter:
                     if w.end_us > source.scope_start_us + lower
                     and w.start_us < source.scope_start_us + upper
                 ]
+                additions = self._recover_coverage(audio, represented, check)
+                if additions:
+                    recovered = tuple(
+                        Word(
+                            word.word,
+                            int(
+                                ((word.start + offset) * 1_000_000).quantize(
+                                    Decimal(1), rounding=ROUND_HALF_UP
+                                )
+                            ),
+                            int(
+                                ((word.end + offset) * 1_000_000).quantize(
+                                    Decimal(1), rounding=ROUND_HALF_UP
+                                )
+                            ),
+                            word.probability,
+                        )
+                        for word in additions
+                    )
+                    merged = tuple(sorted((*merged, *recovered), key=lambda w: w.start_us))
+                    represented = sorted((*represented, *additions), key=lambda w: w.start)
                 self._verify_coverage(audio, represented, check)
         check()
         if not merged:
@@ -1067,11 +1366,18 @@ class FasterWhisperAdapter:
                 "languageDetection": "original-pcm-region-redetection-v1",
                 "languageDetectionEncoder": "native-unpadded-log-mel-v1",
                 "speechCoverage": "owned-word-union-temporal-lexical-decode-v3",
+                "speechCoverageRecovery": "single-pass-native-gap-alignment-v1",
+                "maximumCoverageRecoveryPassesPerWindow": 1,
+                "maximumCoverageAlignmentEncodesPerGap": 32,
                 "overlapReconciliation": "two-temporal-anchors-original-pcm-v1",
+                "overlapAnchorIdentity": "ascii-case-only-exact-spelling-original-pcm-v1",
+                "overlapCompetingPrefix": (
+                    "unique-exact-anchor-full-native-coverage-strict-confidence-v1"
+                ),
                 "zeroTimePunctuation": "append-to-exactly-touching-lexical-word",
                 "alignmentContextMaxUs": 30000000,
                 "recognitionContextMaxUs": 30000000,
-                "recognitionContinuation": "same-language-original-pcm-redecode-once-v1",
+                "recognitionContinuation": "same-language-original-pcm-unstitched-once-v2",
                 "recognitionContinuationMaxUs": self.settings.overlap_us,
                 "maximumRecognitionPassesPerWindow": 2,
                 "maximumAlignmentEncodesPerWindow": 32,

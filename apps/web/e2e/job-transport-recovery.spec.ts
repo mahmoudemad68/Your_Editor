@@ -160,6 +160,9 @@ test("real Redis subscriber TCP outage closes SSE and reconciles production-work
     other = undefined;
     await control(request, "advance", { ms: 901000 });
     await control(request, "job-transport", { action: "break" });
+    // Do not restore TCP before the browser has observed the old stream close.
+    // Otherwise restoration can win the intended disconnect/refresh handshake.
+    await expect.poll(async () => (await readJobTrace(page)).opens[1]?.closedAt).toBeTruthy();
     await control(request, "job-transport", { action: "restore" });
     await expect
       .poll(async () => (await readJobTrace(page)).opens.length, { timeout: 7000 })
@@ -173,7 +176,7 @@ test("real Redis subscriber TCP outage closes SSE and reconciles production-work
     console.log("US131_REDIS_RECOVERY", JSON.stringify({ ...evidence, accessRefresh: true }));
   } finally {
     await other?.close();
-    await page.goto("/health");
+    await page.close();
     await control(request, "reset");
     rmSync(dir, { recursive: true, force: true });
   }
@@ -188,6 +191,9 @@ test("live Project stream stops on logout/expired session and opens after re-log
     const project = await signup(page);
     await expect.poll(async () => (await readJobTrace(page)).opens.length).toBe(1);
     await page.getByRole("button", { name: "Sign out", exact: true }).click();
+    // Subscription cleanup can finish before the sign-out redirect. Wait for
+    // that navigation before deliberately opening the return-to sign-in URL.
+    await expect(page).toHaveURL(/\/sign-in$/);
     await expect
       .poll(
         async () =>
@@ -230,7 +236,7 @@ test("live Project stream stops on logout/expired session and opens after re-log
       }),
     );
   } finally {
-    await page.goto("/health");
+    await page.close();
     await control(request, "reset");
   }
 });

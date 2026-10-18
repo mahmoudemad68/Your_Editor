@@ -1,5 +1,6 @@
 """The native profile is established before import, never inferred from a CPU vendor."""
 
+import io
 import json
 import os
 import subprocess
@@ -12,10 +13,34 @@ from editagent_ai_worker.infrastructure.config import (
     ASR_NATIVE_ENVIRONMENT,
     ASR_NATIVE_RESERVED_ENVIRONMENT,
     ConfigurationError,
+    _read_cpu_flags,
     analysis_child_environment,
     configure_asr_native_environment,
     require_asr_native_environment,
 )
+
+
+def test_cpu_flags_intersect_every_reported_processor(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pathlib import Path
+
+    monkeypatch.setattr(
+        Path,
+        "open",
+        lambda *args, **kwargs: io.StringIO(
+            "processor : 0\nflags : avx2 fma sse4_1\n\nprocessor : 1\nflags : avx2\n"
+        ),
+    )
+    assert _read_cpu_flags() == frozenset({"avx2"})
+
+
+def test_cpu_metadata_read_is_bounded_and_fail_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pathlib import Path
+
+    monkeypatch.setattr(
+        Path, "open", lambda *args, **kwargs: io.StringIO("x" * (2 * 1024 * 1024 + 1))
+    )
+    with pytest.raises(ConfigurationError, match="cannot be verified"):
+        _read_cpu_flags()
 
 
 def test_native_profile_bootstraps_a_fresh_process_before_native_import() -> None:
@@ -48,12 +73,12 @@ def test_child_profile_overrides_inherited_backend_without_mutating_parent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("CT2_USE_MKL", "1")
-    monkeypatch.setenv("CT2_FORCE_CPU_ISA", "AVX512")
+    monkeypatch.setenv("CT2_FORCE_CPU_ISA", "untrusted")
     result = analysis_child_environment("/tmp/trusted-analysis-workspace")
     assert all(result[key] == value for key, value in ASR_NATIVE_ENVIRONMENT.items())
     assert all(key not in result for key in ASR_NATIVE_RESERVED_ENVIRONMENT)
     assert os.environ["CT2_USE_MKL"] == "1"
-    assert os.environ["CT2_FORCE_CPU_ISA"] == "AVX512"
+    assert os.environ["CT2_FORCE_CPU_ISA"] == "untrusted"
 
 
 def test_late_conflicting_native_initialization_fails_without_changing_environment(

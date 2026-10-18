@@ -57,6 +57,7 @@ export class BullMqJobQueue implements JobQueue {
   }
 
   async enqueue(command: EnqueueJobCommand): Promise<EnqueueJobResult> {
+    this.assertOpen();
     const envelope = envelopeFrom(command, 1);
     assertEnvelope(this.validateEnvelope, envelope);
     await this.publishState(command.id);
@@ -83,6 +84,7 @@ export class BullMqJobQueue implements JobQueue {
   }
 
   async reserve(queueName: string): Promise<ReservedJob | null> {
+    this.assertOpen();
     const worker = await this.workerFor(queueName);
     await sweepStalled(worker);
     const token = `reserve-${crypto.randomUUID()}`;
@@ -247,6 +249,8 @@ export class BullMqJobQueue implements JobQueue {
   }
 
   private queueFor(queueName: string): Queue {
+    // A publisher may resume after close() while awaiting its state event.
+    this.assertOpen();
     const existing = this.queues.get(queueName);
     if (existing) {
       return existing;
@@ -261,6 +265,7 @@ export class BullMqJobQueue implements JobQueue {
   }
 
   private async workerFor(queueName: string): Promise<Worker> {
+    this.assertOpen();
     const existing = this.workers.get(queueName);
     if (existing) {
       return existing;
@@ -277,6 +282,10 @@ export class BullMqJobQueue implements JobQueue {
     this.workers.set(queueName, worker);
     await worker.startStalledCheckTimer();
     return worker;
+  }
+
+  private assertOpen(): void {
+    if (this.closed) throw new Error("Job queue is closed.");
   }
 
   protected async persistReservedEnvelope(job: BullJob, envelope: JobEnvelope): Promise<void> {

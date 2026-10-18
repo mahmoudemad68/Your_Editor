@@ -185,15 +185,16 @@ jobs:
       - name: Real production render, cancellation and timeline golden frames
         run: pnpm render:test
 
-      - name: Upload real render evidence
+      - name: Upload allowlisted test summary
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v7
         with:
-          name: render-evidence-${{ github.sha }}
+          name: test-summary-${{ github.sha }}
           if-no-files-found: ignore
+          # Counts/status only. Render media and all raw inference diagnostics
+          # remain local; no directory-wide evidence upload is authorized.
           path: |
-            .local/render-batch/
-            .local/asr-batch/
+            .local/asr-public/test-summary.json
 
       - name: Upload coverage reports
         if: ${{ !cancelled() }}

@@ -1,4 +1,3 @@
-import { test } from "node:test";
 import assert from "node:assert/strict";
 import { randomBytes, createHash } from "node:crypto";
 import { readFile, readdir, mkdtemp, rm, mkdir, writeFile } from "node:fs/promises";
@@ -32,6 +31,10 @@ import {
   validateMediaAnalysisV1_1,
 } from "../../packages/schemas/dist/index.js";
 import { startIntegrationServices } from "./support/containers.mjs";
+import {
+  privateAsrDiagnostic,
+  privateAsrIntegrationTest as test,
+} from "./support/private-asr-diagnostics.mjs";
 import { GetMediaAnalysis } from "../../apps/api/dist/application/media-analysis.js";
 import { GetMediaDetails } from "../../apps/api/dist/application/media-details.js";
 import { PostgresMediaAssetRepository } from "../../apps/api/dist/infrastructure/postgres-media-repository.js";
@@ -365,7 +368,7 @@ test(
                   `import urllib.request,urllib.error
 try: print(urllib.request.urlopen('http://127.0.0.1:3200/${route}',timeout=5).status)
 except urllib.error.HTTPError as error: print(error.code)
-except urllib.error.URLError: print(0)`,
+except (urllib.error.URLError, TimeoutError): print(0)`,
                 ],
                 process.env,
               )
@@ -454,8 +457,8 @@ asyncio.run(run())`,
           ],
           env,
         ).catch(async (error) => {
-          console.error(
-            "ANALYSIS_FAILURE",
+          await privateAsrDiagnostic(
+            "analysis-failure",
             (
               await pool.query(
                 "SELECT analyzer,configuration,result_attempt,failure FROM analysis_tasks",
@@ -587,6 +590,8 @@ asyncio.run(run())`,
         { asr: { alignmentAlgorithm: "ct2-contextual-v13" } },
         { asr: { alignmentAlgorithm: "ct2-contextual-v14" } },
         { asr: { alignmentAlgorithm: "ct2-contextual-v15" } },
+        { asr: { alignmentAlgorithm: "ct2-contextual-v16" } },
+        { asr: { alignmentAlgorithm: "ct2-contextual-v17" } },
       ]) {
         const connection = await pool.connect();
         try {
@@ -977,15 +982,13 @@ asyncio.run(run())`,
           sourceImmutable: true,
           revocationDenied: true,
           revocationDuringInferenceFenced: true,
-          wordCount: document.sections.transcript.data.segments.length,
-          sourceSha256: sourceHash,
         }),
       );
     } finally {
       await app?.close();
       if (containerName) {
         await command("docker", ["logs", "--tail", "30", containerName], process.env)
-          .then((log) => console.log("PRODUCTION_AI_LOG", log))
+          .then((log) => privateAsrDiagnostic("container-log", log))
           .catch(() => undefined);
         await command(
           "docker",
@@ -1000,7 +1003,7 @@ print(json.dumps({"readyFile":os.path.isfile('/tmp/editagent.ready'),"pgRedis":d
           ],
           process.env,
         )
-          .then((log) => console.log("PRODUCTION_AI_DEPENDENCIES", log))
+          .then((log) => privateAsrDiagnostic("container-dependencies", log))
           .catch(() => undefined);
       }
       if (containerName)

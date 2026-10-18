@@ -46,6 +46,8 @@ export function main(): void {
   const stop = async () => {
     shutdown.abort();
     health.close();
+    // Close Redis first to unblock consumers during dependency outages. The
+    // queue fences late client construction after an in-flight SQL await.
     await queue.close(true);
     await consuming;
     await analyzing;

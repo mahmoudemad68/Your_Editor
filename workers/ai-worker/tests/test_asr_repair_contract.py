@@ -1,5 +1,6 @@
 """Fail-closed coverage and deterministic preprocessing, without invented speech gold."""
 
+from decimal import Decimal
 from types import SimpleNamespace
 from typing import Any
 
@@ -18,6 +19,25 @@ from editagent_ai_worker.infrastructure.asr_features import DeterministicFeature
 
 def alignment_word(text: str, start: float, end: float) -> Any:
     return SimpleNamespace(word=text, start=start, end=end, probability=0.8)
+
+
+@pytest.mark.parametrize(
+    "left,right,expected",
+    [
+        (" Wiki", " wiki", True),
+        (" Craft.", " craft.", True),
+        (" word", " word", True),
+        (" العربية", " العربية", True),
+        (" ß", " ss", False),
+        (" İ", " i", False),
+        (" word,", " word.", False),
+        (" Peru.", " peruse", False),
+    ],
+)
+def test_overlap_anchor_capitalization_never_changes_spelling_or_unicode_identity(
+    left: str, right: str, expected: bool
+) -> None:
+    assert whisper.same_context_word(left, right) is expected
 
 
 def test_complementary_native_alignments_preserve_exact_intervals_and_all_text() -> None:
@@ -84,7 +104,9 @@ def test_fixed_order_features_preserve_reference_definition_and_repeat_exactly()
 def adapter_returning(segments: list[Any]) -> Any:
     adapter = whisper.FasterWhisperAdapter.__new__(whisper.FasterWhisperAdapter)
     adapter.settings = AsrSettings()
-    adapter.model = SimpleNamespace(transcribe=lambda *args, **kwargs: (iter(segments), None))
+    adapter.model = SimpleNamespace(
+        transcribe=lambda *args, **kwargs: (iter(segments), SimpleNamespace(language="en"))
+    )
     return adapter
 
 
@@ -116,7 +138,7 @@ def fallback_adapter(monkeypatch: Any, defect: str | None = None) -> tuple[Any, 
     adapter._alignment_model = SimpleNamespace(
         hf_tokenizer=None,
         model=SimpleNamespace(is_multilingual=True),
-        feature_extractor=lambda audio: None,
+        feature_extractor=lambda audio: np.zeros((80, 301), dtype=np.float32),
         encode=encode,
         find_alignment=lambda *args, **kwargs: [
             [{"word": w.word, "start": w.start, "end": w.end, "probability": 0.01} for w in native]
@@ -296,6 +318,102 @@ def test_genuine_silence_never_requires_lexical_output(monkeypatch: Any) -> None
     adapter._verify_coverage(np.zeros(32000), [], lambda: None)
 
 
+def test_coverage_recovery_keeps_native_text_timing_confidence_and_existing_anchors(
+    monkeypatch: Any,
+) -> None:
+    monkeypatch.setattr(
+        whisper, "get_speech_timestamps", lambda *args: [{"start": 0, "end": 80000}]
+    )
+    native = alignment_word(" repeated", 1.4, 1.9)
+    segment = SimpleNamespace(
+        text=native.word, words=[native], avg_logprob=-0.1, no_speech_prob=0.01
+    )
+    adapter = adapter_returning([segment])
+    original = [alignment_word(" repeated", 0, 0.5), alignment_word(" end", 4, 5)]
+    before = [vars(w).copy() for w in original]
+    recovered = adapter._recover_coverage(np.zeros(80000), original, lambda: None)
+    # Gap begins at 0.5s; one-second context is clamped to sample zero.
+    assert len(recovered) == 1
+    assert recovered[0].word == native.word
+    assert recovered[0].start == Decimal("1.4")
+    assert recovered[0].end == Decimal("1.9")
+    assert recovered[0].probability == native.probability
+    assert [vars(w) for w in original] == before
+    assert adapter._unrepresented_words(
+        [native], [original[0], *recovered, original[1]], 0, 0, 80000
+    ) == ([], 1)
+
+
+def test_coverage_recovery_cannot_overlap_untouched_words(monkeypatch: Any) -> None:
+    monkeypatch.setattr(
+        whisper, "get_speech_timestamps", lambda *args: [{"start": 0, "end": 80000}]
+    )
+    native = alignment_word(" conflict", 0.5, 2.0)
+    adapter = adapter_returning(
+        [SimpleNamespace(text=native.word, words=[native], avg_logprob=-0.1, no_speech_prob=0.01)]
+    )
+    calls = 0
+
+    def invalid_alignment(*args: Any) -> list[Any]:
+        nonlocal calls
+        calls += 1
+        # Fault-inject a native result crossing the newly bounded PCM anchor.
+        return [alignment_word(" conflict", -0.5, 1.0)]
+
+    adapter._aligned_chunk = invalid_alignment
+    with pytest.raises(TranscriptionError, match="outside anchors"):
+        adapter._recover_coverage(
+            np.zeros(80000), [alignment_word(" existing", 0, 1)], lambda: None
+        )
+    assert calls == 1
+
+
+def test_coverage_recovery_rejects_untrustworthy_native_timing_without_extra_alignment(
+    monkeypatch: Any,
+) -> None:
+    monkeypatch.setattr(
+        whisper, "get_speech_timestamps", lambda *args: [{"start": 0, "end": 80000}]
+    )
+    native = alignment_word(" collapsed", 1.5, 1.5)
+    adapter = adapter_returning(
+        [SimpleNamespace(text=native.word, words=[native], avg_logprob=-0.1, no_speech_prob=0.01)]
+    )
+    adapter._aligned_chunk = lambda *args: pytest.fail(
+        "Invalid coverage consumed an alignment budget"
+    )
+    with pytest.raises(TranscriptionError, match="trustworthy native timing"):
+        adapter._recover_coverage(np.zeros(80000), [], lambda: None)
+
+
+@pytest.mark.parametrize("mode", ["silence", "noise", "cancelled", "timeout"])
+def test_coverage_recovery_never_invents_speech_or_ignores_interruptions(
+    monkeypatch: Any, mode: str
+) -> None:
+    monkeypatch.setattr(
+        whisper, "get_speech_timestamps", lambda *args: [{"start": 0, "end": 32000}]
+    )
+    native = alignment_word(" low evidence", 0.5, 1)
+    adapter = adapter_returning(
+        []
+        if mode == "silence"
+        else [
+            SimpleNamespace(text=native.word, words=[native], avg_logprob=-2.0, no_speech_prob=0.9)
+        ]
+    )
+
+    def check() -> None:
+        if mode == "cancelled":
+            raise TranscriptionCancelled("cancelled")
+        if mode == "timeout":
+            raise TranscriptionTimeout("expired")
+
+    if mode in {"cancelled", "timeout"}:
+        with pytest.raises(TranscriptionError):
+            adapter._recover_coverage(np.zeros(32000), [], check)
+    else:
+        assert adapter._recover_coverage(np.zeros(32000), [], check) == []
+
+
 @pytest.mark.parametrize("mode", ["represented", "different", "disjoint", "repeated"])
 def test_short_context_word_drift_requires_ordered_temporal_lexical_evidence(
     monkeypatch: Any, mode: str
@@ -436,6 +554,43 @@ def test_forced_alignment_encodes_actual_source_features_without_artificial_padd
     )
     result = adapter._aligned_chunk([segment], np.zeros(16000), "en")
     assert [(w.word, w.start, w.end) for w in result] == [(" word", 0.2, 0.5)]
+
+
+@pytest.mark.parametrize(
+    ("samples", "columns"), [(16000, 101), (448000, 2801), (479999, 3000), (480000, 3000)]
+)
+def test_alignment_model_bound_excludes_only_full_window_feature_overflow(
+    monkeypatch: pytest.MonkeyPatch, samples: int, columns: int
+) -> None:
+    pcm = np.sin(np.arange(samples, dtype=np.float32) * np.float32(0.17))
+    features = DeterministicFeatureExtractor()(pcm)
+    encoded = []
+
+    def encode(value: Any) -> None:
+        assert value.shape == (80, columns)
+        np.testing.assert_array_equal(value, features[..., :3000])
+        encoded.append(value.shape)
+
+    monkeypatch.setattr(
+        whisper, "Tokenizer", lambda *args, **kwargs: SimpleNamespace(encode=lambda text: [1])
+    )
+    monkeypatch.setattr(whisper, "merge_punctuations", lambda *args: None)
+    adapter = adapter_returning([])
+    adapter.model = SimpleNamespace(
+        hf_tokenizer=None,
+        model=SimpleNamespace(is_multilingual=True),
+        feature_extractor=lambda audio: features,
+        encode=encode,
+        find_alignment=lambda *args, **kwargs: [
+            [{"word": " word", "start": 0.2, "end": 0.5, "probability": 0.8}]
+        ],
+    )
+    segment = SimpleNamespace(
+        text=" word", start=0, end=samples / 16000, words=[alignment_word(" word", 0.2, 0.2)]
+    )
+    result = adapter._aligned_chunk([segment], pcm, "en")
+    assert [(w.word, w.start, w.end) for w in result] == [(" word", 0.2, 0.5)]
+    assert encoded == [(80, columns)]
 
 
 def test_local_partial_native_evidence_is_not_discarded_for_an_unrelated_zero_word(
@@ -657,9 +812,11 @@ def test_partial_context_recognition_is_bounded_and_aligns_only_final_model_text
     adapter = adapter_returning([])
     adapter.settings = AsrSettings(chunk_us=26_000_000)
     calls = []
+    vad_modes = []
 
     def decode(audio: Any, **kwargs: Any) -> Any:
         calls.append(len(audio))
+        vad_modes.append(kwargs["vad_filter"])
 
         def word(text: str, start: float, end: float) -> Any:
             return SimpleNamespace(word=text, start=start, end=end, probability=0.8)
@@ -687,6 +844,7 @@ def test_partial_context_recognition_is_bounded_and_aligns_only_final_model_text
         with pytest.raises(TranscriptionError):
             adapter.transcribe(str(path), identity)
         assert calls == [448000, 480000]
+        assert vad_modes == [True, False]
     else:
         result = adapter.transcribe(str(path), identity)
         assert [w.text for w in result.words] == [" word", " Academy"]
@@ -695,6 +853,61 @@ def test_partial_context_recognition_is_bounded_and_aligns_only_final_model_text
             (28_000_000, 29_000_000),
         ]
         assert calls == [448000, 480000, 96000]
+        assert vad_modes == [True, False, True]
+
+
+@pytest.mark.parametrize("retry_valid", [True, False])
+def test_invalid_stitched_alignment_retries_same_contiguous_pcm_at_most_once(
+    tmp_path: Any, monkeypatch: Any, retry_valid: bool
+) -> None:
+    import hashlib
+    import wave
+
+    from editagent_ai_worker.domain.analysis.voice_activity import AudioIdentity
+
+    path = tmp_path / "source.wav"
+    with wave.open(str(path), "wb") as wav:
+        wav.setparams((1, 2, 16000, 0, "NONE", "not compressed"))
+        wav.writeframes(b"\x00\x00" * 80000)
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    source = AudioIdentity("fixture", digest, "fixture-asr", digest, 5_000_000, 0, 5_000_000)
+    adapter = adapter_returning([])
+    adapter.settings = AsrSettings(chunk_us=5_000_000, overlap_us=0)
+    calls = []
+
+    def decode(audio: Any, **kwargs: Any) -> Any:
+        calls.append((kwargs["vad_filter"], hashlib.sha256(audio.tobytes()).hexdigest()))
+        valid = not kwargs["vad_filter"] and retry_valid
+        words = [alignment_word(" genuine", 1, 2 if valid else 1), alignment_word(" speech", 2, 3)]
+        return iter([SimpleNamespace(text=" genuine speech", words=words)]), SimpleNamespace(
+            language="en", language_probability=0.9
+        )
+
+    def aligned(segments: Any, audio: Any, language: str, check: Any) -> Any:
+        assert [s.text for s in segments] == [" genuine speech"]
+        words, _, valid, _ = adapter._alignment_state(segments, audio)
+        if not valid:
+            raise TranscriptionError("ASR words require trustworthy realignment")
+        return words
+
+    adapter.model.transcribe = decode
+    adapter._aligned_chunk = aligned
+    adapter._continued_pcm = lambda *args: pytest.fail("A middle-word error extended source time")
+    monkeypatch.setattr(adapter, "_language_regions", lambda *args: [(0, 5_000_000, "en", 0.9)])
+    monkeypatch.setattr(whisper, "get_speech_timestamps", lambda *args: [])
+    if retry_valid:
+        result = adapter.transcribe(str(path), source)
+        assert [w.text for w in result.words] == [" genuine", " speech"]
+        assert [(w.start_us, w.end_us) for w in result.words] == [
+            (1_000_000, 2_000_000),
+            (2_000_000, 3_000_000),
+        ]
+    else:
+        with pytest.raises(TranscriptionError, match="trustworthy realignment"):
+            adapter.transcribe(str(path), source)
+    assert [mode for mode, _ in calls] == [True, False]
+    assert calls[0][1] == calls[1][1]
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == digest
 
 
 def test_colliding_owned_words_use_one_anchored_native_view_not_greedy_alternatives() -> None:
@@ -833,6 +1046,120 @@ def test_boundary_search_never_skips_an_owned_left_word() -> None:
     )
     with pytest.raises(TranscriptionError, match="boundary"):
         whisper.merge_owned_words(chunks, source)
+
+
+@pytest.mark.parametrize(
+    "defect",
+    [None, "weak", "equal", "hole", "outside", "repeated", "nonfinal", "no-expansion"],
+)
+def test_competing_boundary_prefix_requires_unique_complete_stronger_native_evidence(
+    defect: str | None,
+) -> None:
+    from editagent_ai_worker.domain.analysis.transcription import Word
+
+    left = [
+        Word(" earlier", 4_200_000, 4_800_000, 0.7),
+        Word(" complete", 5_100_000, 5_700_000, 0.8),
+        Word(" phrase", 5_700_000, 5_900_000, 0.9),
+        Word(" anchor", 5_900_000, 6_300_000, 0.75),
+    ]
+    right = [
+        Word(" competing", 5_200_000, 5_950_000, 0.6),
+        Word(" anchor", 5_950_000, 6_320_000, 0.7),
+    ]
+    if defect in {"weak", "equal"}:
+        left[1] = Word(" complete", 5_100_000, 5_700_000, 0.5 if defect == "weak" else 0.6)
+    elif defect == "hole":
+        left[2] = Word(" phrase", 5_800_000, 5_900_000, 0.9)
+    elif defect == "outside":
+        right[0] = Word(" unrelated", 5_000_000, 5_950_000, 0.6)
+    elif defect == "repeated":
+        left[0] = Word(" anchor", 4_200_000, 4_800_000, 0.7)
+    elif defect == "nonfinal":
+        left.append(Word(" additional", 6_300_000, 6_400_000, 0.8))
+    elif defect == "no-expansion":
+        left[1:3] = [Word(" complete", 5_100_000, 5_900_000, 0.8)]
+    original_left, original_right = tuple(left), tuple(right)
+    result = whisper.FasterWhisperAdapter._dominant_boundary_prefix(
+        original_left, original_right, 5_000_000
+    )
+    assert result == ((1, 4) if defect is None else None)
+    assert tuple(left) == original_left and tuple(right) == original_right
+
+
+def test_dominant_boundary_keeps_complete_original_words_and_untouched_following_text() -> None:
+    from editagent_ai_worker.domain.analysis.transcription import Word
+    from editagent_ai_worker.domain.analysis.voice_activity import AudioIdentity
+
+    left = (
+        Word(" earlier", 4_200_000, 4_800_000, 0.7),
+        Word(" complete", 5_100_000, 5_700_000, 0.8),
+        Word(" phrase", 5_700_000, 5_900_000, 0.9),
+        Word(" anchor", 5_900_000, 6_300_000, 0.75),
+    )
+    right = (
+        Word(" competing", 5_200_000, 5_950_000, 0.6),
+        Word(" anchor", 5_950_000, 6_320_000, 0.7),
+        Word(" untouched", 7_200_000, 7_800_000, 0.9),
+    )
+    adapter = adapter_returning([])
+    aligned_text = []
+
+    def align(segments: Any, audio: Any, language: str, check: Any) -> Any:
+        aligned_text.append(segments[0].text)
+        return segments[0].words
+
+    adapter._aligned_chunk = align
+    source = AudioIdentity("fixture", "a" * 64, "audio", "b" * 64, 10_000_000, 0, 10_000_000)
+    chunks = [(0, 5_000_000, left), (5_000_000, 10_000_000, right)]
+    repaired = adapter._reconcile_overlaps(
+        chunks, ["ar", "ar"], PcmReader(10), source, lambda: None
+    )
+    merged = whisper.merge_owned_words(repaired, source)
+    assert merged == (*left[:3], *right[1:])
+    assert aligned_text == [" earlier complete phrase anchor"]
+    assert chunks == [(0, 5_000_000, left), (5_000_000, 10_000_000, right)]
+
+
+@pytest.mark.parametrize("inward_us", [0, 1, 37, 63])
+@pytest.mark.parametrize("case_alias", [False, True])
+def test_boundary_pcm_padding_cannot_include_untouched_outside_words(
+    inward_us: int, case_alias: bool
+) -> None:
+    """Independently constructed abstract words/times, not a captured transcript."""
+    from editagent_ai_worker.domain.analysis.transcription import Word
+    from editagent_ai_worker.domain.analysis.voice_activity import AudioIdentity
+
+    left = (
+        Word(" outside", 2_000_000, 2_900_000 + inward_us, 0.8),
+        Word(" earlier", 3_300_000, 4_000_000, 0.8),
+        Word(" recovered", 5_050_000, 5_300_000, 0.8),
+        Word(" Anchor" if case_alias else " anchor", 5_350_000, 5_650_000, 0.8),
+        Word(" bridge", 5_700_000, 6_000_000, 0.8),
+    )
+    right = (
+        Word(" anchor", 5_350_000, 5_650_000, 0.8),
+        Word(" bridge", 5_700_000, 6_000_000, 0.8),
+        Word(" later", 6_500_000, 6_800_000, 0.8),
+        Word(" untouched", 7_100_000 - inward_us, 8_000_000, 0.8),
+    )
+    chunks = [(0, 5_000_000, left), (5_000_000, 10_000_000, right)]
+    first = ((2_900_000 + inward_us) * 16000 + 999999) // 1000000
+    last = (7_100_000 - inward_us) * 16000 // 1000000
+    wav = PcmReader(10)
+    adapter = adapter_returning([])
+
+    def inspect(segments: Any, audio: Any, language: str, check: Any) -> Any:
+        assert wav.reads == [(first, last - first)]
+        assert len(audio) == last - first
+        assert segments[0].text == " earlier recovered anchor bridge later"
+        raise TranscriptionError("Observed bounded original PCM")
+
+    adapter._aligned_chunk = inspect
+    source = AudioIdentity("synthetic", "a" * 64, "audio", "b" * 64, 10_000_000, 0, 10_000_000)
+    with pytest.raises(TranscriptionError, match="Observed bounded original PCM"):
+        adapter._reconcile_overlaps(chunks, ["en", "en"], wav, source, lambda: None)
+    assert chunks == [(0, 5_000_000, left), (5_000_000, 10_000_000, right)]
 
 
 @pytest.mark.parametrize("defect", ["replace", "omit", "reorder"])

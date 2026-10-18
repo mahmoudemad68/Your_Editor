@@ -8,6 +8,10 @@ test.afterEach(() => {
   for (const path of directories.splice(0)) rmSync(path, { recursive: true, force: true });
 });
 const SIZE = 16 * 1024 * 1024;
+// The disposable service harness maps S3 to a random port; intercept the actual
+// configured public endpoint, never an unrelated fixed-port service.
+const storageOrigin = new URL(process.env.S3_PUBLIC_ENDPOINT ?? "http://127.0.0.1:9000").origin;
+const storageRoute = `${storageOrigin}/**`;
 async function openProject(page: Page) {
   await page.goto("/sign-up");
   await page.getByLabel("Email", { exact: true }).fill("uploader@example.test");
@@ -53,7 +57,7 @@ test("US-123 AC1/AC2: real network interruption at 50%, browser recreation and o
   );
   const puts: number[] = [];
   let interrupt = true;
-  await context.route("http://127.0.0.1:9000/**", async (route) => {
+  await context.route(storageRoute, async (route) => {
     const req = route.request();
     const n = Number(new URL(req.url()).searchParams.get("partNumber"));
     if (req.method() === "PUT" && n) {
@@ -65,7 +69,23 @@ test("US-123 AC1/AC2: real network interruption at 50%, browser recreation and o
     }
     await route.continue();
   });
+  const admitted = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" && response.url().endsWith("/uploads/multipart"),
+  );
+  const transferred = Promise.all(
+    [1, 2].map((part) =>
+      page.waitForResponse(
+        (response) =>
+          response.request().method() === "PUT" &&
+          new URL(response.url()).origin === storageOrigin &&
+          new URL(response.url()).searchParams.get("partNumber") === String(part),
+      ),
+    ),
+  );
   await page.locator("#media-file").setInputFiles(source);
+  expect((await admitted).ok()).toBe(true);
+  expect((await transferred).every((response) => response.ok())).toBe(true);
   await expect
     // Allow the bounded control/part backoff plus real 16 MiB transfers.
     .poll(
@@ -99,7 +119,15 @@ test("US-123 AC1/AC2: real network interruption at 50%, browser recreation and o
   await expect(resumed.locator("p[role=alert]")).toContainText("does not match");
   expect(puts.length).toBe(startOfRecovery);
   await request.post("http://127.0.0.1:3032/advance", { data: { ms: 901000 } });
+  const completion = resumed.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      response.url().endsWith(`/uploads/multipart/${before.id}/complete`),
+  );
   await resumed.locator("#media-file").setInputFiles(source);
+  // Real transfer/hash verification precedes the UI deadline. Synchronize on
+  // durable completion rather than assuming 32 MiB plus S3 hashing takes <5s.
+  expect((await completion).ok()).toBe(true);
   await expect(
     resumed.getByText("Upload complete. The video was not sent through the application server."),
   ).toBeVisible();
@@ -172,12 +200,28 @@ test("US-123 small PUT regression; multipart explicit CSRF/forged session reject
   await expect(
     page.getByText("Upload complete. The video was not sent through the application server."),
   ).toBeVisible();
-  await context.route("http://127.0.0.1:9000/**", (route) => route.abort("internetdisconnected"));
+  let started!: () => void;
+  let release!: () => void;
+  const transferring = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const released = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  // Hold a real data request until the user pauses it. Immediately rejecting it
+  // can exhaust retries before Playwright observes the active-upload controls.
+  await context.route(storageRoute, async (route) => {
+    started();
+    await released;
+    await route.abort("internetdisconnected");
+  });
   await page
     .locator("#media-file")
     .setInputFiles({ name: "cancel.mp4", mimeType: "video/mp4", buffer: Buffer.alloc(SIZE, 6) });
+  await transferring;
   await expect(page.getByRole("button", { name: "Pause upload" })).toBeVisible();
   await page.getByRole("button", { name: "Pause upload" }).click();
+  release();
   await expect(page.getByRole("button", { name: "Discard resumable upload" })).toBeVisible();
   await page.getByRole("button", { name: "Discard resumable upload" }).click();
   await expect(page.getByText(/The upload was cancelled/)).toBeVisible();

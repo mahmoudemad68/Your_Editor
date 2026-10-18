@@ -1,160 +1,66 @@
-"""Bounded real-inference failure evidence; never changes a test or model outcome.
+"""Keep test failures private and publish only aggregate counts/status.
 
-Only the licensed ASR fixture tests are eligible. No environment values, local
-paths or arbitrary test input are exported. CI uploads the existing asr-batch
-artifact even when a test fails, so native CPU differences can be reproduced.
+Reporting never changes a test outcome or its assertions. Detailed runtime
+introspection is intentionally absent from this repository reporting hook.
 """
 
 from __future__ import annotations
 
-import dataclasses
 import hashlib
-import importlib.metadata
 import json
-import math
-import os
-import platform
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from editagent_ai_worker.infrastructure.config import (
-    ASR_NATIVE_ENVIRONMENT,
-    ASR_NATIVE_PROFILE,
-    configure_asr_native_environment,
-)
+from editagent_ai_worker.infrastructure.config import configure_asr_native_environment
 
-
-def _runtime_identity() -> dict[str, Any]:
-    cpu: dict[str, str] = {}
-    if Path("/proc/cpuinfo").exists():
-        for line in Path("/proc/cpuinfo").read_text().splitlines():
-            key, _, value = line.partition(":")
-            if key.strip() in {"vendor_id", "model name", "flags"}:
-                cpu.setdefault(key.strip(), value.strip())
-    quota: dict[str, int | None] | None = None
-    try:
-        limit, period = Path("/sys/fs/cgroup/cpu.max").read_text().split()
-        quota = {"quotaUs": None if limit == "max" else int(limit), "periodUs": int(period)}
-    except (OSError, ValueError):
-        pass
-    return {
-        "python": platform.python_version(),
-        "machine": platform.machine(),
-        "libc": platform.libc_ver(),
-        "nativeCpuProfile": ASR_NATIVE_PROFILE,
-        "nativeCpuEnvironment": dict(ASR_NATIVE_ENVIRONMENT),
-        "cpu": cpu,
-        "logicalCpuCount": os.cpu_count(),
-        "cpuAffinity": sorted(os.sched_getaffinity(0))
-        if hasattr(os, "sched_getaffinity")
-        else None,
-        "cpuQuota": quota,
-        "libraries": {
-            name: importlib.metadata.version(name)
-            for name in ("numpy", "ctranslate2", "faster-whisper")
-        },
-    }
+ROOT = Path(__file__).resolve().parents[3]
+PRIVATE_ASR_TESTS = {
+    "test_real_asr.py",
+    "test_real_multilingual_asr.py",
+    "test_asr_native_configuration.py",
+}
 
 
 def pytest_sessionstart(session: pytest.Session) -> None:
     configure_asr_native_environment()
-    directory = Path(__file__).resolve().parents[3] / ".local/asr-batch"
+
+
+_PUBLIC_COUNTS: dict[str, int] = {"passed": 0, "failed": 0, "skipped": 0}
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[Any]) -> Any:
+    outcome = yield
+    report = outcome.get_result()
+    if report.when == "call" or (report.when == "setup" and not report.passed):
+        _PUBLIC_COUNTS[report.outcome] += 1
+    if report.failed and item.path.name in PRIVATE_ASR_TESTS:
+        # Save the original traceback locally before removing source-derived
+        # assertion operands and native details from public terminal reporting.
+        directory = ROOT / ".local/asr-batch"
+        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        identity = hashlib.sha256(item.nodeid.encode()).hexdigest()[:16]
+        (directory / f"private-traceback-{identity}.txt").write_text(
+            report.longreprtext, encoding="utf-8"
+        )
+        (directory / f"private-output-{identity}.json").write_text(
+            json.dumps(report.sections, ensure_ascii=False), encoding="utf-8"
+        )
+        # Pytest prints captured stdout/stderr separately from longrepr. Both
+        # must stay private, including native diagnostics emitted below Python.
+        report.sections = []
+        report.longrepr = (
+            f"Real inference test failed (case {identity}); "
+            "raw diagnostics retained locally and excluded from publication."
+        )
+
+
+def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+    directory = ROOT / ".local/asr-public"
     directory.mkdir(parents=True, exist_ok=True)
-    (directory / "native-runtime.json").write_text(
-        json.dumps(_runtime_identity(), sort_keys=True), encoding="utf-8"
-    )
-
-
-def _number(value: Any) -> float | str:
-    number = float(value)
-    return number if math.isfinite(number) else str(number)
-
-
-def _word(word: Any) -> dict[str, Any]:
-    return {
-        "text": getattr(word, "word", getattr(word, "text", "")),
-        "start": _number(getattr(word, "start", getattr(word, "start_us", 0))),
-        "end": _number(getattr(word, "end", getattr(word, "end_us", 0))),
-        "confidence": (
-            _number(getattr(word, "probability", getattr(word, "confidence", 0)))
-            if hasattr(word, "probability") or hasattr(word, "confidence")
-            else None
-        ),
-    }
-
-
-def pytest_exception_interact(
-    node: pytest.Item, call: pytest.CallInfo[Any], report: pytest.TestReport
-) -> None:
-    if node.path.name not in {"test_real_asr.py", "test_real_multilingual_asr.py"}:
-        return
-    if call.excinfo is None or not report.failed:
-        return
-    # A long native suite may reach the outer CI job limit before pytest's
-    # end-of-session traceback. Emit bounded diagnostics immediately as well as
-    # the durable fixture artifact, without depending on successful teardown.
-    terminal = node.config.pluginmanager.getplugin("terminalreporter")
-    if terminal is not None:
-        terminal.write_sep("=", "real ASR fixture failure")
-        terminal.write_line(report.longreprtext[:12000])
-    frames: list[dict[str, Any]] = []
-    for entry in call.excinfo.traceback:
-        values = entry.frame.f_locals
-        frame: dict[str, Any] = {"function": entry.frame.code.name}
-        for key in (
-            "core",
-            "end",
-            "lower",
-            "upper",
-            "start_sample",
-            "end_sample",
-            "region_end",
-            "alignment_encodes",
-        ):
-            if type(values.get(key)) is int:
-                frame[key] = values[key]
-        if "audio" in values:
-            audio = values["audio"]
-            if hasattr(audio, "tobytes"):
-                frame["pcmSamples"] = len(audio)
-                frame["float32PcmSha256"] = hashlib.sha256(audio.tobytes()).hexdigest()
-        if isinstance(values.get("segments"), list):
-            frame["segments"] = [
-                {
-                    "text": segment.text,
-                    "start": _number(segment.start),
-                    "end": _number(segment.end),
-                    "words": [_word(word) for word in segment.words or []],
-                }
-                for segment in values["segments"][:100]
-            ]
-        if isinstance(values.get("full_evidence"), list):
-            frame["nativeAlignmentEvidence"] = [
-                [_word(word) for word in candidate[:512]]
-                for candidate in values["full_evidence"][:4]
-            ]
-        if isinstance(values.get("words"), list):
-            frame["words"] = [_word(word) for word in values["words"][:1000]]
-        result = values.get("result")
-        if result is not None and dataclasses.is_dataclass(result) and not isinstance(result, type):
-            frame["result"] = dataclasses.asdict(result)
-        if len(frame) > 1:
-            frames.append(frame)
-    directory = Path(__file__).resolve().parents[3] / ".local/asr-batch"
-    directory.mkdir(parents=True, exist_ok=True)
-    identity = hashlib.sha256(node.nodeid.encode()).hexdigest()[:16]
-    (directory / f"native-failure-{identity}.json").write_text(
-        json.dumps(
-            {
-                "kind": "licensed fixture failure diagnostics; not gold annotations",
-                "test": node.name,
-                **_runtime_identity(),
-                "frames": frames,
-            },
-            ensure_ascii=False,
-            sort_keys=True,
-        ),
+    (directory / "test-summary.json").write_text(
+        json.dumps({"exitStatus": int(exitstatus), "tests": _PUBLIC_COUNTS}, sort_keys=True),
         encoding="utf-8",
     )

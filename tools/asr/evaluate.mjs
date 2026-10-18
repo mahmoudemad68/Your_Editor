@@ -182,11 +182,23 @@ if (process.argv[1] === new URL(import.meta.url).pathname) {
   const index = process.argv.indexOf("--root");
   if (index < 0 || !process.argv[index + 1])
     throw new Error("usage: asr:evaluate --root LOCAL_DATASET [--require-human-gold]");
+  const report = await evaluate(resolve(process.argv[index + 1]), {
+    requireHuman: process.argv.includes("--require-human-gold"),
+  });
+  // Full recognized outputs and native configuration remain local; publication
+  // is limited to the explicit metric/provenance-status summary.
   console.log(
     JSON.stringify(
-      await evaluate(resolve(process.argv[index + 1]), {
-        requireHuman: process.argv.includes("--require-human-gold"),
-      }),
+      {
+        runId: report.runId,
+        datasetVersion: report.datasetVersion,
+        ownerDecisionId: report.ownerDecisionId,
+        independentHumanAccuracy: report.independentHumanAccuracy,
+        cp2Status: report.cp2Status,
+        englishThreshold: report.englishThreshold,
+        englishProjectGoldGate: report.englishProjectGoldGate,
+        aggregate: report.aggregate,
+      },
       null,
       2,
     ),

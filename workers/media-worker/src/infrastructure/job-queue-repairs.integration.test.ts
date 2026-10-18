@@ -41,10 +41,9 @@ function spec(exportName: string): IsolatedHandler {
 }
 
 function adminUrl(): string {
-  return (
-    process.env.DATABASE_URL ??
-    "postgresql://editagent:editagent-dev-password@127.0.0.1:5432/editagent"
-  );
+  const configured = process.env.DATABASE_URL;
+  if (!configured) throw new Error("Set DATABASE_URL through the integration service harness.");
+  return configured;
 }
 
 function withDatabase(url: string, database: string): string {
@@ -158,6 +157,58 @@ async function runUntilHandlerStarts(
 function subject(media: string) {
   return { kind: "media-asset" as const, mediaAssetId: mediaAssetId(media) };
 }
+
+test("shutdown fences late reservations and publication after a state-event await", async () => {
+  let entered!: () => void;
+  let resume!: () => void;
+  const publishing = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const resumed = new Promise<void>((resolve) => {
+    resume = resolve;
+  });
+  const queueName = `shutdown-${uniqueQueueSuffix()}`;
+  const queue = new BullMqJobQueue(redisUrl, {
+    events: {
+      async state() {
+        entered();
+        await resumed;
+      },
+      async progress() {},
+      async flush() {},
+      async close() {},
+    },
+  });
+  const inspect = new Queue(queueName, { connection: { url: redisUrl } });
+  const id = jobId(newId());
+  try {
+    assert.equal(await queue.reserve(queueName), null);
+    const pending = queue.enqueue({
+      id,
+      queueName,
+      jobType: "probe",
+      idempotencyKey: id,
+      payload: {},
+      subject: subject(newId()),
+      timeoutMs: 2000,
+      maxAttempts: 1,
+      backoffBaseMs: 20,
+    });
+    await publishing;
+    await queue.close(true);
+    resume();
+    await assert.rejects(pending, /Job queue is closed/);
+    for (let attempt = 0; attempt < 10; attempt++)
+      await assert.rejects(queue.reserve(queueName), /Job queue is closed/);
+    assert.equal(await inspect.getJob(id), undefined);
+    assert.equal(await inspect.getWaitingCount(), 0);
+  } finally {
+    resume();
+    await queue.close(true);
+    await inspect.obliterate({ force: true });
+    await inspect.close();
+  }
+});
 
 async function markerExists(file: string): Promise<boolean> {
   try {

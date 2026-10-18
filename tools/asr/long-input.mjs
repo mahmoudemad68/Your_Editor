@@ -95,4 +95,16 @@ await writeFile(
   path.join(dir, `ten-minute-${model}-evidence.json`),
   JSON.stringify(report, null, 2) + "\n",
 );
-process.stdout.write(JSON.stringify(report, null, 2) + "\n");
+// Complete recognized text/native diagnostics remain in the local evidence files.
+const publicSummary = {
+  runId: report.runId,
+  durationUs: report.durationUs,
+  wordCount: report.wordCount,
+  detectedLanguage: report.detectedLanguage,
+  wallTimeMs: report.wallTimeMs,
+  realTimeFactor: report.realTimeFactor,
+  peakRssBytes: report.peakRssBytes,
+  model,
+  wer: report.wer,
+};
+process.stdout.write(JSON.stringify(publicSummary, null, 2) + "\n");

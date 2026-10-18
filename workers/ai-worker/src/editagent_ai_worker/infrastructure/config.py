@@ -19,6 +19,25 @@ class ConfigurationError(Exception):
     """Missing or invalid AI worker configuration."""
 
 
+def _read_cpu_flags() -> frozenset[str]:
+    """Require bounded capability evidence from every reported processor."""
+    try:
+        with Path("/proc/cpuinfo").open(encoding="ascii") as stream:
+            description = stream.read(2 * 1024 * 1024 + 1)
+        if len(description) > 2 * 1024 * 1024:
+            raise ValueError("CPU description exceeds bound")
+        flags = [
+            frozenset(line.partition(":")[2].split())
+            for line in description.splitlines()
+            if line.partition(":")[0].strip() == "flags"
+        ]
+        if not flags:
+            raise ValueError("CPU flags absent")
+        return frozenset.intersection(*flags)
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise ConfigurationError("ASR CPU instruction support cannot be verified.") from exc
+
+
 ASR_NATIVE_PROFILE = "onednn-avx2-strict-v4"
 ASR_NATIVE_ENVIRONMENT = MappingProxyType(
     {
@@ -73,16 +92,7 @@ def configure_asr_native_environment() -> None:
         )
     if platform.machine().lower() not in {"x86_64", "amd64"}:
         raise ConfigurationError("ASR CPU execution requires the supported x86-64 runtime.")
-    try:
-        with Path("/proc/cpuinfo").open(encoding="ascii") as stream:
-            description = stream.read(65536)
-        flags = next(
-            line.partition(":")[2].split()
-            for line in description.splitlines()
-            if line.partition(":")[0].strip() == "flags"
-        )
-    except (OSError, UnicodeError, StopIteration) as exc:
-        raise ConfigurationError("ASR CPU instruction support cannot be verified.") from exc
+    flags = _read_cpu_flags()
     if not {"avx2", "fma"}.issubset(flags):
         raise ConfigurationError("ASR CPU execution requires verified AVX2 and FMA support.")
     for key in ASR_NATIVE_RESERVED_ENVIRONMENT:
