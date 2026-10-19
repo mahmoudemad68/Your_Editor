@@ -5,7 +5,7 @@
 FROM scratch AS pnpm-store
 COPY tools/render/empty-store/ /
 
-FROM node:22.23.3-trixie-slim@sha256:b26b04c123d9ff8ab646ceb18b9d75a1173acf64b9a401094b906d27b29338d4 AS build
+FROM node:26.12.0-trixie-slim@sha256:0d1e33586362bb9e608c4e751e7a9e7edb55c9ac11461ed5666af696cc461dd4 AS build
 ENV PNPM_HOME=/pnpm PATH=/pnpm:$PATH CI=true HUSKY=0 NODE_USE_ENV_PROXY=1
 RUN --mount=type=secret,id=proxy_ca \
     if [ -f /run/secrets/proxy_ca ]; then export NODE_EXTRA_CA_CERTS=/run/secrets/proxy_ca; fi; \
@@ -22,7 +22,7 @@ RUN --mount=type=secret,id=proxy_ca --mount=type=bind,from=pnpm-store,source=/,t
  && rm -rf /pnpm-offline
 
 # Reuse the audited US-127 media-tool build recipe: no network protocols/libxml2/DASH.
-FROM node:22.23.3-trixie-slim@sha256:b26b04c123d9ff8ab646ceb18b9d75a1173acf64b9a401094b906d27b29338d4 AS media-tools
+FROM node:26.12.0-trixie-slim@sha256:0d1e33586362bb9e608c4e751e7a9e7edb55c9ac11461ed5666af696cc461dd4 AS media-tools
 COPY workers/media-worker/build-ffmpeg.sh /tmp/build-ffmpeg.sh
 WORKDIR /src
 RUN --mount=type=secret,id=proxy_ca \
@@ -30,7 +30,7 @@ RUN --mount=type=secret,id=proxy_ca \
     apt-get update && apt-get install -y --no-install-recommends ca-certificates curl xz-utils build-essential pkg-config nasm zlib1g-dev libx264-dev libvpx-dev libopus-dev \
  && sh /tmp/build-ffmpeg.sh
 
-FROM node:22.23.3-trixie-slim@sha256:b26b04c123d9ff8ab646ceb18b9d75a1173acf64b9a401094b906d27b29338d4 AS chromium-download
+FROM node:26.12.0-trixie-slim@sha256:0d1e33586362bb9e608c4e751e7a9e7edb55c9ac11461ed5666af696cc461dd4 AS chromium-download
 RUN --mount=type=secret,id=proxy_ca \
     set -eu; apt-get update && apt-get install -y --no-install-recommends curl unzip ca-certificates \
  && mkdir -p /opt/chromium \
@@ -40,7 +40,7 @@ RUN --mount=type=secret,id=proxy_ca \
  && unzip -q /tmp/chromium.zip -d /opt/chromium
 
 # Official Noto Color Emoji 2.051, SIL Open Font License 1.1. Offline at runtime.
-FROM node:22.23.3-trixie-slim@sha256:b26b04c123d9ff8ab646ceb18b9d75a1173acf64b9a401094b906d27b29338d4 AS emoji-font
+FROM node:26.12.0-trixie-slim@sha256:0d1e33586362bb9e608c4e751e7a9e7edb55c9ac11461ed5666af696cc461dd4 AS emoji-font
 RUN --mount=type=secret,id=proxy_ca \
     set -eu; apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
  && mkdir -p /font \
@@ -52,7 +52,7 @@ RUN --mount=type=secret,id=proxy_ca \
 
 # Debian's current Expat 2.8.3 has five HIGH advisories. Build the unmodified
 # official release fixing them; keep its version/license/source identity visible.
-FROM node:22.23.3-trixie-slim@sha256:b26b04c123d9ff8ab646ceb18b9d75a1173acf64b9a401094b906d27b29338d4 AS expat-build
+FROM node:26.12.0-trixie-slim@sha256:0d1e33586362bb9e608c4e751e7a9e7edb55c9ac11461ed5666af696cc461dd4 AS expat-build
 RUN --mount=type=secret,id=proxy_ca \
     set -eu; apt-get update && apt-get install -y --no-install-recommends curl ca-certificates xz-utils build-essential \
  && if [ -f /run/secrets/proxy_ca ]; then export CURL_CA_BUNDLE=/run/secrets/proxy_ca; fi; \
@@ -65,7 +65,7 @@ RUN --mount=type=secret,id=proxy_ca \
  && cp COPYING Changes /out/usr/local/share/editagent/expat/ \
  && printf '%s\n' 'expat 2.9.0' 'source=https://github.com/libexpat/libexpat/releases/download/R_2_9_0/expat-2.9.0.tar.xz' 'sourceSha256=1e6371862cc31999b368c3b89b49994f0677e1bab5f1b2b85ae3741f5d803051' > /out/usr/local/share/editagent/expat/provenance.txt
 
-FROM node:22.23.3-trixie-slim@sha256:b26b04c123d9ff8ab646ceb18b9d75a1173acf64b9a401094b906d27b29338d4 AS runtime
+FROM node:26.12.0-trixie-slim@sha256:0d1e33586362bb9e608c4e751e7a9e7edb55c9ac11461ed5666af696cc461dd4 AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends libx264-164 libvpx9 libopus0 ca-certificates \
  && rm -rf /var/lib/apt/lists/* /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack \
  && groupadd --system --gid 10001 editagent \
