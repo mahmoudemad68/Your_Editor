@@ -39,7 +39,7 @@ from editagent_ai_worker.infrastructure.config import (
 )
 from editagent_ai_worker.infrastructure.vad_audio import verify_audio_file, wav_parameters
 
-ASR_ALGORITHM = "ct2-contextual-v18"
+ASR_ALGORITHM = "ct2-contextual-v19"
 
 
 def uncovered_speech(audio: Any, words: list[Any], options: Any) -> list[tuple[int, int]]:
@@ -1035,8 +1035,16 @@ class FasterWhisperAdapter:
                 # lexical speech was omitted. Do not publish a partial result.
                 if segment.avg_logprob < -1.0 or segment.no_speech_prob >= 0.6:
                     continue
+                if segment.text.strip() and not segment.words:
+                    raise TranscriptionError("ASR recognized speech lacks complete word coverage")
                 missing, last_match = self._unrepresented_words(
-                    segment.words or [], words, start, lower, upper, last_match
+                    segment.words or [],
+                    words,
+                    start,
+                    lower,
+                    upper,
+                    last_match,
+                    intersect_gap=True,
                 )
                 if missing:
                     evidence.append((start, end, lower, upper, segment, str(info.language)))

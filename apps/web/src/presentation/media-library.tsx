@@ -10,6 +10,7 @@ import type { JobEventStream } from "../job-contract";
 import { projectJobEvents } from "./job-event-stream";
 import { browserMediaLibraryApi } from "./media-library-api";
 import { Button } from "./ui/button";
+import { MediaAnalysisPanel } from "./media-analysis";
 
 export function formatDuration(duration: string | null): string {
   if (duration === null || !/^[0-9]+$/.test(duration)) return "Duration unavailable";
@@ -137,6 +138,7 @@ export function MediaCard({
   const [posterFailed, setPosterFailed] = useState(false);
   const [spriteFailed, setSpriteFailed] = useState(false);
   const [playerOpen, setPlayerOpen] = useState(false);
+  const [analysisOpen, setAnalysisOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [playerVersion, setPlayerVersion] = useState(0);
@@ -343,6 +345,17 @@ export function MediaCard({
             </Button>
           </div>
         ) : null}
+        {item.validationStatus === "validated" ? (
+          <Button
+            className="mt-3"
+            variant="secondary"
+            onClick={() => setAnalysisOpen((open) => !open)}
+            aria-expanded={analysisOpen}
+          >
+            {analysisOpen ? "Close analysis" : "View analysis"}
+          </Button>
+        ) : null}
+        {analysisOpen ? <MediaAnalysisPanel projectId={projectId} mediaId={item.id} /> : null}
       </div>
     </article>
   );
