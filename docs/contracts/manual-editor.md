@@ -77,3 +77,13 @@ An incomplete run cannot pass. Missing cgroup evidence or an unsupported runtime
 fails qualification. Docker inference is NOT_RUN_ON_WINDOWS. This qualifies the
 default two-thread profile only; other hardware/profiles remain separate work.
 There is no independent 600-second word gold, so ten-minute WER is not claimed.
+
+ASR algorithm `ct2-contextual-v24` uses NumPy profile `numpy-avx2-log-v2`.
+CT2/oneDNN retains its existing strict AVX2 backend. NumPy cosine, complex
+magnitude and float64 natural-log kernels must actually select X86_V3.
+The log-Mel frontend computes the existing clipped base-ten logarithm through
+`log(x) * log10(e)` in float64 before converting to float32 model features.
+This avoids the system-dependent float32 `log10f` path. The energy floor,
+eight-decade clamp and final Whisper normalization remain unchanged. A separate
+80-digit Decimal oracle checks synthetic energies; full native outputs across
+processes and execution profiles remain the inference acceptance evidence.

@@ -112,13 +112,13 @@ print(json.dumps({'kernels':numpy_cpu_kernels(),'features':DeterministicFeatureE
     assert outputs[0]["kernels"] == {
         "cos_float64": "X86_V3",
         "absolute_complex64": "X86_V3",
-        "log10_float32": "baseline(X86_V2)",
+        "log_float64": "X86_V3",
     }
     # Compare the actual full feature values, not only a digest or declaration.
     assert outputs[0] == outputs[1]
 
 
-@pytest.mark.parametrize("defect", ["cos", "absolute", "log10", "missing", "version"])
+@pytest.mark.parametrize("defect", ["cos", "absolute", "log", "missing", "version"])
 def test_effective_numpy_kernel_mismatch_fails_closed(
     monkeypatch: pytest.MonkeyPatch, defect: str
 ) -> None:
@@ -129,9 +129,9 @@ def test_effective_numpy_kernel_mismatch_fails_closed(
     selected = {
         "cos": {"dd": {"current": "X86_V3"}},
         "absolute": {"Ff": {"current": "X86_V3"}},
-        "log10": {"ff": {"current": "baseline(X86_V2)"}},
+        "log": {"dd": {"current": "X86_V3"}},
     }
-    if defect in ("cos", "absolute", "log10"):
+    if defect in ("cos", "absolute", "log"):
         for value in selected[defect].values():
             value["current"] = "X86_V4"
     elif defect == "missing":

@@ -108,15 +108,15 @@ function qualifyResult(result, model) {
     effectiveDevice: "cpu",
     effectiveComputeType: "int8",
     nativeCpuProfile: "onednn-avx2-strict-v4",
-    alignmentAlgorithm: "ct2-contextual-v23",
-    numpyCpuProfile: "numpy-avx2-v1",
+    alignmentAlgorithm: "ct2-contextual-v24",
+    numpyCpuProfile: "numpy-avx2-log-v2",
     numpyVersion: "2.4.6",
   }))
     assert.equal(settings[key], expected);
   assert.deepEqual(settings.numpyCpuKernels, {
     cos_float64: "X86_V3",
     absolute_complex64: "X86_V3",
-    log10_float32: "baseline(X86_V2)",
+    log_float64: "X86_V3",
   });
   assert.deepEqual(
     settings.alignmentFallbackModel,
@@ -336,11 +336,11 @@ export async function main() {
         alignmentFallbackModel: model === "tiny" ? modelIdentities.small : null,
         runtimeVersions: { numpy: "2.4.6", ctranslate2: "4.8.2", "faster-whisper": "1.2.1" },
         nativeProfile: "onednn-avx2-strict-v4",
-        numpyProfile: "numpy-avx2-v1",
+        numpyProfile: "numpy-avx2-log-v2",
         numpyKernels: {
           cos_float64: "X86_V3",
           absolute_complex64: "X86_V3",
-          log10_float32: "baseline(X86_V2)",
+          log_float64: "X86_V3",
         },
         cpuThreads: 2,
         workers: 1,
