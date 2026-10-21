@@ -304,6 +304,7 @@ def test_independently_recognized_missing_words_cannot_publish_completed(monkeyp
         SimpleNamespace(
             avg_logprob=-0.1,
             no_speech_prob=0.01,
+            text=" genuine",
             words=[SimpleNamespace(word=" genuine", start=0.5, end=1.0)],
         )
     ]
@@ -431,7 +432,14 @@ def test_short_context_word_drift_requires_ordered_temporal_lexical_evidence(
     ]
     if mode == "repeated":
         words.append(SimpleNamespace(word=" 2021.", start=0.9, end=2.0))
-    segments = [SimpleNamespace(avg_logprob=-0.1, no_speech_prob=0.01, words=words)]
+    segments = [
+        SimpleNamespace(
+            avg_logprob=-0.1,
+            no_speech_prob=0.01,
+            text="".join(w.word for w in words),
+            words=words,
+        )
+    ]
     adapter = adapter_returning(segments)
     if mode == "represented":
         adapter._verify_coverage(np.zeros(64000), represented, lambda: None)

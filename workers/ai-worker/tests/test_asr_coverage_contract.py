@@ -67,6 +67,14 @@ def word(start: float, end: float, text: str = " مرحبا") -> Any:
 
 
 class CoverageContractTests(unittest.TestCase):
+    def test_partial_word_alignment_cannot_hide_reliable_remaining_segment_text(self) -> None:
+        for first, complete in ((" hello", " hello world"), (" مرحبا", " مرحبا بالعالم")):
+            with self.subTest(text=complete):
+                aligned = word(1.1, 1.3, first)
+                adapter, _ = coverage_adapter([segment([aligned], complete)])
+                with self.assertRaisesRegex(TranscriptionError, "complete word coverage"):
+                    adapter._verify_coverage([0] * 64_000, [aligned], lambda: None)
+
     def test_reliable_lexical_speech_without_word_alignment_cannot_be_certified(self) -> None:
         for text in (" hello", " مرحبا"):
             with self.subTest(text=text):
