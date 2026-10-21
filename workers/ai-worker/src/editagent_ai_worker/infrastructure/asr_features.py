@@ -10,6 +10,39 @@ from typing import Any
 import numpy as np
 from faster_whisper.feature_extractor import FeatureExtractor  # type: ignore[import-untyped]
 
+from editagent_ai_worker.infrastructure.config import ConfigurationError
+
+NUMPY_CPU_PROFILE = "numpy-avx2-v1"
+
+
+def numpy_cpu_kernels() -> dict[str, str]:
+    """Attest the actual selected kernels, not just their environment declaration.
+
+    NumPy 2.4.6 has no AVX2 log10 kernel: its admitted path is the compiled
+    baseline there. Cosine and complex magnitude use X86_V3 (AVX2). A missing
+    or different binding cannot describe the same numerical feature profile.
+    """
+    try:
+        if np.__version__ != "2.4.6":
+            raise ValueError("Unsupported NumPy runtime")
+        selected = np.lib.introspect.opt_func_info(
+            func_name="^(cos|absolute|log10)$", signature="float32|float64|complex64"
+        )
+        kernels = {
+            "cos_float64": selected["cos"]["dd"]["current"],
+            "absolute_complex64": selected["absolute"]["Ff"]["current"],
+            "log10_float32": selected["log10"]["ff"]["current"],
+        }
+        if kernels != {
+            "cos_float64": "X86_V3",
+            "absolute_complex64": "X86_V3",
+            "log10_float32": "baseline(X86_V2)",
+        }:
+            raise ValueError("Different selected feature kernels")
+        return kernels
+    except (AttributeError, KeyError, TypeError, ValueError) as exc:
+        raise ConfigurationError("ASR NumPy feature profile is invalid.") from exc
+
 
 class DeterministicFeatureExtractor(FeatureExtractor):  # type: ignore[misc]
     def __call__(self, waveform: Any, padding: int = 160, chunk_length: int | None = None) -> Any:

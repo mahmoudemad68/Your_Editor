@@ -276,6 +276,19 @@ jobs:
       - name: Run every assigned real-inference test
         working-directory: workers/ai-worker
         run: uv run python ../../tools/asr/test_partition.py --shard "${{ matrix.shard }}"
+      - name: Setup pinned Node for production qualification
+        if: ${{ !cancelled() && matrix.shard == 'long-input' }}
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+      - name: Original ten-minute inference in the production CPU jail
+        if: ${{ !cancelled() && matrix.shard == 'long-input' }}
+        env:
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          # Sequential runs retain this job's existing 45m cap and the 600000ms inference limit.
+          node tools/asr/container.mjs --build-only --model tiny
+          node tools/asr/qualification.mjs
       - name: Upload allowlisted test summary
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v7

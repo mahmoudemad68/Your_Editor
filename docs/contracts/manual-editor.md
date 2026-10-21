@@ -58,3 +58,22 @@ demo export; all native diagnostics, private logs, evaluation gold and prior ren
 artifacts remain excluded. A failed/incomplete run cannot establish full MVP PASS.
 H1/H2/H3, WER, production performance, US-210 recovery and Independent QA remain
 separate acceptance gates. No merge, deployment or Ready transition is implied.
+
+The long-input CI shard additionally builds the same production AI image and runs
+the immutable original ten-minute recording twice per model, sequentially, through
+the actual production adapter. Containers retain UID 10001, a read-only filesystem,
+no network, dropped capabilities, no new privileges, two CPUs, 3 GiB without swap
+and 128 PIDs. Both the adapter deadline and enclosing inference watchdog remain
+600,000 ms; the existing 45-minute job cap is unchanged. No extra CI job is added.
+
+The qualifier requires actual cgroup-v2 quota, throttling and peak-memory evidence,
+checks every native word boundary and minute of coverage, and compares complete
+ordered native results, confidence, provenance and configuration across fresh
+containers. It records inclusive phase costs with profiling overhead included;
+nested phase times must not be added together. Its public report contains only
+explicit control/numeric fields and already approved source/model identities.
+Native results, failure operands and logs remain private and excluded from uploads.
+An incomplete run cannot pass. Missing cgroup evidence or an unsupported runtime
+fails qualification. Docker inference is NOT_RUN_ON_WINDOWS. This qualifies the
+default two-thread profile only; other hardware/profiles remain separate work.
+There is no independent 600-second word gold, so ten-minute WER is not claimed.

@@ -29,7 +29,11 @@ from editagent_ai_worker.domain.analysis.transcription import (
 )
 from editagent_ai_worker.domain.analysis.voice_activity import AudioIdentity, Cancellation
 from editagent_ai_worker.infrastructure.asr_config import AsrSettings
-from editagent_ai_worker.infrastructure.asr_features import DeterministicFeatureExtractor
+from editagent_ai_worker.infrastructure.asr_features import (
+    NUMPY_CPU_PROFILE,
+    DeterministicFeatureExtractor,
+    numpy_cpu_kernels,
+)
 from editagent_ai_worker.infrastructure.asr_model import model_identity, verify_asr_model
 from editagent_ai_worker.infrastructure.config import (
     ASR_NATIVE_ENVIRONMENT,
@@ -39,7 +43,7 @@ from editagent_ai_worker.infrastructure.config import (
 )
 from editagent_ai_worker.infrastructure.vad_audio import verify_audio_file, wav_parameters
 
-ASR_ALGORITHM = "ct2-contextual-v22"
+ASR_ALGORITHM = "ct2-contextual-v23"
 
 
 def uncovered_speech(audio: Any, words: list[Any], options: Any) -> list[tuple[int, int]]:
@@ -295,6 +299,7 @@ class FasterWhisperAdapter:
     def __init__(self, settings: AsrSettings) -> None:
         try:
             require_asr_native_environment()
+            numpy_cpu_kernels()
         except ConfigurationError as exc:
             raise TranscriptionError("ASR native execution profile is invalid") from exc
         self.settings = settings
@@ -1538,6 +1543,9 @@ class FasterWhisperAdapter:
                 "workers": 1,
                 "alignmentAlgorithm": ASR_ALGORITHM,
                 "nativeCpuProfile": ASR_NATIVE_PROFILE,
+                "numpyCpuProfile": NUMPY_CPU_PROFILE,
+                "numpyVersion": np.__version__,
+                "numpyCpuKernels": numpy_cpu_kernels(),
                 "nativeCpuEnvironment": dict(ASR_NATIVE_ENVIRONMENT),
                 "featureProjection": "frequency-ordered-float32-v1",
                 "languageDetectionWindowUs": 4000000,

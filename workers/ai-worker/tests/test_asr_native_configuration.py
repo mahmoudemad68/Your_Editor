@@ -50,7 +50,7 @@ from editagent_ai_worker.infrastructure.config import (
     ASR_NATIVE_ENVIRONMENT, ASR_NATIVE_RESERVED_ENVIRONMENT, configure_asr_native_environment
 )
 configure_asr_native_environment()
-assert 'ctranslate2' not in sys.modules and 'faster_whisper' not in sys.modules
+assert all(name not in sys.modules for name in ('numpy', 'ctranslate2', 'faster_whisper'))
 assert all(key not in os.environ for key in ASR_NATIVE_RESERVED_ENVIRONMENT)
 print(json.dumps({key: os.environ[key] for key in ASR_NATIVE_ENVIRONMENT}))
 """
@@ -67,6 +67,80 @@ print(json.dumps({key: os.environ[key] for key in ASR_NATIVE_ENVIRONMENT}))
         timeout=20,
     )
     assert json.loads(result.stdout) == dict(ASR_NATIVE_ENVIRONMENT)
+
+
+def test_numpy_import_before_profile_is_rejected_even_with_matching_environment() -> None:
+    program = """
+import os,numpy
+from editagent_ai_worker.infrastructure.config import (
+ ASR_NATIVE_ENVIRONMENT,ConfigurationError,configure_asr_native_environment
+)
+before={key:os.environ.get(key) for key in ASR_NATIVE_ENVIRONMENT}
+try: configure_asr_native_environment()
+except ConfigurationError:
+ assert before=={key:os.environ.get(key) for key in ASR_NATIVE_ENVIRONMENT}
+ raise SystemExit(0)
+raise SystemExit(1)
+"""
+    result = subprocess.run([sys.executable, "-c", program], capture_output=True, timeout=20)
+    assert result.returncode == 0, result.stderr
+
+
+def test_actual_numpy_kernels_and_complete_features_ignore_inherited_isa_overrides() -> None:
+    program = """
+import json
+from editagent_ai_worker.infrastructure.config import configure_asr_native_environment
+configure_asr_native_environment()
+import numpy as np
+from editagent_ai_worker.infrastructure.asr_features import (
+ DeterministicFeatureExtractor,numpy_cpu_kernels
+)
+pcm=((np.arange(1600)%257).astype(np.float32)-128)/32768
+print(json.dumps({'kernels':numpy_cpu_kernels(),'features':DeterministicFeatureExtractor()(pcm).tolist()}))
+"""
+    outputs = []
+    for inherited in ("", "X86_V3,X86_V4,AVX512_ICL,AVX512_SPR"):
+        result = subprocess.run(
+            [sys.executable, "-c", program],
+            env={**os.environ, "NPY_DISABLE_CPU_FEATURES": inherited},
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=20,
+        )
+        outputs.append(json.loads(result.stdout))
+    assert outputs[0]["kernels"] == {
+        "cos_float64": "X86_V3",
+        "absolute_complex64": "X86_V3",
+        "log10_float32": "baseline(X86_V2)",
+    }
+    # Compare the actual full feature values, not only a digest or declaration.
+    assert outputs[0] == outputs[1]
+
+
+@pytest.mark.parametrize("defect", ["cos", "absolute", "log10", "missing", "version"])
+def test_effective_numpy_kernel_mismatch_fails_closed(
+    monkeypatch: pytest.MonkeyPatch, defect: str
+) -> None:
+    import numpy as np
+
+    from editagent_ai_worker.infrastructure.asr_features import numpy_cpu_kernels
+
+    selected = {
+        "cos": {"dd": {"current": "X86_V3"}},
+        "absolute": {"Ff": {"current": "X86_V3"}},
+        "log10": {"ff": {"current": "baseline(X86_V2)"}},
+    }
+    if defect in ("cos", "absolute", "log10"):
+        for value in selected[defect].values():
+            value["current"] = "X86_V4"
+    elif defect == "missing":
+        selected.clear()
+    else:
+        monkeypatch.setattr(np, "__version__", "unadmitted")
+    monkeypatch.setattr(np.lib.introspect, "opt_func_info", lambda **kwargs: selected)
+    with pytest.raises(ConfigurationError, match="NumPy feature profile"):
+        numpy_cpu_kernels()
 
 
 def test_child_profile_overrides_inherited_backend_without_mutating_parent(

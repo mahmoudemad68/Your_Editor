@@ -54,12 +54,17 @@ ASR_NATIVE_ENVIRONMENT = MappingProxyType(
         "OMP_NUM_THREADS": "1",
         "OMP_WAIT_POLICY": "PASSIVE",
         "GOMP_SPINCOUNT": "0",
+        # CT2/oneDNN ISA controls do not constrain NumPy's independent ufunc
+        # dispatch (including log10, cosine and complex magnitude). Bind it
+        # before import to the same supported AVX2 level, not host AVX-512.
+        "NPY_DISABLE_CPU_FEATURES": "X86_V4,AVX512_ICL,AVX512_SPR",
     }
 )
 ASR_NATIVE_RESERVED_ENVIRONMENT = (
     "MKL_CBWR",
     "MKL_ENABLE_INSTRUCTIONS",
     "MKL_DEBUG_CPU_TYPE",
+    "NPY_ENABLE_CPU_FEATURES",
 )
 
 
@@ -86,7 +91,7 @@ def configure_asr_native_environment() -> None:
     alone does not constrain its BLAS backend. Never switch an already-imported
     native library into a profile its initialized state cannot establish.
     """
-    if "ctranslate2" in sys.modules or "faster_whisper" in sys.modules:
+    if any(name in sys.modules for name in ("numpy", "ctranslate2", "faster_whisper")):
         raise ConfigurationError(
             "ASR native runtime is already imported; this startup profile is not configured."
         )
