@@ -275,6 +275,22 @@ def merge_owned_words(
     return tuple(words)
 
 
+def cross_language_boundary_collision(
+    chunks: list[tuple[int, int, tuple[Word, ...]]], languages: list[str]
+) -> bool:
+    """Classify an already rejected join; no lexical/coordinate operands leave the worker."""
+    for index in range(1, len(chunks)):
+        if languages[index - 1] == languages[index]:
+            continue
+        lower, upper, right = chunks[index]
+        left_lower, left_upper, left = chunks[index - 1]
+        left_owned = [w for w in left if 2 * left_lower <= w.start_us + w.end_us < 2 * left_upper]
+        right_owned = [w for w in right if 2 * lower <= w.start_us + w.end_us < 2 * upper]
+        if left_owned and right_owned and left_owned[-1].end_us > right_owned[0].start_us:
+            return True
+    return False
+
+
 class FasterWhisperAdapter:
     def __init__(self, settings: AsrSettings) -> None:
         try:
@@ -1446,7 +1462,17 @@ class FasterWhisperAdapter:
                 except Exception as exc:
                     raise TranscriptionError("ASR input or inference failed") from exc
             chunks = self._reconcile_overlaps(chunks, chunk_languages, wav, source, check)
-            merged = merge_owned_words(chunks, source)
+            try:
+                merged = merge_owned_words(chunks, source)
+            except TranscriptionError as error:
+                if str(error).startswith(
+                    "ASR chunk boundary requires trustworthy realignment"
+                ) and cross_language_boundary_collision(chunks, chunk_languages):
+                    raise TranscriptionError(
+                        "ASR chunk boundary requires trustworthy realignment: "
+                        "detected_language_change"
+                    ) from error
+                raise
             # Judge complete canonical ownership, not an individual context's
             # partial view. Whole words from neighboring cores remain evidence.
             for _, _, lower, upper, _, _, _ in windows:

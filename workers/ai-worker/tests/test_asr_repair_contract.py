@@ -1202,6 +1202,26 @@ def test_boundary_search_never_skips_an_owned_right_word() -> None:
     )
 
 
+@pytest.mark.parametrize("language_changed", [False, True])
+@pytest.mark.parametrize("collision", [False, True])
+def test_rejected_cross_language_join_classification_does_not_accept_words(
+    language_changed: bool, collision: bool
+) -> None:
+    from editagent_ai_worker.domain.analysis.transcription import Word
+
+    left = (Word(" preserved", 4_500_000, 5_100_000, 0.8),)
+    right = (Word(" following", 4_950_000 if collision else 5_100_000, 5_500_000, 0.8),)
+    chunks = [(0, 5_000_000, left), (5_000_000, 10_000_000, right)]
+    languages = ["en", "ar" if language_changed else "en"]
+    typed_chunks: list[tuple[int, int, tuple[Word, ...]]] = [
+        (a, b, words) for a, b, words in chunks
+    ]
+    assert whisper.cross_language_boundary_collision(typed_chunks, languages) is (
+        language_changed and collision
+    )
+    assert chunks[0][2] is left and chunks[1][2] is right
+
+
 def test_owned_duplicate_anchor_search_observes_cancellation() -> None:
     from editagent_ai_worker.domain.analysis.transcription import Word
 

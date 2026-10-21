@@ -3,6 +3,8 @@ import { createHash } from "node:crypto";
 import { test } from "node:test";
 import {
   MediaAsset,
+  DomainError,
+  applyCommand,
   Project,
   SplitClip,
   Timeline,
@@ -205,3 +207,36 @@ test("a proposal from a newer snapshot cannot overwrite the browser's basis", as
   );
   assert.equal(writes(), 1);
 });
+
+for (const changed of [false, true]) {
+  test(`SDK validation failure keeps ${changed ? "concurrent basis conflict" : "genuine invalid input"} semantics`, async () => {
+    const { editor, tools, store, writes } = await fixture();
+    const initial = await editor.create(OWNER, PROJECT, MEDIA);
+    const clipId = initial.timeline.tracks[0]!.clips[0]!.id;
+    tools.propose = async () => {
+      if (changed) {
+        const next = applyCommand(
+          Timeline.restore(initial.timeline),
+          TrimClip(id(200), initial.timeline.id, {
+            clipId,
+            startUs: "300000",
+            endUs: "1600000",
+          }),
+        ).timeline;
+        await store.save(OWNER, next, initial.stateSha256);
+      }
+      throw new DomainError("The bounds are invalid on the SDK's current snapshot.");
+    };
+    await assert.rejects(
+      editor.edit(OWNER, PROJECT, initial.timeline.id, initial.stateSha256, "trim-video", {
+        clipId,
+        startUs: "200000",
+        endUs: "1800000",
+      }),
+      changed ? TimelineConflict : DomainError,
+    );
+    const saved = await editor.read(OWNER, PROJECT, initial.timeline.id);
+    assert.equal(saved.timeline.tracks[0]!.clips[0]!.inPoint, changed ? "300000" : "0");
+    assert.equal(writes(), changed ? 2 : 1);
+  });
+}

@@ -185,6 +185,7 @@ jobs:
         run: pnpm test
 
       - name: Real non-root CPU ASR, S3 readiness and crash recovery
+        if: ${{ !cancelled() }}
         run: pnpm asr:container
 
       - name: Real production render, cancellation and timeline golden frames

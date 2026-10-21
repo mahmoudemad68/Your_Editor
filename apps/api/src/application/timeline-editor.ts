@@ -120,7 +120,21 @@ export class TimelineEditor {
     await this.access(actor, project, true);
     const stored = await this.store.load(project, id);
     if (stored.stateSha256 !== expectedSha256) throw new TimelineConflict();
-    const proposal = await this.tools.propose(actor, project, id, operation, input);
+    let proposal: Awaited<ReturnType<TimelineProposals["propose"]>>;
+    try {
+      proposal = await this.tools.propose(actor, project, id, operation, input);
+    } catch (error) {
+      if (error instanceof DomainError) {
+        // The SDK loads its own current snapshot. A concurrent edit can make
+        // previously valid bounds invalid before it returns a proposal. Keep
+        // genuine validation errors, but classify an advanced basis as a
+        // conflict without retrying or applying the stale request.
+        await this.access(actor, project, true);
+        if ((await this.store.load(project, id)).stateSha256 !== expectedSha256)
+          throw new TimelineConflict();
+      }
+      throw error;
+    }
     if (proposal.basisSha256 !== expectedSha256 || proposal.commands.length !== 1)
       throw new TimelineConflict();
     const command = proposal.commands[0]!;

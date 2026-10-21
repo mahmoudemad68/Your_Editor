@@ -39,6 +39,9 @@ _PUBLIC_COUNTS: dict[str, int] = {"passed": 0, "failed": 0, "skipped": 0}
 
 _SAFE_FAILURES = {
     (
+        "ASR chunk boundary requires trustworthy realignment: detected_language_change"
+    ): "boundary_language_change",
+    (
         "ASR chunk boundary requires trustworthy realignment: fused_native_token"
     ): "boundary_fused_token",
     (
