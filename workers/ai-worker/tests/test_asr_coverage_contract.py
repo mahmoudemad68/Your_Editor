@@ -94,6 +94,16 @@ class CoverageContractTests(unittest.TestCase):
         represented = [word(0.7, 1.1)]
         self.assertEqual(adapter._coverage_evidence([0] * 64_000, represented, lambda: None), [])
 
+    def test_collapsed_native_word_remains_evidence_without_inventing_a_duration(self) -> None:
+        observation = segment([word(1.5, 1.5)])
+        adapter, _ = coverage_adapter([observation])
+        evidence = adapter._coverage_evidence([0] * 64_000, [], lambda: None)
+        self.assertEqual(len(evidence), 1)
+        self.assertIs(evidence[0][4], observation)
+        self.assertEqual(observation.words[0].start, observation.words[0].end)
+        with self.assertRaisesRegex(TranscriptionError, "complete word coverage"):
+            adapter._verify_coverage([0] * 64_000, [], lambda: None)
+
     def test_low_quality_or_non_speech_decode_is_not_reliable_missing_speech(self) -> None:
         for field, value in (("avg_logprob", -1.2), ("no_speech_prob", 0.8)):
             with self.subTest(field=field):

@@ -1004,7 +1004,7 @@ class FasterWhisperAdapter:
                 last_match = matches[0]
             elif (
                 max(first * 16000, Decimal(lower)) < min(last * 16000, Decimal(upper))
-                if intersect_gap
+                if intersect_gap and first < last
                 else Decimal(lower) <= (first + last) * 8000 < Decimal(upper)
             ):
                 missing.append(index)
@@ -1035,7 +1035,7 @@ class FasterWhisperAdapter:
                 # lexical speech was omitted. Do not publish a partial result.
                 if segment.avg_logprob < -1.0 or segment.no_speech_prob >= 0.6:
                     continue
-                if segment.text.strip() and not segment.words:
+                if not segment.words and segment.text.strip():
                     raise TranscriptionError("ASR recognized speech lacks complete word coverage")
                 missing, last_match = self._unrepresented_words(
                     segment.words or [],
