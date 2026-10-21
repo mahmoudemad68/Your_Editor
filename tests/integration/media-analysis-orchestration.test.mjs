@@ -547,6 +547,7 @@ asyncio.run(run())`,
       assert.equal(document.sections.audio.status, "completed");
       assert.ok(document.sections.audio.data.speech);
       assert.equal(JSON.stringify(document.sections.transcript), before);
+      console.info("US210_PHASE isolated-analyzer-retry-complete");
       const media = new PostgresMediaAssetRepository(pool);
       const getter = new GetMediaAnalysis(
         new GetMediaDetails(new PostgresProjectRepository(pool), media),
@@ -592,6 +593,7 @@ asyncio.run(run())`,
       assert.equal((await fetch(`${apiUrl}/media/${asset}/analysis`, { headers })).status, 404);
       await app.close();
       app = undefined;
+      console.info("US210_PHASE authenticated-get-and-revocation-complete");
       // Real SIGKILL during native inference: restart must retain the durable attempt
       // identity, reclaim the lease, stop the orphan child and complete exactly once.
       const priorTranscript = (
@@ -646,6 +648,7 @@ asyncio.run(run())`,
         assert.equal(fenced.result, null);
         assert.equal(fenced.inference_parameters, null);
       }
+      console.info("US210_PHASE runtime-version-fences-complete");
       await store.recover(queue);
       const crashing = consumer(env, "transcript");
       const childInfo = await until(() => {
@@ -659,12 +662,15 @@ asyncio.run(run())`,
         (await pool.query("SELECT status FROM jobs WHERE id=$1", [crashJob])).rows[0].status,
         "Running",
       );
+      console.info("US210_PHASE crash-native-child-running");
       crashing.child.kill("SIGKILL");
       assert.equal((await crashing.exit).signal, "SIGKILL");
       await until(() => notRunning(childInfo.pid), "parent-death child termination");
+      console.info("US210_PHASE orphan-native-child-terminated");
       await new PostgresAnalysis(pool).recover(queue);
       const restarted = consumer(env, "transcript");
       assert.equal((await restarted.exit).code, 0, restarted.diagnostics());
+      console.info("US210_PHASE restarted-consumer-exited");
       assert.equal(
         JSON.parse(restarted.output()).status,
         "Completed",
@@ -687,9 +693,11 @@ asyncio.run(run())`,
       assert.equal(crashState.attempt_count, 2);
       assert.equal(crashState.result_attempt, 2);
       assert.ok(crashState.result);
+      console.info("US210_PHASE restarted-attempt-complete");
       // The production image and the restarted real native consumer must retain
       // every canonical word, timestamp, confidence and provenance field.
       assert.deepEqual(crashState.result, document.sections.transcript);
+      console.info("US210_PHASE crash-output-identical");
       await assert.rejects(
         pool.query("UPDATE analysis_tasks SET inference_parameters=$2 WHERE job_id=$1", [
           crashJob,
