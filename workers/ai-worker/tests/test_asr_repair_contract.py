@@ -1003,6 +1003,22 @@ def test_boundary_context_prefix_can_differ_but_owned_text_cannot_be_replaced(
     assert all(a.end_us <= b.start_us for a, b in zip(merged, merged[1:], strict=False))
 
 
+def test_rejected_join_exposes_only_a_fixed_category_without_native_operands() -> None:
+    from editagent_ai_worker.domain.analysis.transcription import Word
+
+    left = (Word(" opaque-left-sentinel", 4_600_000, 5_100_000, 0.8),)
+    right = (Word(" opaque-right-sentinel", 4_900_000, 5_300_000, 0.8),)
+    message = str(whisper.boundary_alignment_failure(left, right, 5_000_000))
+    assert message.endswith(": no_shared_native_anchor")
+    assert "sentinel" not in message and "4600000" not in message and "5300000" not in message
+    fused = whisper.boundary_alignment_failure(
+        (Word(" moon", 4_000_000, 4_800_000, 0.8), Word(" light", 4_800_000, 5_400_000, 0.8)),
+        (Word(" Moonlight", 4_700_000, 5_500_000, 0.8),),
+        5_000_000,
+    )
+    assert str(fused).endswith(": fused_native_token")
+
+
 def test_fused_boundary_token_requires_exact_anchored_native_resegmentation() -> None:
     """Abstract synthetic words; no captured diagnostics or evaluation labels."""
     from editagent_ai_worker.domain.analysis.transcription import Word

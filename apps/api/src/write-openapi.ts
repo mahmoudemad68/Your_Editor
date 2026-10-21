@@ -34,6 +34,31 @@ async function main(): Promise<void> {
   const sessions = new InMemoryRefreshSessionRepository();
   const rateLimit = new LoginRateLimit(30, 60_000);
   const document = await createOpenApiDocument({
+    editor: {
+      async create() {
+        throw new Error("Document generation only.");
+      },
+      async read() {
+        throw new Error("Document generation only.");
+      },
+      async edit() {
+        throw new Error("Document generation only.");
+      },
+    },
+    timelineExports: {
+      async start() {
+        throw new Error("Document generation only.");
+      },
+      async read() {
+        throw new Error("Document generation only.");
+      },
+      async cancel() {
+        throw new Error("Document generation only.");
+      },
+      async download() {
+        throw new Error("Document generation only.");
+      },
+    },
     analysis: {
       async read() {
         return null;

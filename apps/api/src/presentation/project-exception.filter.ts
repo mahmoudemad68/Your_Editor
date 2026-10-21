@@ -1,4 +1,6 @@
 import { InspectionRetryConflict } from "../application/inspection-job.js";
+import { TimelineConflict } from "../application/timeline-editor.js";
+import { RenderUnavailable } from "../application/timeline-exports.js";
 import { type ArgumentsHost, Catch, type ExceptionFilter, HttpException } from "@nestjs/common";
 import { DomainError, MediaAssetConflict, ProjectConflict } from "@editagent/domain";
 import { createCorrelationId, currentCorrelationId, type JsonLogger } from "@editagent/shared";
@@ -29,6 +31,10 @@ export class ProjectExceptionFilter implements ExceptionFilter {
   }
   catch(exception: unknown, host: ArgumentsHost): void {
     const response = host.switchToHttp().getResponse<HttpReply>();
+    if (exception instanceof RenderUnavailable) {
+      response.status(503).json({ statusCode: 503, message: exception.message });
+      return;
+    }
     // /ready has an established, deliberately small 503 response contract.
     if (exception instanceof HttpException && exception.getStatus() === 503) {
       const body = exception.getResponse();
@@ -57,6 +63,7 @@ export class ProjectExceptionFilter implements ExceptionFilter {
     }
     if (
       exception instanceof InspectionRetryConflict ||
+      exception instanceof TimelineConflict ||
       exception instanceof ProjectConflict ||
       exception instanceof MediaAssetConflict
     ) {

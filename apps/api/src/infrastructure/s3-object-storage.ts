@@ -118,6 +118,20 @@ export class S3ObjectStorage implements IObjectStorage {
     return { url };
   }
 
+  async presignDownload(key: string, expiresInSeconds: number): Promise<PresignedGet> {
+    return {
+      url: await getSignedUrl(
+        this.publicClient,
+        new GetObjectCommand({
+          Bucket: this.bucket,
+          Key: key,
+          ResponseContentDisposition: 'attachment; filename="export.mp4"',
+        }),
+        { expiresIn: expiresInSeconds },
+      ),
+    };
+  }
+
   async stat(key: string): Promise<ObjectStat | null> {
     try {
       const response = await this.internal.send(

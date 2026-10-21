@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import console from "node:console";
 import { randomBytes, createHash } from "node:crypto";
 import { readFile, readdir, mkdtemp, rm, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -278,6 +279,7 @@ test(
         store.discover(analysisConfiguration({ EDITAGENT_ASR_MODEL: "tiny" })),
         store.discover(analysisConfiguration({ EDITAGENT_ASR_MODEL: "tiny" })),
       ]);
+      console.info("US210_PHASE derivation-and-discovery-complete");
       assert.equal((await pool.query("SELECT count(*) FROM analysis_tasks")).rows[0].count, "3");
       assert.equal(
         (await pool.query("SELECT count(*) FROM jobs WHERE job_type LIKE 'analysis.%'")).rows[0]
@@ -375,15 +377,33 @@ except (urllib.error.URLError, TimeoutError): print(0)`,
             ).trim(),
           );
         await until(async () => (await probe("ready")) === 200, "production image ready");
+        console.info("US210_PHASE production-container-ready");
         for (const analyzer of ["transcript", "speech"])
           await until(
             async () => {
               const row = (
                 await pool.query(
-                  "SELECT j.status FROM jobs j JOIN analysis_tasks t ON t.job_id=j.id WHERE t.analyzer=$1",
+                  "SELECT j.status,t.failure->>'code' AS failure_code FROM jobs j JOIN analysis_tasks t ON t.job_id=j.id WHERE t.analyzer=$1",
                   [analyzer],
                 )
               ).rows[0];
+              if (row.status === "Failed") {
+                const safe = new Set([
+                  "timeout",
+                  "unsupported",
+                  "processing_failed",
+                  "cancelled",
+                  "invalid_input",
+                ]);
+                console.info(
+                  "US210_STATUS",
+                  JSON.stringify({
+                    analyzer,
+                    status: "Failed",
+                    failureCode: safe.has(row.failure_code) ? row.failure_code : "unclassified",
+                  }),
+                );
+              }
               assert.notEqual(row.status, "Failed");
               return row.status === "Completed";
             },

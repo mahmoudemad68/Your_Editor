@@ -38,6 +38,7 @@ COPY packages/schemas packages/schemas
 COPY workers/ai-worker/src/editagent_ai_worker/contracts/media_analysis_generated.py workers/ai-worker/src/editagent_ai_worker/contracts/media_analysis_generated.py
 COPY workers/ai-worker/src/editagent_ai_worker/contracts/media_analysis_v1_1_generated.py workers/ai-worker/src/editagent_ai_worker/contracts/media_analysis_v1_1_generated.py
 COPY packages/shared packages/shared
+COPY packages/tool-sdk packages/tool-sdk
 COPY packages/job-queue packages/job-queue
 COPY packages/analysis-core packages/analysis-core
 RUN pnpm --filter @editagent/api... build \

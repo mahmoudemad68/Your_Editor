@@ -262,6 +262,7 @@ services:
       AUTH_TRUSTED_PROXIES: ${AUTH_TRUSTED_PROXIES:-}
       <<: *object-storage
       S3_PUBLIC_ENDPOINT: http://localhost:${S3_PORT:-${MINIO_PORT:-9000}}
+      EDITAGENT_RENDER_VERSION: ${EDITAGENT_RENDER_VERSION:-}
     ports:
       - "${API_PORT:-3001}:3001"
     depends_on:

@@ -38,6 +38,18 @@ _PUBLIC_COUNTS: dict[str, int] = {"passed": 0, "failed": 0, "skipped": 0}
 
 
 _SAFE_FAILURES = {
+    (
+        "ASR chunk boundary requires trustworthy realignment: fused_native_token"
+    ): "boundary_fused_token",
+    (
+        "ASR chunk boundary requires trustworthy realignment: shared_native_prefix"
+    ): "boundary_owned_prefix",
+    (
+        "ASR chunk boundary requires trustworthy realignment: single_native_anchor"
+    ): "boundary_single_anchor",
+    (
+        "ASR chunk boundary requires trustworthy realignment: no_shared_native_anchor"
+    ): "boundary_no_anchor",
     "ASR words require trustworthy realignment": "alignment_unverified",
     "ASR trustworthy realignment resource bound exceeded": "alignment_budget",
     "ASR fallback has no complete bounded lexical evidence": "lexical_alignment_unverified",

@@ -11,13 +11,21 @@ export type { ApiConfig };
 export { ConfigurationError };
 
 export interface ApiRuntimeConfig extends ApiConfig {
+  readonly renderVersion?: string;
   readonly mediaInspectQueue: string;
   readonly validationPolicy: ValidationPolicy;
 }
 
 /** Process boundary for API configuration. Reads the environment once. */
 export function loadApiConfig(env: EnvSource = process.env): ApiRuntimeConfig {
+  const renderVersion = env["EDITAGENT_RENDER_VERSION"];
+  if (renderVersion && (renderVersion.length !== 64 || !/^[a-f0-9]{64}$/.test(renderVersion)))
+    throw new ConfigurationError(
+      "API",
+      "EDITAGENT_RENDER_VERSION must be a render catalog SHA-256.",
+    );
   return {
+    ...(renderVersion ? { renderVersion } : {}),
     ...parseApiConfig(env),
     mediaInspectQueue: parseMediaInspectQueue(env),
     validationPolicy: parseValidationPolicy(env),

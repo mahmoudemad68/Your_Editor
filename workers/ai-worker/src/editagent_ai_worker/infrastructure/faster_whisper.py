@@ -191,6 +191,41 @@ def merge_native_alignment_evidence(
     return repaired
 
 
+def boundary_alignment_failure(
+    left: tuple[Word, ...], right: tuple[Word, ...], boundary: int
+) -> TranscriptionError:
+    """Fixed validation categories only; never expose native words or coordinates.
+
+    This inspects bounded overlap evidence only after a rejected join. It does
+    not repair a hypothesis, accept an interval, or change a successful output.
+    """
+    tail = tuple(w for w in left if w.end_us > boundary - 5_000_000)[-256:]
+    head = tuple(w for w in right if w.start_us < boundary + 5_000_000)[:256]
+    fused = any(
+        same_context_word("".join(w.text.strip() for w in tail[start : start + size]), word.text)
+        and max(tail[start].start_us, word.start_us)
+        < min(tail[start + size - 1].end_us, word.end_us)
+        for word in head
+        for start in range(len(tail))
+        for size in range(2, min(8, len(tail) - start) + 1)
+    )
+    anchors = sum(
+        same_context_word(a.text, b.text) and max(a.start_us, b.start_us) < min(a.end_us, b.end_us)
+        for a in tail
+        for b in head
+    )
+    category = (
+        "fused_native_token"
+        if fused
+        else "shared_native_prefix"
+        if anchors >= 2
+        else "single_native_anchor"
+        if anchors == 1
+        else "no_shared_native_anchor"
+    )
+    return TranscriptionError("ASR chunk boundary requires trustworthy realignment: " + category)
+
+
 def merge_owned_words(
     chunks: list[tuple[int, int, tuple[Word, ...]]], source: AudioIdentity
 ) -> tuple[Word, ...]:
@@ -230,8 +265,8 @@ def merge_owned_words(
                         # Two views of the same boundary word, with overlapping evidence.
                         continue
                     else:
-                        raise TranscriptionError(
-                            "ASR chunk boundary requires trustworthy realignment"
+                        raise boundary_alignment_failure(
+                            chunks[chunk_index - 1][2], candidates, lower
                         )
                 else:
                     raise TranscriptionError("ASR chunk boundary requires trustworthy realignment")

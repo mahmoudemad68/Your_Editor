@@ -286,6 +286,14 @@ export function MediaCard({
       </button>
       <div className="p-3">
         <h3 className="overflow-anywhere text-sm font-medium">{filename}</h3>
+        {status === "Ready" ? (
+          <a
+            className="mt-3 inline-block text-sm underline"
+            href={`/projects/${encodeURIComponent(projectId)}/editor?media=${encodeURIComponent(item.id)}`}
+          >
+            Edit video
+          </a>
+        ) : null}
         <p
           className={`mt-2 text-xs ${status === "Failed" ? "text-danger" : "text-muted"}`}
           aria-live="polite"

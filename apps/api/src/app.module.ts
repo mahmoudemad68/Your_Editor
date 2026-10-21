@@ -1,4 +1,8 @@
 import { MediaInspectionJobs, type InspectionJobs } from "./application/inspection-job.js";
+import { TimelineEditor } from "./application/timeline-editor.js";
+import { TimelineEditorController } from "./presentation/timeline-editor.controller.js";
+import { TimelineExports } from "./application/timeline-exports.js";
+import { TimelineExportsController } from "./presentation/timeline-exports.controller.js";
 import { type AnalysisReader } from "@editagent/analysis-core";
 import { GetMediaAnalysis } from "./application/media-analysis.js";
 import { MediaAnalysisController } from "./presentation/media-analysis.controller.js";
@@ -61,6 +65,8 @@ import {
 import { type SessionTokens } from "./application/session-tokens.js";
 
 export interface ApiComposition {
+  readonly editor?: Pick<TimelineEditor, "create" | "read" | "edit">;
+  readonly timelineExports?: Pick<TimelineExports, "start" | "read" | "cancel" | "download">;
   readonly analysis?: AnalysisReader;
   readonly jobEvents?: JobEventSubscriber;
   readonly inspectionJobs?: InspectionJobs;
@@ -106,6 +112,8 @@ export class AppModule {
         ProjectsController,
         UploadsController,
         MediaController,
+        ...(composition.editor === undefined ? [] : [TimelineEditorController]),
+        ...(composition.timelineExports === undefined ? [] : [TimelineExportsController]),
         ...(composition.analysis === undefined ? [] : [MediaAnalysisController]),
         ...(composition.inspectionJobs === undefined ? [] : [InspectionJobController]),
         ...(composition.jobEvents === undefined ? [] : [JobEventsController]),
@@ -113,6 +121,12 @@ export class AppModule {
         ...(composition.auth === undefined ? [] : [AuthController]),
       ],
       providers: [
+        ...(composition.timelineExports === undefined
+          ? []
+          : [{ provide: TimelineExports, useValue: composition.timelineExports }]),
+        ...(composition.editor === undefined
+          ? []
+          : [{ provide: TimelineEditor, useValue: composition.editor }]),
         ...(composition.analysis === undefined
           ? []
           : [

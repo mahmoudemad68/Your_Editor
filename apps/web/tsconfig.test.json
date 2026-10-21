@@ -22,7 +22,8 @@
     "src/composition/job-proxy.ts",
     "src/composition/job-proxy.test.ts",
     "src/composition/analysis-proxy.test.ts",
-    "src/job-contract.ts"
+    "src/job-contract.ts",
+    "src/composition/editor-proxy.test.ts"
   ],
   "exclude": [
     "node_modules",

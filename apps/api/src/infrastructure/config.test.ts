@@ -69,3 +69,19 @@ test("a present database URL is returned unchanged", () => {
   assert.equal(config.authJwtSecret, "local-development-jwt-secret-32chars");
   assert.equal(config.authCookieSecure, true);
 });
+
+test("render catalog identity is optional and strictly operator configured", () => {
+  assert.throws(
+    () => loadApiConfig({ ...apiEnv, EDITAGENT_RENDER_VERSION: "a".repeat(64) + "\n" }),
+    ConfigurationError,
+  );
+  assert.equal(loadApiConfig(apiEnv).renderVersion, undefined);
+  assert.equal(
+    loadApiConfig({ ...apiEnv, EDITAGENT_RENDER_VERSION: "a".repeat(64) }).renderVersion,
+    "a".repeat(64),
+  );
+  assert.throws(
+    () => loadApiConfig({ ...apiEnv, EDITAGENT_RENDER_VERSION: "../catalog" }),
+    ConfigurationError,
+  );
+});
