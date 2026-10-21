@@ -39,7 +39,7 @@ from editagent_ai_worker.infrastructure.config import (
 )
 from editagent_ai_worker.infrastructure.vad_audio import verify_audio_file, wav_parameters
 
-ASR_ALGORITHM = "ct2-contextual-v20"
+ASR_ALGORITHM = "ct2-contextual-v21"
 
 
 def uncovered_speech(audio: Any, words: list[Any], options: Any) -> list[tuple[int, int]]:
@@ -787,6 +787,16 @@ class FasterWhisperAdapter:
                                 )
                             )
             if not matches:
+                # A context can fuse several words into one token and assign
+                # its whole interval to the final syllables. Midpoint ownership
+                # then duplicates earlier letters at the join. Two exact
+                # lexical/temporal anchors plus an exact concatenation of the
+                # original decoder words establish resegmentation, not a new
+                # recognition hypothesis. Keep those native word boundaries;
+                # the bounded original-PCM path below validates their joint
+                # sequence and realigns only if those intervals conflict.
+                matches = self._segmented_boundary_prefix(tail, head, boundary)
+            if not matches:
                 # Two contexts may disagree about the same spoken prefix,
                 # rather than merely omit a word. Do not throw away a more
                 # complete, strictly stronger native hypothesis just because
@@ -920,6 +930,57 @@ class FasterWhisperAdapter:
             )
             chunks[index] = (*chunks[index][:2], (*right[: ri[0]], *repaired, *right[ri[-1] + 1 :]))
         return chunks
+
+    @staticmethod
+    def _segmented_boundary_prefix(
+        tail: tuple[Word, ...], head: tuple[Word, ...], boundary: int
+    ) -> list[tuple[int, int, int, bool]]:
+        """Recognize one fused token only through an anchored exact character sequence.
+
+        No punctuation, spelling or Unicode folding is admitted. At least two
+        existing words straddle ownership; every skipped head character must
+        occur in that contiguous decoder sequence. The caller still performs
+        native alignment and indexed-text/outside-anchor validation.
+        """
+        if (
+            len(head) < 3
+            or head[0].start_us + head[0].end_us < 2 * boundary
+            or any(char.isspace() for char in head[0].text.strip())
+        ):
+            return []
+        matches = []
+        for end in range(len(tail), 1, -1):
+            if end < len(tail) and tail[end].start_us + tail[end].end_us < 2 * boundary:
+                break
+            for count in range(2, min(end, len(head) - 1) + 1):
+                start = end - count
+                if not all(
+                    a.text.strip() == b.text.strip()
+                    and max(a.start_us, b.start_us) < min(a.end_us, b.end_us)
+                    for a, b in zip(tail[start:end], head[1 : count + 1], strict=True)
+                ):
+                    continue
+                sequences = []
+                for size in range(2, min(start, 8) + 1):
+                    sequence = tail[start - size : start]
+                    if (
+                        all(
+                            w.text.strip() and not any(c.isspace() for c in w.text.strip())
+                            for w in sequence
+                        )
+                        and same_context_word(
+                            "".join(w.text.strip() for w in sequence), head[0].text
+                        )
+                        and sequence[0].start_us + sequence[0].end_us
+                        < 2 * boundary
+                        <= sequence[-1].start_us + sequence[-1].end_us
+                        and max(sequence[0].start_us, head[0].start_us)
+                        < min(sequence[-1].end_us, head[0].end_us)
+                    ):
+                        sequences.append(size)
+                if len(sequences) == 1:
+                    matches.append((count, 1, end, True))
+        return matches
 
     @staticmethod
     def _dominant_boundary_prefix(

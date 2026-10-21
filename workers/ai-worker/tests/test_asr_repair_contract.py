@@ -1003,6 +1003,81 @@ def test_boundary_context_prefix_can_differ_but_owned_text_cannot_be_replaced(
     assert all(a.end_us <= b.start_us for a, b in zip(merged, merged[1:], strict=False))
 
 
+def test_fused_boundary_token_requires_exact_anchored_native_resegmentation() -> None:
+    """Abstract synthetic words; no captured diagnostics or evaluation labels."""
+    from editagent_ai_worker.domain.analysis.transcription import Word
+    from editagent_ai_worker.domain.analysis.voice_activity import AudioIdentity
+
+    left = (
+        Word(" outside", 2_000_000, 2_800_000, 0.8),
+        Word(" moon", 3_800_000, 4_100_000, 0.8),
+        Word(" light", 4_100_000, 4_800_000, 0.5),
+        Word(" rises", 4_800_000, 5_400_000, 0.9),
+        Word(" anchor", 5_700_000, 5_900_000, 0.8),
+        Word(" bridge", 5_900_000, 6_100_000, 0.8),
+        Word(" unfinished.", 6_100_000, 6_300_000, 0.8),
+    )
+    right = (
+        Word(" Moonlightrises", 4_780_000, 5_450_000, 0.7),
+        Word(" anchor", 5_720_000, 5_900_000, 0.8),
+        Word(" bridge", 5_900_000, 6_200_000, 0.8),
+        Word(" finished", 6_200_000, 6_400_000, 0.8),
+        Word(" untouched", 8_000_000, 8_500_000, 0.8),
+    )
+    chunks = [(0, 5_000_000, left), (5_000_000, 10_000_000, right)]
+    source = AudioIdentity("synthetic", "a" * 64, "audio", "b" * 64, 10_000_000, 0, 10_000_000)
+    adapter = adapter_returning([])
+    calls = []
+
+    def align(segments: Any, audio: Any, language: str, check: Any) -> Any:
+        calls.append(segments[0].text)
+        assert language == "en" and len(audio) == 73_600
+        return segments[0].words
+
+    adapter._aligned_chunk = align
+    wav = PcmReader(10)
+    repaired = adapter._reconcile_overlaps(chunks, ["en", "en"], wav, source, lambda: None)
+    merged = whisper.merge_owned_words(repaired, source)
+    assert calls == [" moon light rises anchor bridge finished"]
+    assert wav.reads == [(44_800, 73_600)]
+    assert merged == (*left[:4], *right[1:])
+    assert chunks == [(0, 5_000_000, left), (5_000_000, 10_000_000, right)]
+
+
+@pytest.mark.parametrize(
+    "defect", ["spelling", "punctuation", "space", "anchor", "time", "ownership", "extra"]
+)
+def test_resegmentation_cannot_remove_unexplained_owned_text_or_guess_anchors(defect: str) -> None:
+    from editagent_ai_worker.domain.analysis.transcription import Word
+
+    tail = (
+        Word(" moon", 3_800_000, 4_100_000, 0.8),
+        Word(" light", 4_100_000, 4_800_000, 0.8),
+        Word(" rises", 4_800_000, 5_400_000, 0.8),
+        Word(" anchor", 5_700_000, 5_900_000, 0.8),
+        Word(" bridge", 5_900_000, 6_100_000, 0.8),
+    )
+    head = [Word(" Moonlightrises", 4_780_000, 5_450_000, 0.7), *tail[3:]]
+    if defect in {"spelling", "punctuation", "space"}:
+        text = {
+            "spelling": " Moonlightrose",
+            "punctuation": " Moonlightrises.",
+            "space": " Moonlight rises",
+        }[defect]
+        head[0] = Word(text, 4_780_000, 5_450_000, 0.7)
+    elif defect == "anchor":
+        head.pop()
+    elif defect == "time":
+        head[1] = Word(" anchor", 5_400_000, 5_600_000, 0.8)
+    elif defect == "ownership":
+        head[0] = Word(" Moonlightrises", 4_100_000, 4_900_000, 0.7)
+    else:
+        head.insert(0, Word(" keep", 5_000_000, 5_100_000, 0.8))
+    assert (
+        whisper.FasterWhisperAdapter._segmented_boundary_prefix(tail, tuple(head), 5_000_000) == []
+    )
+
+
 def test_boundary_search_never_skips_an_owned_right_word() -> None:
     from editagent_ai_worker.domain.analysis.transcription import Word
     from editagent_ai_worker.domain.analysis.voice_activity import AudioIdentity
