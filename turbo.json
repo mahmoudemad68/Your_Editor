@@ -46,7 +46,8 @@
     },
     "@editagent/ai-worker#test": {
       "dependsOn": ["build", "@editagent/api#test"],
-      "cache": false
+      "cache": false,
+      "passThroughEnv": ["PYTEST_ADDOPTS"]
     }
   },
   "globalDependencies": ["tools/test/vitest.config.mts"]
