@@ -1094,6 +1094,93 @@ def test_resegmentation_cannot_remove_unexplained_owned_text_or_guess_anchors(de
     )
 
 
+def test_owned_duplicate_prefix_retains_missing_native_word_and_original_spelling() -> None:
+    from editagent_ai_worker.domain.analysis.transcription import Word
+    from editagent_ai_worker.domain.analysis.voice_activity import AudioIdentity
+
+    left = (
+        Word(" lead", 1_000_000, 1_500_000, 0.9),
+        Word(" near", 4_700_000, 5_100_000, 0.9),
+        Word(" lost", 5_100_000, 5_300_000, 0.8),
+        Word(" anchor", 5_300_000, 5_500_000, 0.8),
+        Word(" bridge", 5_500_000, 5_800_000, 0.8),
+    )
+    right = (
+        Word(" near", 4_950_000, 5_150_000, 0.7),
+        Word(" anchor", 5_200_000, 5_600_000, 0.8),
+        Word(" bridge", 5_600_000, 5_900_000, 0.8),
+        Word(" after", 8_000_000, 8_500_000, 0.8),
+    )
+    chunks = [(0, 5_000_000, left), (5_000_000, 10_000_000, right)]
+    source = AudioIdentity("fixture", "a" * 64, "audio", "b" * 64, 10_000_000, 0, 10_000_000)
+    adapter = adapter_returning([])
+    calls = []
+
+    def aligned(segments: Any, pcm: Any, language: str, check: Any) -> list[Any]:
+        calls.append(segments[0].text)
+        assert 0 < len(pcm) <= 480000
+        # Simulated native forced-alignment result: the existing complete left
+        # intervals, relative to the actual padded 3.7s PCM start. Raw right intervals
+        # overlap the missing word and must not be accepted unchanged.
+        return [
+            SimpleNamespace(
+                word=w.text,
+                start=(w.start_us - 3_700_000) / 1_000_000,
+                end=(w.end_us - 3_700_000) / 1_000_000,
+                probability=w.confidence,
+            )
+            for w in left[1:]
+        ]
+
+    adapter._aligned_chunk = aligned
+    repaired = adapter._reconcile_overlaps(
+        chunks, ["en", "en"], PcmReader(10), source, lambda: None
+    )
+    words = whisper.merge_owned_words(repaired, source)
+    assert [word.text for word in words] == [
+        " lead",
+        " near",
+        " lost",
+        " anchor",
+        " bridge",
+        " after",
+    ]
+    assert calls == [" near lost anchor bridge"]
+    assert words[1] == left[1] and words[2] == left[2]
+    assert chunks == [(0, 5_000_000, left), (5_000_000, 10_000_000, right)]
+
+
+@pytest.mark.parametrize("defect", ["text", "time", "order", "ambiguous", "anchor"])
+def test_owned_duplicate_prefix_requires_unique_ordered_complete_native_evidence(
+    defect: str,
+) -> None:
+    from editagent_ai_worker.domain.analysis.transcription import Word
+
+    tail = [
+        Word(" keep", 4_700_000, 5_100_000, 0.8),
+        Word(" lost", 5_100_000, 5_300_000, 0.8),
+        Word(" a", 5_300_000, 5_500_000, 0.8),
+        Word(" b", 5_500_000, 5_800_000, 0.8),
+    ]
+    head = [Word(" keep", 4_950_000, 5_150_000, 0.8), *tail[2:]]
+    if defect == "text":
+        head[0] = Word(" unrelated", 4_950_000, 5_150_000, 0.8)
+    elif defect == "time":
+        head[0] = Word(" keep", 5_200_000, 5_300_000, 0.8)
+    elif defect == "order":
+        head.insert(0, tail[1])
+    elif defect == "ambiguous":
+        tail.insert(0, tail[0])
+    else:
+        head.pop()
+    assert (
+        whisper.FasterWhisperAdapter._duplicated_boundary_prefix(
+            tuple(tail), tuple(head), 5_000_000
+        )
+        == []
+    )
+
+
 def test_boundary_search_never_skips_an_owned_right_word() -> None:
     from editagent_ai_worker.domain.analysis.transcription import Word
     from editagent_ai_worker.domain.analysis.voice_activity import AudioIdentity
@@ -1113,6 +1200,20 @@ def test_boundary_search_never_skips_an_owned_right_word() -> None:
         adapter._reconcile_overlaps(chunks, ["en", "en"], PcmReader(10), source, lambda: None)
         == chunks
     )
+
+
+def test_owned_duplicate_anchor_search_observes_cancellation() -> None:
+    from editagent_ai_worker.domain.analysis.transcription import Word
+
+    word = Word(" word", 5_000_000, 5_100_000, 0.8)
+
+    def cancelled() -> None:
+        raise TranscriptionCancelled("cancelled")
+
+    with pytest.raises(TranscriptionCancelled):
+        whisper.FasterWhisperAdapter._duplicated_boundary_prefix(
+            (word, word), (word, word, word), 5_000_000, cancelled
+        )
 
 
 def test_boundary_search_never_skips_an_owned_left_word() -> None:

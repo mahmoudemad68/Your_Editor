@@ -169,6 +169,10 @@ test("graduation upload → inspection → analysis → edit → render → down
     return;
   } catch (error) {
     await writeFile(path.join(privateDir, "browser-error.txt"), String(error), { mode: 0o600 });
+    await writeFile(
+      path.join(privateDir, "browser-result.json"),
+      JSON.stringify({ status: "FAIL", phase }),
+    );
     // Do not serialize locator operands, signed URLs, cookies or recognized text into CI.
   }
   throw new Error(`Graduation browser verification failed at ${phase}; details retained locally.`);

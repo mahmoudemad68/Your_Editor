@@ -56,6 +56,7 @@ export async function runGraduationDemo({
   const publicDir = path.join(root, ".local/graduation-demo-public");
   await mkdir(privateDir, { recursive: true });
   await mkdir(publicDir, { recursive: true });
+  await rm(path.join(privateDir, "browser-result.json"), { force: true });
   // Public artifacts are an exact allowlist. Raw logs/native output stay in privateDir.
   for (const file of [
     "report.json",
@@ -290,7 +291,26 @@ export async function runGraduationDemo({
       },
     );
     children.push(browser);
-    if ((await browser.wait(390_000)) !== 0) throw new Error("Browser journey did not pass");
+    if ((await browser.wait(390_000)) !== 0) {
+      try {
+        const failure = JSON.parse(
+          await readFile(path.join(privateDir, "browser-result.json"), "utf8"),
+        );
+        const stages = [
+          "authentication",
+          "upload-and-inspection",
+          "real-analysis",
+          "timeline-editing",
+          "production-render",
+          "playback-and-download",
+        ];
+        if (failure.status === "FAIL" && stages.includes(failure.phase))
+          phase = "browser-" + failure.phase;
+      } catch {
+        /* Missing private result does not expose raw browser logs. */
+      }
+      throw new Error("Browser journey did not pass");
+    }
     const result = JSON.parse(await readFile(path.join(privateDir, "browser-result.json"), "utf8"));
     if (result.status !== "PASS" || result.mockData !== false)
       throw new Error("Missing real browser evidence");
@@ -304,6 +324,7 @@ export async function runGraduationDemo({
       document = probe(outputFile);
     const video = document.streams.find((stream) => stream.codec_type === "video");
     const audio = document.streams.find((stream) => stream.codec_type === "audio");
+    const frames = document.videoFrameTimes;
     if (
       !video ||
       video.codec_name !== "h264" ||
@@ -318,6 +339,12 @@ export async function runGraduationDemo({
       audio.channels !== 2
     )
       throw new Error("Downloaded output violates the expected media clock/codec contract");
+    if (
+      !Array.isArray(frames) ||
+      frames.length !== 200 ||
+      frames.some((time, index) => !Number.isFinite(time) || Math.abs(time - index / 25) > 0.00001)
+    )
+      throw new Error("Downloaded output has an invalid presentation-frame cadence");
     const fixtureManifest = JSON.parse(
       await readFile(path.join(root, "tests/fixtures/asr/manifest.json"), "utf8"),
     );
@@ -354,6 +381,12 @@ export async function runGraduationDemo({
             frameCount: video.nb_read_frames,
             timeBase: video.time_base,
             startTime: video.start_time,
+            frameTiming: {
+              framesVerified: frames.length,
+              firstPts: frames[0],
+              lastPts: frames.at(-1),
+              expectedStepSeconds: 0.04,
+            },
             audioCodec: audio.codec_name,
             audioSampleRate: audio.sample_rate,
             audioChannels: audio.channels,

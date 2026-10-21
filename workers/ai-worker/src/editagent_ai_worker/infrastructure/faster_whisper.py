@@ -39,7 +39,7 @@ from editagent_ai_worker.infrastructure.config import (
 )
 from editagent_ai_worker.infrastructure.vad_audio import verify_audio_file, wav_parameters
 
-ASR_ALGORITHM = "ct2-contextual-v21"
+ASR_ALGORITHM = "ct2-contextual-v22"
 
 
 def uncovered_speech(audio: Any, words: list[Any], options: Any) -> list[tuple[int, int]]:
@@ -822,6 +822,14 @@ class FasterWhisperAdapter:
                                 )
                             )
             if not matches:
+                # A right-owned leading word can duplicate earlier left PCM
+                # evidence even when another left-context word was omitted by
+                # the right decoder. Skip it only when every skipped word has
+                # unique ordered lexical/time evidence in the retained prefix.
+                # Two later exact anchors still fence the full original-PCM
+                # alignment; unrelated owned words remain non-skippable.
+                matches = self._duplicated_boundary_prefix(tail, head, boundary, check)
+            if not matches:
                 # A context can fuse several words into one token and assign
                 # its whole interval to the final syllables. Midpoint ownership
                 # then duplicates earlier letters at the join. Two exact
@@ -965,6 +973,47 @@ class FasterWhisperAdapter:
             )
             chunks[index] = (*chunks[index][:2], (*right[: ri[0]], *repaired, *right[ri[-1] + 1 :]))
         return chunks
+
+    @staticmethod
+    def _duplicated_boundary_prefix(
+        tail: tuple[Word, ...],
+        head: tuple[Word, ...],
+        boundary: int,
+        check: Callable[[], None] | None = None,
+    ) -> list[tuple[int, int, int, bool]]:
+        """Retain every skipped owned word through unique original-time evidence."""
+        matches = []
+        for end in range(len(tail), 1, -1):
+            if end < len(tail) and tail[end].start_us + tail[end].end_us < 2 * boundary:
+                break
+            for offset in range(1, len(head) - 1):
+                if check is not None:
+                    check()
+                if not any(w.start_us + w.end_us >= 2 * boundary for w in head[:offset]):
+                    continue
+                for count in range(2, min(end, len(head) - offset) + 1):
+                    start = end - count
+                    if not all(
+                        a.text.strip() == b.text.strip()
+                        and max(a.start_us, b.start_us) < min(a.end_us, b.end_us)
+                        for a, b in zip(tail[start:end], head[offset : offset + count], strict=True)
+                    ):
+                        continue
+                    previous = -1
+                    for word in head[:offset]:
+                        positions = [
+                            i
+                            for i, original in enumerate(tail[:start])
+                            if original.text.strip() == word.text.strip()
+                            and max(original.start_us, word.start_us)
+                            < min(original.end_us, word.end_us)
+                        ]
+                        if len(positions) != 1 or positions[0] <= previous:
+                            break
+                        previous = positions[0]
+                    else:
+                        matches.append((count, offset, end, True))
+        return matches
 
     @staticmethod
     def _segmented_boundary_prefix(

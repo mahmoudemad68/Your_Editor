@@ -875,13 +875,34 @@ try {
         );
       },
       probe(file) {
-        return JSON.parse(
+        const document = JSON.parse(
           execFileSync(
             "ffprobe",
             ["-v", "error", "-count_frames", "-show_streams", "-show_format", "-of", "json", file],
             { encoding: "utf8", timeout: 30_000, maxBuffer: 1_048_576 },
           ),
         );
+        const timing = JSON.parse(
+          execFileSync(
+            "ffprobe",
+            [
+              "-v",
+              "error",
+              "-select_streams",
+              "v:0",
+              "-show_entries",
+              "frame=best_effort_timestamp_time",
+              "-of",
+              "json",
+              file,
+            ],
+            { encoding: "utf8", timeout: 30_000, maxBuffer: 1_048_576 },
+          ),
+        );
+        return {
+          ...document,
+          videoFrameTimes: timing.frames.map((frame) => Number(frame.best_effort_timestamp_time)),
+        };
       },
     });
   }
