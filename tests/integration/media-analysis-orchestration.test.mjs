@@ -410,6 +410,7 @@ except (urllib.error.URLError, TimeoutError): print(0)`,
             `container ${analyzer} complete`,
             120000,
           );
+        console.info("US210_PHASE production-analysis-complete");
         const uid = Number(
           (await command("docker", ["exec", containerName, "id", "-u"], process.env)).trim(),
         );
@@ -419,6 +420,7 @@ except (urllib.error.URLError, TimeoutError): print(0)`,
           ["network", "disconnect", networkName, services.minio.container.getId()],
           process.env,
         );
+        console.info("US210_PHASE s3-disconnected");
         assert.equal(await probe("ready"), 503);
         assert.equal(await probe("health"), 200);
         await command(
@@ -427,6 +429,7 @@ except (urllib.error.URLError, TimeoutError): print(0)`,
           process.env,
         );
         await until(async () => (await probe("ready")) === 200, "S3 readiness recovered");
+        console.info("US210_PHASE s3-readiness-recovered");
         await command(
           "docker",
           [
@@ -456,6 +459,7 @@ except (urllib.error.URLError, TimeoutError): print(0)`,
           }),
         );
         await command("docker", ["stop", "--time", "5", containerName], process.env);
+        console.info("US210_PHASE production-container-stopped");
       }
       const python = ["run", "--no-sync", "--project", "workers/ai-worker", "python"];
       for (const analyzer of process.env.EDITAGENT_TEST_ASR_CONTAINER === "1"

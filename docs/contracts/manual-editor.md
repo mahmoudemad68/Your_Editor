@@ -46,6 +46,9 @@ upload, inspection, actual Small analysis, durable trim/split/reload, production
 render, browser playback and browser download. Independent FFprobe checks the
 downloaded media's codecs, dimensions, duration, frame count and frame clock.
 No domain rows or successful job states are inserted by the demo harness.
+The disposable MinIO fixture uses server-side loopback-only CORS because its
+pinned release rejects bucket-CORS writes. The harness requires actual PUT/GET
+preflights for the browser origin; production SeaweedFS policy is unchanged.
 
 The demonstration input is repository-generated animation with the immutable,
 licensed English human-speech fixture. It is demonstration media, not independent

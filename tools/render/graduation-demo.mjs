@@ -6,7 +6,7 @@ import { URL } from "node:url";
 import { readFile, writeFile, mkdir, copyFile, rm } from "node:fs/promises";
 import { createHash, randomBytes } from "node:crypto";
 import { Pool } from "pg";
-import { CreateBucketCommand, PutBucketCorsCommand } from "@aws-sdk/client-s3";
+import { CreateBucketCommand } from "@aws-sdk/client-s3";
 import { buildProductImages } from "../test/compose-build.mjs";
 import process from "node:process";
 import console from "node:console";
@@ -82,6 +82,7 @@ export async function runGraduationDemo({
     await buildProductImages(root, ["media-worker"]);
     // The required ASR container step built this exact source revision and pinned models.
     docker(["image", "inspect", "editagent-ai-asr:test"]);
+    phase = "demo-database-create";
     await admin.query(`CREATE DATABASE ${databaseName}`); // generated identifier, no domain fixture inserts
     const hostPg = new URL(services.postgres.url);
     hostPg.pathname = `/${databaseName}`;
@@ -95,23 +96,33 @@ export async function runGraduationDemo({
       webUrl = `http://127.0.0.1:${webPort}`;
     if (!/^[a-f0-9]{64}$/.test(renderVersion))
       throw new Error("Missing immutable render catalog identity");
+    phase = "demo-storage-create";
     await s3.send(new CreateBucketCommand({ Bucket: bucket }));
-    await s3.send(
-      new PutBucketCorsCommand({
-        Bucket: bucket,
-        CORSConfiguration: {
-          CORSRules: [
-            {
-              AllowedOrigins: [webUrl],
-              AllowedMethods: ["PUT", "GET", "HEAD"],
-              AllowedHeaders: ["*"],
-              ExposeHeaders: ["ETag"],
-              MaxAgeSeconds: 60,
-            },
-          ],
+    // The pinned community MinIO rejects PUT ?cors. This test fixture uses
+    // server-side loopback-origin CORS; production SeaweedFS policy is unchanged.
+    // Require its real browser-facing preflight rather than assume support.
+    phase = "demo-browser-storage-preflight";
+    for (const method of ["PUT", "GET"]) {
+      const cors = await globalThis.fetch(
+        `${services.minio.endpoint}/${bucket}/browser-preflight`,
+        {
+          method: "OPTIONS",
+          headers: {
+            origin: webUrl,
+            "access-control-request-method": method,
+            "access-control-request-headers": "content-type",
+          },
+          signal: globalThis.AbortSignal.timeout(5000),
         },
-      }),
-    );
+      );
+      if (
+        !cors.ok ||
+        cors.headers.get("access-control-allow-origin") !== webUrl ||
+        !(cors.headers.get("access-control-allow-methods") ?? "").split(/,\s*/).includes(method)
+      )
+        throw new Error("Demo storage does not allow the actual browser origin/method");
+      await cors.body?.cancel();
+    }
     const shared = {
       S3_BUCKET: bucket,
       S3_REGION: services.minio.region,

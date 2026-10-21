@@ -111,7 +111,9 @@ const nonce = randomBytes(6).toString("hex"),
   work = "render-work-" + nonce,
   control = "render-control-" + nonce;
 if (!process.argv.includes("--no-build")) await buildRenderImages();
-const services = await startIntegrationServices();
+const services = await startIntegrationServices({
+  browserLoopbackCors: process.argv.includes("--graduation-demo"),
+});
 const s3 = new S3Client({
   endpoint: services.minio.endpoint,
   region: services.minio.region,

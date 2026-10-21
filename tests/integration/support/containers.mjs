@@ -86,13 +86,14 @@ export async function startRedis() {
     close: () => container.stop(),
   };
 }
-export async function startMinio() {
+export async function startMinio({ browserLoopbackCors = false } = {}) {
   await buildMinioImage();
   const credentials = { accessKeyId: "test-" + randomUUID(), secretAccessKey: randomUUID() };
   const container = await new GenericContainer(TEST_IMAGES.minio)
     .withEnvironment({
       MINIO_ROOT_USER: credentials.accessKeyId,
       MINIO_ROOT_PASSWORD: credentials.secretAccessKey,
+      ...(browserLoopbackCors ? { MINIO_API_CORS_ALLOW_ORIGIN: "http://127.0.0.1:*" } : {}),
     })
     .withExposedPorts(9000)
     .withWaitStrategy(Wait.forHttp("/minio/health/live", 9000).forStatusCode(200))
@@ -106,13 +107,17 @@ export async function startMinio() {
   };
 }
 /** Concurrent startup and cleanup of partial failures, with no implicit Docker skip. */
-export async function startIntegrationServices() {
+export async function startIntegrationServices({ browserLoopbackCors = false } = {}) {
   await Promise.all([
     buildInfrastructureImage("postgres"),
     buildInfrastructureImage("redis"),
     buildMinioImage(),
   ]);
-  const result = await Promise.allSettled([startPostgres(), startRedis(), startMinio()]);
+  const result = await Promise.allSettled([
+    startPostgres(),
+    startRedis(),
+    startMinio({ browserLoopbackCors }),
+  ]);
   const started = result.filter((r) => r.status === "fulfilled").map((r) => r.value);
   if (result.some((r) => r.status === "rejected")) {
     await Promise.allSettled(started.map((service) => service.close()));
