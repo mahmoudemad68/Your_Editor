@@ -3,17 +3,52 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import wave
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from editagent_ai_worker.domain.analysis.transcription import TranscriptionError
 from editagent_ai_worker.domain.analysis.voice_activity import AudioIdentity
 from editagent_ai_worker.infrastructure.asr_config import AsrSettings
 from editagent_ai_worker.infrastructure.faster_whisper import FasterWhisperAdapter
 
 ROOT = Path(__file__).resolve().parents[3]
+
+
+def test_real_offgrid_code_switch_rejects_conflicting_neighbor_prompt(
+    real_adapter: FasterWhisperAdapter, tmp_path: Path
+) -> None:
+    """Source-language ambiguity must not become a successful English transcript.
+
+    This is a fail-closed regression, not human gold or multilingual acceptance.
+    The actual EN/AR transitions at 6/14 seconds cross the four-second cells.
+    """
+    manifest = json.loads((ROOT / "tests/fixtures/asr/manifest.json").read_text())
+    samples = []
+    for name in ("en.wav", "ar.wav"):
+        path = ROOT / "tests/fixtures/asr" / name
+        expected = next(entry for entry in manifest["fixtures"] if entry["file"] == name)
+        assert hashlib.sha256(path.read_bytes()).hexdigest() == expected["sha256"]
+        with wave.open(str(path), "rb") as stream:
+            assert stream.getparams()[:3] == (1, 2, 16000)
+            samples.append(stream.readframes(stream.getnframes()))
+    english, arabic = samples
+    assert len(english) == len(arabic) == 8 * 32000
+    path = tmp_path / "offgrid.wav"
+    with wave.open(str(path), "wb") as stream:
+        stream.setparams((1, 2, 16000, 0, "NONE", "not compressed"))
+        stream.writeframes(english[: 6 * 32000] + arabic + english)
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    source = AudioIdentity("offgrid-fixture", digest, "offgrid-pcm", digest, 22000000, 0, 22000000)
+    for _ in range(2):
+        with pytest.raises(
+            TranscriptionError, match="language evidence requires trustworthy redetection"
+        ):
+            real_adapter.transcribe(str(path), source)
 
 
 @pytest.fixture(scope="module")

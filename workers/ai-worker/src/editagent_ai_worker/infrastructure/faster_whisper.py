@@ -43,7 +43,7 @@ from editagent_ai_worker.infrastructure.config import (
 )
 from editagent_ai_worker.infrastructure.vad_audio import verify_audio_file, wav_parameters
 
-ASR_ALGORITHM = "ct2-contextual-v26"
+ASR_ALGORITHM = "ct2-contextual-v27"
 
 
 def uncovered_speech(audio: Any, words: list[Any], options: Any) -> list[tuple[int, int]]:
@@ -92,6 +92,27 @@ def same_context_word(left: str, right: str) -> bool:
         return "".join(chr(ord(c) + 32) if "A" <= c <= "Z" else c for c in text.strip())
 
     return key(left) == key(right)
+
+
+def neighboring_language_prompt(
+    neighbor: str, probabilities: dict[str, float], corroboration: dict[str, float]
+) -> str:
+    """A neighboring prompt cannot override conflicting source-language evidence.
+
+    Silent cells have no language evidence and may borrow a prompt. Weak speech
+    evidence alone cannot prove a switch. A conflicting native preference also
+    supported by a shifted original-PCM probe at the existing 0.5 threshold
+    requires trustworthy redetection before publishing a completed transcript.
+    """
+    if probabilities:
+        preferred = max(probabilities, key=lambda key: probabilities[key])
+        if (
+            preferred != neighbor
+            and corroboration.get(preferred, 0.0) >= 0.5
+            and corroboration[preferred] == max(corroboration.values())
+        ):
+            raise TranscriptionError("ASR language evidence requires trustworthy redetection")
+    return neighbor
 
 
 def verify_retry_word_coverage(
@@ -437,7 +458,31 @@ class FasterWhisperAdapter:
         regions: list[tuple[int, int, str | None, float]] = []
         for i, (lower, upper, language, probabilities) in enumerate(cells):
             if language is None and known:
-                language = min(known, key=lambda item: (abs(item[0] - i), item[0]))[1]
+                neighbor = min(known, key=lambda item: (abs(item[0] - i), item[0]))[1]
+                corroboration: dict[str, float] = {}
+                if probabilities and probabilities.get(str(neighbor), 0.0) < max(
+                    probabilities.values()
+                ):
+                    # One shifted, bounded source probe corroborates a possible
+                    # switch; weak evidence alone must not reject valid speech.
+                    check()
+                    probe_lower = max(0, lower - 2_000_000)
+                    if probe_lower == lower:
+                        probe_lower = min(duration_us, lower + 2_000_000)
+                    probe_upper = min(duration_us, probe_lower + 4_000_000)
+                    if probe_lower < probe_upper:
+                        first = probe_lower * 16000 // 1_000_000
+                        last = min(wav.getnframes(), (probe_upper * 16000 + 999999) // 1000000)
+                        wav.setpos(first)
+                        pcm = np.frombuffer(wav.readframes(last - first), dtype="<i2").astype(
+                            np.float32
+                        )
+                        pcm /= 32768
+                        encoded = self.model.encode(self.model.feature_extractor(pcm))
+                        native = self.model.model.detect_language(encoded)[0]
+                        corroboration = {str(token)[2:-2]: float(value) for token, value in native}
+                        check()
+                language = neighboring_language_prompt(str(neighbor), probabilities, corroboration)
             probability = probabilities.get(language, 0.0) if language is not None else 0.0
             if regions and regions[-1][2] == language:
                 start, _, _, previous_probability = regions[-1]

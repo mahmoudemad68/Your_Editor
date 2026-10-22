@@ -15,7 +15,12 @@ from editagent_ai_worker.domain.analysis.transcription import TranscriptionError
 SOURCE = (
     Path(__file__).resolve().parents[1] / "src/editagent_ai_worker/infrastructure/faster_whisper.py"
 )
-NAMES = {"microseconds", "same_context_word", "verify_retry_word_coverage"}
+NAMES = {
+    "microseconds",
+    "same_context_word",
+    "verify_retry_word_coverage",
+    "neighboring_language_prompt",
+}
 functions = [
     node
     for node in ast.parse(SOURCE.read_text(encoding="utf-8")).body
@@ -32,6 +37,7 @@ namespace: dict[str, Any] = {
 body: list[ast.stmt] = list(functions)
 exec(compile(ast.Module(body=body, type_ignores=[]), str(SOURCE), "exec"), namespace)
 verify = namespace["verify_retry_word_coverage"]
+language_prompt = namespace["neighboring_language_prompt"]
 
 
 def word(text: str, start: float, end: float) -> Any:
@@ -39,6 +45,34 @@ def word(text: str, start: float, end: float) -> Any:
 
 
 class RetryIntegrityTests(unittest.TestCase):
+    def test_silent_cell_can_borrow_a_neighboring_prompt(self) -> None:
+        self.assertEqual(language_prompt("ar", {}, {}), "ar")
+
+    def test_weak_agreeing_language_evidence_is_preserved(self) -> None:
+        probabilities = {"ar": 0.38, "en": 0.24, "es": 0.2}
+        self.assertEqual(language_prompt("ar", probabilities, {}), "ar")
+        self.assertEqual(probabilities, {"ar": 0.38, "en": 0.24, "es": 0.2})
+
+    def test_conflicting_speech_cannot_be_forced_to_the_neighboring_language(self) -> None:
+        for neighbor, probabilities in [
+            ("en", {"ar": 0.38, "en": 0.24, "es": 0.2}),
+            ("ar", {"en": 0.4, "ar": 0.3}),
+            ("en", {"ar": 0.4}),
+        ]:
+            with self.subTest(neighbor=neighbor, probabilities=probabilities):
+                with self.assertRaisesRegex(TranscriptionError, "trustworthy redetection"):
+                    language_prompt(
+                        neighbor,
+                        probabilities,
+                        {max(probabilities, key=lambda key: probabilities[key]): 0.6},
+                    )
+
+    def test_weak_or_disagreeing_corroboration_does_not_prove_a_language_switch(self) -> None:
+        probabilities = {"ar": 0.38, "en": 0.24, "es": 0.2}
+        for corroboration in [{}, {"ar": 0.49, "en": 0.4}, {"en": 0.9, "ar": 0.05}]:
+            with self.subTest(corroboration=corroboration):
+                self.assertEqual(language_prompt("en", probabilities, corroboration), "en")
+
     def test_native_overlap_keeps_both_hypotheses_unchanged(self) -> None:
         original = [word(" Retained", 1, 1.5), word(" recovery", 2, 2)]
         retry = [word(" retained", 1.1, 1.6), word(" recovery", 2, 2.5)]
