@@ -918,6 +918,64 @@ def test_invalid_stitched_alignment_retries_same_contiguous_pcm_at_most_once(
     assert hashlib.sha256(path.read_bytes()).hexdigest() == digest
 
 
+@pytest.mark.parametrize("defect", ["omitted", "substituted", "repeated", "relocated"])
+def test_contiguous_retry_cannot_replace_positive_native_word_evidence(
+    tmp_path: Any, monkeypatch: Any, defect: str
+) -> None:
+    import hashlib
+    import wave
+
+    from editagent_ai_worker.domain.analysis.voice_activity import AudioIdentity
+
+    path = tmp_path / "retry.wav"
+    with wave.open(str(path), "wb") as wav:
+        wav.setparams((1, 2, 16000, 0, "NONE", "not compressed"))
+        wav.writeframes(b"\x00\x00" * 80000)
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    source = AudioIdentity("fixture", digest, "fixture-asr", digest, 5_000_000, 0, 5_000_000)
+    adapter = adapter_returning([])
+    adapter.settings = AsrSettings(chunk_us=5_000_000, overlap_us=0)
+    original = [alignment_word(" retained", 1, 1.5)]
+    retry = [alignment_word(" retained", 1, 1.5)]
+    if defect == "omitted":
+        retry = []
+    elif defect == "substituted":
+        retry[0].word = " replacement"
+    elif defect == "repeated":
+        original.append(alignment_word(" retained", 2, 2.5))
+    else:
+        retry[0].start, retry[0].end = 2, 2.5
+    original.append(alignment_word(" recovery", 3, 3))
+    retry.append(alignment_word(" recovery", 3, 3.5))
+    calls: list[bool] = []
+
+    def decode(audio: Any, **kwargs: Any) -> Any:
+        calls.append(kwargs["vad_filter"])
+        words = original if kwargs["vad_filter"] else retry
+        return iter([SimpleNamespace(text="".join(w.word for w in words), words=words)]), (
+            SimpleNamespace(language="en", language_probability=0.9)
+        )
+
+    def aligned(segments: Any, audio: Any, language: str, check: Any) -> Any:
+        words, _, valid, _ = adapter._alignment_state(segments, audio)
+        if not valid:
+            raise TranscriptionError("ASR words require trustworthy realignment")
+        return words
+
+    adapter.model.transcribe = decode
+    adapter._aligned_chunk = aligned
+    adapter._continued_pcm = lambda *args: pytest.fail("A middle word extended source time")
+    monkeypatch.setattr(adapter, "_language_regions", lambda *args: [(0, 5_000_000, "en", 0.9)])
+    # No VAD gap need exist: a later, independently timed word can occupy the
+    # same range as omitted speech. Retry adoption must retain the first
+    # decoder's positive lexical/temporal evidence before coverage is judged.
+    monkeypatch.setattr(whisper, "get_speech_timestamps", lambda *args: [])
+    with pytest.raises(TranscriptionError, match="complete word coverage"):
+        adapter.transcribe(str(path), source)
+    assert calls == [True, False]
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == digest
+
+
 def test_colliding_owned_words_use_one_anchored_native_view_not_greedy_alternatives() -> None:
     from editagent_ai_worker.domain.analysis.transcription import Word
     from editagent_ai_worker.domain.analysis.voice_activity import AudioIdentity

@@ -108,7 +108,7 @@ function qualifyResult(result, model) {
     effectiveDevice: "cpu",
     effectiveComputeType: "int8",
     nativeCpuProfile: "onednn-avx2-strict-v4",
-    alignmentAlgorithm: "ct2-contextual-v24",
+    alignmentAlgorithm: "ct2-contextual-v25",
     numpyCpuProfile: "numpy-avx2-log-v2",
     numpyVersion: "2.4.6",
   }))

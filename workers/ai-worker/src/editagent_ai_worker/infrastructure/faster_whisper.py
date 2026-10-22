@@ -43,7 +43,7 @@ from editagent_ai_worker.infrastructure.config import (
 )
 from editagent_ai_worker.infrastructure.vad_audio import verify_audio_file, wav_parameters
 
-ASR_ALGORITHM = "ct2-contextual-v24"
+ASR_ALGORITHM = "ct2-contextual-v25"
 
 
 def uncovered_speech(audio: Any, words: list[Any], options: Any) -> list[tuple[int, int]]:
@@ -92,6 +92,42 @@ def same_context_word(left: str, right: str) -> bool:
         return "".join(chr(ord(c) + 32) if "A" <= c <= "Z" else c for c in text.strip())
 
     return key(left) == key(right)
+
+
+def verify_retry_word_coverage(
+    original: list[Any],
+    replacement: list[Any],
+    original_duration: float,
+    sample_offset: int,
+    owned_start_us: int,
+    owned_end_us: int,
+) -> None:
+    """A new native hypothesis cannot erase positive evidence owned by this core.
+
+    VAD-gap checks alone cannot detect an omitted word if another retry word
+    occupies that time. Preserve ordered lexical occurrences with intersecting
+    native intervals before adopting the retry. Context outside this core is
+    owned by its neighboring window; collapsed/out-of-source intervals do not
+    establish positive timing. This validates evidence without altering it.
+    """
+    last_match = -1
+    for word in original:
+        if not 0 <= word.start < word.end <= original_duration:
+            continue
+        midpoint_twice = microseconds(word.start, sample_offset) + microseconds(
+            word.end, sample_offset
+        )
+        if not owned_start_us * 2 <= midpoint_twice < owned_end_us * 2:
+            continue
+        for index in range(last_match + 1, len(replacement)):
+            candidate = replacement[index]
+            if same_context_word(word.word, candidate.word) and max(
+                Decimal(str(word.start)), Decimal(str(candidate.start))
+            ) < min(Decimal(str(word.end)), Decimal(str(candidate.end))):
+                last_match = index
+                break
+        else:
+            raise TranscriptionError("ASR recognized speech lacks complete word coverage")
 
 
 def attach_boundary_punctuation(words: list[Any]) -> list[Any]:
@@ -1387,8 +1423,12 @@ class FasterWhisperAdapter:
                 audio = np.frombuffer(raw, dtype="<i2").astype(np.float32) / 32768
                 try:
                     decoded, info = self._decode_window(audio, detected_language, check)
-                    _, _, valid, right_edge_failure = self._alignment_state(decoded, audio)
+                    original_words, _, valid, right_edge_failure = self._alignment_state(
+                        decoded, audio
+                    )
+                    original_duration = len(audio) / 16000
                     retried = False
+                    replaced = False
                     if not valid and right_edge_failure:
                         continued = self._continued_pcm(
                             wav, start_sample, end_sample, region_end, audio, check
@@ -1399,6 +1439,7 @@ class FasterWhisperAdapter:
                                 audio, detected_language, check, stitch_speech=False
                             )
                             retried = True
+                            replaced = True
                     candidates = []
                     try:
                         aligned = self._aligned_chunk(decoded, audio, str(info.language), check)
@@ -1421,6 +1462,11 @@ class FasterWhisperAdapter:
                         # Native-valid timing requires zero additional encodes,
                         # preserving the existing total alignment resource bound.
                         aligned = self._aligned_chunk(decoded, audio, str(info.language), check)
+                        replaced = True
+                    if replaced:
+                        verify_retry_word_coverage(
+                            original_words, aligned, original_duration, start_sample, core, end
+                        )
                     for word in aligned:
                         check()
                         candidates.append(
