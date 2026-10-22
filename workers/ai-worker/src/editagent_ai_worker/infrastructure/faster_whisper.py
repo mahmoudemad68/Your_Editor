@@ -43,7 +43,7 @@ from editagent_ai_worker.infrastructure.config import (
 )
 from editagent_ai_worker.infrastructure.vad_audio import verify_audio_file, wav_parameters
 
-ASR_ALGORITHM = "ct2-contextual-v27"
+ASR_ALGORITHM = "ct2-contextual-v28"
 
 
 def uncovered_speech(audio: Any, words: list[Any], options: Any) -> list[tuple[int, int]]:
@@ -421,6 +421,30 @@ class FasterWhisperAdapter:
     def _language_regions(
         self, wav: Any, duration_us: int, check: Callable[[], None]
     ) -> list[tuple[int, int, str | None, float]]:
+        try:
+            return self._planned_language_regions(
+                wav, duration_us, check, self.model, refine=self.settings.model == "small"
+            )
+        except TranscriptionError as error:
+            if self.settings.model != "tiny" or str(error) != (
+                "ASR language evidence requires trustworthy redetection"
+            ):
+                raise
+            # Tiny's short language probes can disagree on actual Arabic. Use
+            # the existing verified Small model for one bounded source plan,
+            # before decoding any words. Recognition remains the selected model.
+            model = self._pinned_alignment_model(check)
+            return self._planned_language_regions(wav, duration_us, check, model, refine=True)
+
+    def _planned_language_regions(
+        self,
+        wav: Any,
+        duration_us: int,
+        check: Callable[[], None],
+        model: Any,
+        *,
+        refine: bool,
+    ) -> list[tuple[int, int, str | None, float]]:
         """Two-pass streaming plan; language evidence is not a whole-file prompt.
 
         Every four-second source cell is inspected independently. Only cells
@@ -444,8 +468,8 @@ class FasterWhisperAdapter:
                 # The supported CT2 encoder accepts the actual feature length.
                 # Language probes need no artificial 30-second padded encoder
                 # window; retain that normal FW context for transcription.
-                encoded = self.model.encode(self.model.feature_extractor(pcm))
-                native = self.model.model.detect_language(encoded)[0]
+                encoded = model.encode(model.feature_extractor(pcm))
+                native = model.model.detect_language(encoded)[0]
                 probabilities = {str(token)[2:-2]: float(value) for token, value in native}
                 detected = str(native[0][0])[2:-2]
                 probability = float(native[0][1])
@@ -478,8 +502,8 @@ class FasterWhisperAdapter:
                             np.float32
                         )
                         pcm /= 32768
-                        encoded = self.model.encode(self.model.feature_extractor(pcm))
-                        native = self.model.model.detect_language(encoded)[0]
+                        encoded = model.encode(model.feature_extractor(pcm))
+                        native = model.model.detect_language(encoded)[0]
                         corroboration = {str(token)[2:-2]: float(value) for token, value in native}
                         check()
                 language = neighboring_language_prompt(str(neighbor), probabilities, corroboration)
@@ -492,7 +516,101 @@ class FasterWhisperAdapter:
                 regions[-1] = (start, upper, language, probability)
             else:
                 regions.append((lower, upper, language, probability))
+        if refine:
+            return self._refine_language_boundaries(wav, duration_us, regions, model, check)
         return regions
+
+    def _refine_language_boundaries(
+        self,
+        wav: Any,
+        duration_us: int,
+        regions: list[tuple[int, int, str | None, float]],
+        model: Any,
+        check: Callable[[], None],
+    ) -> list[tuple[int, int, str | None, float]]:
+        """Refine only cells touching a detected switch using real source PCM.
+
+        Four-second language cells are prompts, not observed speech boundaries.
+        Probe their two halves. A conflicting half-cell preference requires a
+        second, overlapping native probe at the existing 0.5 threshold. Six
+        additional probes per boundary cell is the maximum; no whole-file
+        language override, synthetic audio, words or word times are introduced.
+        """
+        boundary_cells: set[int] = set()
+        for left, right in zip(regions, regions[1:], strict=False):
+            if left[2] is not None and right[2] is not None and left[2] != right[2]:
+                boundary_cells.update(((left[1] - 1) // 4_000_000, right[0] // 4_000_000))
+        if not boundary_cells:
+            return regions
+        cache: dict[tuple[int, int], dict[str, float]] = {}
+
+        def probe(lower: int, upper: int) -> dict[str, float]:
+            check()
+            if not 0 <= lower < upper <= duration_us or upper - lower > 4_000_000:
+                raise TranscriptionError("Invalid bounded language context")
+            if (lower, upper) not in cache:
+                first = lower * 16000 // 1_000_000
+                last = min(wav.getnframes(), (upper * 16000 + 999999) // 1_000_000)
+                wav.setpos(first)
+                raw = wav.readframes(last - first)
+                if len(raw) != 2 * (last - first):
+                    raise TranscriptionError("Truncated language context PCM")
+                audio = np.frombuffer(raw, dtype="<i2").astype(np.float32) / 32768
+                probabilities: dict[str, float] = {}
+                if get_speech_timestamps(audio, self._vad_options()):
+                    encoded = model.encode(model.feature_extractor(audio))
+                    native = model.model.detect_language(encoded)[0]
+                    probabilities = {str(token)[2:-2]: float(value) for token, value in native}
+                check()
+                cache[lower, upper] = probabilities
+            return cache[lower, upper]
+
+        refined: list[tuple[int, int, str | None, float]] = []
+        for start, end, language, probability in regions:
+            for lower in range(start, end, 4_000_000):
+                upper = min(end, lower + 4_000_000)
+                halves = (
+                    [(lower, min(upper, lower + 2_000_000)), (lower + 2_000_000, upper)]
+                    if lower // 4_000_000 in boundary_cells
+                    else [(lower, upper)]
+                )
+                for first, last in halves:
+                    if first >= last:
+                        continue
+                    selected, confidence = language, probability
+                    if lower // 4_000_000 in boundary_cells:
+                        evidence = probe(first, last)
+                        if evidence:
+                            preferred = max(evidence, key=lambda key: evidence[key])
+                            if preferred != language:
+                                contexts = (
+                                    (max(0, first - 2_000_000), last),
+                                    (first, min(duration_us, last + 2_000_000)),
+                                )
+                                corroborated = False
+                                for context in contexts:
+                                    if context == (first, last):
+                                        continue
+                                    alternative = probe(*context)
+                                    if alternative.get(preferred, 0.0) >= 0.5 and alternative[
+                                        preferred
+                                    ] == max(alternative.values()):
+                                        corroborated = True
+                                        break
+                                if not corroborated:
+                                    raise TranscriptionError(
+                                        "ASR language evidence requires trustworthy redetection"
+                                    )
+                            selected, confidence = preferred, evidence[preferred]
+                    if refined and refined[-1][2] == selected:
+                        previous_start, _, _, previous = refined.pop()
+                        confidence = (
+                            previous * (first - previous_start) + confidence * (last - first)
+                        ) / (last - previous_start)
+                        refined.append((previous_start, last, selected, confidence))
+                    else:
+                        refined.append((first, last, selected, confidence))
+        return refined
 
     def _decode_window(
         self,
@@ -606,7 +724,7 @@ class FasterWhisperAdapter:
         """Bounded small-model alignment supplies anchored timings, never decoder text.
 
         Tiny's attention can collapse a genuine word on supported CPU kernels.
-        The immutable small model is used only for forced alignment. Every
+        This path uses the immutable Small model only for forced alignment. Every
         complete context must retain the exact indexed lexical sequence with
         positive ordered native intervals. Decoder probabilities are preserved.
         No small-model transcription or guessed duration occurs.
@@ -616,6 +734,27 @@ class FasterWhisperAdapter:
         words, text, _, _ = self._alignment_state(segments, audio)
         if not 0 < len(audio) <= 480000 or "".join(w.word for w in words).strip() != text.strip():
             raise TranscriptionError("ASR fallback has no complete bounded lexical evidence")
+        model = self._pinned_alignment_model(check)
+        candidate = self._primary_aligned_chunk(
+            segments,
+            audio,
+            language,
+            check,
+            alignment_model=model,
+            maximum_encodes=24,
+        )
+        _, _, valid, _ = self._alignment_state([SimpleNamespace(text=text, words=candidate)], audio)
+        if not valid or [w.word for w in candidate] != [w.word for w in words]:
+            raise TranscriptionError("ASR words require trustworthy realignment")
+        if check is not None:
+            check()
+        return [
+            SimpleNamespace(word=w.word, start=w.start, end=w.end, probability=original.probability)
+            for w, original in zip(candidate, words, strict=True)
+        ]
+
+    def _pinned_alignment_model(self, check: Callable[[], None] | None) -> Any:
+        """Reuse the one verified Small instance for timing and language recovery."""
         if self._alignment_model is None:
             path = self.settings.model_root / "small"
             verify_asr_model(path, "small")
@@ -638,23 +777,7 @@ class FasterWhisperAdapter:
                 raise TranscriptionError("Pinned ASR alignment model is unavailable") from exc
         if check is not None:
             check()
-        candidate = self._primary_aligned_chunk(
-            segments,
-            audio,
-            language,
-            check,
-            alignment_model=self._alignment_model,
-            maximum_encodes=24,
-        )
-        _, _, valid, _ = self._alignment_state([SimpleNamespace(text=text, words=candidate)], audio)
-        if not valid or [w.word for w in candidate] != [w.word for w in words]:
-            raise TranscriptionError("ASR words require trustworthy realignment")
-        if check is not None:
-            check()
-        return [
-            SimpleNamespace(word=w.word, start=w.start, end=w.end, probability=original.probability)
-            for w, original in zip(candidate, words, strict=True)
-        ]
+        return self._alignment_model
 
     def close(self) -> None:
         """Release both native models when an adapter outlives a single request."""
@@ -1661,6 +1784,13 @@ class FasterWhisperAdapter:
                 "languageDetectionMinimumProbability": 0.5,
                 "languageDetection": "original-pcm-region-redetection-v1",
                 "languageDetectionEncoder": "native-unpadded-log-mel-v1",
+                "languageBoundaryRecovery": "corroborated-half-cell-original-pcm-v1",
+                "languageBoundaryCellUs": 2000000,
+                "maximumAdditionalLanguageProbesPerBoundaryCell": 6,
+                "maximumLanguageFallbackPlans": 1 if self.settings.model == "tiny" else 0,
+                "languageFallbackModel": model_identity("small")
+                if self.settings.model == "tiny"
+                else None,
                 "speechCoverage": "owned-word-union-temporal-lexical-decode-v3",
                 "speechCoverageRecovery": "single-pass-native-gap-alignment-v1",
                 "maximumCoverageRecoveryPassesPerWindow": 1,

@@ -6,12 +6,13 @@ import hashlib
 import json
 import wave
 from collections.abc import Iterator
+from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 
-from editagent_ai_worker.domain.analysis.transcription import TranscriptionError
+from editagent_ai_worker.domain.analysis.transcription import Word
 from editagent_ai_worker.domain.analysis.voice_activity import AudioIdentity
 from editagent_ai_worker.infrastructure.asr_config import AsrSettings
 from editagent_ai_worker.infrastructure.faster_whisper import FasterWhisperAdapter
@@ -19,12 +20,14 @@ from editagent_ai_worker.infrastructure.faster_whisper import FasterWhisperAdapt
 ROOT = Path(__file__).resolve().parents[3]
 
 
-def test_real_offgrid_code_switch_rejects_conflicting_neighbor_prompt(
-    real_adapter: FasterWhisperAdapter, tmp_path: Path
+@pytest.mark.parametrize("model", ["tiny", "small"])
+@pytest.mark.parametrize("threads", [1, 2])
+def test_real_offgrid_code_switch_preserves_complete_native_component_words(
+    model: Literal["tiny", "small"], threads: int, tmp_path: Path
 ) -> None:
-    """Source-language ambiguity must not become a successful English transcript.
+    """Actual switch recovery preserves every observed component word tuple.
 
-    This is a fail-closed regression, not human gold or multilingual acceptance.
+    Component recognition is not independent human accuracy ground truth.
     The actual EN/AR transitions at 6/14 seconds cross the four-second cells.
     """
     manifest = json.loads((ROOT / "tests/fixtures/asr/manifest.json").read_text())
@@ -44,11 +47,40 @@ def test_real_offgrid_code_switch_rejects_conflicting_neighbor_prompt(
         stream.writeframes(english[: 6 * 32000] + arabic + english)
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
     source = AudioIdentity("offgrid-fixture", digest, "offgrid-pcm", digest, 22000000, 0, 22000000)
-    for _ in range(2):
-        with pytest.raises(
-            TranscriptionError, match="language evidence requires trustworthy redetection"
+    adapter = FasterWhisperAdapter(
+        AsrSettings(model=model, model_root=ROOT / ".local/asr-models", cpu_threads=threads)
+    )
+    try:
+        expected_words: list[Word] = []
+        for index, (pcm, lower, upper) in enumerate(
+            [
+                (english[: 6 * 32000], 0, 6000000),
+                (arabic, 6000000, 14000000),
+                (english, 14000000, 22000000),
+            ]
         ):
-            real_adapter.transcribe(str(path), source)
+            component = tmp_path / f"component-{index}.wav"
+            with wave.open(str(component), "wb") as stream:
+                stream.setparams((1, 2, 16000, 0, "NONE", "not compressed"))
+                stream.writeframes(pcm)
+            digest = hashlib.sha256(component.read_bytes()).hexdigest()
+            identity = AudioIdentity(
+                "component", digest, "component-pcm", digest, upper - lower, 0, upper - lower
+            )
+            observed = adapter.transcribe(str(component), identity)
+            assert observed.words
+            expected_words.extend(
+                replace(word, start_us=word.start_us + lower, end_us=word.end_us + lower)
+                for word in observed.words
+            )
+        results = [adapter.transcribe(str(path), source) for _ in range(2)]
+        assert results[0] == results[1]
+        assert results[0].words == tuple(expected_words)
+        assert all(
+            a.end_us <= b.start_us for a, b in zip(expected_words, expected_words[1:], strict=False)
+        )
+    finally:
+        adapter.close()
 
 
 @pytest.fixture(scope="module")

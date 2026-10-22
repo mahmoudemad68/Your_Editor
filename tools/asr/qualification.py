@@ -13,6 +13,7 @@ import importlib.metadata
 import io
 import json
 import os
+import platform
 import sys
 import time
 from pathlib import Path
@@ -30,6 +31,70 @@ class ResourceSnapshot(TypedDict):
     memoryEvents: dict[str, int]
     logicalCpus: int
     affinityCpus: int
+
+
+def numerical_runtime_evidence() -> dict[str, object]:
+    """Compare numerical stacks using public synthetic PCM, never speech output.
+
+    Equal package versions and ISA declarations do not establish equal feature
+    arithmetic across system libraries. This records actual preprocessing on a
+    fixed integer signal. Fingerprint equality is diagnostic evidence, not proof
+    of deterministic decoding. No environment values or machine paths leave here.
+    The caller must establish the native profile before importing NumPy.
+    """
+    import ctranslate2  # type: ignore[import-untyped]
+    import faster_whisper  # type: ignore[import-untyped]
+    import numpy as np
+    from editagent_ai_worker.infrastructure.asr_features import (
+        DeterministicFeatureExtractor,
+        numpy_cpu_kernels,
+    )
+    from editagent_ai_worker.infrastructure.config import require_asr_native_environment
+
+    require_asr_native_environment()
+    # Every sample is exactly representable; constructing the probe calls no
+    # sine/logarithm or system-dependent random-number generator.
+    integers = (np.arange(16000, dtype=np.int32) * 197) % 65536 - 32768
+    pcm = integers.astype(np.float32) / 32768
+    extractor = DeterministicFeatureExtractor()
+    window = np.hanning(extractor.n_fft + 1)[:-1].astype(np.float32)
+    spectrum = extractor.stft(
+        np.pad(pcm, (0, 160)),
+        extractor.n_fft,
+        extractor.hop_length,
+        window=window,
+        return_complex=True,
+    ).astype(np.complex64)
+    features = extractor(pcm)
+    # Only installed, immutable package bytes are read, not paths from a job.
+    extension = Path(ctranslate2._ext.__file__)
+    graph = Path(faster_whisper.__file__).parent / "assets" / "silero_vad_v6.onnx"
+    libc, libc_version = platform.libc_ver()
+    with extension.open("rb") as stream:
+        extension_sha256 = hashlib.file_digest(stream, "sha256").hexdigest()
+    return {
+        "schemaVersion": 1,
+        "probe": "integer-ramp-pcm16-16000-v1",
+        "python": platform.python_version(),
+        "libc": {"name": libc, "version": libc_version},
+        "machine": platform.machine(),
+        "packages": {
+            name: importlib.metadata.version(name)
+            for name in ("numpy", "ctranslate2", "faster-whisper", "onnxruntime", "av")
+        },
+        "ctranslate2ExtensionSha256": extension_sha256,
+        "vadGraphSha256": hashlib.sha256(graph.read_bytes()).hexdigest(),
+        "numpyKernels": numpy_cpu_kernels(),
+        "synthetic": {
+            "pcmFloat32Sha256": hashlib.sha256(pcm.tobytes()).hexdigest(),
+            "melFiltersFloat32Sha256": hashlib.sha256(
+                extractor.mel_filters.tobytes()
+            ).hexdigest(),
+            "hannFloat32Sha256": hashlib.sha256(window.tobytes()).hexdigest(),
+            "stftComplex64Sha256": hashlib.sha256(spectrum.tobytes()).hexdigest(),
+            "logMelFloat32Sha256": hashlib.sha256(features.tobytes()).hexdigest(),
+        },
+    }
 
 
 def prepare(repository: Path, directory: Path) -> None:
@@ -176,6 +241,7 @@ def measure() -> int:
                 "before": before,
                 "after": cgroup_snapshot(),
                 "phases": phases,
+                "numericalRuntime": numerical_runtime_evidence(),
                 "versions": {
                     name: importlib.metadata.version(name)
                     for name in ("numpy", "ctranslate2", "faster-whisper")

@@ -64,6 +64,59 @@ export function qualifyResources(before, after) {
   };
 }
 
+export function qualifyNumericalRuntime(value) {
+  assert.equal(value.schemaVersion, 1);
+  assert.equal(value.probe, "integer-ramp-pcm16-16000-v1");
+  assert.match(value.python, /^3\.11\.\d+$/);
+  assert.equal(value.libc.name, "glibc");
+  assert.match(value.libc.version, /^\d+\.\d+$/);
+  assert.equal(value.machine, "x86_64");
+  assert.deepEqual(value.packages, {
+    numpy: "2.4.6",
+    ctranslate2: "4.8.2",
+    "faster-whisper": "1.2.1",
+    onnxruntime: "1.31.0",
+    av: "18.1.0",
+  });
+  const hash = (input) => {
+    assert.equal(typeof input, "string");
+    assert.match(input, /^[a-f0-9]{64}$/);
+    return input;
+  };
+  assert.equal(
+    hash(value.vadGraphSha256),
+    "4cbf549b8326f60f80f2536d9eefeb450a9abe83365a098031c89719f1be17d2",
+  );
+  assert.deepEqual(value.numpyKernels, {
+    cos_float64: "X86_V3",
+    absolute_complex64: "X86_V3",
+    log_float64: "X86_V3",
+  });
+  const synthetic = {};
+  for (const name of [
+    "pcmFloat32Sha256",
+    "melFiltersFloat32Sha256",
+    "hannFloat32Sha256",
+    "stftComplex64Sha256",
+    "logMelFloat32Sha256",
+  ])
+    synthetic[name] = hash(value.synthetic[name]);
+  // Rebuild the explicit public allowlist. Never spread an unvalidated native
+  // object into the report or publish real waveform/transcript fingerprints.
+  return {
+    schemaVersion: 1,
+    probe: value.probe,
+    python: value.python,
+    libc: { name: value.libc.name, version: value.libc.version },
+    machine: value.machine,
+    packages: { ...value.packages },
+    ctranslate2ExtensionSha256: hash(value.ctranslate2ExtensionSha256),
+    vadGraphSha256: value.vadGraphSha256,
+    numpyKernels: { ...value.numpyKernels },
+    synthetic,
+  };
+}
+
 export function qualifyWords(words) {
   assert.ok(Array.isArray(words) && words.length > 600);
   let previous = 0;
@@ -87,6 +140,20 @@ export function qualifyWords(words) {
   return words.length;
 }
 
+export function inferenceConfigurationSha256(settings) {
+  return createHash("sha256")
+    .update(
+      JSON.stringify(settings, (_key, value) =>
+        value && typeof value === "object" && !Array.isArray(value)
+          ? Object.fromEntries(
+              Object.entries(value).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+            )
+          : value,
+      ),
+    )
+    .digest("hex");
+}
+
 function qualifyResult(result, model) {
   const worker = result.worker;
   assert.equal(worker.section.status, "completed");
@@ -97,6 +164,10 @@ function qualifyResult(result, model) {
   });
   assert.deepEqual(worker.section.provenance.model, modelIdentities[model]);
   const settings = worker.inferenceParameters;
+  assert.equal(
+    worker.section.provenance.configurationSha256,
+    inferenceConfigurationSha256(settings),
+  );
   for (const [key, expected] of Object.entries({
     model,
     cpu_threads: 2,
@@ -105,10 +176,16 @@ function qualifyResult(result, model) {
     beam_size: 5,
     temperature: 0,
     seed: 0,
+    chunk_us: 24000000,
+    overlap_us: 2000000,
+    speech_threshold: 0.5,
+    negative_threshold: 0.35,
+    min_silence_ms: 200,
+    speech_padding_ms: 100,
     effectiveDevice: "cpu",
     effectiveComputeType: "int8",
     nativeCpuProfile: "onednn-avx2-strict-v4",
-    alignmentAlgorithm: "ct2-contextual-v27",
+    alignmentAlgorithm: "ct2-contextual-v28",
     numpyCpuProfile: "numpy-avx2-log-v2",
     numpyVersion: "2.4.6",
   }))
@@ -153,6 +230,8 @@ function qualifyResult(result, model) {
     wordCount,
     resources: qualifyResources(result.before, result.after),
     phases,
+    numericalRuntime: qualifyNumericalRuntime(result.numericalRuntime),
+    configurationSha256: worker.section.provenance.configurationSha256,
   };
 }
 
