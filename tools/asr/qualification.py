@@ -33,6 +33,29 @@ class ResourceSnapshot(TypedDict):
     affinityCpus: int
 
 
+def cpu_dispatch_evidence(cpuinfo: str) -> dict[str, object]:
+    """Bounded CPU taxonomy only; no names, unique IDs or arbitrary fields."""
+    records: list[dict[str, object]] = []
+    for block in cpuinfo.split("\n\n"):
+        fields = dict(line.split(":", 1) for line in block.splitlines() if ":" in line)
+        fields = {key.strip(): value.strip() for key, value in fields.items()}
+        if "processor" not in fields:
+            continue
+        vendor = fields["vendor_id"]
+        record: dict[str, object] = {
+            "vendor": vendor if vendor in {"GenuineIntel", "AuthenticAMD"} else "other"
+        }
+        for key in ("cpu family", "model", "stepping"):
+            value = int(fields[key])
+            if not 0 <= value <= 4095:
+                raise ValueError("Invalid CPU taxonomy")
+            record[key.replace("cpu ", "")] = value
+        records.append(record)
+    if not records:
+        raise ValueError("CPU taxonomy is unavailable")
+    return {**records[0], "uniform": all(record == records[0] for record in records)}
+
+
 def numerical_runtime_evidence() -> dict[str, object]:
     """Compare numerical stacks using public synthetic PCM, never speech output.
 
@@ -73,11 +96,12 @@ def numerical_runtime_evidence() -> dict[str, object]:
     with extension.open("rb") as stream:
         extension_sha256 = hashlib.file_digest(stream, "sha256").hexdigest()
     return {
-        "schemaVersion": 1,
+        "schemaVersion": 2,
         "probe": "integer-ramp-pcm16-16000-v1",
         "python": platform.python_version(),
         "libc": {"name": libc, "version": libc_version},
         "machine": platform.machine(),
+        "cpu": cpu_dispatch_evidence(Path("/proc/cpuinfo").read_text(encoding="ascii")),
         "packages": {
             name: importlib.metadata.version(name)
             for name in ("numpy", "ctranslate2", "faster-whisper", "onnxruntime", "av")

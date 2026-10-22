@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import subprocess
+import sys
 import wave
 from collections.abc import Iterator
 from dataclasses import replace
@@ -18,6 +21,148 @@ from editagent_ai_worker.infrastructure.asr_config import AsrSettings
 from editagent_ai_worker.infrastructure.faster_whisper import FasterWhisperAdapter
 
 ROOT = Path(__file__).resolve().parents[3]
+
+
+@pytest.mark.parametrize("model", ["tiny", "small"])
+@pytest.mark.parametrize("threads", [1, 2])
+def test_real_original_multilingual_complete_components_and_fresh_process(
+    model: Literal["tiny", "small"], threads: int, tmp_path: Path
+) -> None:
+    """Every component survives the original QA compositions, including EN20.
+
+    Complete native component agreement is a composition-integrity check, not
+    independent human accuracy gold. All text, timing and confidence are compared.
+    """
+    fixtures = json.loads((ROOT / "tests/fixtures/asr/manifest.json").read_text())["fixtures"]
+    sources = json.loads((ROOT / "docs/evaluation/manifest.json").read_text())["sources"]
+
+    def write(name: str, pcm: bytes) -> Path:
+        path = tmp_path / (name + ".wav")
+        with wave.open(str(path), "wb") as stream:
+            stream.setparams((1, 2, 16000, 0, "NONE", "not compressed"))
+            stream.writeframes(pcm)
+        return path
+
+    adapter = FasterWhisperAdapter(
+        AsrSettings(model=model, model_root=ROOT / ".local/asr-models", cpu_threads=threads)
+    )
+    try:
+        components: dict[str, tuple[bytes, tuple[Word, ...], int]] = {}
+        for name, filename, seconds in (
+            ("en8", "en.wav", 8),
+            ("ar8", "ar.wav", 8),
+            ("en20", "en-chunks.wav", 20),
+        ):
+            fixture = next(entry for entry in fixtures if entry["file"] == filename)
+            path = ROOT / "tests/fixtures/asr" / filename
+            assert hashlib.sha256(path.read_bytes()).hexdigest() == fixture["sha256"]
+            with wave.open(str(path), "rb") as stream:
+                assert stream.getparams()[:3] == (1, 2, 16000)
+                pcm = stream.readframes(seconds * 16000)
+            assert len(pcm) == seconds * 32000
+            path = write(name, pcm)
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            original = next(entry for entry in sources if entry["id"] == fixture["sourceId"])
+            lower = int(fixture["sourceScopeUs"]["startUs"])
+            identity = AudioIdentity(
+                fixture["sourceId"],
+                fixture["sourceSha256"],
+                name,
+                digest,
+                int(original["durationUs"]),
+                lower,
+                lower + seconds * 1000000,
+            )
+            observed = adapter.transcribe(str(path), identity)
+            assert observed.words
+            components[name] = (pcm, observed.words, lower)
+        for name, sequence in (
+            ("mixed-en-ar", ("en8", "ar8")),
+            ("codeswitch-boundary", ("en20", "ar8", "en8")),
+        ):
+            samples = b"".join(components[key][0] for key in sequence)
+            path = write(name, samples)
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            duration = len(samples) * 1000000 // 32000
+            identity = AudioIdentity(name, digest, name + "-pcm", digest, duration, 0, duration)
+            expected: list[Word] = []
+            offset = 0
+            for key in sequence:
+                pcm, words, original_start = components[key]
+                expected.extend(
+                    replace(
+                        word,
+                        start_us=word.start_us - original_start + offset,
+                        end_us=word.end_us - original_start + offset,
+                    )
+                    for word in words
+                )
+                offset += len(pcm) * 1000000 // 32000
+            repeated = [adapter.transcribe(str(path), identity) for _ in range(3)]
+            assert repeated[0] == repeated[1] == repeated[2]
+            assert repeated[0].words == tuple(expected)
+            assert all(0 <= word.start_us < word.end_us <= duration for word in expected)
+            assert all(a.end_us <= b.start_us for a, b in zip(expected, expected[1:], strict=False))
+            before = adapter.provenance(identity)
+            assert before["model"] == adapter.model_identity
+            identity_path = tmp_path / (name + ".identity.json")
+            identity_path.write_text(
+                json.dumps(
+                    {
+                        "source_id": identity.source_id,
+                        "source_sha256": identity.source_sha256,
+                        "artifact_id": identity.artifact_id,
+                        "audio_sha256": identity.audio_sha256,
+                        "source_duration_us": identity.source_duration_us,
+                        "scope_start_us": identity.scope_start_us,
+                        "scope_end_us": identity.scope_end_us,
+                    }
+                )
+            )
+            fresh = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "editagent_ai_worker.composition.transcribe",
+                    "--audio",
+                    str(path),
+                    "--identity",
+                    str(identity_path),
+                ],
+                cwd=ROOT / "workers/ai-worker",
+                env={
+                    **os.environ,
+                    "EDITAGENT_ASR_MODEL": model,
+                    "EDITAGENT_ASR_MODEL_ROOT": str(ROOT / ".local/asr-models"),
+                    "EDITAGENT_ASR_CPU_THREADS": str(threads),
+                },
+                capture_output=True,
+                text=True,
+                timeout=650,
+            )
+            assert fresh.returncode == 0
+            assert len(fresh.stdout) < 16000000
+            result = json.loads(fresh.stdout)
+            expected_words = [
+                {
+                    "text": word.text,
+                    "startUs": str(word.start_us),
+                    "endUs": str(word.end_us),
+                    "confidence": word.confidence,
+                }
+                for word in expected
+            ]
+            data = result["section"]["data"]
+            assert [
+                word for segment in data["segments"] for word in segment["words"]
+            ] == expected_words
+            assert data["language"] == repeated[0].language
+            assert data["languageConfidence"] == repeated[0].language_confidence
+            assert result["section"]["status"] == "completed"
+            assert result["section"]["provenance"] == before == adapter.provenance(identity)
+            assert result["inferenceParameters"] == adapter.parameters()
+    finally:
+        adapter.close()
 
 
 @pytest.mark.parametrize("model", ["tiny", "small"])

@@ -65,12 +65,18 @@ export function qualifyResources(before, after) {
 }
 
 export function qualifyNumericalRuntime(value) {
-  assert.equal(value.schemaVersion, 1);
+  assert.equal(value.schemaVersion, 2);
   assert.equal(value.probe, "integer-ramp-pcm16-16000-v1");
   assert.match(value.python, /^3\.11\.\d+$/);
   assert.equal(value.libc.name, "glibc");
   assert.match(value.libc.version, /^\d+\.\d+$/);
   assert.equal(value.machine, "x86_64");
+  assert.ok(["GenuineIntel", "AuthenticAMD", "other"].includes(value.cpu.vendor));
+  for (const key of ["family", "model", "stepping"])
+    assert.ok(
+      Number.isSafeInteger(value.cpu[key]) && value.cpu[key] >= 0 && value.cpu[key] <= 4095,
+    );
+  assert.equal(typeof value.cpu.uniform, "boolean");
   assert.deepEqual(value.packages, {
     numpy: "2.4.6",
     ctranslate2: "4.8.2",
@@ -104,11 +110,18 @@ export function qualifyNumericalRuntime(value) {
   // Rebuild the explicit public allowlist. Never spread an unvalidated native
   // object into the report or publish real waveform/transcript fingerprints.
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     probe: value.probe,
     python: value.python,
     libc: { name: value.libc.name, version: value.libc.version },
     machine: value.machine,
+    cpu: {
+      vendor: value.cpu.vendor,
+      family: value.cpu.family,
+      model: value.cpu.model,
+      stepping: value.cpu.stepping,
+      uniform: value.cpu.uniform,
+    },
     packages: { ...value.packages },
     ctranslate2ExtensionSha256: hash(value.ctranslate2ExtensionSha256),
     vadGraphSha256: value.vadGraphSha256,

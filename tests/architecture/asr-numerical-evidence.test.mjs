@@ -81,11 +81,12 @@ test("configuration digest matches Python's nested sort_keys serialization", () 
 
 function evidence() {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     probe: "integer-ramp-pcm16-16000-v1",
     python: "3.11.16",
     libc: { name: "glibc", version: "2.39" },
     machine: "x86_64",
+    cpu: { vendor: "GenuineIntel", family: 6, model: 85, stepping: 7, uniform: true },
     packages: {
       numpy: "2.4.6",
       ctranslate2: "4.8.2",
@@ -116,6 +117,7 @@ test("numerical evidence publishes only its explicit non-speech allowlist", () =
   const input = evidence();
   input.privateOperand = "synthetic-private-sentinel";
   input.libc.path = "synthetic-private-sentinel";
+  input.cpu.serial = "synthetic-private-sentinel";
   input.synthetic.words = "synthetic-private-sentinel";
   const result = qualifyNumericalRuntime(input);
   assert.deepEqual(result, evidence());
@@ -129,6 +131,9 @@ for (const defect of [
   "python",
   "libc",
   "machine",
+  "cpu-vendor",
+  "cpu-number",
+  "cpu-uniform",
   "package",
   "vad",
   "kernel",
@@ -142,6 +147,9 @@ for (const defect of [
     if (defect === "python") input.python = "3.12.0";
     if (defect === "libc") input.libc.name = "unknown";
     if (defect === "machine") input.machine = "arm64";
+    if (defect === "cpu-vendor") input.cpu.vendor = "unvalidated";
+    if (defect === "cpu-number") input.cpu.model = "85";
+    if (defect === "cpu-uniform") input.cpu.uniform = "true";
     if (defect === "package") input.packages.onnxruntime = "unknown";
     if (defect === "vad") input.vadGraphSha256 = "c".repeat(64);
     if (defect === "kernel") input.numpyKernels.log_float64 = "unknown";

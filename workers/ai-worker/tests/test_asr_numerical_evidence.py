@@ -4,6 +4,8 @@ import importlib.util
 import json
 from pathlib import Path
 
+import pytest
+
 
 def test_synthetic_numerical_evidence_has_repeatable_bounded_stage_hashes() -> None:
     root = Path(__file__).resolve().parents[3]
@@ -33,6 +35,7 @@ def test_synthetic_numerical_evidence_has_repeatable_bounded_stage_hashes() -> N
         "python",
         "libc",
         "machine",
+        "cpu",
         "packages",
         "ctranslate2ExtensionSha256",
         "vadGraphSha256",
@@ -40,3 +43,43 @@ def test_synthetic_numerical_evidence_has_repeatable_bounded_stage_hashes() -> N
         "synthetic",
     }
     assert len(json.dumps(first)) < 2000
+
+
+def test_cpu_taxonomy_excludes_unbounded_and_private_cpuinfo_fields() -> None:
+    root = Path(__file__).resolve().parents[3]
+    spec = importlib.util.spec_from_file_location(
+        "asr_cpu_qualification", root / "tools/asr/qualification.py"
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    sample = (
+        "processor : 0\nvendor_id : GenuineIntel\ncpu family : 6\nmodel : 85\n"
+        "stepping : 7\nmodel name : private-sentinel\nserial : private-sentinel\n"
+    )
+    expected = {"vendor": "GenuineIntel", "family": 6, "model": 85, "stepping": 7, "uniform": True}
+    assert module.cpu_dispatch_evidence(sample) == expected
+    assert module.cpu_dispatch_evidence(sample + "\n" + sample.replace("0", "1")) == expected
+    assert module.cpu_dispatch_evidence(sample.replace("GenuineIntel", "private-sentinel")) == {
+        **expected,
+        "vendor": "other",
+    }
+    assert (
+        module.cpu_dispatch_evidence(sample + "\n" + sample.replace("85", "86"))["uniform"] is False
+    )
+
+
+@pytest.mark.parametrize("value", ["-1", "4096", "not-a-number"])
+def test_cpu_taxonomy_rejects_unverifiable_numeric_values(value: str) -> None:
+    root = Path(__file__).resolve().parents[3]
+    spec = importlib.util.spec_from_file_location(
+        "asr_invalid_cpu_qualification", root / "tools/asr/qualification.py"
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    with pytest.raises(ValueError):
+        module.cpu_dispatch_evidence(
+            "processor : 0\nvendor_id : GenuineIntel\ncpu family : 6\n"
+            f"model : {value}\nstepping : 7"
+        )

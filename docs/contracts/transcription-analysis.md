@@ -56,6 +56,18 @@ the focused regression matrix also runs pinned `small`. CPU uses int8. CUDA is
 configurable with an explicit CPU fallback; GPU accuracy/performance requires a
 separate measured run and is not inferred from CPU tests.
 
+Model selection is an operator deployment setting. `cpu_fallback` changes the
+device for the selected model; it does not authorize changing Tiny recognition
+into Small recognition. Tiny may use the pinned Small dependency to recover a
+language plan or align its existing indexed words, while its transcript model
+identity remains Tiny. Neither operation supplies replacement Small words.
+If Tiny cannot provide complete, defensibly aligned output, the attempt fails
+explicitly. A separately configured Small transcription must record Small's
+actual model revision/SHA and configuration identity, and pass the ordinary
+admission, generation and result fences. It is not a passing Tiny result.
+The production Small default and its successful outputs do not close outstanding
+Tiny Arabic acceptance. No automatic cross-model recognition policy is enabled.
+
 `pnpm asr:setup --root .local/asr-models --model small` acquires immutable
 Systran model revisions at setup/build time, checking the size and SHA-256 of
 weights, tokenizer, vocabulary and configuration. Production startup verifies the
@@ -170,7 +182,7 @@ when that context requires realignment. Partial same-model repairs retain the
 existing two-anchor rule. Conflicting or invalid full-context evidence fails closed.
 Its model revision/SHA, device and compute type are recorded in the actual
 inference parameters/configuration identity. Timing-only fallback is part of
-`ct2-contextual-v16`; it is not a claim that tiny alone generated every timing.
+`ct2-contextual-v29`; it is not a claim that tiny alone generated every timing.
 Tiny deployments therefore bundle both pinned models during setup/build and
 verify both before readiness. There is no inference-time acquisition. At most
 one decoder and one lazily loaded fallback model reside in an adapter; their
@@ -194,7 +206,7 @@ tiny and small separately with the ordinary default beam, thread and deadline
 settings. Per-run words, provenance, wall time and process peak RSS are retained.
 This checks long-recording integrity; there is no 600-second reference transcript
 and no accuracy claim for that fixture.
-The `ct2-contextual-v16` identity also participates in durable admission identity,
+The `ct2-contextual-v29` identity also participates in durable admission identity,
 so prior algorithm results cannot satisfy a new-algorithm task accidentally.
 The deferred PostgreSQL receipt fence checks the worker's actual algorithm
 acknowledgment and freezes its inference metadata together with the result.
