@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   inferenceConfigurationSha256,
+  compareCanonicalRuntime,
   qualifyNumericalRuntime,
   qualifyThreadEquivalent,
 } from "../../tools/asr/qualification.mjs";
@@ -12,6 +13,7 @@ function worker(threads) {
   return {
     inferenceParameters: parameters,
     section: {
+      status: "completed",
       data: { words: [{ text: " unit", startUs: "0", endUs: "20", confidence: 0.8 }] },
       provenance: {
         model: { sha256: "a".repeat(64) },
@@ -20,6 +22,23 @@ function worker(threads) {
     },
   };
 }
+
+test("same-host control compares complete canonical operands without changing them", () => {
+  const a = worker(2),
+    b = worker(2);
+  const before = JSON.stringify([a, b]);
+  assert.deepEqual(compareCanonicalRuntime(a, b), {
+    status: "PASS",
+    dataExactlyEqual: true,
+    provenanceExactlyEqual: true,
+    parametersExactlyEqual: true,
+  });
+  assert.equal(JSON.stringify([a, b]), before);
+  a.section.data.words[0].confidence = 0.7;
+  assert.equal(compareCanonicalRuntime(a, b).status, "FAIL");
+  a.section.provenance.configurationSha256 = "c".repeat(64);
+  assert.throws(() => compareCanonicalRuntime(a, b));
+});
 
 test("cross-thread qualification compares full ordered data and verified provenance", () => {
   const single = worker(1),
@@ -39,6 +58,32 @@ for (const defect of [
   "configuration",
   "parameter",
 ]) {
+  test(`same-host control detects actual canonical differences: ${defect}`, () => {
+    const control = worker(2),
+      reference = worker(2);
+    const word = control.section.data.words[0];
+    if (defect === "text") word.text = " other";
+    if (defect === "start") word.startUs = "1";
+    if (defect === "end") word.endUs = "21";
+    if (defect === "confidence") word.confidence = 0.81;
+    if (defect === "extra-word") control.section.data.words.push({ ...word });
+    if (defect === "model") control.section.provenance.model.sha256 = "b".repeat(64);
+    if (defect === "configuration") control.section.provenance.configurationSha256 = "b".repeat(64);
+    if (defect === "parameter") {
+      control.inferenceParameters.temperature = 1;
+      control.section.provenance.configurationSha256 = inferenceConfigurationSha256(
+        control.inferenceParameters,
+      );
+    }
+    if (defect === "configuration") {
+      assert.throws(() => compareCanonicalRuntime(control, reference));
+    } else {
+      const before = JSON.stringify([control, reference]);
+      assert.equal(compareCanonicalRuntime(control, reference).status, "FAIL");
+      assert.equal(JSON.stringify([control, reference]), before);
+    }
+  });
+
   test(`cross-thread qualification rejects actual output differences: ${defect}`, () => {
     const single = worker(1),
       reference = worker(2);
@@ -59,6 +104,12 @@ for (const defect of [
     assert.throws(() => qualifyThreadEquivalent(single, reference));
   });
 }
+
+test("same-host control rejects failed recognition rather than comparing incomplete data", () => {
+  const control = worker(2);
+  control.section.status = "failed";
+  assert.throws(() => compareCanonicalRuntime(control, worker(2)));
+});
 
 test("configuration digest matches Python's nested sort_keys serialization", () => {
   const parameters = {

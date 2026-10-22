@@ -11,6 +11,7 @@ import { Buffer } from "node:buffer";
 import { setTimeout, clearTimeout } from "node:timers";
 import { fileURLToPath } from "node:url";
 import { performance } from "node:perf_hooks";
+import { isDeepStrictEqual } from "node:util";
 
 const root = path.resolve(import.meta.dirname, "../..");
 const modelIdentities = {
@@ -167,6 +168,32 @@ export function inferenceConfigurationSha256(settings) {
     .digest("hex");
 }
 
+/** Actual ordered data comparison; differing runtime stacks are not normalized. */
+export function compareCanonicalRuntime(control, reference) {
+  for (const worker of [control, reference]) {
+    assert.equal(worker.section.status, "completed");
+    assert.equal(
+      worker.section.provenance.configurationSha256,
+      inferenceConfigurationSha256(worker.inferenceParameters),
+    );
+  }
+  const dataExactlyEqual = isDeepStrictEqual(control.section.data, reference.section.data);
+  const provenanceExactlyEqual = isDeepStrictEqual(
+    control.section.provenance,
+    reference.section.provenance,
+  );
+  const parametersExactlyEqual = isDeepStrictEqual(
+    control.inferenceParameters,
+    reference.inferenceParameters,
+  );
+  return {
+    status: dataExactlyEqual && provenanceExactlyEqual && parametersExactlyEqual ? "PASS" : "FAIL",
+    dataExactlyEqual,
+    provenanceExactlyEqual,
+    parametersExactlyEqual,
+  };
+}
+
 export function qualifyThreadEquivalent(single, reference) {
   assert.equal(single.inferenceParameters.cpu_threads, 1);
   assert.equal(reference.inferenceParameters.cpu_threads, 2);
@@ -274,8 +301,12 @@ function qualifyResult(result, model, threads = 2) {
 }
 
 /** A failed/overflowing/timed-out run kills its container before reporting failure. */
-async function captured(bin, args, { name, deadlineMs, maxBytes = 16000000 } = {}) {
-  const child = spawn(bin, args, { cwd: root, stdio: ["ignore", "pipe", "pipe"] });
+async function captured(
+  bin,
+  args,
+  { name, deadlineMs, maxBytes = 16000000, env = process.env } = {},
+) {
+  const child = spawn(bin, args, { cwd: root, env, stdio: ["ignore", "pipe", "pipe"] });
   const output = [],
     errors = [];
   let bytes = 0,
@@ -484,6 +515,56 @@ export async function main() {
           "Inclusive method wall times; nested phases are not additive; profiling overhead included",
         measurements,
       };
+      if (model === "small") {
+        // Direct owned Python process: the existing timeout kills native work,
+        // without an intermediate launcher leaving an orphan child. This host
+        // variant is diagnostic, never reported as a Docker resource-jail pass.
+        const control = await captured(
+          path.join(root, "workers/ai-worker/.venv/bin/python"),
+          [driver, "host-control", "--directory", inputs],
+          {
+            deadlineMs: 600000,
+            env: {
+              ...process.env,
+              PYTHONPATH: path.join(root, "workers/ai-worker/src"),
+              EDITAGENT_ASR_MODEL: "small",
+              EDITAGENT_ASR_MODEL_ROOT: path.join(root, ".local/asr-models"),
+              EDITAGENT_ASR_CPU_THREADS: "2",
+              EDITAGENT_ASR_TIMEOUT_MS: "600000",
+            },
+          },
+        );
+        await writeFile(path.join(privateDir, "small-host-control-native.json"), control.output, {
+          mode: 0o600,
+          flag: "wx",
+        });
+        await writeFile(path.join(privateDir, "small-host-control-native.log"), control.error, {
+          mode: 0o600,
+          flag: "wx",
+        });
+        assert.equal(control.code, 0, "Same-host native control did not complete");
+        const actual = JSON.parse(control.output);
+        const hostWords = actual.worker.section.data.segments.flatMap((s) => s.words);
+        report.sameHostRuntimeControl = {
+          ...compareCanonicalRuntime(actual.worker, reference),
+          hostWordCount: qualifyWords(hostWords),
+          productionWordCount: measurements[0].wordCount,
+          hostLogicalCpus: integer(actual.logicalCpus),
+          hostAffinityCpus: integer(actual.affinityCpus),
+          hostNumericalRuntime: qualifyNumericalRuntime(actual.numericalRuntime),
+          productionNumericalRuntime: measurements[0].numericalRuntime,
+          runtimeMetadataExactlyEqual: isDeepStrictEqual(
+            actual.numericalRuntime,
+            measurements[0].numericalRuntime,
+          ),
+          profiling: "Identical bounded method-timing callback in both execution stacks",
+          inferenceDeadlineMs: 600000,
+          scope:
+            "Same physical Linux runner and prepared PCM; host runtime versus production container. Host is not resource-jail performance qualification. Different runtime stacks cannot prove within-profile nondeterminism; broad H2 remains NOT_PROVEN.",
+        };
+        // This is an additional cross-runtime observation, not a replacement
+        // for the mandatory production fresh/thread equality assertions above.
+      }
     }
     assert.equal(
       createHash("sha256")

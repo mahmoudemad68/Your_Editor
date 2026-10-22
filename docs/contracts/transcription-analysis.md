@@ -68,6 +68,18 @@ admission, generation and result fences. It is not a passing Tiny result.
 The production Small default and its successful outputs do not close outstanding
 Tiny Arabic acceptance. No automatic cross-model recognition policy is enabled.
 
+The original ten-minute qualifier additionally compares a fresh Small run on the
+same physical Linux runner with the production container, using the same prepared
+PCM, pinned model, parameters and timing instrumentation. Full ordered transcript
+data and provenance are compared privately; the public report contains bounded
+runtime metadata and comparison results. The native-host variant is diagnostic,
+not a Docker resource-jail performance qualification. A cross-runtime mismatch
+is reported as FAIL, with remaining runtime differences disclosed; it does not
+establish nondeterminism within an identical execution stack. This additional
+observation does not replace or relax mandatory production fresh-process,
+thread-equivalence, resource, deadline or word-integrity assertions. A failed
+native-host execution fails the qualification rather than disappearing from it.
+
 `pnpm asr:setup --root .local/asr-models --model small` acquires immutable
 Systran model revisions at setup/build time, checking the size and SHA-256 of
 weights, tokenizer, vocabulary and configuration. Production startup verifies the

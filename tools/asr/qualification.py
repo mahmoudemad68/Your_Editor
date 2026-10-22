@@ -16,6 +16,7 @@ import os
 import platform
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 from types import FrameType
 from typing import TypedDict
@@ -204,25 +205,10 @@ def cgroup_snapshot(root: Path = Path("/sys/fs/cgroup")) -> ResourceSnapshot:
     }
 
 
-def measure() -> int:
-    from editagent_ai_worker.composition.transcribe import main as transcribe
-
-    before = cgroup_snapshot()
-    if (
-        before["cpuQuotaUs"] != 2 * before["cpuPeriodUs"]
-        or before["memoryLimitBytes"] != 3 * 1024**3
-        or before["pidsLimit"] != 128
-    ):
-        raise ValueError("Production qualification resource profile differs")
-    sys.argv = [
-        "transcribe",
-        "--audio",
-        "/qualification/audio.wav",
-        "--identity",
-        "/qualification/identity.json",
-    ]
-    captured = io.StringIO()
-    phases: dict[str, dict[str, float | int]] = {}
+def phase_profiler(
+    phases: dict[str, dict[str, float | int]],
+) -> Callable[[FrameType, str, object], None]:
+    """Identical non-operand timing instrumentation in both execution stacks."""
     started: dict[int, int] = {}
     measured = {
         "_load",
@@ -249,7 +235,29 @@ def measure() -> int:
             entry["calls"] += 1
             entry["wallTimeMs"] += elapsed
 
-    sys.setprofile(profile)
+    return profile
+
+
+def measure() -> int:
+    from editagent_ai_worker.composition.transcribe import main as transcribe
+
+    before = cgroup_snapshot()
+    if (
+        before["cpuQuotaUs"] != 2 * before["cpuPeriodUs"]
+        or before["memoryLimitBytes"] != 3 * 1024**3
+        or before["pidsLimit"] != 128
+    ):
+        raise ValueError("Production qualification resource profile differs")
+    sys.argv = [
+        "transcribe",
+        "--audio",
+        "/qualification/audio.wav",
+        "--identity",
+        "/qualification/identity.json",
+    ]
+    captured = io.StringIO()
+    phases: dict[str, dict[str, float | int]] = {}
+    sys.setprofile(phase_profiler(phases))
     try:
         with contextlib.redirect_stdout(captured):
             status = transcribe()
@@ -276,12 +284,52 @@ def measure() -> int:
     return status
 
 
+def host_control(directory: Path) -> int:
+    """Same-host diagnostic only: never impersonate Docker/cgroup qualification."""
+    from editagent_ai_worker.composition.transcribe import main as transcribe
+
+    sys.argv = [
+        sys.argv[0],
+        "--audio",
+        str(directory / "audio.wav"),
+        "--identity",
+        str(directory / "identity.json"),
+    ]
+    captured = io.StringIO()
+    phases: dict[str, dict[str, float | int]] = {}
+    sys.setprofile(phase_profiler(phases))
+    try:
+        with contextlib.redirect_stdout(captured):
+            status = transcribe()
+    finally:
+        sys.setprofile(None)
+    content = captured.getvalue()
+    if len(content) > 16_000_000:
+        raise ValueError("Native result exceeds private output bound")
+    print(
+        json.dumps(
+            {
+                "worker": json.loads(content),
+                "phases": phases,
+                "numericalRuntime": numerical_runtime_evidence(),
+                "logicalCpus": os.cpu_count(),
+                "affinityCpus": len(os.sched_getaffinity(0)),
+            }
+        )
+    )
+    return status
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=("prepare", "measure"))
+    parser.add_argument("mode", choices=("prepare", "measure", "host-control"))
     parser.add_argument("--repository", type=Path)
     parser.add_argument("--directory", type=Path)
     args = parser.parse_args()
+    if args.mode == "host-control":
+        if args.directory is None or not args.directory.is_dir():
+            raise ValueError("Dedicated prepared input directory is required")
+        return host_control(args.directory)
     if args.mode == "prepare":
         if (
             args.repository is None
