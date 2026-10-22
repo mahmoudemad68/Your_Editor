@@ -43,7 +43,7 @@ from editagent_ai_worker.infrastructure.config import (
 )
 from editagent_ai_worker.infrastructure.vad_audio import verify_audio_file, wav_parameters
 
-ASR_ALGORITHM = "ct2-contextual-v28"
+ASR_ALGORITHM = "ct2-contextual-v29"
 
 
 def uncovered_speech(audio: Any, words: list[Any], options: Any) -> list[tuple[int, int]]:
@@ -531,8 +531,8 @@ class FasterWhisperAdapter:
         """Refine only cells touching a detected switch using real source PCM.
 
         Four-second language cells are prompts, not observed speech boundaries.
-        Probe their two halves. A conflicting half-cell preference requires a
-        second, overlapping native probe at the existing 0.5 threshold. Six
+        Probe their two halves. A replacement must outrank the current prompt
+        in its half-cell and receive overlapping source support at 0.5. Six
         additional probes per boundary cell is the maximum; no whole-file
         language override, synthetic audio, words or word times are introduced.
         """
@@ -587,21 +587,33 @@ class FasterWhisperAdapter:
                                     (max(0, first - 2_000_000), last),
                                     (first, min(duration_us, last + 2_000_000)),
                                 )
-                                corroborated = False
+                                supported: set[str] = set()
                                 for context in contexts:
                                     if context == (first, last):
                                         continue
                                     alternative = probe(*context)
-                                    if alternative.get(preferred, 0.0) >= 0.5 and alternative[
-                                        preferred
-                                    ] == max(alternative.values()):
-                                        corroborated = True
-                                        break
-                                if not corroborated:
+                                    for candidate, value in alternative.items():
+                                        if (
+                                            candidate != language
+                                            and value >= 0.5
+                                            and value == max(alternative.values())
+                                            and evidence.get(candidate, 0.0)
+                                            > evidence.get(str(language), 0.0)
+                                        ):
+                                            supported.add(candidate)
+                                if len(supported) > 1:
                                     raise TranscriptionError(
                                         "ASR language evidence requires trustworthy redetection"
                                     )
-                            selected, confidence = preferred, evidence[preferred]
+                                if supported:
+                                    selected = next(iter(supported))
+                                    confidence = evidence[selected]
+                                # A lone short-probe preference is not stronger
+                                # evidence than the established source region.
+                                # Retain that prompt when no switch is confirmed;
+                                # never publish the uncorroborated alternative.
+                            else:
+                                selected, confidence = preferred, evidence[preferred]
                     if refined and refined[-1][2] == selected:
                         previous_start, _, _, previous = refined.pop()
                         confidence = (
@@ -1784,7 +1796,7 @@ class FasterWhisperAdapter:
                 "languageDetectionMinimumProbability": 0.5,
                 "languageDetection": "original-pcm-region-redetection-v1",
                 "languageDetectionEncoder": "native-unpadded-log-mel-v1",
-                "languageBoundaryRecovery": "corroborated-half-cell-original-pcm-v1",
+                "languageBoundaryRecovery": "corroborated-relative-half-cell-original-pcm-v2",
                 "languageBoundaryCellUs": 2000000,
                 "maximumAdditionalLanguageProbesPerBoundaryCell": 6,
                 "maximumLanguageFallbackPlans": 1 if self.settings.model == "tiny" else 0,

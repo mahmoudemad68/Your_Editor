@@ -3,7 +3,62 @@ import { test } from "node:test";
 import {
   inferenceConfigurationSha256,
   qualifyNumericalRuntime,
+  qualifyThreadEquivalent,
 } from "../../tools/asr/qualification.mjs";
+
+// Synthetic objects verify rejection controls, not real ASR or accuracy gold.
+function worker(threads) {
+  const parameters = { cpu_threads: threads, temperature: 0 };
+  return {
+    inferenceParameters: parameters,
+    section: {
+      data: { words: [{ text: " unit", startUs: "0", endUs: "20", confidence: 0.8 }] },
+      provenance: {
+        model: { sha256: "a".repeat(64) },
+        configurationSha256: inferenceConfigurationSha256(parameters),
+      },
+    },
+  };
+}
+
+test("cross-thread qualification compares full ordered data and verified provenance", () => {
+  const single = worker(1),
+    reference = worker(2);
+  const before = JSON.stringify([single, reference]);
+  qualifyThreadEquivalent(single, reference);
+  assert.equal(JSON.stringify([single, reference]), before);
+});
+
+for (const defect of [
+  "text",
+  "start",
+  "end",
+  "confidence",
+  "extra-word",
+  "model",
+  "configuration",
+  "parameter",
+]) {
+  test(`cross-thread qualification rejects actual output differences: ${defect}`, () => {
+    const single = worker(1),
+      reference = worker(2);
+    const word = single.section.data.words[0];
+    if (defect === "text") word.text = " other";
+    if (defect === "start") word.startUs = "1";
+    if (defect === "end") word.endUs = "21";
+    if (defect === "confidence") word.confidence = 0.81;
+    if (defect === "extra-word") single.section.data.words.push({ ...word });
+    if (defect === "model") single.section.provenance.model.sha256 = "b".repeat(64);
+    if (defect === "configuration") single.section.provenance.configurationSha256 = "b".repeat(64);
+    if (defect === "parameter") {
+      single.inferenceParameters.temperature = 1;
+      single.section.provenance.configurationSha256 = inferenceConfigurationSha256(
+        single.inferenceParameters,
+      );
+    }
+    assert.throws(() => qualifyThreadEquivalent(single, reference));
+  });
+}
 
 test("configuration digest matches Python's nested sort_keys serialization", () => {
   const parameters = {

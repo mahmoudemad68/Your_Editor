@@ -154,7 +154,32 @@ export function inferenceConfigurationSha256(settings) {
     .digest("hex");
 }
 
-function qualifyResult(result, model) {
+export function qualifyThreadEquivalent(single, reference) {
+  assert.equal(single.inferenceParameters.cpu_threads, 1);
+  assert.equal(reference.inferenceParameters.cpu_threads, 2);
+  for (const value of [single, reference])
+    assert.equal(
+      value.section.provenance.configurationSha256,
+      inferenceConfigurationSha256(value.inferenceParameters),
+    );
+  // Compare actual ordered native objects. Only the independently verified
+  // configuration identity may differ with the declared thread count.
+  assert.deepEqual(single.section.data, reference.section.data);
+  const provenance = [single, reference].map((value) => {
+    const copy = { ...value.section.provenance };
+    delete copy.configurationSha256;
+    return copy;
+  });
+  assert.deepEqual(...provenance);
+  const parameters = [single, reference].map((value) => {
+    const copy = { ...value.inferenceParameters };
+    delete copy.cpu_threads;
+    return copy;
+  });
+  assert.deepEqual(...parameters);
+}
+
+function qualifyResult(result, model, threads = 2) {
   const worker = result.worker;
   assert.equal(worker.section.status, "completed");
   assert.deepEqual(result.versions, {
@@ -170,7 +195,7 @@ function qualifyResult(result, model) {
   );
   for (const [key, expected] of Object.entries({
     model,
-    cpu_threads: 2,
+    cpu_threads: threads,
     workers: 1,
     timeout_ms: 600000,
     beam_size: 5,
@@ -185,7 +210,7 @@ function qualifyResult(result, model) {
     effectiveDevice: "cpu",
     effectiveComputeType: "int8",
     nativeCpuProfile: "onednn-avx2-strict-v4",
-    alignmentAlgorithm: "ct2-contextual-v28",
+    alignmentAlgorithm: "ct2-contextual-v29",
     numpyCpuProfile: "numpy-avx2-log-v2",
     numpyVersion: "2.4.6",
   }))
@@ -339,7 +364,9 @@ export async function main() {
       const measurements = [];
       report.models[model] = { status: "FAIL", measurements };
       let reference;
-      for (let pass = 0; pass < 2; pass++) {
+      let singleThreadMeasurement;
+      for (let pass = 0; pass < 3; pass++) {
+        const threads = pass === 2 ? 1 : 2;
         const name = "asr-qualification-" + randomUUID();
         const started = performance.now();
         try {
@@ -376,7 +403,7 @@ export async function main() {
               "-e",
               `EDITAGENT_ASR_MODEL=${model}`,
               "-e",
-              "EDITAGENT_ASR_CPU_THREADS=2",
+              `EDITAGENT_ASR_CPU_THREADS=${threads}`,
               "-e",
               "EDITAGENT_ASR_TIMEOUT_MS=600000",
               report.image,
@@ -396,15 +423,24 @@ export async function main() {
           });
           assert.equal(run.code, 0, "Production original inference failed");
           const result = JSON.parse(run.output);
-          measurements.push({
-            ...qualifyResult(result, model),
+          const measurement = {
+            ...qualifyResult(result, model, threads),
             containerWallTimeMs: performance.now() - started,
-          });
-          if (reference) {
+          };
+          if (threads === 1) {
+            // Retain completed measurement evidence even if tuple comparison
+            // fails. The public report contains no failed comparison operands.
+            report.models[model].singleThreadMeasurement = measurement;
+            report.models[model].singleThreadFullOutputEqualsDefault = false;
+            qualifyThreadEquivalent(result.worker, reference);
+            singleThreadMeasurement = measurement;
+            report.models[model].singleThreadFullOutputEqualsDefault = true;
+          } else measurements.push(measurement);
+          if (reference && threads === 2) {
             // Full actual native objects, including ordered words/confidence/provenance.
             assert.deepEqual(result.worker.section, reference.section);
             assert.deepEqual(result.worker.inferenceParameters, reference.inferenceParameters);
-          } else reference = result.worker;
+          } else if (!reference) reference = result.worker;
         } finally {
           execFileSync("docker", ["rm", "-f", name], { timeout: 15000, stdio: "ignore" });
         }
@@ -429,6 +465,8 @@ export async function main() {
         seed: 0,
         inferenceDeadlineMs: 600000,
         freshProcessFullOutputExactlyEqual: true,
+        singleThreadFullOutputEqualsDefault: true,
+        singleThreadMeasurement,
         phaseTiming:
           "Inclusive method wall times; nested phases are not additive; profiling overhead included",
         measurements,

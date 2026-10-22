@@ -90,6 +90,82 @@ def adapter_for(reader: OriginalPcm, unsupported: bool = False) -> Any:
 
 
 class BoundedLanguageRecoveryTests(unittest.TestCase):
+    def test_uncorroborated_short_probe_does_not_overrule_strong_source_region(self) -> None:
+        for confidence, region_probability in [(0.3, 0.9), (0.8, 0.9), (0.3, 0.4), (0.8, 0.4)]:
+            reader = OriginalPcm(16)
+            adapter = adapter_for(reader)
+
+            def detect(
+                encoded: Any, confidence: float = confidence, reader: OriginalPcm = reader
+            ) -> Any:
+                first, last = reader.reads[-1]
+                if (first, last) == (8 * 16000, 10 * 16000):
+                    return [[("<|ur|>", confidence)]]
+                return [[("<|ar|>" if first >= 8 * 16000 else "<|en|>", 0.9)]]
+
+            adapter.model.model.detect_language = detect
+            # A region's duration-weighted confidence may be below 0.5 even
+            # though its language came from a valid >=0.5 source-cell anchor.
+            regions = [(0, 8000000, "en", 0.9), (8000000, 16000000, "ar", region_probability)]
+            result = adapter._refine_language_boundaries(
+                reader, 16000000, regions, adapter.model, lambda: None
+            )
+            self.assertEqual(
+                [(a, b, language) for a, b, language, _ in result],
+                [(0, 8000000, "en"), (8000000, 16000000, "ar")],
+            )
+
+    def test_corroborated_relative_language_evidence_survives_noisy_short_top_label(self) -> None:
+        reader = OriginalPcm()
+        adapter = adapter_for(reader)
+        original = adapter.model.model.detect_language
+
+        def detect(encoded: Any) -> Any:
+            first, last = reader.reads[-1]
+            if (first, last) in {(6 * 16000, 8 * 16000), (12 * 16000, 14 * 16000)}:
+                return [[("<|ur|>", 0.45), ("<|ar|>", 0.4), ("<|en|>", 0.1)]]
+            return original(encoded)
+
+        adapter.model.model.detect_language = detect
+        result = adapter._refine_language_boundaries(
+            reader,
+            22000000,
+            [
+                (0, 8000000, "en", 0.9),
+                (8000000, 12000000, "ar", 0.9),
+                (12000000, 22000000, "en", 0.9),
+            ],
+            adapter.model,
+            lambda: None,
+        )
+        self.assertEqual(
+            [(a, b, language) for a, b, language, _ in result],
+            [(0, 6000000, "en"), (6000000, 14000000, "ar"), (14000000, 22000000, "en")],
+        )
+
+    def test_conflicting_corroborated_alternatives_cannot_choose_an_arbitrary_prompt(self) -> None:
+        reader = OriginalPcm()
+        adapter = adapter_for(reader)
+        original = adapter.model.model.detect_language
+
+        def detect(encoded: Any) -> Any:
+            first, last = reader.reads[-1]
+            if (first, last) == (6 * 16000, 8 * 16000):
+                return [[("<|ar|>", 0.4), ("<|fr|>", 0.3), ("<|en|>", 0.1)]]
+            if (first, last) == (4 * 16000, 8 * 16000):
+                return [[("<|fr|>", 0.9)]]
+            return original(encoded)
+
+        adapter.model.model.detect_language = detect
+        with self.assertRaisesRegex(TranscriptionError, "trustworthy redetection"):
+            adapter._refine_language_boundaries(
+                reader,
+                22000000,
+                [(0, 8000000, "en", 0.9), (8000000, 22000000, "ar", 0.9)],
+                adapter.model,
+                lambda: None,
+            )
+
     def test_offgrid_boundary_uses_corroborated_original_pcm_and_complete_partition(self) -> None:
         reader = OriginalPcm()
         adapter = adapter_for(reader)
@@ -110,17 +186,21 @@ class BoundedLanguageRecoveryTests(unittest.TestCase):
         self.assertIn((6 * 16000, 10 * 16000), reader.reads)
         self.assertIn((10 * 16000, 14 * 16000), reader.reads)
 
-    def test_unsupported_boundary_preference_cannot_publish_a_successful_plan(self) -> None:
+    def test_unsupported_fallback_cannot_publish_a_successful_plan(self) -> None:
         reader = OriginalPcm()
-        adapter = adapter_for(reader, unsupported=True)
+        adapter = adapter_for(reader)
+        adapter.settings.model = "tiny"
+        calls = []
+
+        def unavailable(*args: Any, **kwargs: Any) -> Any:
+            calls.append(1)
+            raise TranscriptionError("ASR language evidence requires trustworthy redetection")
+
+        adapter._planned_language_regions = unavailable
+        adapter._pinned_alignment_model = lambda check: object()
         with self.assertRaisesRegex(TranscriptionError, "trustworthy redetection"):
-            adapter._refine_language_boundaries(
-                reader,
-                22000000,
-                [(0, 8000000, "en", 0.9), (8000000, 22000000, "ar", 0.9)],
-                adapter.model,
-                lambda: None,
-            )
+            adapter._language_regions(reader, 22000000, lambda: None)
+        self.assertEqual(len(calls), 2)
 
     def test_same_language_does_not_add_encodes_or_change_plan(self) -> None:
         reader = OriginalPcm()
