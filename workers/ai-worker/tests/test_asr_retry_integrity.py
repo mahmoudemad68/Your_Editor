@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import unicodedata
 import unittest
 from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
@@ -26,6 +27,7 @@ namespace: dict[str, Any] = {
     "ROUND_HALF_UP": ROUND_HALF_UP,
     "Any": Any,
     "TranscriptionError": TranscriptionError,
+    "unicodedata": unicodedata,
 }
 body: list[ast.stmt] = list(functions)
 exec(compile(ast.Module(body=body, type_ignores=[]), str(SOURCE), "exec"), namespace)
@@ -68,10 +70,30 @@ class RetryIntegrityTests(unittest.TestCase):
                 verify([word(" unaligned", start, end)], [], 5, 0, 0, 5_000_000)
 
     def test_lexical_substitution_and_unicode_folding_are_rejected(self) -> None:
-        for original, retry in [(" kept", " replaced"), (" ß", " ss"), (" word,", " word.")]:
+        for original, retry in [
+            (" kept", " replaced"),
+            (" ß", " ss"),
+            (" re-cover", " recover"),
+            (" can't", " cant"),
+        ]:
             with self.subTest(original=original, retry=retry):
                 with self.assertRaisesRegex(TranscriptionError, "complete word coverage"):
                     verify([word(original, 1, 2)], [word(retry, 1, 2)], 5, 0, 0, 5_000_000)
+
+    def test_boundary_punctuation_does_not_hide_an_existing_lexical_match(self) -> None:
+        for original, retry in [
+            (" retained,", " retained."),
+            (' ( "retained" ) ', " retained!"),
+            (" مرحبا،", " مرحبا؟"),
+        ]:
+            with self.subTest(original=original, retry=retry):
+                before, after = [word(original, 1, 2)], [word(retry, 1, 2)]
+                expected = [vars(before[0]).copy(), vars(after[0]).copy()]
+                verify(before, after, 5, 0, 0, 5_000_000)
+                self.assertEqual([vars(before[0]), vars(after[0])], expected)
+
+    def test_punctuation_alone_is_not_missing_lexical_speech(self) -> None:
+        verify([word(" . ", 1, 2)], [], 5, 0, 0, 5_000_000)
 
     def test_neighbouring_context_is_not_owned_by_this_core(self) -> None:
         verify(

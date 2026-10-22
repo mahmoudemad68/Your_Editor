@@ -43,7 +43,7 @@ from editagent_ai_worker.infrastructure.config import (
 )
 from editagent_ai_worker.infrastructure.vad_audio import verify_audio_file, wav_parameters
 
-ASR_ALGORITHM = "ct2-contextual-v25"
+ASR_ALGORITHM = "ct2-contextual-v26"
 
 
 def uncovered_speech(audio: Any, words: list[Any], options: Any) -> list[tuple[int, int]]:
@@ -110,9 +110,27 @@ def verify_retry_word_coverage(
     owned by its neighboring window; collapsed/out-of-source intervals do not
     establish positive timing. This validates evidence without altering it.
     """
+
+    def lexical(text: str) -> str:
+        # Boundary punctuation can change between native hypotheses without
+        # omitting speech. Compare lexical content only; never rewrite output.
+        first, last = 0, len(text)
+        while first < last and (
+            text[first].isspace() or unicodedata.category(text[first]).startswith("P")
+        ):
+            first += 1
+        while first < last and (
+            text[last - 1].isspace() or unicodedata.category(text[last - 1]).startswith("P")
+        ):
+            last -= 1
+        return text[first:last]
+
     last_match = -1
     for word in original:
         if not 0 <= word.start < word.end <= original_duration:
+            continue
+        text = lexical(word.word)
+        if not text:
             continue
         midpoint_twice = microseconds(word.start, sample_offset) + microseconds(
             word.end, sample_offset
@@ -121,7 +139,7 @@ def verify_retry_word_coverage(
             continue
         for index in range(last_match + 1, len(replacement)):
             candidate = replacement[index]
-            if same_context_word(word.word, candidate.word) and max(
+            if same_context_word(text, lexical(candidate.word)) and max(
                 Decimal(str(word.start)), Decimal(str(candidate.start))
             ) < min(Decimal(str(word.end)), Decimal(str(candidate.end))):
                 last_match = index
