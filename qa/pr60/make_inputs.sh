@@ -11,6 +11,9 @@ test "$expected" = "$actual"
 ffmpeg -v error -y -f lavfi -i "testsrc2=size=320x240:rate=25:duration=8" -i "$wav" \
   -map 0:v:0 -map 1:a:0 -t 8 -c:v libx264 -preset veryfast -crf 16 -pix_fmt yuv420p -g 25 \
   -c:a aac -b:a 160k -ar 48000 -ac 2 -movflags +faststart "$out/qa-source.mp4"
+ffmpeg -v error -y -f lavfi -i "testsrc2=size=320x240:rate=25:duration=8" -i "$wav" \
+  -map 0:v:0 -map 1:a:0 -t 8 -c:v libx264 -preset veryfast -crf 20 -pix_fmt yuv420p -g 25 \
+  -c:a aac -b:a 128k -ar 48000 -ac 2 -movflags +faststart "$out/qa-timeout.mp4"
 ffmpeg -v error -y -f lavfi -i "testsrc2=size=320x240:rate=25:duration=8" \
   -t 8 -c:v libx264 -preset veryfast -crf 16 -pix_fmt yuv420p -g 25 -movflags +faststart "$out/qa-noaudio.mp4"
 sha256sum "$out"/*.mp4

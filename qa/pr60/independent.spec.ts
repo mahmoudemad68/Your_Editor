@@ -182,6 +182,7 @@ test("PR60 independent QA: US-210 real services and browser-to-export", async ({
   const library = page.getByRole("region", { name: "Media Library" });
   await expect(library.getByRole("link", { name: "Edit video" })).toBeVisible({ timeout: 120_000 });
   const M = new URL((await library.getByRole("link", { name: "Edit video" }).getAttribute("href"))!, page.url()).searchParams.get("media")!;
+  let M3 = "";
   await page.screenshot({ path: path.join(OUT, "01-upload-inspection.png"), fullPage: true, mask: hideAccount(page) });
 
   // ---------- QA-F1: US-210 ----------
@@ -303,7 +304,7 @@ test("PR60 independent QA: US-210 real services and browser-to-export", async ({
     });
   }
 
-  await probe("F1-15", "Concurrent retries are deduplicated (exactly one accepted)", "8 simultaneous retries with the same predecessor -> exactly one 2xx and exactly one new generation", async () => {
+  await probe("F1-15", "Concurrent retries are deduplicated", "8 simultaneous retries with the same predecessor -> every accepted response names the same stable job (contract: 'returns the stable new Job ID') and exactly one new generation", async () => {
     const prev = await latest(M, "transcript");
     const before = (await tasks(M)).filter((t) => t.analyzer === "transcript").length;
     const rs = await Promise.all(Array.from({ length: 8 }, () => retry(owner, M, "transcript", prev.job_id)));
@@ -311,7 +312,7 @@ test("PR60 independent QA: US-210 real services and browser-to-export", async ({
     const ids = [...new Set(ok.map((r) => r.json?.jobId))];
     if (ids[0]) await waitApplied(ids[0]);
     const after = (await tasks(M)).filter((t) => t.analyzer === "transcript").length;
-    return { pass: ok.length === 1 && after - before === 1, actual: { statuses: rs.map((r) => r.status).sort(), distinctAcceptedJobs: ids.length, newGenerations: after - before } };
+    return { pass: ok.length >= 1 && ids.length === 1 && after - before === 1 && rs.every((r) => (r.status >= 200 && r.status < 300) || r.status === 403 || r.status === 409), actual: { statuses: rs.map((r) => r.status).sort(), distinctAcceptedJobs: ids.length, newGenerations: after - before } };
   });
   await probe("F1-16", "Stale predecessor rejected", "retry naming an older generation is refused and creates no task", async () => {
     const t = (await tasks(M)).filter((x) => x.analyzer === "transcript");
@@ -323,6 +324,7 @@ test("PR60 independent QA: US-210 real services and browser-to-export", async ({
   // ---- Crash, timeout/cancellation and revocation (races retried until observed mid-flight) ----
   async function midFlight(u: User, analyzer: string, onRunning: (jobId: string) => Promise<void>) {
     for (let attempt = 1; attempt <= 4; attempt++) {
+      await waitApplied((await latest(M, analyzer)).job_id);
       const prev = await latest(M, analyzer);
       const r = await retry(u, M, analyzer, prev.job_id);
       if (r.status < 200 || r.status >= 300) throw new Error(`retry refused ${r.status}`);
@@ -351,28 +353,29 @@ test("PR60 independent QA: US-210 real services and browser-to-export", async ({
         audioIntact: canon(after.document.sections.audio) === canon(before.document.sections.audio), recoveryMs: Date.now() - killedAt, raceAttempts: r.attempt } };
   });
 
-  await probe("F1-18", "Deadline expiry cancels a running analysis and fences any late result", "job Cancelled; transcript section failed(timeout) with no fabricated data; audio intact; no late result after 30 s; a new retry restores completion", async () => {
-    const before = await dbDoc(M);
-    const r = await midFlight(owner, "transcript", async (j) => {
-      await q("UPDATE analysis_tasks SET deadline_at_ms=(extract(epoch FROM clock_timestamp())*1000)::bigint-1 WHERE job_id=$1", [j]);
-    });
-    if (!r) return { pass: null, actual: "job finished before it could be observed Running in 4 attempts" };
-    const status = await waitJob(r.jobId, terminal, 180_000, 500);
-    await waitApplied(r.jobId, 180_000).catch(() => null);
-    const mid = await dbDoc(M);
-    await sleep(30_000);
-    const [late] = await q("SELECT t.result IS NOT NULL AS has_result,j.status FROM analysis_tasks t JOIN jobs j ON j.id=t.job_id WHERE t.job_id=$1", [r.jobId]);
-    const later = await dbDoc(M);
-    const tr = mid.document.sections.transcript;
-    const restore = await retry(owner, M, "transcript", r.jobId);
-    const restored = restore.json?.jobId ? await waitApplied(restore.json.jobId) : null;
-    const final = await dbDoc(M);
-    return { pass: status === "Cancelled" && tr.status === "failed" && tr.failure?.code === "timeout" && !tr.data && !late.has_result && late.status === "Cancelled" &&
-        canon(later.document) === canon(mid.document) && canon(mid.document.sections.audio) === canon(before.document.sections.audio) &&
-        restored === "Completed" && final.document.sections.transcript.status === "completed",
-      actual: { jobStatus: status, section: { status: tr.status, code: tr.failure?.code, reason: tr.failure?.reason, retryable: tr.failure?.retryable, hasData: Boolean(tr.data) },
-        lateResultWritten: late.has_result, statusAfter30s: late.status, documentUnchangedAfter30s: canon(later.document) === canon(mid.document),
-        audioIntact: canon(mid.document.sections.audio) === canon(before.document.sections.audio), restoreStatus: restore.status, restoredJob: restored } };
+  await probe("F1-18", "Transcript deadline (operator timeout 4 s) fails closed and is isolated; no late result", "with EDITAGENT_ASR_TIMEOUT_MS=4000 on admission+AI worker, a new upload's transcript ends failed(timeout) with no data while audio completes; nothing changes 30 s later; DB refuses intent mutation", async () => {
+    const immutable = await q("UPDATE analysis_tasks SET deadline_at_ms=0 WHERE job_id=$1", [(await latest(M, "audio")).job_id]).then(() => "mutated", (e) => String(e.message).slice(0, 80));
+    const shortEnv = { ...process.env, EDITAGENT_ASR_TIMEOUT_MS: "4000" };
+    execFileSync("docker", ["compose", "up", "-d", "--no-build", "--wait", "--wait-timeout", "300", "media-worker", "ai-worker"], { cwd: APP, env: shortEnv, encoding: "utf8" });
+    try {
+      await page.goto(`/projects/${P}`);
+      await page.locator("#media-file").setInputFiles(path.join(INPUTS, "qa-timeout.mp4"));
+      M3 = await until(async () => (await q("SELECT id FROM media_assets WHERE project_id=$1 AND id<>$2 ORDER BY id DESC LIMIT 1", [P, M]))[0]?.id, 180_000, "timeout asset");
+      const { t, d } = await settled(M3, 300_000);
+      const tTask = t.filter((x: any) => x.analyzer === "transcript").at(-1);
+      const [cfg] = await q("SELECT configuration->'asr'->>'timeout_ms' AS timeout FROM analysis_tasks WHERE job_id=$1", [tTask.job_id]);
+      const mid = canon(d.document);
+      await sleep(30_000);
+      const [late] = await q("SELECT t.result IS NOT NULL AS has_result,j.status FROM analysis_tasks t JOIN jobs j ON j.id=t.job_id WHERE t.job_id=$1", [tTask.job_id]);
+      const after = await dbDoc(M3);
+      const tr = d.document.sections.transcript, au = d.document.sections.audio;
+      return { pass: tr.status === "failed" && tr.failure?.code === "timeout" && !tr.data && au.status === "completed" && !late.has_result &&
+          canon(after.document) === mid && immutable !== "mutated",
+        actual: { frozenTimeoutMs: cfg?.timeout, transcriptJob: tTask.status, attempts: tTask.attempts, section: { status: tr.status, code: tr.failure?.code, reason: tr.failure?.reason, retryable: tr.failure?.retryable, hasData: Boolean(tr.data) },
+          audioSection: au.status, lateResultAfter30s: late.has_result, statusAfter30s: late.status, documentUnchangedAfter30s: canon(after.document) === mid, intentMutationAttempt: immutable } };
+    } finally {
+      execFileSync("docker", ["compose", "up", "-d", "--no-build", "--wait", "--wait-timeout", "300", "media-worker", "ai-worker"], { cwd: APP, env: { ...process.env, EDITAGENT_ASR_TIMEOUT_MS: "600000" }, encoding: "utf8" });
+    }
   });
 
   await probe("F1-19", "Membership revocation during an editor-initiated run: no result published, other section intact, access removed", "revoked editor's job does not publish a completed transcript; audio intact; revoked user GET denied; owner retry restores", async () => {
@@ -404,7 +407,8 @@ test("PR60 independent QA: US-210 real services and browser-to-export", async ({
     return { pass: canon(before) === canon(after), actual: { identical: canon(before) === canon(after) } };
   });
 
-  await probe("F1-21", "Generation fencing invariant", "document sections equal the result of the newest generation; no Failed/Cancelled task holds a result", async () => {
+  await probe("F1-21", "Generation fencing invariant", "after all work settles, the transcript section equals the newest generation's result; no Failed/Cancelled task holds a result", async () => {
+    await settled(M);
     const t = await tasks(M), d = await dbDoc(M);
     const [tr] = await q("SELECT result FROM analysis_tasks WHERE media_asset_id=$1 AND analyzer='transcript' ORDER BY generation DESC LIMIT 1", [M]);
     const badResults = t.filter((x) => x.status !== "Completed" && x.has_result).length;
@@ -431,7 +435,7 @@ test("PR60 independent QA: US-210 real services and browser-to-export", async ({
   await probe("F1-23", "Video without an audio track: analysis is honest (no fabricated transcript)", "no 'completed' transcript/audio with data; explicit failed/not_available status or no document", async () => {
     await page.goto(`/projects/${P}`);
     await page.locator("#media-file").setInputFiles(noAudio);
-    const m2 = await until(async () => (await q("SELECT id FROM media_assets WHERE project_id=$1 AND id<>$2", [P, M]))[0]?.id, 180_000, "second asset");
+    const m2 = await until(async () => (await q("SELECT id FROM media_assets WHERE project_id=$1 AND id<>ALL($2::uuid[])", [P, [M, M3].filter(Boolean)]))[0]?.id, 180_000, "no-audio asset");
     await sleep(60_000);
     const r = await getDoc(owner, P, m2);
     const [insp] = await q("SELECT status FROM jobs WHERE subject_id=$1 AND job_type LIKE '%inspect%' ORDER BY created_at DESC LIMIT 1", [m2]).catch(() => [{}] as any);
@@ -467,7 +471,7 @@ test("PR60 independent QA: US-210 real services and browser-to-export", async ({
     const clipText = (await timeline.locator("[data-clip-id]").allInnerTexts()).map((s) => s.replace(/\s+/g, " ").trim());
     const [row] = await q("SELECT state_sha256,project_id FROM editing_timelines WHERE id=$1", [tid]);
     await page.screenshot({ path: path.join(OUT, "03-timeline.png"), fullPage: true, mask: hideAccount(page) });
-    return { pass: edited === reloaded && row?.state_sha256 === edited && row?.project_id === P && clipText.length === 2 && /0\.5.3/.test(clipText[0]) && /3.7/.test(clipText[1]),
+    return { pass: edited === reloaded && row?.state_sha256 === edited && row?.project_id === P && clipText.length === 2 && /Source 0\.5\d*\D+3 s/.test(clipText[0]) && /Source 3\D+7 s/.test(clipText[1]),
       actual: { clips: clipText, persistedAfterReload: edited === reloaded, dbStateMatches: row?.state_sha256 === edited, timelineChangedFromOriginal: original !== edited } };
   });
 

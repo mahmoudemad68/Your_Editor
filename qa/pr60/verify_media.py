@@ -60,8 +60,11 @@ def main():
         if inside(t, 1.0 / FPS):
             mae = float(np.abs(exp[i] - src[i]).mean()); kept_err.append(mae)
             cand = range(max(0, i - 3), min(len(src), i + 4))
-            best = min(cand, key=lambda j: float(np.abs(exp[i] - src[j]).mean()))
-            offsets.append(best - i)
+            errs = {j: float(np.abs(exp[i] - src[j]).mean()) for j in cand}
+            best = min(errs, key=errs.get)
+            # Same-time frame must be (within tolerance) the best match; on near-static content
+            # several neighbours tie, which is not evidence of a time shift.
+            offsets.append(0 if errs[i] - errs[best] <= 0.5 else best - i)
             kept_bad += mae > 12.0
         elif outside(t, 1.0 / FPS):
             black_bad += float(exp[i].mean()) > 16.0
