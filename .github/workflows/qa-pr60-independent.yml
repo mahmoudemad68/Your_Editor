@@ -209,7 +209,11 @@ jobs:
       - name: Start SeaweedFS (repository script)
         working-directory: app
         run: sh infra/seaweedfs/start-storage.sh --from-boot
+      - name: Existing ASR container build and US-210 orchestration test (unchanged; same order as repository CI)
+        working-directory: app
+        run: pnpm asr:container
       - name: Existing graduation integration test (unchanged)
+        if: ${{ !cancelled() }}
         working-directory: app
         env:
           PR_HEAD_SHA: ${{ env.QA_APP_SHA }}
