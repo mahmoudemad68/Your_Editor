@@ -111,8 +111,7 @@ export function acousticFixture(spec) {
   };
 }
 
-export async function acousticAcceptance() {
-  const analyzer = new FFmpegAudioAnalyzer(); // Unchanged -60 dB / 200 ms production defaults.
+export async function acousticAcceptance(analyzer = new FFmpegAudioAnalyzer()) {
   const directory = await mkdtemp(join(tmpdir(), "us204-acoustic-"));
   const clips = [];
   try {
