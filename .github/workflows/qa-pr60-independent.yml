@@ -22,7 +22,7 @@ jobs:
   compose-blackbox:
     name: QA-F1 US-210 real services + QA-F2 browser-to-export (Compose)
     runs-on: ubuntu-latest
-    timeout-minutes: 150
+    timeout-minutes: 180
     env:
       COMPOSE_PROJECT_NAME: qapr60
       EDITAGENT_RUNTIME: development

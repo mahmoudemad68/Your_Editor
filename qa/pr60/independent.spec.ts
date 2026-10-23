@@ -98,6 +98,16 @@ async function call(u: User | null, method: "GET" | "POST", url: string, body?: 
   if (!u) await ctx.dispose();
   return out;
 }
+// Administrative membership changes must respect the Project aggregate's chronology invariant
+// (membership.createdAt within [project.createdAt, project.updatedAt]), exactly as the product's own
+// membership commands advance updated_at/revision. A raw insert without this makes the Project unloadable.
+async function setMembership(project: string, user: string, role: "viewer" | "editor" | null) {
+  const now = Date.now();
+  if (role === null) await q("DELETE FROM project_memberships WHERE project_id=$1 AND user_id=$2", [project, user]);
+  else await q(`INSERT INTO project_memberships(project_id,user_id,role,created_at) VALUES($1,$2,$3,$4)
+    ON CONFLICT (project_id,user_id) DO UPDATE SET role=EXCLUDED.role`, [project, user, role, now]);
+  await q("UPDATE projects SET updated_at=GREATEST(updated_at,$2), revision=revision+1 WHERE id=$1", [project, now]);
+}
 const getDoc = async (u: User, p: string, m: string) => call(u, "GET", `/projects/${p}/media/${m}/analysis`);
 const tasks = (m: string) => q(
   `SELECT t.job_id,t.analyzer,t.generation::int AS generation,t.applied,j.status,(t.result IS NOT NULL) AS has_result,
@@ -206,9 +216,14 @@ test("PR60 independent QA: US-210 real services and browser-to-export", async ({
       language: tr?.data?.language, model: tr?.provenance?.model, words: wc, sectionStatuses: otherSections } };
   });
 
-  await probe("F1-04", "No fabricated outputs for unimplemented analyzers", "sections other than transcript/audio are not 'completed'", async () => {
-    const s = Object.entries(doc.sections).filter(([k]) => !["transcript", "audio"].includes(k));
-    return { pass: s.every(([, v]: any) => v.status !== "completed"), actual: Object.fromEntries(s.map(([k, v]: any) => [k, { status: v.status, code: v.failure?.code ?? v.reason ?? null }])) };
+  await probe("F1-04", "No fabricated outputs for unimplemented analyzers", "scenes/faces/objects are not 'completed'; metadata (implemented inspection) matches the real input (8 s, 320x240)", async () => {
+    const s = Object.entries(doc.sections).filter(([k]) => !["transcript", "audio", "metadata"].includes(k));
+    const meta = doc.sections.metadata;
+    const metaText = JSON.stringify(meta?.data ?? {});
+    const metaReal = meta?.status === "completed" && /320/.test(metaText) && /240/.test(metaText);
+    return { pass: s.every(([, v]: any) => v.status !== "completed") && metaReal,
+      actual: { unimplemented: Object.fromEntries(s.map(([k, v]: any) => [k, { status: v.status, code: v.failure?.code ?? v.reason ?? null }])),
+        metadata: { status: meta?.status, mentionsInputDimensions: metaReal, provenance: meta?.provenance ? { analyzer: meta.provenance.analyzer, analyzerVersion: meta.provenance.analyzerVersion } : null } } };
   });
 
   await probe("F1-05", "API document equals durable PostgreSQL document; asset route equals project route", "canonical equality across GET routes and media_analyses.document", async () => {
@@ -256,7 +271,7 @@ test("PR60 independent QA: US-210 real services and browser-to-export", async ({
     return { pass: p2.status === 201 && r.status >= 400, actual: { createStatus: p2.status, crossProjectRead: r.status } };
   });
   await probe("F1-11", "Viewer may read but not retry; CSRF enforced for owner retries", "viewer GET 200, viewer retry denied, owner retry without CSRF header 403, no new task", async () => {
-    await q("INSERT INTO project_memberships(project_id,user_id,role,created_at) VALUES($1,$2,'viewer',$3)", [P, member.id, Date.now()]);
+    await setMembership(P, member.id, "viewer");
     const before = (await tasks(M)).length;
     const g = await getDoc(member, P, M);
     const r = await retry(member, M, "audio", (await latest(M, "audio")).job_id);
@@ -361,10 +376,10 @@ test("PR60 independent QA: US-210 real services and browser-to-export", async ({
   });
 
   await probe("F1-19", "Membership revocation during an editor-initiated run: no result published, other section intact, access removed", "revoked editor's job does not publish a completed transcript; audio intact; revoked user GET denied; owner retry restores", async () => {
-    await q("UPDATE project_memberships SET role='editor' WHERE project_id=$1 AND user_id=$2", [P, member.id]);
+    await setMembership(P, member.id, "editor");
     const before = await dbDoc(M);
     const r = await midFlight(member, "transcript", async () => {
-      await q("DELETE FROM project_memberships WHERE project_id=$1 AND user_id=$2", [P, member.id]);
+      await setMembership(P, member.id, null);
     });
     if (!r) return { pass: null, actual: "job finished before it could be observed Running in 4 attempts" };
     const status = await waitJob(r.jobId, terminal, 300_000, 500);
@@ -409,7 +424,8 @@ test("PR60 independent QA: US-210 real services and browser-to-export", async ({
     await sleep(10_000);
     const assets2 = (await q("SELECT count(*)::int AS n FROM media_assets WHERE project_id=$1", [P]))[0].n;
     const sameId = JSON.stringify(body ?? "").includes(M);
-    return { pass: res.status() < 300 && sameId && assets2 === assets && (await tasks(M)).length === nTasks, actual: { status: res.status(), returnsSameAsset: sameId, newAssets: assets2 - assets, newTasks: (await tasks(M)).length - nTasks } };
+    const shape = body && typeof body === "object" ? { keys: Object.keys(body).sort(), ok: body.ok ?? null, status: body.status ?? null, dataKeys: body.data && typeof body.data === "object" ? Object.keys(body.data).sort() : null } : null;
+    return { pass: res.status() < 300 && sameId && assets2 === assets && (await tasks(M)).length === nTasks, actual: { status: res.status(), returnsSameAsset: sameId, responseShape: shape, newAssets: assets2 - assets, newTasks: (await tasks(M)).length - nTasks } };
   });
 
   await probe("F1-23", "Video without an audio track: analysis is honest (no fabricated transcript)", "no 'completed' transcript/audio with data; explicit failed/not_available status or no document", async () => {
