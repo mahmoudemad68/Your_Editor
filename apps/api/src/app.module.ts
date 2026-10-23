@@ -1,4 +1,11 @@
 import { MediaInspectionJobs, type InspectionJobs } from "./application/inspection-job.js";
+import { TimelineEditor } from "./application/timeline-editor.js";
+import { TimelineEditorController } from "./presentation/timeline-editor.controller.js";
+import { TimelineExports } from "./application/timeline-exports.js";
+import { TimelineExportsController } from "./presentation/timeline-exports.controller.js";
+import { type AnalysisReader } from "@editagent/analysis-core";
+import { GetMediaAnalysis } from "./application/media-analysis.js";
+import { MediaAnalysisController } from "./presentation/media-analysis.controller.js";
 import { InspectionJobController } from "./presentation/inspection-job.controller.js";
 import { ProjectJobEvents } from "./application/job-events.js";
 import { JobEventsController } from "./presentation/job-events.controller.js";
@@ -58,6 +65,9 @@ import {
 import { type SessionTokens } from "./application/session-tokens.js";
 
 export interface ApiComposition {
+  readonly editor?: Pick<TimelineEditor, "create" | "read" | "edit">;
+  readonly timelineExports?: Pick<TimelineExports, "start" | "read" | "cancel" | "download">;
+  readonly analysis?: AnalysisReader;
   readonly jobEvents?: JobEventSubscriber;
   readonly inspectionJobs?: InspectionJobs;
   readonly projects: ProjectRepository;
@@ -102,12 +112,33 @@ export class AppModule {
         ProjectsController,
         UploadsController,
         MediaController,
+        ...(composition.editor === undefined ? [] : [TimelineEditorController]),
+        ...(composition.timelineExports === undefined ? [] : [TimelineExportsController]),
+        ...(composition.analysis === undefined ? [] : [MediaAnalysisController]),
         ...(composition.inspectionJobs === undefined ? [] : [InspectionJobController]),
         ...(composition.jobEvents === undefined ? [] : [JobEventsController]),
         ...(composition.uploadSessions === undefined ? [] : [MultipartController]),
         ...(composition.auth === undefined ? [] : [AuthController]),
       ],
       providers: [
+        ...(composition.timelineExports === undefined
+          ? []
+          : [{ provide: TimelineExports, useValue: composition.timelineExports }]),
+        ...(composition.editor === undefined
+          ? []
+          : [{ provide: TimelineEditor, useValue: composition.editor }]),
+        ...(composition.analysis === undefined
+          ? []
+          : [
+              {
+                provide: GetMediaAnalysis,
+                useValue: new GetMediaAnalysis(
+                  new GetMediaDetails(composition.projects, composition.media),
+                  composition.analysis,
+                  composition.media,
+                ),
+              },
+            ]),
         ...(composition.inspectionJobs === undefined
           ? []
           : [

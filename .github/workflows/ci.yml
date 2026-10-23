@@ -14,8 +14,8 @@ permissions:
   contents: read
 
 jobs:
-  ci:
-    name: ci
+  repository:
+    name: repository checks
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -174,21 +174,51 @@ jobs:
           git lfs ls-files
           pnpm test:fixtures
 
-      # pnpm test includes the generated API-client gate, domain coverage,
-      # pytest, Testcontainers and harness Playwright; execute each once.
-      - name: Test
+      # Keep all Node, contract, domain, Python-unit, service and browser tests.
+      # All complete real-ASR files run in the required matrix below.
+      - name: Test (real inference runs in required matrix)
+        env:
+          PYTEST_ADDOPTS: >-
+            --ignore=tests/test_real_asr.py
+            --ignore=tests/test_real_multilingual_asr.py
+            --ignore=tests/test_real_model_reuse.py
         run: pnpm test
 
-      - name: Real production render, cancellation and timeline golden frames
-        run: pnpm render:test
-
-      - name: Upload real render evidence
+      - name: Real non-root CPU ASR, S3 readiness and crash recovery
         if: ${{ !cancelled() }}
+        run: pnpm asr:container
+
+      - name: Real production render, cancellation and timeline golden frames
+        if: ${{ !cancelled() }}
+        env:
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: pnpm render:test --graduation-demo
+
+      - name: Audit graduation demonstration evidence
+        id: graduation-audit
+        if: ${{ !cancelled() }}
+        run: |
+          if [ -d .local/graduation-demo-public ]; then
+            python3 tools/test/audit-artifacts.py .local/graduation-demo-public
+          fi
+
+      - name: Upload allowlisted test summary
+        if: ${{ !cancelled() && steps.graduation-audit.outcome == 'success' }}
         uses: actions/upload-artifact@v7
         with:
-          name: render-evidence-${{ github.sha }}
+          name: test-summary-${{ github.sha }}
           if-no-files-found: ignore
-          path: .local/render-batch/
+          # Exact allowlist: counts and the newly generated graduation demo.
+          # Native diagnostics, private logs, gold and existing render evidence
+          # remain excluded. Screenshots mask account identity and transcript.
+          path: |
+            .local/asr-public/test-summary.json
+            .local/graduation-demo-public/report.json
+            .local/graduation-demo-public/upload-inspection.png
+            .local/graduation-demo-public/analysis-status.png
+            .local/graduation-demo-public/timeline.png
+            .local/graduation-demo-public/export.png
+            .local/graduation-demo-public/demo-export.mp4
 
       - name: Upload coverage reports
         if: ${{ !cancelled() }}
@@ -202,3 +232,82 @@ jobs:
             packages/*/coverage/lcov.info
             workers/*/coverage/lcov.info
             workers/ai-worker/coverage.xml
+
+  real-asr:
+    name: real ASR (${{ matrix.shard }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard:
+          - native
+          - languages
+          - state-single
+          - state-multi
+          - long-input
+          - alignment
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          lfs: true
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v10.2.0
+        with:
+          cache-python: true
+          enable-cache: true
+      - name: Install pinned audio runtime
+        run: sh tools/test/ensure-ffmpeg.sh
+      - name: Prepare immutable offline models
+        working-directory: workers/ai-worker
+        run: |
+          uv sync --frozen
+          uv run python -m editagent_ai_worker.infrastructure.vad_model
+          uv run python -m editagent_ai_worker.infrastructure.asr_model --root ../../.local/asr-models --model tiny
+          uv run python -m editagent_ai_worker.infrastructure.asr_model --root ../../.local/asr-models --model small
+      - name: Check complete real-inference partition
+        working-directory: workers/ai-worker
+        run: uv run python ../../tools/asr/test_partition.py --check
+      - name: Run every assigned real-inference test
+        working-directory: workers/ai-worker
+        run: uv run python ../../tools/asr/test_partition.py --shard "${{ matrix.shard }}"
+      - name: Setup pinned Node for production qualification
+        if: ${{ !cancelled() && matrix.shard == 'long-input' }}
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+      - name: Original ten-minute inference in the production CPU jail
+        if: ${{ !cancelled() && matrix.shard == 'long-input' }}
+        env:
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          # Sequential runs retain this job's existing 45m cap and the 600000ms inference limit.
+          node tools/asr/container.mjs --build-only --model tiny
+          node tools/asr/qualification.mjs
+      - name: Upload allowlisted test summary
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: asr-test-summary-${{ matrix.shard }}-${{ github.sha }}
+          if-no-files-found: error
+          path: |
+            .local/asr-public/test-summary.json
+
+  ci:
+    name: ci
+    runs-on: ubuntu-latest
+    needs: [repository, real-asr]
+    if: ${{ always() }}
+    steps:
+      - name: Require repository checks and every real-inference shard
+        env:
+          REPOSITORY_RESULT: ${{ needs.repository.result }}
+          REAL_ASR_RESULT: ${{ needs['real-asr'].result }}
+        run: |
+          test "$REPOSITORY_RESULT" = success
+          test "$REAL_ASR_RESULT" = success

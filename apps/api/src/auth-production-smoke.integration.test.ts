@@ -1,6 +1,8 @@
 /**
  * Production bootstrap smoke. Staging must refuse authentication cookies that
  * are not marked Secure, and a staging process with Secure cookies can register.
+ * API test files run serially: concurrent cold Nest boots plus password hashing
+ * must not oversubscribe the CI CPU budget. The startup deadline stays 10s.
  */
 import assert from "node:assert/strict";
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
@@ -64,6 +66,7 @@ test("staging refuses insecure authentication cookies and a secure process can s
     env: runtimeEnv(databaseUrl, "staging", "true", "34118"),
     stdio: ["ignore", "pipe", "pipe"],
   });
+  const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
   let output = "";
   child.stdout?.on("data", (chunk: Buffer) => {
     output += chunk.toString();
@@ -74,18 +77,34 @@ test("staging refuses insecure authentication cookies and a secure process can s
   try {
     const base = "http://127.0.0.1:34118";
     let ready = false;
+    let lastStatus: number | null = null;
+    const startedAt = performance.now();
+    const deadline = startedAt + 10_000;
     for (let attempt = 0; attempt < 40; attempt += 1) {
+      const remaining = deadline - performance.now();
+      if (remaining <= 0 || child.exitCode !== null || child.signalCode !== null) break;
       try {
-        const health = await fetch(`${base}/health`);
+        const health = await fetch(`${base}/health`, {
+          signal: AbortSignal.timeout(Math.max(1, Math.min(250, Math.floor(remaining)))),
+        });
+        lastStatus = health.status;
+        await health.arrayBuffer();
         if (health.status === 200) {
           ready = true;
           break;
         }
       } catch {
-        await new Promise((resolve) => setTimeout(resolve, 250));
+        /* Startup has not bound its socket yet. */
       }
+      await new Promise((resolve) =>
+        setTimeout(resolve, Math.max(0, Math.min(250, deadline - performance.now()))),
+      );
     }
-    assert.equal(ready, true, output);
+    assert.equal(
+      ready,
+      true,
+      `Production bootstrap did not become healthy within 10s; lastStatus=${lastStatus}, exitCode=${child.exitCode}. ${output}`,
+    );
     const registered = await fetch(`${base}/auth/register`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -133,6 +152,6 @@ test("staging refuses insecure authentication cookies and a secure process can s
     assert.equal(refreshed.status, 200, await refreshed.clone().text());
   } finally {
     child.kill("SIGTERM");
-    await new Promise((resolve) => child.once("exit", () => resolve(undefined)));
+    await exited;
   }
 });

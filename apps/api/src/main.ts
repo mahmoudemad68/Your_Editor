@@ -1,4 +1,5 @@
 import { PostgresInspectionJobs } from "./infrastructure/postgres-inspection-jobs.js";
+import { PostgresAnalysis } from "@editagent/analysis-core";
 import { RedisJobEventPublisher, RedisJobEventSubscriber } from "@editagent/job-queue";
 import { PostgresUploadSessionRepository } from "./infrastructure/postgres-upload-sessions.js";
 import { GetCurrentUser } from "./application/current-user.js";
@@ -40,11 +41,20 @@ import {
 } from "./infrastructure/postgres-upload-publication.js";
 import { S3ObjectStorage } from "./infrastructure/s3-object-storage.js";
 import { SystemClock } from "./infrastructure/system-clock.js";
+import { TimelineEditor } from "./application/timeline-editor.js";
+import { TimelineExports } from "./application/timeline-exports.js";
+import { GetMediaDetails } from "./application/media-details.js";
 
 export async function bootstrap(): Promise<void> {
   startNoopTracing("api");
   const logger = createServiceLogger("api");
   const config = loadApiConfig();
+  const [{ PostgresTimelineStore }, { PostgresTimelineRenders }, { timelineProposals }] =
+    await Promise.all([
+      import("./infrastructure/postgres-timeline-store.js"),
+      import("./infrastructure/postgres-timeline-renders.js"),
+      import("./infrastructure/timeline-proposals.js"),
+    ]);
   const pool = new Pool({ connectionString: config.databaseUrl });
   observePostgresPool(pool, () => {
     logger.error({ errorCode: "postgres_connection_lost" }, "postgres.pool.disconnected");
@@ -83,7 +93,39 @@ export async function bootstrap(): Promise<void> {
     workerId: `api-${randomBytes(8).toString("hex")}`,
   });
   const recovery = startPublicationRecovery(publication);
+  const projects = new PostgresProjectRepository(pool),
+    media = new PostgresMediaAssetRepository(pool);
+  const objects = new S3ObjectStorage(config.objectStorage);
+  const timelines = new PostgresTimelineStore(pool);
+  const editor = new TimelineEditor(
+    projects,
+    new GetMediaDetails(projects, media),
+    timelines,
+    timelineProposals(pool, timelines),
+    clock,
+    () => createUuidV7(Date.now(), randomBytes(10)),
+  );
+  const renders = new PostgresTimelineRenders(
+    pool,
+    {
+      jobs,
+      queue,
+      now: () => clock.now(),
+      newAttemptId: () => createUuidV7(Date.now(), randomBytes(10)),
+      supervisor: {
+        async run() {
+          throw new Error("API does not execute Jobs.");
+        },
+      },
+    },
+    config.renderVersion,
+  );
   const app = await createApiApplication({
+    editor,
+    timelineExports: new TimelineExports(projects, editor, renders, objects, (key, ttl) =>
+      objects.presignDownload(key, ttl),
+    ),
+    analysis: new PostgresAnalysis(pool),
     jobEvents: new RedisJobEventSubscriber(config.redisUrl, logger),
     inspectionJobs: new PostgresInspectionJobs(
       pool,
@@ -104,12 +146,12 @@ export async function bootstrap(): Promise<void> {
         newJobId: () => createUuidV7(Date.now(), randomBytes(10)),
       },
     ),
-    projects: new PostgresProjectRepository(pool),
+    projects,
     clock,
     ids: new NodeProjectIdGenerator(),
-    media: new PostgresMediaAssetRepository(pool),
+    media,
     derivedAssets: new PostgresDerivedAssetReader(pool),
-    objects: new S3ObjectStorage(config.objectStorage),
+    objects,
     mediaIds: new NodeMediaAssetIdGenerator(),
     presignTtlSeconds: config.objectStorage.presignTtlSeconds,
     uploadSessions: new PostgresUploadSessionRepository(pool),

@@ -39,7 +39,14 @@ export async function consumeMediaJobs(
         {
           jobs,
           queue,
-          supervisor,
+          supervisor: {
+            run: (envelope, selectedHandler, jobSignal) =>
+              supervisor.run(
+                envelope,
+                selectedHandler,
+                signal === undefined ? jobSignal : AbortSignal.any([signal, jobSignal]),
+              ),
+          },
           now: () => instant(BigInt(Date.now())),
           newAttemptId: () => createUuidV7(Date.now(), randomBytes(10)),
           onLifecycle: (event) => {

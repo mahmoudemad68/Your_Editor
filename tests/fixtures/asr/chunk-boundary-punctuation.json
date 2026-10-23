@@ -1,0 +1,631 @@
+{
+  "createdBy": "machine_generated",
+  "sourceId": "commons-148215183",
+  "fixtureFile": "en-chunks.wav",
+  "fixtureSha256": "8686fa55c9a1dd06b886ea8bf06ebebfb787a160c617392d42d93caeb96f8ea0",
+  "scopeStartUs": 96000000,
+  "scopeEndUs": 156000000,
+  "boundaryUs": 120000000,
+  "rightContextStartUs": 118000000,
+  "purpose": "Actual tiny/int8 native context punctuation conflict; diagnostic only, not evaluation gold",
+  "observedCodeHead": "8afb96fb3907d2903d7e8b2ddabfe7334cf8d58c",
+  "experimentalNativeProfile": {
+    "CT2_USE_MKL": "0",
+    "CT2_PACKED_GEMM": "0",
+    "CT2_FORCE_CPU_ISA": "AVX2",
+    "ONEDNN_MAX_CPU_ISA": "AVX2",
+    "DNNL_MAX_CPU_ISA": "AVX2",
+    "ONEDNN_DEFAULT_FPMATH_MODE": "strict",
+    "DNNL_DEFAULT_FPMATH_MODE": "strict"
+  },
+  "observedLeftPrefix": [
+    {
+      "text": " In",
+      "startUs": "97020000",
+      "endUs": "97400000",
+      "confidence": 0.9336094856262207
+    },
+    {
+      "text": " Wikidata,",
+      "startUs": "97400000",
+      "endUs": "98100000",
+      "confidence": 0.6678996632496516
+    },
+    {
+      "text": " references",
+      "startUs": "98240000",
+      "endUs": "98660000",
+      "confidence": 0.7484084367752075
+    },
+    {
+      "text": " provide",
+      "startUs": "98660000",
+      "endUs": "99340000",
+      "confidence": 0.7502479553222656
+    },
+    {
+      "text": " source",
+      "startUs": "99340000",
+      "endUs": "99800000",
+      "confidence": 0.9587877988815308
+    },
+    {
+      "text": " information",
+      "startUs": "99800000",
+      "endUs": "100440000",
+      "confidence": 0.9987840056419373
+    },
+    {
+      "text": " that",
+      "startUs": "100440000",
+      "endUs": "101160000",
+      "confidence": 0.9873360991477966
+    },
+    {
+      "text": " shows",
+      "startUs": "101160000",
+      "endUs": "101660000",
+      "confidence": 0.9954223036766052
+    },
+    {
+      "text": " where",
+      "startUs": "101660000",
+      "endUs": "102140000",
+      "confidence": 0.9614303708076477
+    },
+    {
+      "text": " the",
+      "startUs": "102140000",
+      "endUs": "102300000",
+      "confidence": 0.9832415580749512
+    },
+    {
+      "text": " information",
+      "startUs": "102300000",
+      "endUs": "102720000",
+      "confidence": 0.9958910942077637
+    },
+    {
+      "text": " for",
+      "startUs": "102720000",
+      "endUs": "103200000",
+      "confidence": 0.9921451210975647
+    },
+    {
+      "text": " a",
+      "startUs": "103200000",
+      "endUs": "103340000",
+      "confidence": 0.9944695234298706
+    },
+    {
+      "text": " particular",
+      "startUs": "103340000",
+      "endUs": "103700000",
+      "confidence": 0.9874032735824585
+    },
+    {
+      "text": " statement",
+      "startUs": "103700000",
+      "endUs": "104340000",
+      "confidence": 0.990227460861206
+    },
+    {
+      "text": " originated.",
+      "startUs": "104340000",
+      "endUs": "105040000",
+      "confidence": 0.9781434535980225
+    },
+    {
+      "text": " They",
+      "startUs": "106280000",
+      "endUs": "106380000",
+      "confidence": 0.9898802042007446
+    },
+    {
+      "text": " are",
+      "startUs": "106380000",
+      "endUs": "106600000",
+      "confidence": 0.9959490299224854
+    },
+    {
+      "text": " created",
+      "startUs": "106600000",
+      "endUs": "107200000",
+      "confidence": 0.9947821497917175
+    },
+    {
+      "text": " inside",
+      "startUs": "107200000",
+      "endUs": "108060000",
+      "confidence": 0.9738233685493469
+    },
+    {
+      "text": " of",
+      "startUs": "108060000",
+      "endUs": "108380000",
+      "confidence": 0.7965075969696045
+    },
+    {
+      "text": " a",
+      "startUs": "108380000",
+      "endUs": "108480000",
+      "confidence": 0.9943597912788391
+    },
+    {
+      "text": " statement",
+      "startUs": "108480000",
+      "endUs": "108760000",
+      "confidence": 0.9833683371543884
+    },
+    {
+      "text": " group",
+      "startUs": "108760000",
+      "endUs": "109320000",
+      "confidence": 0.9952656030654907
+    },
+    {
+      "text": " by",
+      "startUs": "109320000",
+      "endUs": "109900000",
+      "confidence": 0.9878917932510376
+    },
+    {
+      "text": " clicking",
+      "startUs": "109900000",
+      "endUs": "110340000",
+      "confidence": 0.995225191116333
+    },
+    {
+      "text": " on",
+      "startUs": "110340000",
+      "endUs": "110840000",
+      "confidence": 0.9774779081344604
+    },
+    {
+      "text": " plus",
+      "startUs": "110840000",
+      "endUs": "111200000",
+      "confidence": 0.5000184774398804
+    },
+    {
+      "text": " add",
+      "startUs": "111200000",
+      "endUs": "111820000",
+      "confidence": 0.4516989588737488
+    },
+    {
+      "text": " reference.",
+      "startUs": "111820000",
+      "endUs": "112360000",
+      "confidence": 0.978467583656311
+    },
+    {
+      "text": " So",
+      "startUs": "113430000",
+      "endUs": "113610000",
+      "confidence": 0.9358320832252502
+    },
+    {
+      "text": " in",
+      "startUs": "113610000",
+      "endUs": "113690000",
+      "confidence": 0.8991215229034424
+    },
+    {
+      "text": " this",
+      "startUs": "113690000",
+      "endUs": "114070000",
+      "confidence": 0.9990623593330383
+    },
+    {
+      "text": " example,",
+      "startUs": "114070000",
+      "endUs": "114650000",
+      "confidence": 0.9984299540519714
+    },
+    {
+      "text": " we",
+      "startUs": "115360000",
+      "endUs": "115460000",
+      "confidence": 0.9946042895317078
+    },
+    {
+      "text": " have",
+      "startUs": "115460000",
+      "endUs": "115760000",
+      "confidence": 0.9992753863334656
+    },
+    {
+      "text": " the",
+      "startUs": "115760000",
+      "endUs": "116020000",
+      "confidence": 0.9592403769493103
+    },
+    {
+      "text": " date",
+      "startUs": "116020000",
+      "endUs": "116240000",
+      "confidence": 0.7746506333351135
+    },
+    {
+      "text": " of",
+      "startUs": "116240000",
+      "endUs": "116460000",
+      "confidence": 0.996434211730957
+    },
+    {
+      "text": " death",
+      "startUs": "116460000",
+      "endUs": "116740000",
+      "confidence": 0.989437460899353
+    },
+    {
+      "text": " of",
+      "startUs": "116740000",
+      "endUs": "117060000",
+      "confidence": 0.9978905320167542
+    },
+    {
+      "text": " Katherine",
+      "startUs": "117060000",
+      "endUs": "117400000",
+      "confidence": 0.5489203929901123
+    },
+    {
+      "text": " Johnson",
+      "startUs": "117400000",
+      "endUs": "118000000",
+      "confidence": 0.9862779974937439
+    },
+    {
+      "text": " with",
+      "startUs": "118320000",
+      "endUs": "119060000",
+      "confidence": 0.4905456304550171
+    },
+    {
+      "text": " a",
+      "startUs": "119060000",
+      "endUs": "119340000",
+      "confidence": 0.7847930788993835
+    },
+    {
+      "text": " value",
+      "startUs": "119340000",
+      "endUs": "119620000",
+      "confidence": 0.9809914231300354
+    },
+    {
+      "text": " of",
+      "startUs": "119620000",
+      "endUs": "120120000",
+      "confidence": 0.789924681186676
+    },
+    {
+      "text": " 24",
+      "startUs": "120200000",
+      "endUs": "121020000",
+      "confidence": 0.7898608446121216
+    },
+    {
+      "text": " February.",
+      "startUs": "121020000",
+      "endUs": "121640000",
+      "confidence": 0.9653470516204834
+    }
+  ],
+  "observedRightContext": [
+    {
+      "text": " With",
+      "startUs": "118000000",
+      "endUs": "118960000",
+      "confidence": 0.38230928778648376
+    },
+    {
+      "text": " a",
+      "startUs": "118960000",
+      "endUs": "119120000",
+      "confidence": 0.4449133574962616
+    },
+    {
+      "text": " value",
+      "startUs": "119120000",
+      "endUs": "119480000",
+      "confidence": 0.9786943197250366
+    },
+    {
+      "text": " of",
+      "startUs": "119480000",
+      "endUs": "120020000",
+      "confidence": 0.9965634942054749
+    },
+    {
+      "text": " 24",
+      "startUs": "120020000",
+      "endUs": "120940000",
+      "confidence": 0.9226003289222717
+    },
+    {
+      "text": " February",
+      "startUs": "120940000",
+      "endUs": "121560000",
+      "confidence": 0.8719579577445984
+    },
+    {
+      "text": " 2020,",
+      "startUs": "121560000",
+      "endUs": "122940000",
+      "confidence": 0.9597290754318237
+    },
+    {
+      "text": " there",
+      "startUs": "123580000",
+      "endUs": "124520000",
+      "confidence": 0.9555928707122803
+    },
+    {
+      "text": " are",
+      "startUs": "124520000",
+      "endUs": "124740000",
+      "confidence": 0.9976674914360046
+    },
+    {
+      "text": " three",
+      "startUs": "124740000",
+      "endUs": "125320000",
+      "confidence": 0.8673068881034851
+    },
+    {
+      "text": " references",
+      "startUs": "125320000",
+      "endUs": "126080000",
+      "confidence": 0.9918700456619263
+    },
+    {
+      "text": " for",
+      "startUs": "126080000",
+      "endUs": "126920000",
+      "confidence": 0.9845356345176697
+    },
+    {
+      "text": " this",
+      "startUs": "126920000",
+      "endUs": "127260000",
+      "confidence": 0.9954259991645813
+    },
+    {
+      "text": " information",
+      "startUs": "127260000",
+      "endUs": "127980000",
+      "confidence": 0.9968134760856628
+    },
+    {
+      "text": " and",
+      "startUs": "127980000",
+      "endUs": "129220000",
+      "confidence": 0.3471081554889679
+    },
+    {
+      "text": " shown",
+      "startUs": "129220000",
+      "endUs": "129560000",
+      "confidence": 0.9721643924713135
+    },
+    {
+      "text": " here",
+      "startUs": "129560000",
+      "endUs": "129900000",
+      "confidence": 0.9961477518081665
+    },
+    {
+      "text": " we",
+      "startUs": "129900000",
+      "endUs": "130260000",
+      "confidence": 0.7438443303108215
+    },
+    {
+      "text": " have",
+      "startUs": "130260000",
+      "endUs": "130540000",
+      "confidence": 0.9982141256332397
+    },
+    {
+      "text": " the",
+      "startUs": "130540000",
+      "endUs": "131020000",
+      "confidence": 0.9786877632141113
+    },
+    {
+      "text": " first",
+      "startUs": "131020000",
+      "endUs": "131360000",
+      "confidence": 0.9891855716705322
+    },
+    {
+      "text": " one",
+      "startUs": "131360000",
+      "endUs": "131660000",
+      "confidence": 0.9961875081062317
+    },
+    {
+      "text": " as",
+      "startUs": "131660000",
+      "endUs": "132120000",
+      "confidence": 0.9625135660171509
+    },
+    {
+      "text": " a",
+      "startUs": "132120000",
+      "endUs": "132280000",
+      "confidence": 0.9525871276855469
+    },
+    {
+      "text": " reference",
+      "startUs": "132280000",
+      "endUs": "132740000",
+      "confidence": 0.9688291549682617
+    },
+    {
+      "text": " URL",
+      "startUs": "132740000",
+      "endUs": "133540000",
+      "confidence": 0.9371191263198853
+    },
+    {
+      "text": " to",
+      "startUs": "133540000",
+      "endUs": "134520000",
+      "confidence": 0.959195613861084
+    },
+    {
+      "text": " a",
+      "startUs": "134520000",
+      "endUs": "134740000",
+      "confidence": 0.9743925929069519
+    },
+    {
+      "text": " NASA",
+      "startUs": "134740000",
+      "endUs": "135020000",
+      "confidence": 0.9084668159484863
+    },
+    {
+      "text": " website.",
+      "startUs": "135020000",
+      "endUs": "135660000",
+      "confidence": 0.9804698824882507
+    },
+    {
+      "text": " In",
+      "startUs": "136720000",
+      "endUs": "137200000",
+      "confidence": 0.9903833270072937
+    },
+    {
+      "text": " the",
+      "startUs": "137200000",
+      "endUs": "137300000",
+      "confidence": 0.9983130693435669
+    },
+    {
+      "text": " second",
+      "startUs": "137300000",
+      "endUs": "137640000",
+      "confidence": 0.9910364151000977
+    },
+    {
+      "text": " reference,",
+      "startUs": "137640000",
+      "endUs": "138060000",
+      "confidence": 0.9956954717636108
+    },
+    {
+      "text": " we",
+      "startUs": "138480000",
+      "endUs": "138940000",
+      "confidence": 0.9964855909347534
+    },
+    {
+      "text": " have",
+      "startUs": "138940000",
+      "endUs": "139160000",
+      "confidence": 0.9981302618980408
+    },
+    {
+      "text": " a",
+      "startUs": "139160000",
+      "endUs": "139340000",
+      "confidence": 0.9848906397819519
+    },
+    {
+      "text": " listing",
+      "startUs": "139340000",
+      "endUs": "139660000",
+      "confidence": 0.9866669774055481
+    },
+    {
+      "text": " for",
+      "startUs": "139660000",
+      "endUs": "140320000",
+      "confidence": 0.9927369952201843
+    },
+    {
+      "text": " the",
+      "startUs": "140320000",
+      "endUs": "140860000",
+      "confidence": 0.9667536020278931
+    },
+    {
+      "text": " Daily",
+      "startUs": "140860000",
+      "endUs": "141260000",
+      "confidence": 0.8404911160469055
+    },
+    {
+      "text": " Mail,",
+      "startUs": "141260000",
+      "endUs": "141660000",
+      "confidence": 0.9714283347129822
+    },
+    {
+      "text": " a",
+      "startUs": "142200000",
+      "endUs": "142400000",
+      "confidence": 0.9815831780433655
+    },
+    {
+      "text": " newspaper.",
+      "startUs": "142400000",
+      "endUs": "142740000",
+      "confidence": 0.9750242829322815
+    },
+    {
+      "text": " So",
+      "startUs": "143740000",
+      "endUs": "144340000",
+      "confidence": 0.9393076300621033
+    },
+    {
+      "text": " how",
+      "startUs": "144340000",
+      "endUs": "144640000",
+      "confidence": 0.8914558291435242
+    },
+    {
+      "text": " do",
+      "startUs": "144640000",
+      "endUs": "144740000",
+      "confidence": 0.9978245496749878
+    },
+    {
+      "text": " you",
+      "startUs": "144740000",
+      "endUs": "144860000",
+      "confidence": 0.9979925155639648
+    },
+    {
+      "text": " add",
+      "startUs": "144860000",
+      "endUs": "145180000",
+      "confidence": 0.9977210164070129
+    },
+    {
+      "text": " a",
+      "startUs": "145180000",
+      "endUs": "145320000",
+      "confidence": 0.9938963055610657
+    },
+    {
+      "text": " reference",
+      "startUs": "145320000",
+      "endUs": "145660000",
+      "confidence": 0.9983243346214294
+    },
+    {
+      "text": " to...",
+      "startUs": "145660000",
+      "endUs": "145980000",
+      "confidence": 0.5893061384558678
+    }
+  ]
+}

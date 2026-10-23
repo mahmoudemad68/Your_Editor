@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import { fork } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
+import { clearTimeout } from "node:timers";
 import { createRedisTransportProxy } from "./redis-transport-proxy.mjs";
 const require = createRequire(new URL("../../apps/api/package.json", import.meta.url));
 const { Pool } = require("pg");
@@ -102,7 +103,7 @@ export async function createJobFixture() {
     },
     async resetTransport(action) {
       if (action === "break") return { lostAt: transport.break() };
-      transport.restore();
+      await transport.restore();
       // A genuine SUBSCRIBE acknowledgement proves Redis is ready again.
       const probe = await subscriber.subscribe(newId(), () => {});
       readyAt = Date.now();
@@ -150,23 +151,54 @@ export async function createJobFixture() {
         child.on("error", reject);
         child.on("exit", (code, signal) => resolve({ code, signal }));
       });
+      let outcome;
+      let failure;
+      let stopped;
       try {
         const deadline = Date.now() + 20000;
         while (Date.now() < deadline) {
-          const latest = (
-            await pool.query("SELECT status FROM jobs ORDER BY created_at DESC,id DESC LIMIT 1")
-          ).rows[0];
-          if (latest?.status === "Completed")
-            return { completedAt: Date.now(), status: latest.status };
-          if (latest?.status === "Failed" || child.exitCode !== null)
+          const inspections = await pool.query(
+            "SELECT id::text,status FROM jobs WHERE queue_name=$1 AND job_type='media.inspect' ORDER BY created_at,id",
+            [queueName],
+          );
+          if (
+            inspections.rows.length > 0 &&
+            inspections.rows.every((job) => job.status === "Completed")
+          ) {
+            outcome = {
+              completedAt: Date.now(),
+              status: "Completed",
+              jobIds: inspections.rows.map((job) => job.id),
+            };
+            break;
+          }
+          if (
+            inspections.rows.some((job) => job.status === "Failed") ||
+            child.exitCode !== null ||
+            child.signalCode !== null
+          )
             throw new Error(`Production fixture worker failed: ${stderr}`);
           await new Promise((resolve) => setTimeout(resolve, 20));
         }
-        throw new Error("Production fixture worker timed out.");
+        if (!outcome) throw new Error("Production fixture worker timed out.");
+      } catch (error) {
+        failure = error;
       } finally {
         child.kill("SIGTERM");
-        await exited;
+        // A completed durable job is not proof that its worker released Redis
+        // and child-process resources. Bound teardown, kill only this child if
+        // necessary, and fail the real-browser regression on unclean shutdown.
+        const watchdog = setTimeout(() => child.kill("SIGKILL"), 5000);
+        try {
+          stopped = await exited;
+        } finally {
+          clearTimeout(watchdog);
+        }
       }
+      if (failure) throw failure;
+      if (stopped.code !== 0 || stopped.signal !== null)
+        throw new Error("Production fixture worker did not shut down cleanly.");
+      return outcome;
     },
     async observe(projectId) {
       subscriptions.push(await subscriber.subscribe(projectId, (event) => events.push(event)));
@@ -196,9 +228,17 @@ export async function createJobFixture() {
     },
     async evidence() {
       const result = await pool.query(
-        `SELECT id::text, status, subject_id::text, idempotency_key, timeout_ms, max_attempts, attempt_count, created_at::text, updated_at::text FROM jobs ORDER BY created_at, id`,
+        `SELECT id::text, job_type, status, subject_id::text, idempotency_key, timeout_ms, max_attempts, attempt_count, created_at::text, updated_at::text FROM jobs WHERE queue_name=$1 ORDER BY created_at, id`,
+        [queueName],
       );
-      return { jobs: result.rows, events, reports };
+      // Automatic US-210 derivation shares this queue. Keep its durable facts
+      // visible, but it cannot satisfy an inspection-completion assertion.
+      return {
+        jobs: result.rows.filter((job) => job.job_type === "media.inspect"),
+        backgroundJobs: result.rows.filter((job) => job.job_type !== "media.inspect"),
+        events,
+        reports,
+      };
     },
     async close() {
       for (const sub of subscriptions) await sub.close();

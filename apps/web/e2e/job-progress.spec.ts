@@ -58,8 +58,8 @@ test("US-131 real PostgreSQL/BullMQ/Redis/BFF/browser progress and immutable fai
     await expect(panel.getByText("Waiting to start")).toBeVisible();
     const success = request.post("http://127.0.0.1:3032/job-run", { data: { mode: "success" } });
     await expect(panel.getByText("Preparing · 0%")).toBeVisible();
-    await expect(panel.getByText("Completed", { exact: true })).toBeVisible();
     expect((await success).ok()).toBe(true);
+    await expect(panel.getByText("Completed", { exact: true })).toBeVisible();
     await expect(page.getByText("Validation passed", { exact: true })).toBeVisible();
     const completedEvidence = await (
       await request.get("http://127.0.0.1:3032/job-evidence")
@@ -90,8 +90,8 @@ test("US-131 real PostgreSQL/BullMQ/Redis/BFF/browser progress and immutable fai
     await page.locator("#media-file").setInputFiles(other);
     await expect(panel.getByText("Waiting to start")).toBeVisible();
     const failing = request.post("http://127.0.0.1:3032/job-run", { data: { mode: "fail" } });
-    await expect(panel.getByText("Processing failed.")).toBeVisible();
     expect((await failing).ok()).toBe(true);
+    await expect(panel.getByText("Processing failed.")).toBeVisible();
     const before = await (await request.get("http://127.0.0.1:3032/job-evidence")).json();
     const predecessor = before.jobs.at(-1);
     const retryResponse = page.waitForResponse(
@@ -105,8 +105,8 @@ test("US-131 real PostgreSQL/BullMQ/Redis/BFF/browser progress and immutable fai
     await expect(panel.getByText("Waiting to start")).toBeVisible();
     const again = request.post("http://127.0.0.1:3032/job-run", { data: { mode: "success" } });
     await expect(panel.getByText("Preparing · 0%")).toBeVisible();
-    await expect(panel.getByText("Completed", { exact: true })).toBeVisible();
     expect((await again).ok()).toBe(true);
+    await expect(panel.getByText("Completed", { exact: true })).toBeVisible();
     const final = await (await request.get("http://127.0.0.1:3032/job-evidence")).json();
     expect(final.jobs.find((j: { id: string }) => j.id === predecessor.id)).toEqual(predecessor);
     expect(final.jobs.at(-1).status).toBe("Completed");

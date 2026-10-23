@@ -3,9 +3,9 @@
   "version": "0.0.0",
   "private": true,
   "scripts": {
-    "build": "uv sync --frozen && uv run python -m editagent_ai_worker.infrastructure.vad_model",
+    "build": "uv sync --frozen && uv run python -m editagent_ai_worker.infrastructure.vad_model && uv run python -m editagent_ai_worker.infrastructure.asr_model --root ../../.local/asr-models --model tiny && uv run python -m editagent_ai_worker.infrastructure.asr_model --root ../../.local/asr-models --model small",
     "lint": "uv run ruff check . && uv run ruff format --check . && uv run lint-imports",
     "typecheck": "uv run mypy",
-    "test": "uv run pytest"
+    "test": "uv run pytest -v -x"
   }
 }

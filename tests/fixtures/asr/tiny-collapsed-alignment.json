@@ -1,0 +1,369 @@
+{
+  "kind": "Native ASR timing failure diagnostics; NOT evaluation gold or human labels",
+  "createdBy": "machine_generated",
+  "sourceId": "commons-148215183",
+  "sourceSha256": "793bade8dea8492b56d266f1d6fb2997f1c936cb01c0ff5c65fe449bbe59f0f1",
+  "fixtureFile": "en-chunks.wav",
+  "fixtureSha256": "8686fa55c9a1dd06b886ea8bf06ebebfb787a160c617392d42d93caeb96f8ea0",
+  "sourceScopeUs": {
+    "startUs": "118000000",
+    "endUs": "146000000"
+  },
+  "sampleStart": 352000,
+  "sampleEnd": 800000,
+  "float32PcmSha256": "508c171cdb32e0bb544f6ffed512ee9f56829e0c60ba49e496c8172e7e57ded7",
+  "capturedRuntime": {
+    "model": "tiny",
+    "computeType": "int8",
+    "cpu": "Intel(R) Xeon(R) 6973P-C",
+    "libraries": {
+      "ctranslate2": "4.8.2",
+      "faster-whisper": "1.2.1",
+      "numpy": "2.4.6"
+    }
+  },
+  "segments": [
+    {
+      "end": 17.79,
+      "start": 0.57,
+      "text": " With a value of 24 February 2020, there are three references for this information, and shown here we have the first one as a reference URL to a NASA website.",
+      "words": [
+        {
+          "confidence": 0.3653355836868286,
+          "end": 1.07,
+          "start": 0.57,
+          "text": " With"
+        },
+        {
+          "confidence": 0.4428768754005432,
+          "end": 1.33,
+          "start": 1.07,
+          "text": " a"
+        },
+        {
+          "confidence": 0.9811471700668335,
+          "end": 1.59,
+          "start": 1.33,
+          "text": " value"
+        },
+        {
+          "confidence": 0.9958280920982361,
+          "end": 2.41,
+          "start": 1.59,
+          "text": " of"
+        },
+        {
+          "confidence": 0.9342744946479797,
+          "end": 3.06,
+          "start": 2.5,
+          "text": " 24"
+        },
+        {
+          "confidence": 0.9030792117118835,
+          "end": 3.76,
+          "start": 3.06,
+          "text": " February"
+        },
+        {
+          "confidence": 0.9672597050666809,
+          "end": 5.29,
+          "start": 4.13,
+          "text": " 2020,"
+        },
+        {
+          "confidence": 0.9691855311393738,
+          "end": 6.61,
+          "start": 6.61,
+          "text": " there"
+        },
+        {
+          "confidence": 0.9965416789054871,
+          "end": 6.87,
+          "start": 6.61,
+          "text": " are"
+        },
+        {
+          "confidence": 0.8959939479827881,
+          "end": 7.55,
+          "start": 6.87,
+          "text": " three"
+        },
+        {
+          "confidence": 0.9921644926071167,
+          "end": 8.17,
+          "start": 7.55,
+          "text": " references"
+        },
+        {
+          "confidence": 0.98502117395401,
+          "end": 9.05,
+          "start": 8.17,
+          "text": " for"
+        },
+        {
+          "confidence": 0.9965083003044128,
+          "end": 9.45,
+          "start": 9.05,
+          "text": " this"
+        },
+        {
+          "confidence": 0.9974464178085327,
+          "end": 10.07,
+          "start": 9.45,
+          "text": " information,"
+        },
+        {
+          "confidence": 0.9824972748756409,
+          "end": 11.45,
+          "start": 11.33,
+          "text": " and"
+        },
+        {
+          "confidence": 0.96249920129776,
+          "end": 11.71,
+          "start": 11.45,
+          "text": " shown"
+        },
+        {
+          "confidence": 0.997090220451355,
+          "end": 12.17,
+          "start": 11.71,
+          "text": " here"
+        },
+        {
+          "confidence": 0.7399430871009827,
+          "end": 12.35,
+          "start": 12.17,
+          "text": " we"
+        },
+        {
+          "confidence": 0.9987710118293762,
+          "end": 12.81,
+          "start": 12.35,
+          "text": " have"
+        },
+        {
+          "confidence": 0.9674919247627258,
+          "end": 13.17,
+          "start": 12.81,
+          "text": " the"
+        },
+        {
+          "confidence": 0.9928147792816162,
+          "end": 13.47,
+          "start": 13.17,
+          "text": " first"
+        },
+        {
+          "confidence": 0.9971897006034851,
+          "end": 13.83,
+          "start": 13.47,
+          "text": " one"
+        },
+        {
+          "confidence": 0.9002928137779236,
+          "end": 14.27,
+          "start": 13.83,
+          "text": " as"
+        },
+        {
+          "confidence": 0.9771208763122559,
+          "end": 14.53,
+          "start": 14.27,
+          "text": " a"
+        },
+        {
+          "confidence": 0.9785099029541016,
+          "end": 14.95,
+          "start": 14.53,
+          "text": " reference"
+        },
+        {
+          "confidence": 0.9319611191749573,
+          "end": 15.65,
+          "start": 14.95,
+          "text": " URL"
+        },
+        {
+          "confidence": 0.9426558613777161,
+          "end": 16.65,
+          "start": 15.77,
+          "text": " to"
+        },
+        {
+          "confidence": 0.9715738892555237,
+          "end": 16.83,
+          "start": 16.65,
+          "text": " a"
+        },
+        {
+          "confidence": 0.9071656465530396,
+          "end": 17.19,
+          "start": 16.83,
+          "text": " NASA"
+        },
+        {
+          "confidence": 0.9795238375663757,
+          "end": 17.79,
+          "start": 17.19,
+          "text": " website."
+        }
+      ]
+    },
+    {
+      "end": 25.03,
+      "start": 19.22,
+      "text": " In the second reference, we have a listing for the Daily Mail, a newspaper.",
+      "words": [
+        {
+          "confidence": 0.9948429465293884,
+          "end": 19.26,
+          "start": 19.22,
+          "text": " In"
+        },
+        {
+          "confidence": 0.9973681569099426,
+          "end": 19.5,
+          "start": 19.26,
+          "text": " the"
+        },
+        {
+          "confidence": 0.9913883805274963,
+          "end": 19.78,
+          "start": 19.5,
+          "text": " second"
+        },
+        {
+          "confidence": 0.9953752160072327,
+          "end": 20.38,
+          "start": 19.78,
+          "text": " reference,"
+        },
+        {
+          "confidence": 0.9977438449859619,
+          "end": 21.04,
+          "start": 20.96,
+          "text": " we"
+        },
+        {
+          "confidence": 0.9983501434326172,
+          "end": 21.32,
+          "start": 21.04,
+          "text": " have"
+        },
+        {
+          "confidence": 0.9888483285903931,
+          "end": 21.54,
+          "start": 21.32,
+          "text": " a"
+        },
+        {
+          "confidence": 0.9897850155830383,
+          "end": 21.86,
+          "start": 21.54,
+          "text": " listing"
+        },
+        {
+          "confidence": 0.9964032173156738,
+          "end": 22.68,
+          "start": 21.86,
+          "text": " for"
+        },
+        {
+          "confidence": 0.9624646306037903,
+          "end": 23.08,
+          "start": 22.68,
+          "text": " the"
+        },
+        {
+          "confidence": 0.8553205728530884,
+          "end": 23.38,
+          "start": 23.08,
+          "text": " Daily"
+        },
+        {
+          "confidence": 0.9696133732795715,
+          "end": 23.98,
+          "start": 23.38,
+          "text": " Mail,"
+        },
+        {
+          "confidence": 0.977999746799469,
+          "end": 24.55,
+          "start": 24.49,
+          "text": " a"
+        },
+        {
+          "confidence": 0.9771531820297241,
+          "end": 25.03,
+          "start": 24.55,
+          "text": " newspaper."
+        }
+      ]
+    },
+    {
+      "end": 27.96,
+      "start": 26.36,
+      "text": " So how do you add a reference to...",
+      "words": [
+        {
+          "confidence": 0.96161288022995,
+          "end": 26.5,
+          "start": 26.36,
+          "text": " So"
+        },
+        {
+          "confidence": 0.844966471195221,
+          "end": 26.7,
+          "start": 26.5,
+          "text": " how"
+        },
+        {
+          "confidence": 0.9975801706314087,
+          "end": 27.0,
+          "start": 26.7,
+          "text": " do"
+        },
+        {
+          "confidence": 0.9981185793876648,
+          "end": 27.1,
+          "start": 27.0,
+          "text": " you"
+        },
+        {
+          "confidence": 0.9980471134185791,
+          "end": 27.36,
+          "start": 27.1,
+          "text": " add"
+        },
+        {
+          "confidence": 0.9929050803184509,
+          "end": 27.52,
+          "start": 27.36,
+          "text": " a"
+        },
+        {
+          "confidence": 0.9982478618621826,
+          "end": 27.76,
+          "start": 27.52,
+          "text": " reference"
+        },
+        {
+          "confidence": 0.5947703421115875,
+          "end": 27.96,
+          "start": 27.76,
+          "text": " to..."
+        }
+      ]
+    }
+  ],
+  "license": {
+    "id": "CC-BY-SA-4.0",
+    "name": "CC BY-SA 4.0",
+    "url": "https://creativecommons.org/licenses/by-sa/4.0",
+    "attribution": "WikiSalon Wikidata Adding References.webm — Doreva Belfiore and the Philadelphia WikiSalon; https://commons.wikimedia.org/wiki/File:WikiSalon_Wikidata_Adding_References.webm; CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0). Acquired Wikimedia transcode; candidate reel is an excerpt/format adaptation.",
+    "allowedUseRationale": "Redistribution and adapted evaluation reels permitted with attribution and indication of changes. Adapted reels must retain this compatible ShareAlike license; attribution travels with every distributed reel.",
+    "rightsAssertion": "File page revision 1134023890 declares CC BY-SA 4.0; credited creator: Doreva Belfiore and the Philadelphia WikiSalon. Source credit: Vimeo : WikiSalon Wikidata Adding References ( view archived source ).",
+    "evidenceUrl": "https://commons.wikimedia.org/w/index.php?oldid=1134023890"
+  }
+}

@@ -157,6 +157,184 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/projects/{projectId}/timelines": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations["TimelineEditorController_create"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/projects/{projectId}/timelines/{timelineId}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["TimelineEditorController_read"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/projects/{projectId}/timelines/{timelineId}/trim": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations["TimelineEditorController_trim"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/projects/{projectId}/timelines/{timelineId}/split": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations["TimelineEditorController_split"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/projects/{projectId}/timelines/{timelineId}/render": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations["TimelineExportsController_start"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/projects/{projectId}/exports/{jobId}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["TimelineExportsController_read"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/projects/{projectId}/exports/{jobId}/cancel": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations["TimelineExportsController_cancel"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/projects/{projectId}/exports/{jobId}/download": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["TimelineExportsController_download"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/media/{mediaId}/analysis/{analyzer}/retry": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations["MediaAnalysisController_retry"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/media/{mediaId}/analysis": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Read authorized MediaAnalysis using the persisted asset's project identity. */
+    get: operations["MediaAnalysisController_getByAsset"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/projects/{projectId}/media/{mediaId}/analysis": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Read versioned MediaAnalysis for an authorized project asset. */
+    get: operations["MediaAnalysisController_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/projects/{projectId}/media/{mediaAssetId}/inspection-job": {
     parameters: {
       query?: never;
@@ -544,6 +722,27 @@ export interface components {
       sampleRate: number | null;
       streams: components["schemas"]["MediaStreamDto"][] | null;
       inspectionError: string | null;
+    };
+    CreateTimelineDto: {
+      /** Format: uuid */
+      mediaAssetId: string;
+    };
+    TrimTimelineDto: {
+      stateSha256: string;
+      /** Format: uuid */
+      clipId: string;
+      startUs: string;
+      endUs: string;
+    };
+    SplitTimelineDto: {
+      stateSha256: string;
+      /** Format: uuid */
+      clipId: string;
+      atUs: string;
+    };
+    RenderTimelineDto: {
+      stateSha256: string;
+      requestId: string;
     };
     InspectionJobDto: {
       /** Format: uuid */
@@ -1091,6 +1290,240 @@ export interface operations {
       };
       /** @description The MediaAsset is not visible to the caller. */
       404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  TimelineEditorController_create: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        projectId: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["CreateTimelineDto"];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  TimelineEditorController_read: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        projectId: string;
+        timelineId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  TimelineEditorController_trim: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        projectId: string;
+        timelineId: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["TrimTimelineDto"];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  TimelineEditorController_split: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        projectId: string;
+        timelineId: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["SplitTimelineDto"];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  TimelineExportsController_start: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        projectId: string;
+        timelineId: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["RenderTimelineDto"];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  TimelineExportsController_read: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        projectId: string;
+        jobId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  TimelineExportsController_cancel: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        projectId: string;
+        jobId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  TimelineExportsController_download: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        projectId: string;
+        jobId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  MediaAnalysisController_retry: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        mediaId: string;
+        analyzer: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  MediaAnalysisController_getByAsset: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        mediaId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  MediaAnalysisController_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        projectId: string;
+        mediaId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
         headers: {
           [name: string]: unknown;
         };

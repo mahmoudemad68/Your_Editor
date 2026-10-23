@@ -5,6 +5,8 @@ import console from "node:console";
 import { setTimeout, clearTimeout } from "node:timers";
 /** No skipped Docker tests: exact production images, real queue, Chromium, FFprobe and S3. */
 import { spawn, execFileSync } from "node:child_process";
+import { createWriteStream } from "node:fs";
+import { runGraduationDemo } from "./graduation-demo.mjs";
 import { randomBytes, createHash } from "node:crypto";
 import { readFile, readdir, mkdir, writeFile, rm } from "node:fs/promises";
 import assert from "node:assert/strict";
@@ -34,6 +36,74 @@ const root = new URL("../../", import.meta.url).pathname;
 // runs the default command, which always includes the existing rendering regressions.
 const editingOnly = process.argv.includes("--editing-only");
 const docker = (args) => execFileSync("docker", args, { encoding: "utf8", maxBuffer: 2097152 });
+
+/** Test-process lifecycle only; production worker/executor supervision stays unchanged. */
+function launch(bin, args, options) {
+  const output = createWriteStream(options.log, { flags: "w", mode: 0o600 });
+  const child = spawn(bin, args, {
+    cwd: options.cwd,
+    env: options.env,
+    shell: false,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let ended = false,
+    bytes = 0;
+  const capture = (chunk) => {
+    if (bytes < 2_097_152) output.write(chunk.subarray(0, 2_097_152 - bytes));
+    bytes += chunk.length;
+  };
+  child.stdout.on("data", capture);
+  child.stderr.on("data", capture);
+  const exit = new Promise((resolve) => {
+    child.once("error", () => {
+      ended = true;
+      output.end();
+      resolve(-1);
+    });
+    child.once("exit", (code) => {
+      ended = true;
+      output.end();
+      resolve(code ?? -1);
+    });
+  });
+  return {
+    exited: () => ended,
+    async wait(ms) {
+      let timer;
+      try {
+        return await Promise.race([
+          exit,
+          new Promise((resolve) => {
+            timer = setTimeout(() => {
+              if (!ended) child.kill("SIGKILL");
+              resolve(-1);
+            }, ms);
+          }),
+        ]);
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+    async close() {
+      if (ended) return;
+      child.kill("SIGTERM");
+      let timer;
+      try {
+        await Promise.race([
+          exit,
+          new Promise((resolve) => {
+            timer = setTimeout(() => {
+              if (!ended) child.kill("SIGKILL");
+              resolve();
+            }, 5000);
+          }),
+        ]);
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+  };
+}
 const nonce = randomBytes(6).toString("hex"),
   network = "render-proof-" + nonce,
   executor = "render-executor-" + nonce,
@@ -41,7 +111,9 @@ const nonce = randomBytes(6).toString("hex"),
   work = "render-work-" + nonce,
   control = "render-control-" + nonce;
 if (!process.argv.includes("--no-build")) await buildRenderImages();
-const services = await startIntegrationServices();
+const services = await startIntegrationServices({
+  browserLoopbackCors: process.argv.includes("--graduation-demo"),
+});
 const s3 = new S3Client({
   endpoint: services.minio.endpoint,
   region: services.minio.region,
@@ -718,6 +790,124 @@ try {
     await writeFile(dir + "/report.json", JSON.stringify(report, null, 2) + "\n");
     console.log("Render integration PASS. Evidence: .local/render-batch/report.json");
   } else console.log("Editing integration PASS. Evidence: .local/render-batch/editing-report.json");
+  if (process.argv.includes("--graduation-demo")) {
+    const renderVersion = docker([
+      "exec",
+      coordinator,
+      "node",
+      "-p",
+      "require('./dist/bundle/catalog.json').renderVersion",
+    ]).trim();
+    await runGraduationDemo({
+      root,
+      services,
+      s3,
+      network,
+      limits,
+      docker,
+      launch,
+      renderVersion,
+      codeIdentity: {
+        checkoutSha: execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(),
+        treeSha: execFileSync("git", ["rev-parse", "HEAD^{tree}"], { encoding: "utf8" }).trim(),
+        prHeadSha: process.env.PR_HEAD_SHA ?? null,
+      },
+      async makeInput(output) {
+        const audio = root + "tests/fixtures/asr/en.wav",
+          visual = root + "tests/fixtures/media/talking-head.mp4";
+        const audioManifest = JSON.parse(
+          await readFile(root + "tests/fixtures/asr/manifest.json", "utf8"),
+        );
+        const mediaManifest = JSON.parse(
+          await readFile(root + "tests/fixtures/media/manifest.json", "utf8"),
+        );
+        assert.equal(
+          createHash("sha256")
+            .update(await readFile(audio))
+            .digest("hex"),
+          audioManifest.fixtures.find((x) => x.file === "en.wav").sha256,
+        );
+        assert.equal(
+          createHash("sha256")
+            .update(await readFile(visual))
+            .digest("hex"),
+          mediaManifest.fixtures.find((x) => x.file === "talking-head.mp4").sha256,
+        );
+        execFileSync(
+          "ffmpeg",
+          [
+            "-v",
+            "error",
+            "-y",
+            "-stream_loop",
+            "-1",
+            "-i",
+            visual,
+            "-i",
+            audio,
+            "-map",
+            "0:v:0",
+            "-map",
+            "1:a:0",
+            "-t",
+            "8",
+            "-r",
+            "25",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-crf",
+            "18",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-ar",
+            "48000",
+            "-ac",
+            "2",
+            "-map_metadata",
+            "-1",
+            "-movflags",
+            "+faststart",
+            output,
+          ],
+          { timeout: 30_000, maxBuffer: 1_048_576 },
+        );
+      },
+      probe(file) {
+        const document = JSON.parse(
+          execFileSync(
+            "ffprobe",
+            ["-v", "error", "-count_frames", "-show_streams", "-show_format", "-of", "json", file],
+            { encoding: "utf8", timeout: 30_000, maxBuffer: 1_048_576 },
+          ),
+        );
+        const timing = JSON.parse(
+          execFileSync(
+            "ffprobe",
+            [
+              "-v",
+              "error",
+              "-select_streams",
+              "v:0",
+              "-show_entries",
+              "frame=best_effort_timestamp_time",
+              "-of",
+              "json",
+              file,
+            ],
+            { encoding: "utf8", timeout: 30_000, maxBuffer: 1_048_576 },
+          ),
+        );
+        return {
+          ...document,
+          videoFrameTimes: timing.frames.map((frame) => Number(frame.best_effort_timestamp_time)),
+        };
+      },
+    });
+  }
 } catch (error) {
   for (const name of [executor, coordinator]) {
     try {
