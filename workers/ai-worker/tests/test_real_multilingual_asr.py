@@ -467,9 +467,9 @@ def test_real_partial_context_uses_bounded_original_pcm_continuation(
     decode_lengths = []
     continuation_expected = []
 
-    def observed_decode(audio: Any, language: Any, check: Any) -> Any:
+    def observed_decode(audio: Any, language: Any, check: Any, **options: Any) -> Any:
         decode_lengths.append(len(audio))
-        decoded, info = original_decode(audio, language, check)
+        decoded, info = original_decode(audio, language, check, **options)
         if len(audio) == 448000:
             _, _, valid, right_edge = adapter._alignment_state(decoded, audio)
             continuation_expected.append(not valid and right_edge)
