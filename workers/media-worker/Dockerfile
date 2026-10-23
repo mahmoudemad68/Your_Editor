@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 # Production image for the media worker. Multi-stage, non-root, no secrets in the image.
 
-FROM node:22.23.3-trixie-slim@sha256:b26b04c123d9ff8ab646ceb18b9d75a1173acf64b9a401094b906d27b29338d4 AS base
+FROM node:26.11.1-trixie-slim@sha256:193fe51b64e77981119c98c2002c9e32a70e2f006fb4d25068ce0558998917f0 AS base
 ENV PNPM_HOME="/pnpm" \
     PATH="/pnpm:$PATH" \
     CI=true \
@@ -46,7 +46,7 @@ RUN pnpm --filter @editagent/media-worker... build \
     && pnpm --filter @editagent/media-worker --prod deploy --legacy /out \
     && rm -f /out/node_modules/.pnpm/node_modules/@editagent/media-worker
 
-FROM node:22.23.3-trixie-slim@sha256:b26b04c123d9ff8ab646ceb18b9d75a1173acf64b9a401094b906d27b29338d4 AS ffmpeg
+FROM node:26.11.1-trixie-slim@sha256:193fe51b64e77981119c98c2002c9e32a70e2f006fb4d25068ce0558998917f0 AS ffmpeg
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
       ca-certificates \
@@ -64,7 +64,7 @@ WORKDIR /src
 COPY workers/media-worker/build-ffmpeg.sh /tmp/build-ffmpeg.sh
 RUN chmod 0755 /tmp/build-ffmpeg.sh && /tmp/build-ffmpeg.sh
 
-FROM node:22.23.3-trixie-slim@sha256:b26b04c123d9ff8ab646ceb18b9d75a1173acf64b9a401094b906d27b29338d4 AS runtime
+FROM node:26.11.1-trixie-slim@sha256:193fe51b64e77981119c98c2002c9e32a70e2f006fb4d25068ce0558998917f0 AS runtime
 RUN apt-get update \
     && apt-get install -y --no-install-recommends libx264-164 libvpx9 libopus0 \
     && rm -rf /var/lib/apt/lists/* \
