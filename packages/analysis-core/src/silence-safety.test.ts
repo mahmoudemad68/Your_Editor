@@ -56,6 +56,15 @@ test("nonempty automatic removal remains fail-closed even for an acoustic candid
     /CP2_NOT_MET/,
   );
   assert.doesNotThrow(() => assertSafeAutomaticSilenceRemoval(doc, [], frameRate(20n, 1n)));
+  assert.throws(
+    () =>
+      assertSafeAutomaticSilenceRemoval(
+        doc,
+        { length: 0 } as unknown as Parameters<typeof assertSafeAutomaticSilenceRemoval>[1],
+        frameRate(20n, 1n),
+      ),
+    /range list/,
+  );
   assert.equal(JSON.stringify(doc), before);
   doc.sections.audio = { status: "not_available" };
   assert.throws(

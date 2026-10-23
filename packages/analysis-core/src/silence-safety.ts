@@ -20,7 +20,8 @@ export function assertSafeAutomaticSilenceRemoval(
     frameTime(1n, fps) < 1n
   )
     throw new Error("Unsupported silence-removal frame grid.");
-  if (ranges.length > 56250) throw new Error("Too many proposed silence ranges.");
+  if (!Array.isArray(ranges) || ranges.length > 56250)
+    throw new Error("Invalid proposed silence range list.");
   if (!ranges.length) return; // A no-op removes no source content.
   if (
     validated.sections.audio.status !== "completed" ||
