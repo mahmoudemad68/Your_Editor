@@ -10,7 +10,11 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-from editagent_ai_worker.domain.analysis.transcription import TranscriptionError
+from editagent_ai_worker.domain.analysis.transcription import (
+    TranscriptionAlignmentError,
+    TranscriptionError,
+    TranscriptionLanguageError,
+)
 
 SOURCE = (
     Path(__file__).resolve().parents[1] / "src/editagent_ai_worker/infrastructure/faster_whisper.py"
@@ -32,6 +36,8 @@ namespace: dict[str, Any] = {
     "ROUND_HALF_UP": ROUND_HALF_UP,
     "Any": Any,
     "TranscriptionError": TranscriptionError,
+    "TranscriptionAlignmentError": TranscriptionAlignmentError,
+    "TranscriptionLanguageError": TranscriptionLanguageError,
     "unicodedata": unicodedata,
 }
 body: list[ast.stmt] = list(functions)

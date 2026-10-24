@@ -14,6 +14,7 @@ import numpy as np
 from editagent_ai_worker.domain.analysis.transcription import (
     TranscriptionCancelled,
     TranscriptionError,
+    TranscriptionLanguageError,
     TranscriptionTimeout,
 )
 
@@ -39,6 +40,7 @@ namespace: dict[str, Any] = {
     "Callable": Callable,
     "np": np,
     "TranscriptionError": TranscriptionError,
+    "TranscriptionLanguageError": TranscriptionLanguageError,
     "get_speech_timestamps": lambda audio, options: [{"start": 0, "end": len(audio)}],
 }
 exec(compile(ast.Module(body=[*methods], type_ignores=[]), str(source), "exec"), namespace)
@@ -194,7 +196,9 @@ class BoundedLanguageRecoveryTests(unittest.TestCase):
 
         def unavailable(*args: Any, **kwargs: Any) -> Any:
             calls.append(1)
-            raise TranscriptionError("ASR language evidence requires trustworthy redetection")
+            raise TranscriptionLanguageError(
+                "ASR language evidence requires trustworthy redetection"
+            )
 
         adapter._planned_language_regions = unavailable
         adapter._pinned_alignment_model = lambda check: object()
@@ -243,7 +247,9 @@ class BoundedLanguageRecoveryTests(unittest.TestCase):
         def planned(wav: Any, duration: int, check: Any, model: Any, *, refine: bool) -> Any:
             calls.append((model, refine))
             if len(calls) == 1:
-                raise TranscriptionError("ASR language evidence requires trustworthy redetection")
+                raise TranscriptionLanguageError(
+                    "ASR language evidence requires trustworthy redetection"
+                )
             self.assertIs(model, fallback)
             return expected
 

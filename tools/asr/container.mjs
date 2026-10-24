@@ -38,6 +38,11 @@ if (process.env.CODEX_PROXY_CERT) {
 }
 args.push(".");
 await run(args);
+await run([
+  process.execPath,
+  "tools/asr/preflight-container.mjs",
+  model === "tiny" ? "editagent-ai-asr:test" : "editagent-ai-asr:small-test",
+]);
 if (!buildOnly)
   await run(
     [process.execPath, "--test", "tests/integration/media-analysis-orchestration.test.mjs"],

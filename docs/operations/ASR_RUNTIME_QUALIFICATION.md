@@ -153,3 +153,24 @@ output checks without publishing transcripts. Preserve the report's exact
 affected native/service regressions and exact-head workflows after publication.
 Keep sanitized reports before workflow retention expires; never copy restricted
 diagnostics into a new publication channel.
+
+### Cgroup namespace visibility
+
+Preflight reads the v2 membership and mounted filesystem identity before walking
+the leaf and every visible ancestor. CPU, memory and PID evidence uses the most
+restrictive finite observation independently. The genuine hierarchy root may
+lack all three controller `max` files; it is terminal only when mount metadata
+identifies a v2 hierarchy root and its controller list corroborates CPU, memory
+and PIDs. Valid descendant limits survive that terminal root. A private namespace
+root containing controller files is read normally. Missing intermediate/leaf
+files, partial root evidence, hidden/delegated roots without limits, malformed
+values and v1 stay unknown and cannot qualify. This does not infer hidden quotas
+or turn preflight into a performance guarantee.
+
+`node tools/asr/container.mjs` runs
+`node tools/asr/preflight-container.mjs editagent-ai-asr:test` after its existing
+image build. Both `--cgroupns=private` and `--cgroupns=host` must report the exact
+2-CPU / 3-GiB / 128-PID profile. The non-root, read-only, no-network probe verifies
+model hashes, no native imports, no environment mutation and no filesystem
+changes. It makes no host changes, installations, downloads or inference calls;
+the separate existing long-input performance tests retain the 600000-ms deadline.
