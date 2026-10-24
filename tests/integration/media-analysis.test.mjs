@@ -69,6 +69,19 @@ function digest(outputs) {
     .digest("hex");
 }
 
+test("production Node builds include every Python reader required by schema drift validation", () => {
+  for (const file of [
+    "apps/api/Dockerfile",
+    "apps/web/Dockerfile",
+    "workers/media-worker/Dockerfile",
+    "workers/agent-worker/Dockerfile",
+  ]) {
+    const dockerfile = readFileSync(resolve(root, file), "utf8");
+    for (const binding of targets.filter((target) => target.endsWith(".py")))
+      assert.ok(dockerfile.includes(`COPY ${binding} ${binding}`), `${file}: ${binding}`);
+  }
+});
+
 test("US-208 canonical fixtures validate under offline JSON Schema, Zod and Pydantic", () => {
   const docs = names.map(fixture);
   const produced = python(docs);
