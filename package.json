@@ -41,6 +41,7 @@
     "schemas:test": "node --test tests/integration/media-analysis.test.mjs",
     "audio:evaluate": "node tools/audio/evaluate.mjs",
     "audio:acceptance": "node tools/audio/acceptance.mjs",
+    "audio:qualify": "node tools/audio/qualify.mjs",
     "render:test": "node tools/render/integration.mjs",
     "asr:evaluate": "node tools/asr/evaluate.mjs",
     "asr:setup": "uv run --project workers/ai-worker python -m editagent_ai_worker.infrastructure.asr_model",

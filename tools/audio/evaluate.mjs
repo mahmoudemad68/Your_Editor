@@ -10,32 +10,25 @@ import { hashStream } from "../evaluation/storage.mjs";
 import { scopedMetricInputs } from "../evaluation/scoped-inputs.mjs";
 import { selectEvaluationClips, aggregate } from "../vad/evaluate.mjs";
 import { FFmpegAudioAnalyzer } from "../../packages/media-core/dist/index.js";
+import { overlapIntervals, intervalDuration } from "./interval-metrics.mjs";
 
 export function overlapScore(predictions, gold) {
-  const duration = (ranges) => ranges.reduce((n, r) => n + BigInt(r.endUs) - BigInt(r.startUs), 0n);
-  let tp = 0n;
-  for (const p of predictions)
-    for (const g of gold) {
-      const a = BigInt(p.startUs) > BigInt(g.startUs) ? BigInt(p.startUs) : BigInt(g.startUs);
-      const b = BigInt(p.endUs) < BigInt(g.endUs) ? BigInt(p.endUs) : BigInt(g.endUs);
-      if (a < b) tp += b - a;
-    }
+  const ranges = overlapIntervals(predictions, gold);
   return aggregate([
     {
-      tpUs: String(tp),
-      fpUs: String(duration(predictions) - tp),
-      fnUs: String(duration(gold) - tp),
+      tpUs: String(intervalDuration(ranges.tp)),
+      fpUs: String(intervalDuration(ranges.fp)),
+      fnUs: String(intervalDuration(ranges.fn)),
     },
   ]);
 }
-export async function evaluateAudio(root) {
+export async function evaluateAudio(root, analyzer = new FFmpegAudioAnalyzer()) {
   if (!root)
     throw new Error("Use --root with verified source/scoped WAV bytes; no missing-clip skips.");
   const dataset = loadDataset();
   const { clips } = selectEvaluationClips(dataset);
-  const analyzer = new FFmpegAudioAnalyzer();
   const results = [];
-  for (const { source, gold, inputs } of clips) {
+  for (const { source, artifact, gold, inputs } of clips) {
     const sourceIdentity = await hashStream(
       createReadStream(resolve(root, `${source.id}.${source.extension}`)),
     );
@@ -71,9 +64,21 @@ export async function evaluateAudio(root) {
     results.push({
       sourceId: source.id,
       language: source.language,
+      identities: {
+        sourceSha256: sourceIdentity.sha256,
+        scopedPcmSha256: identity.sha256,
+        goldSha256: artifact.sha256,
+        goldId: artifact.id,
+        goldMethod: gold.generation?.method,
+      },
       scope: gold.scope,
       provenance: inputs.provenance,
       scores: overlapScore(scoped.predictions, scoped.gold),
+      comparison: {
+        predictions: scoped.predictions,
+        gold: scoped.gold,
+        ...overlapIntervals(scoped.predictions, scoped.gold),
+      },
       processingWallTimeMs,
       realTimeFactor: processingWallTimeMs / (Number(inputs.durationUs) / 1000),
       analysis: section,

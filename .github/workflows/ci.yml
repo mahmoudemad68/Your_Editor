@@ -145,6 +145,9 @@ jobs:
       - name: Validate evaluation metadata (offline; gold completion reported separately)
         run: pnpm evaluation:validate
 
+      - name: Independently verify silence interval accounting
+        run: python3 -m unittest discover -s tools/audio -p 'test_*.py'
+
       - name: Check SeaweedFS S3 contract
         run: node tests/architecture/seaweedfs-s3-contract.mjs
 
