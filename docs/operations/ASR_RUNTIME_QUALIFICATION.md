@@ -108,8 +108,10 @@ The utility checks visible cgroup-v2 ancestors. Hidden host constraints, cgroup-
 inaccessible mounts and unrecognized container markers remain unqualified. CPU
 frequency, thermal throttling, noisy neighbours and all future load cannot be
 predicted by preflight. Metadata matches do not establish native ABI compatibility.
-The production ten-minute qualifier also checks this preflight result, then performs
-real inference and retains its existing resource/output/deadline assertions.
+The production ten-minute qualifier records this preflight result alongside real
+inference and retains its existing resource/output/deadline assertions. Read-only
+model hashing runs after the inference resource snapshot to avoid warming model
+files before the measured worker starts.
 
 ## Failure, determinism and operating limits
 

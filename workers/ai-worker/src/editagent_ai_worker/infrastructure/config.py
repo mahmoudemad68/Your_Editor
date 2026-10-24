@@ -68,6 +68,14 @@ ASR_NATIVE_RESERVED_ENVIRONMENT = (
 )
 
 
+def asr_native_overrides_conflict() -> bool:
+    """Read-only preflight: unset startup flags are allowed; overrides are not."""
+    return any(
+        key in os.environ and os.environ[key] != value
+        for key, value in ASR_NATIVE_ENVIRONMENT.items()
+    ) or any(key in os.environ for key in ASR_NATIVE_RESERVED_ENVIRONMENT)
+
+
 def require_asr_native_environment() -> None:
     """Reject an unrecorded CPU backend; callers configure before native import."""
     if any(os.environ.get(key) != value for key, value in ASR_NATIVE_ENVIRONMENT.items()):

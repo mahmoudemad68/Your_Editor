@@ -11,6 +11,11 @@ from typing import Any
 import pytest
 
 from editagent_ai_worker.infrastructure.asr_preflight import DEPENDENCIES, assess, cgroup_limits
+from editagent_ai_worker.infrastructure.config import (
+    ASR_NATIVE_ENVIRONMENT,
+    ASR_NATIVE_RESERVED_ENVIRONMENT,
+    asr_native_overrides_conflict,
+)
 
 
 def profile() -> dict[str, Any]:
@@ -43,6 +48,26 @@ def test_preflight_never_asserts_inference_acceptance() -> None:
     assert result["performanceGuaranteed"] is False
     assert result["nativeLibrariesLoaded"] is False
     assert value == original
+
+
+def test_native_override_probe_is_read_only_at_configuration_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for key in (*ASR_NATIVE_ENVIRONMENT, *ASR_NATIVE_RESERVED_ENVIRONMENT):
+        monkeypatch.delenv(key, raising=False)
+    assert asr_native_overrides_conflict() is False
+    for key, value in ASR_NATIVE_ENVIRONMENT.items():
+        monkeypatch.setenv(key, value)
+    before = dict(os.environ)
+    assert asr_native_overrides_conflict() is False
+    assert dict(os.environ) == before
+    monkeypatch.setenv("CT2_FORCE_CPU_ISA", "unsupported")
+    assert asr_native_overrides_conflict() is True
+    monkeypatch.setenv("CT2_FORCE_CPU_ISA", ASR_NATIVE_ENVIRONMENT["CT2_FORCE_CPU_ISA"])
+    monkeypatch.setenv("MKL_CBWR", "unsupported")
+    before = dict(os.environ)
+    assert asr_native_overrides_conflict() is True
+    assert dict(os.environ) == before
 
 
 @pytest.mark.parametrize(

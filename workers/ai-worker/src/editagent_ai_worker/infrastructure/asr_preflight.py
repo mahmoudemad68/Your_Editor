@@ -19,9 +19,8 @@ from editagent_ai_worker.infrastructure.asr_model import (
     verify_asr_model,
 )
 from editagent_ai_worker.infrastructure.config import (
-    ASR_NATIVE_ENVIRONMENT,
     ASR_NATIVE_PROFILE,
-    ASR_NATIVE_RESERVED_ENVIRONMENT,
+    asr_native_overrides_conflict,
 )
 
 DEPENDENCIES = {
@@ -225,11 +224,7 @@ def collect(*, verify_models: bool = False) -> dict[str, Any]:
         "model": model,
         "cpuThreads": threads,
         "nativeProfile": ASR_NATIVE_PROFILE,
-        "nativeOverridesConflict": any(
-            key in os.environ and os.environ[key] != value
-            for key, value in ASR_NATIVE_ENVIRONMENT.items()
-        )
-        or any(key in os.environ for key in ASR_NATIVE_RESERVED_ENVIRONMENT),
+        "nativeOverridesConflict": asr_native_overrides_conflict(),
         "modelsVerified": models_verified,
         "expectedModels": {name: model_identity(name) for name in ("tiny", "small")},
         "freeWorkspaceBytes": free,
