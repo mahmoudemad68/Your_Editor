@@ -548,6 +548,8 @@ def fresh_for_cross_mode(
 
 
 def assert_fresh_matches_reused(fresh: dict[str, Any], reused: dict[str, Any]) -> None:
+    from editagent_ai_worker.infrastructure.asr_model import model_identity
+
     transcript = reused["transcript"]
     segments = []
     for index, word in enumerate(transcript["words"]):
@@ -558,14 +560,32 @@ def assert_fresh_matches_reused(fresh: dict[str, Any], reused: dict[str, Any]) -
             "confidence": word["confidence"],
         }
         segments.append({"id": f"word-{index}", **canonical_word, "words": [canonical_word]})
+    data = {
+        "language": transcript["language"],
+        "languageConfidence": transcript["language_confidence"],
+        "segments": segments,
+    }
+    if transcript.get("language_segments"):
+        # Independently compare every context coordinate, raw score and model
+        # identity across native reused output and the fresh serialized receipt.
+        contexts = []
+        for context in transcript["language_segments"]:
+            expected = {
+                "startUs": str(context["start_us"]),
+                "endUs": str(context["end_us"]),
+                "model": model_identity(context["model"]),
+                "method": "ct2-source-context-v1",
+                "scope": "audio_context_not_word_language",
+                "status": context["status"],
+            }
+            if context["status"] == "dominant":
+                expected.update(language=context["languages"][0], confidence=context["confidence"])
+            contexts.append(expected)
+        data["languageSegments"] = contexts
     assert fresh["section"] == {
         "status": "completed",
         "provenance": reused["provenance"],
-        "data": {
-            "language": transcript["language"],
-            "languageConfidence": transcript["language_confidence"],
-            "segments": segments,
-        },
+        "data": data,
     }
     assert fresh["inferenceParameters"] == reused["inferenceParameters"]
 
