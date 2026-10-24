@@ -43,15 +43,31 @@ def bounded_read(path: Path) -> str:
 def cgroup_limits(root: Path = Path("/")) -> dict[str, Any]:
     """Read v2 leaf AND visible ancestors; unavailable evidence stays unknown."""
     try:
-        membership = next(
+        memberships = [
             line[3:]
             for line in bounded_read(root / "proc/self/cgroup").splitlines()
             if line.startswith("0::")
-        )
+        ]
+        if len(memberships) != 1:
+            raise ValueError("Unknown cgroup membership")
+        membership = memberships[0]
         if not membership.startswith("/") or ".." in Path(membership).parts:
             raise ValueError("Invalid cgroup membership")
         mount = root / "sys/fs/cgroup"
         leaf = mount / membership.lstrip("/")
+        mounts = []
+        for line in bounded_read(root / "proc/self/mountinfo").splitlines():
+            fields = line.split()
+            if len(fields) >= 10 and fields[4] == "/sys/fs/cgroup":
+                separator = fields.index("-")
+                if (
+                    separator >= 6
+                    and len(fields) == separator + 4
+                    and fields[separator + 1] == "cgroup2"
+                ):
+                    mounts.append(fields[3])
+        if mounts != ["/"]:
+            raise ValueError("Unknown cgroup mount")
         quotas: list[float] = []
         memories: list[int] = []
         pids: list[int] = []
@@ -61,19 +77,31 @@ def cgroup_limits(root: Path = Path("/")) -> dict[str, Any]:
         for current in (leaf, *leaf.parents):
             if current != mount and mount not in current.parents:
                 break
+            if current.is_symlink():
+                raise ValueError("Untrustworthy cgroup path")
+            files = [current / name for name in ("cpu.max", "memory.max", "pids.max")]
+            if any(path.is_symlink() for path in files):
+                raise ValueError("Untrustworthy controller file")
+            if (
+                current == mount
+                and leaf != mount
+                and mounts[0] == "/"
+                and not any(path.exists() for path in files)
+                and {"cpu", "memory", "pids"}
+                <= set(bounded_read(current / "cgroup.controllers").split())
+            ):
+                # The genuine v2 hierarchy root has no resource-controller max
+                # files. A delegated/bind-mounted root or missing intermediate
+                # files cannot establish this exception. Retain child bounds.
+                break
             quota, period = bounded_read(current / "cpu.max").split()
-            if int(period) <= 0:
-                raise ValueError("Invalid CPU period")
+            period_value = positive_limit(period)
             if quota != "max":
-                if int(quota) <= 0:
-                    raise ValueError("Invalid CPU quota")
-                quotas.append(int(quota) / int(period))
+                quotas.append(positive_limit(quota) / period_value)
             for name, target in (("memory.max", memories), ("pids.max", pids)):
                 value = bounded_read(current / name).strip()
                 if value != "max":
-                    if int(value) <= 0:
-                        raise ValueError("Invalid resource limit")
-                    target.append(int(value))
+                    target.append(positive_limit(value))
         return {
             "version": 2,
             "quotaCpus": min(quotas) if quotas else None,
@@ -81,7 +109,7 @@ def cgroup_limits(root: Path = Path("/")) -> dict[str, Any]:
             "pids": min(pids) if pids else None,
             "visibleAncestorsChecked": True,
         }
-    except (OSError, UnicodeError, ValueError, StopIteration):
+    except (OSError, UnicodeError, ValueError, IndexError):
         return {
             "version": None,
             "quotaCpus": None,
@@ -89,6 +117,13 @@ def cgroup_limits(root: Path = Path("/")) -> dict[str, Any]:
             "pids": None,
             "visibleAncestorsChecked": False,
         }
+
+
+def positive_limit(value: str) -> int:
+    """Kernel limits are bounded positive decimal integers, never signed/float text."""
+    if not value.isascii() or not value.isdecimal() or not 0 < int(value) < 2**64:
+        raise ValueError("Invalid resource limit")
+    return int(value)
 
 
 def assess(evidence: dict[str, Any]) -> dict[str, Any]:
@@ -107,7 +142,13 @@ def assess(evidence: dict[str, Any]) -> dict[str, Any]:
     if not evidence["container"]:
         blockers.append("production_container_required")
     limits = evidence["cgroup"]
-    if limits["quotaCpus"] != 2 or limits["memoryBytes"] != 3 * 1024**3 or limits["pids"] != 128:
+    if (
+        limits.get("version") != 2
+        or limits.get("visibleAncestorsChecked") is not True
+        or limits["quotaCpus"] != 2
+        or limits["memoryBytes"] != 3 * 1024**3
+        or limits["pids"] != 128
+    ):
         blockers.append("resource_profile_not_qualified")
     if evidence["affinityCpus"] < 2:
         blockers.append("cpu_affinity_insufficient")

@@ -966,20 +966,51 @@ asyncio.run(run())`,
       const preservedAudio = JSON.stringify(
         (await store.read(asset, project, sourceHash)).sections.audio,
       );
-      // A failed alignment receipt projects to the existing unsupported code; only its safe
-      // companion detail is new. This controlled receipt tests storage, not Tiny inference.
+      // Exercise the actual deterministic lexical guard and classifier, then persist its
+      // fixed public projection. This controlled input is not a claim of Tiny acceptance.
+      const classified = JSON.parse(
+        await command(
+          "uv",
+          [
+            ...python,
+            "-c",
+            `import json
+from dataclasses import asdict
+from types import SimpleNamespace
+from editagent_ai_worker.infrastructure.config import configure_asr_native_environment
+configure_asr_native_environment()
+from editagent_ai_worker.infrastructure.faster_whisper import verify_retry_word_coverage
+from editagent_ai_worker.infrastructure.analysis_failures import classify_failure
+word=SimpleNamespace(word=' synthetic-private-lexical-evidence',start=0.2,end=0.4)
+try: verify_retry_word_coverage([word],[],1.0,0,0,1000000)
+except Exception as error: print(json.dumps(asdict(classify_failure(error))))`,
+          ],
+          process.env,
+        ),
+      );
+      assert.deepEqual(classified, {
+        category: "untrustworthy_alignment",
+        code: "unsupported",
+        reason: "This analysis is unsupported.",
+        retryable: false,
+      });
+      const { category: integrityCategory, ...legacyFailure } = classified;
       const unsupportedJob = await store.retry(asset, project, "transcript", revokedJob, owner);
       await pool.query("UPDATE jobs SET status='Running',attempt_count=1 WHERE id=$1", [
         unsupportedJob,
       ]);
-      await store.recordFailure(
-        unsupportedJob,
-        1,
-        { code: "unsupported", reason: "This analysis is unsupported.", retryable: false },
-        "untrustworthy_alignment",
-      );
+      await store.recordFailure(unsupportedJob, 1, legacyFailure, integrityCategory);
       await pool.query("UPDATE jobs SET status='Failed' WHERE id=$1", [unsupportedJob]);
       await store.recover(queue);
+      const integrityRow = (
+        await pool.query(
+          "SELECT failure_category,failure,result FROM analysis_tasks WHERE job_id=$1",
+          [unsupportedJob],
+        )
+      ).rows[0];
+      assert.equal(integrityRow.failure_category, "untrustworthy_alignment");
+      assert.deepEqual(integrityRow.failure, legacyFailure);
+      assert.equal(integrityRow.result, null);
       assert.equal(
         (await store.read(asset, project, sourceHash)).sections.transcript.failure.code,
         "unsupported",
@@ -994,6 +1025,38 @@ asyncio.run(run())`,
         ).failures.find((entry) => entry.analyzer === "transcript").category,
         "untrustworthy_alignment",
       );
+      app = await createApiApplication(
+        {
+          projects: new PostgresProjectRepository(pool),
+          media,
+          analysis: store,
+          clock: { now: () => BigInt(Date.now()) },
+          ids: { next: id },
+          mediaIds: { next: id },
+          objects: {},
+          presignTtlSeconds: 900,
+        },
+        (use) => use(authenticateRequest(tokens, () => BigInt(Date.now()))),
+      );
+      await app.listen(0, "127.0.0.1");
+      const integrityUrl = `http://127.0.0.1:${app.getHttpServer().address().port}/projects/${project}/media/${asset}/analysis/failures`;
+      const ownerAccess = await tokens.issueAccess(userId(owner), BigInt(Date.now()));
+      const integrityResponse = await fetch(integrityUrl, {
+        headers: { Authorization: `Bearer ${ownerAccess.token}` },
+      });
+      assert.equal(integrityResponse.status, 200);
+      assert.match(integrityResponse.headers.get("cache-control"), /private.*no-store/);
+      const integrityBody = await integrityResponse.json();
+      const integrityDetail = integrityBody.failures.find(
+        (entry) => entry.analyzer === "transcript",
+      );
+      assert.equal(integrityDetail.category, "untrustworthy_alignment");
+      assert.equal(integrityDetail.retryable, false);
+      assert.ok(!JSON.stringify(integrityBody).includes("synthetic-private-lexical-evidence"));
+      assert.equal((await fetch(integrityUrl, { headers })).status, 404);
+      assert.equal((await fetch(integrityUrl)).status, 401);
+      await app.close();
+      app = undefined;
       const noAudioFile = path.join(temp, "no-audio.mp4");
       await command(
         "ffmpeg",
@@ -1083,6 +1146,8 @@ asyncio.run(run())`,
           sourceImmutable: true,
           revocationDenied: true,
           revocationDuringInferenceFenced: true,
+          typedIntegrityFailurePersisted: true,
+          typedIntegrityFailureAuthenticatedApi: true,
         }),
       );
     } finally {

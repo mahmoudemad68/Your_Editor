@@ -14,6 +14,7 @@ from editagent_ai_worker.domain.analysis.transcription import (
     TranscriptionError,
     TranscriptionTimeout,
 )
+from editagent_ai_worker.infrastructure.analysis_failures import classify_failure
 from editagent_ai_worker.infrastructure.asr_config import AsrSettings
 from editagent_ai_worker.infrastructure.asr_features import DeterministicFeatureExtractor
 
@@ -153,7 +154,7 @@ def fallback_adapter(monkeypatch: Any, defect: str | None = None) -> tuple[Any, 
     def failed(*args: Any, **kwargs: Any) -> Any:
         if kwargs.get("alignment_model") is not None:
             return whisper.FasterWhisperAdapter._primary_aligned_chunk(adapter, *args, **kwargs)
-        raise TranscriptionError("ASR words require trustworthy realignment")
+        raise TranscriptionAlignmentError("ASR words require trustworthy realignment")
 
     adapter._primary_aligned_chunk = failed
     return adapter, counts
@@ -235,6 +236,53 @@ def test_alignment_models_are_both_released_even_if_one_cleanup_fails() -> None:
     assert cleaned == ["alignment", "decoder"]
 
 
+@pytest.mark.parametrize("model", ["tiny", "small"])
+def test_unexpected_alignment_failures_are_not_relabelled_or_retried(model: str) -> None:
+    adapter = adapter_returning([])
+    adapter.settings = AsrSettings(model=model)
+    error = TranscriptionError("ASR recognized speech lacks complete word coverage")
+
+    def failed(*args: Any, **kwargs: Any) -> Any:
+        raise error
+
+    adapter._primary_aligned_chunk = failed
+    adapter._fallback_alignment = lambda *args: pytest.fail("Unexpected error was retried")
+    with pytest.raises(TranscriptionError) as caught:
+        adapter._aligned_chunk([], np.zeros(16000), "en")
+    assert caught.value is error
+    assert classify_failure(caught.value).category == "internal"
+
+
+@pytest.mark.parametrize("value", [True, "private timestamp", -1, float("nan"), float("inf")])
+def test_invalid_native_source_coordinates_have_typed_safe_failure(value: Any) -> None:
+    with pytest.raises(TranscriptionAlignmentError) as caught:
+        whisper.microseconds(value)
+    failure = classify_failure(caught.value)
+    assert (failure.category, failure.code, failure.retryable) == (
+        "untrustworthy_alignment",
+        "unsupported",
+        False,
+    )
+
+
+def test_ambiguous_boundary_anchors_are_typed_and_leave_chunks_unchanged(monkeypatch: Any) -> None:
+    from editagent_ai_worker.domain.analysis.transcription import Word
+    from editagent_ai_worker.domain.analysis.voice_activity import AudioIdentity
+
+    left = (Word(" left", 4_500_000, 5_500_000, 0.8),)
+    right = (Word(" right", 4_700_000, 5_700_000, 0.8),)
+    chunks = [(0, 5_000_000, left), (5_000_000, 10_000_000, right)]
+    adapter = adapter_returning([])
+    monkeypatch.setattr(
+        adapter, "_duplicated_boundary_prefix", lambda *args: [(1, 0, 1, True), (1, 0, 1, True)]
+    )
+    source = AudioIdentity("fixture", "a" * 64, "audio", "b" * 64, 10_000_000, 0, 10_000_000)
+    with pytest.raises(TranscriptionAlignmentError, match="ambiguous temporal anchors") as caught:
+        adapter._reconcile_overlaps(chunks, ["en", "en"], PcmReader(10), source, lambda: None)
+    assert classify_failure(caught.value).category == "untrustworthy_alignment"
+    assert chunks == [(0, 5_000_000, left), (5_000_000, 10_000_000, right)]
+
+
 def test_setup_bundles_the_pinned_alignment_dependency_only_for_tiny(
     tmp_path: Any,
     monkeypatch: Any,
@@ -309,7 +357,7 @@ def test_independently_recognized_missing_words_cannot_publish_completed(monkeyp
             words=[SimpleNamespace(word=" genuine", start=0.5, end=1.0)],
         )
     ]
-    with pytest.raises(TranscriptionError, match="complete word coverage"):
+    with pytest.raises(TranscriptionAlignmentError, match="complete word coverage"):
         adapter_returning(segments)._verify_coverage(np.zeros(32000), [], lambda: None)
 
 
@@ -363,7 +411,7 @@ def test_coverage_recovery_cannot_overlap_untouched_words(monkeypatch: Any) -> N
         return [alignment_word(" conflict", -0.5, 1.0)]
 
     adapter._aligned_chunk = invalid_alignment
-    with pytest.raises(TranscriptionError, match="outside anchors"):
+    with pytest.raises(TranscriptionAlignmentError, match="outside anchors"):
         adapter._recover_coverage(
             np.zeros(80000), [alignment_word(" existing", 0, 1)], lambda: None
         )
@@ -383,7 +431,7 @@ def test_coverage_recovery_rejects_untrustworthy_native_timing_without_extra_ali
     adapter._aligned_chunk = lambda *args: pytest.fail(
         "Invalid coverage consumed an alignment budget"
     )
-    with pytest.raises(TranscriptionError, match="trustworthy native timing"):
+    with pytest.raises(TranscriptionAlignmentError, match="trustworthy native timing"):
         adapter._recover_coverage(np.zeros(80000), [], lambda: None)
 
 
@@ -445,7 +493,7 @@ def test_short_context_word_drift_requires_ordered_temporal_lexical_evidence(
     if mode == "represented":
         adapter._verify_coverage(np.zeros(64000), represented, lambda: None)
     else:
-        with pytest.raises(TranscriptionError, match="complete word coverage"):
+        with pytest.raises(TranscriptionAlignmentError, match="complete word coverage"):
             adapter._verify_coverage(np.zeros(64000), represented, lambda: None)
 
 
@@ -532,7 +580,7 @@ def test_native_repair_cannot_reuse_word_outside_original_pcm(monkeypatch: Any) 
         end=2,
         words=[SimpleNamespace(word=" word", start=0.5, end=2.0, probability=0.8)],
     )
-    with pytest.raises(TranscriptionError, match="trustworthy realignment"):
+    with pytest.raises(TranscriptionAlignmentError, match="trustworthy realignment"):
         adapter._aligned_chunk([segment], np.zeros(16000), "en")
 
 
@@ -896,7 +944,7 @@ def test_invalid_stitched_alignment_retries_same_contiguous_pcm_at_most_once(
         assert [s.text for s in segments] == [" genuine speech"]
         words, _, valid, _ = adapter._alignment_state(segments, audio)
         if not valid:
-            raise TranscriptionError("ASR words require trustworthy realignment")
+            raise TranscriptionAlignmentError("ASR words require trustworthy realignment")
         return words
 
     adapter.model.transcribe = decode
@@ -912,7 +960,7 @@ def test_invalid_stitched_alignment_retries_same_contiguous_pcm_at_most_once(
             (2_000_000, 3_000_000),
         ]
     else:
-        with pytest.raises(TranscriptionError, match="trustworthy realignment"):
+        with pytest.raises(TranscriptionAlignmentError, match="trustworthy realignment"):
             adapter.transcribe(str(path), source)
     assert [mode for mode, _ in calls] == [True, False]
     assert calls[0][1] == calls[1][1]
@@ -960,7 +1008,7 @@ def test_contiguous_retry_cannot_replace_positive_native_word_evidence(
     def aligned(segments: Any, audio: Any, language: str, check: Any) -> Any:
         words, _, valid, _ = adapter._alignment_state(segments, audio)
         if not valid:
-            raise TranscriptionError("ASR words require trustworthy realignment")
+            raise TranscriptionAlignmentError("ASR words require trustworthy realignment")
         return words
 
     adapter.model.transcribe = decode
@@ -971,7 +1019,7 @@ def test_contiguous_retry_cannot_replace_positive_native_word_evidence(
     # same range as omitted speech. Retry adoption must retain the first
     # decoder's positive lexical/temporal evidence before coverage is judged.
     monkeypatch.setattr(whisper, "get_speech_timestamps", lambda *args: [])
-    with pytest.raises(TranscriptionError, match="complete word coverage"):
+    with pytest.raises(TranscriptionAlignmentError, match="complete word coverage"):
         adapter.transcribe(str(path), source)
     assert calls == [True, False]
     assert hashlib.sha256(path.read_bytes()).hexdigest() == digest
@@ -991,7 +1039,7 @@ def test_colliding_owned_words_use_one_anchored_native_view_not_greedy_alternati
         (5_000_000, 10_000_000, right),
     ]
     source = AudioIdentity("fixture", "a" * 64, "audio", "b" * 64, 10_000_000, 0, 10_000_000)
-    with pytest.raises(TranscriptionError, match="boundary"):
+    with pytest.raises(TranscriptionAlignmentError, match="boundary"):
         whisper.merge_owned_words(chunks, source)
     adapter = adapter_returning([])
     wav = PcmReader(10)
@@ -1323,7 +1371,7 @@ def test_boundary_search_never_skips_an_owned_left_word() -> None:
         adapter._reconcile_overlaps(chunks, ["en", "en"], PcmReader(10), source, lambda: None)
         == chunks
     )
-    with pytest.raises(TranscriptionError, match="boundary"):
+    with pytest.raises(TranscriptionAlignmentError, match="boundary"):
         whisper.merge_owned_words(chunks, source)
 
 
@@ -1470,6 +1518,6 @@ def test_boundary_realigner_cannot_change_indexed_decoder_text(defect: str) -> N
     else:
         result.reverse()
     adapter._aligned_chunk = lambda *args: result
-    with pytest.raises(TranscriptionError, match="indexed decoder text"):
+    with pytest.raises(TranscriptionAlignmentError, match="indexed decoder text"):
         adapter._reconcile_overlaps(chunks, ["en", "en"], PcmReader(10), source, lambda: None)
     assert chunks[0][2] == left and chunks[1][2] == right

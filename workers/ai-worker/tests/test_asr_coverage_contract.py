@@ -14,7 +14,10 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-from editagent_ai_worker.domain.analysis.transcription import TranscriptionError
+from editagent_ai_worker.domain.analysis.transcription import (
+    TranscriptionAlignmentError,
+    TranscriptionError,
+)
 
 SOURCE = (
     Path(__file__).resolve().parents[1] / "src/editagent_ai_worker/infrastructure/faster_whisper.py"
@@ -40,6 +43,7 @@ def coverage_adapter(segments: list[Any]) -> tuple[Any, list[int]]:
     namespace: dict[str, Any] = {
         "Decimal": Decimal,
         "TranscriptionError": TranscriptionError,
+        "TranscriptionAlignmentError": TranscriptionAlignmentError,
         "uncovered_speech": lambda *_args: [(16_000, 32_000)],
     }
     exec(compile(isolated, str(SOURCE), "exec"), namespace)

@@ -46,3 +46,13 @@ auth revocation during receipt commit and sidecar reads, persisted classificatio
 safe job reasons and preservation of successful analysis sections. Native/service
 tests use the existing Linux CI runner and real PG/Redis/BullMQ/S3/AI worker; portable
 unit tests and WSL diagnostics are identified separately in the handoff.
+
+Known deterministic decoder integrity rejections (missing lexical coverage,
+ambiguous/out-of-source anchors, unreconciled chunk boundaries, changed indexed
+text and unsupported native timing) use `TranscriptionAlignmentError` and project
+to `untrustworthy_alignment` / legacy `unsupported`, never automatic retry.
+Boundary and conflicting-language subclasses preserve the established bounded
+recovery dispatch without inspecting exception text. Unexpected native, cleanup
+or input-read failures remain generic `internal`; an identical message on an
+untyped exception does not establish an integrity cause. No lexical evidence,
+timestamps, inference parameters, public codes or message allowlists change.
