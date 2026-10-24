@@ -28,6 +28,7 @@ const cases = [
   { namespace: "private", kind: "unlimited", qualified: false },
 ];
 let parentCreated = false;
+let delegatedRoot;
 try {
   if (restrictive) {
     assert.equal(
@@ -42,6 +43,7 @@ try {
     const group = systemctl(["show", slice, "--property=ControlGroup", "--value"]).trim();
     assert.match(group, /^\/your_editor_qa[a-f0-9]+\.slice$/);
     const root = "/sys/fs/cgroup" + group;
+    delegatedRoot = root;
     const [quota, period] = readFileSync(path.join(root, "cpu.max"), "utf8")
       .trim()
       .split(/\s+/)
@@ -51,6 +53,7 @@ try {
     assert.equal(Number(readFileSync(path.join(root, "pids.max"), "utf8")), 64);
     cases.push({ namespace: "private", kind: "restrictive_parent", qualified: true });
     cases.push({ namespace: "host", kind: "restrictive_parent", qualified: false });
+    cases.push({ namespace: "host", kind: "delegated", qualified: false });
   }
   for (const { namespace, kind, qualified } of cases) {
     const name = "asr-preflight-" + randomUUID();
@@ -77,6 +80,9 @@ try {
           ...(kind === "restrictive_parent" ? ["--cgroup-parent", slice] : []),
           ...(kind === "missing"
             ? ["--mount", `type=bind,src=${hidden},dst=/sys/fs/cgroup,readonly`]
+            : []),
+          ...(kind === "delegated"
+            ? ["--mount", `type=bind,src=${delegatedRoot},dst=/sys/fs/cgroup,readonly`]
             : []),
           "--tmpfs",
           "/tmp:rw,nosuid,nodev,noexec,size=128m,mode=1777",
@@ -123,7 +129,10 @@ print(json.dumps(value))`,
         assert.equal(report.cgroup.memoryBytes, 1024 ** 3);
         assert.equal(report.cgroup.pids, 64);
       }
-      if (kind === "missing") assert.equal(report.cgroup.visibleAncestorsChecked, false);
+      if (["missing", "delegated"].includes(kind)) {
+        assert.equal(report.cgroup.visibleAncestorsChecked, false);
+        assert.equal(report.cgroup.version, null);
+      }
       assert.equal(docker(["diff", name]).trim(), "");
       const state = JSON.parse(docker(["inspect", name]))[0];
       assert.equal(state.State.ExitCode, 0);

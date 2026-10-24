@@ -50,7 +50,9 @@ The disposable GitHub Linux test harness uses an explicitly requested
 corroborates those parent values; private/host containers then demonstrate the
 visibility difference. This fixture setup is separate from the read-only,
 no-network, no-installation, no-environment-mutation preflight. It is not a
-production attestation API. Real unknown/unlimited mounts and the existing
+production attestation API. A read-only delegated bind of that owned slice must
+also remain unknown, rather than qualifying a relocated hierarchy as the root.
+Real unknown/unlimited mounts and the existing
 synthetic malformed/delegated/v1 cases remain conservative regression checks.
 
 | Property       | Evidence and limits                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
