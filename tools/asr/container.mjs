@@ -38,12 +38,10 @@ if (process.env.CODEX_PROXY_CERT) {
 }
 args.push(".");
 await run(args);
-await run([
-  process.execPath,
-  "tools/asr/preflight-container.mjs",
-  model === "tiny" ? "editagent-ai-asr:test" : "editagent-ai-asr:small-test",
-]);
-if (!buildOnly)
+if (!buildOnly) {
+  // Keep --build-only free of model-hashing probes: the separate performance
+  // driver must not warm production weights through preflight before timing.
+  await run([process.execPath, "tools/asr/preflight-container.mjs", "editagent-ai-asr:test"]);
   await run(
     [process.execPath, "--test", "tests/integration/media-analysis-orchestration.test.mjs"],
     {
@@ -51,3 +49,4 @@ if (!buildOnly)
       EDITAGENT_TEST_ASR_CONTAINER: "1",
     },
   );
+}
