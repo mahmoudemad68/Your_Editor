@@ -23,8 +23,10 @@ from faster_whisper.vad import VadOptions, get_speech_timestamps  # type: ignore
 from editagent_ai_worker.domain.analysis.transcription import (
     Transcript,
     TranscriptionAlignmentError,
+    TranscriptionBoundaryError,
     TranscriptionCancelled,
     TranscriptionError,
+    TranscriptionLanguageError,
     TranscriptionTimeout,
     TranscriptionUnavailable,
     Word,
@@ -73,10 +75,10 @@ def uncovered_speech(audio: Any, words: list[Any], options: Any) -> list[tuple[i
 
 def microseconds(value: Any, sample_offset: int = 0) -> int:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise TranscriptionError("Invalid ASR timestamp")
+        raise TranscriptionAlignmentError("Invalid ASR timestamp")
     n = Decimal(str(value))
     if not n.is_finite() or n < 0 or type(sample_offset) is not int or sample_offset < 0:
-        raise TranscriptionError("Invalid ASR timestamp")
+        raise TranscriptionAlignmentError("Invalid ASR timestamp")
     # Round once after adding the exact 16 kHz sample offset (62.5 us/sample).
     total = n * 1_000_000 + Decimal(sample_offset) * 1_000_000 / 16000
     return int(total.quantize(Decimal(1), rounding=ROUND_HALF_UP))
@@ -113,7 +115,9 @@ def neighboring_language_prompt(
             and corroboration.get(preferred, 0.0) >= 0.5
             and corroboration[preferred] == max(corroboration.values())
         ):
-            raise TranscriptionError("ASR language evidence requires trustworthy redetection")
+            raise TranscriptionLanguageError(
+                "ASR language evidence requires trustworthy redetection"
+            )
     return neighbor
 
 
@@ -168,7 +172,7 @@ def verify_retry_word_coverage(
                 last_match = index
                 break
         else:
-            raise TranscriptionError("ASR recognized speech lacks complete word coverage")
+            raise TranscriptionAlignmentError("ASR recognized speech lacks complete word coverage")
 
 
 def attach_boundary_punctuation(words: list[Any]) -> list[Any]:
@@ -304,7 +308,7 @@ def boundary_alignment_failure(
         if anchors == 1
         else "no_shared_native_anchor"
     )
-    return TranscriptionAlignmentError(
+    return TranscriptionBoundaryError(
         "ASR chunk boundary requires trustworthy realignment: " + category
     )
 
@@ -325,7 +329,7 @@ def merge_owned_words(
             if not 2 * lower <= midpoint < 2 * upper:
                 continue
             if word.start_us < source.scope_start_us or word.end_us > source.scope_end_us:
-                raise TranscriptionError("ASR word lies outside verified source scope")
+                raise TranscriptionAlignmentError("ASR word lies outside verified source scope")
             origin = chunk_index
             if words and word.start_us < words[-1].end_us:
                 if last_chunk != chunk_index and chunk_index > 0:
@@ -352,7 +356,9 @@ def merge_owned_words(
                             chunks[chunk_index - 1][2], candidates, lower
                         )
                 else:
-                    raise TranscriptionError("ASR chunk boundary requires trustworthy realignment")
+                    raise TranscriptionBoundaryError(
+                        "ASR chunk boundary requires trustworthy realignment"
+                    )
             words.append(word)
             last_chunk = origin
     return tuple(words)
@@ -431,10 +437,8 @@ class FasterWhisperAdapter:
             return self._planned_language_regions(
                 wav, duration_us, check, self.model, refine=self.settings.model == "small"
             )
-        except TranscriptionError as error:
-            if self.settings.model != "tiny" or str(error) != (
-                "ASR language evidence requires trustworthy redetection"
-            ):
+        except TranscriptionLanguageError:
+            if self.settings.model != "tiny":
                 raise
             # Tiny's short language probes can disagree on actual Arabic. Use
             # the existing verified Small model for one bounded source plan,
@@ -608,7 +612,7 @@ class FasterWhisperAdapter:
                                         ):
                                             supported.add(candidate)
                                 if len(supported) > 1:
-                                    raise TranscriptionError(
+                                    raise TranscriptionLanguageError(
                                         "ASR language evidence requires trustworthy redetection"
                                     )
                                 if supported:
@@ -660,7 +664,7 @@ class FasterWhisperAdapter:
         for segment in segments:
             check()
             if segment.text.strip() and not segment.words:
-                raise TranscriptionError("ASR text has no word alignment")
+                raise TranscriptionAlignmentError("ASR text has no word alignment")
             decoded.append(segment)
         check()
         return decoded, info
@@ -722,7 +726,7 @@ class FasterWhisperAdapter:
             return self._primary_aligned_chunk(segments, audio, language, check)
         except (TranscriptionCancelled, TranscriptionTimeout, TranscriptionUnavailable):
             raise
-        except TranscriptionError as primary:
+        except TranscriptionAlignmentError as primary:
             if self.settings.model != "tiny":
                 raise TranscriptionAlignmentError(
                     "ASR words require trustworthy realignment"
@@ -731,7 +735,7 @@ class FasterWhisperAdapter:
                 return self._fallback_alignment(segments, audio, language, check)
             except (TranscriptionCancelled, TranscriptionTimeout, TranscriptionUnavailable):
                 raise
-            except TranscriptionError as fallback:
+            except TranscriptionAlignmentError as fallback:
                 raise TranscriptionAlignmentError(
                     "ASR words require trustworthy realignment"
                 ) from fallback
@@ -755,7 +759,9 @@ class FasterWhisperAdapter:
             check()
         words, text, _, _ = self._alignment_state(segments, audio)
         if not 0 < len(audio) <= 480000 or "".join(w.word for w in words).strip() != text.strip():
-            raise TranscriptionError("ASR fallback has no complete bounded lexical evidence")
+            raise TranscriptionAlignmentError(
+                "ASR fallback has no complete bounded lexical evidence"
+            )
         model = self._pinned_alignment_model(check)
         candidate = self._primary_aligned_chunk(
             segments,
@@ -767,7 +773,7 @@ class FasterWhisperAdapter:
         )
         _, _, valid, _ = self._alignment_state([SimpleNamespace(text=text, words=candidate)], audio)
         if not valid or [w.word for w in candidate] != [w.word for w in words]:
-            raise TranscriptionError("ASR words require trustworthy realignment")
+            raise TranscriptionAlignmentError("ASR words require trustworthy realignment")
         if check is not None:
             check()
         return [
@@ -855,7 +861,9 @@ class FasterWhisperAdapter:
                 check()
             alignment_encodes += 1
             if alignment_encodes > maximum_encodes:
-                raise TranscriptionError("ASR trustworthy realignment resource bound exceeded")
+                raise TranscriptionAlignmentError(
+                    "ASR trustworthy realignment resource bound exceeded"
+                )
             # CT2 supports variable-length encoder input. Artificial 30s padding
             # changes cross-attention evidence for short local speech and can
             # collapse real lexical words into zero-length alignment bins.
@@ -893,7 +901,7 @@ class FasterWhisperAdapter:
                 ]
                 result = attach_boundary_punctuation(result)
                 if "".join(w.word for w in result).strip() != content.strip():
-                    raise TranscriptionError("Alignment changed complete transcript text")
+                    raise TranscriptionAlignmentError("Alignment changed complete transcript text")
                 if retain:
                     full_evidence.append(result)
                 evidence.append(result)
@@ -988,13 +996,13 @@ class FasterWhisperAdapter:
             lower = max(0, int(Decimal(str(segment.start)) * 16000) - 16000)
             upper = min(len(audio), int(Decimal(str(segment.end)) * 16000) + 16000)
             if not lower < upper or upper - lower > 480000:
-                raise TranscriptionError("Invalid local alignment context")
+                raise TranscriptionAlignmentError("Invalid local alignment context")
             part = force(segment.text, audio[lower:upper])
             if part is None:
                 repaired = repair_native()
                 if repaired is not None:
                     return repaired
-                raise TranscriptionError("ASR words require trustworthy realignment")
+                raise TranscriptionAlignmentError("ASR words require trustworthy realignment")
             for word in part:
                 word.start += lower / 16000
                 word.end += lower / 16000
@@ -1005,7 +1013,7 @@ class FasterWhisperAdapter:
             repaired = repair_native()
             if repaired is not None:
                 return repaired
-            raise TranscriptionError("ASR local alignment violates transcript integrity")
+            raise TranscriptionAlignmentError("ASR local alignment violates transcript integrity")
         return localized
 
     def _reconcile_overlaps(
@@ -1125,7 +1133,7 @@ class FasterWhisperAdapter:
             count = max(item[0] for item in matches)
             offsets = [(offset, end) for size, offset, end, _ in matches if size == count]
             if len(offsets) != 1:
-                raise TranscriptionError("ASR overlap has ambiguous temporal anchors")
+                raise TranscriptionAlignmentError("ASR overlap has ambiguous temporal anchors")
             head_offset, tail_end = offsets[0]
             head = head[head_offset:]
             prefix = tail[: tail_end - count]
@@ -1192,7 +1200,7 @@ class FasterWhisperAdapter:
                     (right[ri[-1] + 1].start_us - source.scope_start_us) * 16000 // 1_000_000,
                 )
             if not first < last or last - first > 480000:
-                raise TranscriptionError("ASR boundary alignment context is invalid")
+                raise TranscriptionAlignmentError("ASR boundary alignment context is invalid")
             wav.setpos(first)
             raw = wav.readframes(last - first)
             if len(raw) != 2 * (last - first):
@@ -1216,7 +1224,9 @@ class FasterWhisperAdapter:
             )
             aligned = self._aligned_chunk([segment], audio, languages[index], check)
             if [w.word for w in aligned] != [w.text for w in combined]:
-                raise TranscriptionError("ASR boundary alignment changed indexed decoder text")
+                raise TranscriptionAlignmentError(
+                    "ASR boundary alignment changed indexed decoder text"
+                )
             repaired = tuple(
                 Word(
                     w.word,
@@ -1231,7 +1241,7 @@ class FasterWhisperAdapter:
                 or (li[0] and repaired[0].start_us < left[li[0] - 1].end_us)
                 or (ri[-1] + 1 < len(right) and repaired[-1].end_us > right[ri[-1] + 1].start_us)
             ):
-                raise TranscriptionError("ASR boundary alignment violates outside anchors")
+                raise TranscriptionAlignmentError("ASR boundary alignment violates outside anchors")
             chunks[index - 1] = (
                 *chunks[index - 1][:2],
                 (*left[: li[0]], *repaired, *left[li[-1] + 1 :]),
@@ -1446,7 +1456,9 @@ class FasterWhisperAdapter:
                 if segment.avg_logprob < -1.0 or segment.no_speech_prob >= 0.6:
                     continue
                 if "".join(w.word for w in segment.words or []).strip() != segment.text.strip():
-                    raise TranscriptionError("ASR recognized speech lacks complete word coverage")
+                    raise TranscriptionAlignmentError(
+                        "ASR recognized speech lacks complete word coverage"
+                    )
                 missing, last_match = self._unrepresented_words(
                     segment.words or [],
                     words,
@@ -1480,7 +1492,9 @@ class FasterWhisperAdapter:
             check()
             aligned, _, valid, _ = self._alignment_state([segment], audio[start:end])
             if not valid:
-                raise TranscriptionError("ASR coverage hypothesis has no trustworthy native timing")
+                raise TranscriptionAlignmentError(
+                    "ASR coverage hypothesis has no trustworthy native timing"
+                )
             # Retain whole native words crossing a VAD edge too. Midpoint-only
             # recovery could drop the first lexical word in a recovered phrase.
             # Existing outside anchors still forbid overlap or guessed timing.
@@ -1500,7 +1514,9 @@ class FasterWhisperAdapter:
             left = [w for w in represented if Decimal(str(w.end)) <= first_midpoint]
             right = [w for w in represented if Decimal(str(w.start)) >= last_midpoint]
             if len(left) + len(right) != len(represented):
-                raise TranscriptionError("ASR coverage repair crosses existing word evidence")
+                raise TranscriptionAlignmentError(
+                    "ASR coverage repair crosses existing word evidence"
+                )
             # Independently decoded neighbors can overlap at a short-context
             # edge. Bound the ORIGINAL PCM by immutable outside words, then
             # align the complete missing phrase, rather than clipping inferred
@@ -1525,7 +1541,9 @@ class FasterWhisperAdapter:
                     ),
                 )
             if not first_sample < last_sample:
-                raise TranscriptionError("ASR coverage repair has no bounded source context")
+                raise TranscriptionAlignmentError(
+                    "ASR coverage repair has no bounded source context"
+                )
             patch_origin = Decimal(first_sample) / 16000
             segment = SimpleNamespace(
                 text="".join(w.word for w in selected),
@@ -1543,7 +1561,9 @@ class FasterWhisperAdapter:
             )
             patch = self._aligned_chunk([segment], audio[first_sample:last_sample], language, check)
             if [w.word for w in patch] != [w.word for w in selected]:
-                raise TranscriptionError("ASR coverage alignment changed complete missing text")
+                raise TranscriptionAlignmentError(
+                    "ASR coverage alignment changed complete missing text"
+                )
             for word, original in zip(patch, selected, strict=True):
                 first = patch_origin + Decimal(str(word.start))
                 last = patch_origin + Decimal(str(word.end))
@@ -1551,7 +1571,9 @@ class FasterWhisperAdapter:
                     max(first, Decimal(str(w.start))) < min(last, Decimal(str(w.end)))
                     for w in represented
                 ):
-                    raise TranscriptionError("ASR coverage repair violates outside anchors")
+                    raise TranscriptionAlignmentError(
+                        "ASR coverage repair violates outside anchors"
+                    )
                 candidate = SimpleNamespace(
                     word=word.word, start=first, end=last, probability=float(original.probability)
                 )
@@ -1562,7 +1584,7 @@ class FasterWhisperAdapter:
 
     def _verify_coverage(self, audio: Any, words: list[Any], check: Callable[[], None]) -> None:
         if self._coverage_evidence(audio, words, check):
-            raise TranscriptionError("ASR recognized speech lacks complete word coverage")
+            raise TranscriptionAlignmentError("ASR recognized speech lacks complete word coverage")
 
     def transcribe(
         self,
@@ -1653,7 +1675,7 @@ class FasterWhisperAdapter:
                         aligned = self._aligned_chunk(decoded, audio, str(info.language), check)
                     except (TranscriptionCancelled, TranscriptionTimeout):
                         raise
-                    except TranscriptionError as alignment_failure:
+                    except TranscriptionAlignmentError as alignment_failure:
                         if retried:
                             raise
                         # Exhaust trustworthy timing evidence before replacing
@@ -1723,11 +1745,9 @@ class FasterWhisperAdapter:
             chunks = self._reconcile_overlaps(chunks, chunk_languages, wav, source, check)
             try:
                 merged = merge_owned_words(chunks, source)
-            except TranscriptionError as error:
-                if str(error).startswith(
-                    "ASR chunk boundary requires trustworthy realignment"
-                ) and cross_language_boundary_collision(chunks, chunk_languages):
-                    raise TranscriptionError(
+            except TranscriptionBoundaryError as error:
+                if cross_language_boundary_collision(chunks, chunk_languages):
+                    raise TranscriptionBoundaryError(
                         "ASR chunk boundary requires trustworthy realignment: "
                         "detected_language_change"
                     ) from error
@@ -1784,7 +1804,7 @@ class FasterWhisperAdapter:
         try:
             return Transcript(language, total_probability / duration, merged)
         except ValueError as exc:
-            raise TranscriptionError("ASR output violates word integrity") from exc
+            raise TranscriptionAlignmentError("ASR output violates word integrity") from exc
 
     def parameters(self) -> dict[str, Any]:
         settings = self.settings.model_dump(mode="json", exclude={"model_root"})

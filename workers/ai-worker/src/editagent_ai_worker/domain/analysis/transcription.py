@@ -21,6 +21,14 @@ class TranscriptionAlignmentError(TranscriptionError):
     """Recognized words lack defensible complete timing; never a successful transcript."""
 
 
+class TranscriptionBoundaryError(TranscriptionAlignmentError):
+    """Owned chunk words cannot be reconciled without altering lexical evidence."""
+
+
+class TranscriptionLanguageError(TranscriptionAlignmentError):
+    """Conflicting original-PCM language evidence requires bounded redetection."""
+
+
 class TranscriptionUnavailable(TranscriptionError):
     """Pinned model/runtime cannot execute; operator action is required."""
 
