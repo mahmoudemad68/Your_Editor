@@ -129,6 +129,15 @@ class JobHistory:
             if started is None:
                 raise RuntimeError(f"job {job_id} was not queued")
             attempt_number = int(started[0])
+            if envelope is not None and envelope.get("jobType") in {
+                "analysis.transcript.v1",
+                "analysis.speech.v1",
+            }:
+                connection.execute(
+                    "UPDATE analysis_tasks SET failure=NULL,failure_category=NULL "
+                    "WHERE job_id=%s AND result IS NULL",
+                    (job_id,),
+                )
             connection.execute(
                 """
                 INSERT INTO job_attempts (

@@ -11,7 +11,10 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-from editagent_ai_worker.domain.analysis.transcription import TranscriptionError
+from editagent_ai_worker.domain.analysis.transcription import (
+    TranscriptionError,
+    TranscriptionUnavailable,
+)
 
 MODELS = {
     "tiny": {
@@ -70,14 +73,14 @@ def required_models(model: str) -> tuple[str, ...]:
 def verify_asr_model(path: Path, model: str) -> dict[str, Any]:
     expected = files(model)
     if path.is_symlink() or not path.is_dir():
-        raise TranscriptionError("Pinned ASR model is unavailable")
+        raise TranscriptionUnavailable("Pinned ASR model is unavailable")
     for name, (size, digest) in expected.items():
         file = path / name
         if file.is_symlink() or not file.is_file() or file.stat().st_size != size:
-            raise TranscriptionError("Pinned ASR model is invalid")
+            raise TranscriptionUnavailable("Pinned ASR model is invalid")
         with file.open("rb") as stream:
             if hashlib.file_digest(stream, "sha256").hexdigest() != digest:
-                raise TranscriptionError("Pinned ASR model checksum mismatch")
+                raise TranscriptionUnavailable("Pinned ASR model checksum mismatch")
     # Model bundle identity covers tokenizer/configuration as well as weights.
     return model_identity(model)
 

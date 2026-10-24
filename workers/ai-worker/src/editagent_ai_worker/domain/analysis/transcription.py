@@ -17,6 +17,14 @@ class TranscriptionTimeout(TranscriptionError):
     """Declared inference deadline expired."""
 
 
+class TranscriptionAlignmentError(TranscriptionError):
+    """Recognized words lack defensible complete timing; never a successful transcript."""
+
+
+class TranscriptionUnavailable(TranscriptionError):
+    """Pinned model/runtime cannot execute; operator action is required."""
+
+
 class TranscriptionCancelled(TranscriptionError):
     """Cancellation forbids successful persistence."""
 

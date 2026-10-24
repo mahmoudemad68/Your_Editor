@@ -220,6 +220,9 @@ export function qualifyThreadEquivalent(single, reference) {
 }
 
 function qualifyResult(result, model, threads = 2) {
+  assert.equal(result.preflight?.status, "READY_FOR_QUALIFICATION");
+  assert.equal(result.preflight.performanceGuaranteed, false);
+  assert.equal(result.preflight.modelsVerified, true);
   const worker = result.worker;
   assert.equal(worker.section.status, "completed");
   assert.deepEqual(result.versions, {
@@ -297,6 +300,11 @@ function qualifyResult(result, model, threads = 2) {
     phases,
     numericalRuntime: qualifyNumericalRuntime(result.numericalRuntime),
     configurationSha256: worker.section.provenance.configurationSha256,
+    preflight: {
+      status: "READY_FOR_QUALIFICATION",
+      modelsVerified: true,
+      performanceGuaranteed: false,
+    },
   };
 }
 

@@ -16,6 +16,17 @@ export class GetMediaAnalysis {
     private readonly analysis: AnalysisReader,
     private readonly media: MediaAssetRepository,
   ) {}
+  async failures(actor: UserId, project: ProjectId, asset: MediaAssetId) {
+    const document = await this.execute(actor, project, asset);
+    const details = (await this.analysis.failureDetails?.(
+      asset,
+      project,
+      document.source.sha256,
+    )) ?? { mediaAssetId: asset, sourceSha256: document.source.sha256, failures: [] };
+    const current = await this.details.execute(actor, project, asset);
+    if (current.contentSha256 !== document.source.sha256) throw new ProjectNotFoundError();
+    return details;
+  }
   async executeForAsset(actor: UserId, id: MediaAssetId) {
     const source = await this.media.findById(id);
     if (!source) throw new ProjectNotFoundError();

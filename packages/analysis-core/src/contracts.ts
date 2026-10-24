@@ -3,6 +3,8 @@ import {
   validateMediaAnalysisV1_1,
   type MediaAnalysisV1_1,
 } from "@editagent/schemas";
+import type { AnalysisFailureDetails } from "@editagent/schemas";
+export type { AnalysisFailureDetails } from "@editagent/schemas";
 
 export const ANALYSIS_VERSION = "us210-v1";
 export const ANALYSIS_QUEUE = "media-analysis-v1";
@@ -11,6 +13,11 @@ export type AnalysisDocument = ReturnType<typeof parseMediaAnalysis>;
 export type AnalysisSection = MediaAnalysisV1_1["sections"]["transcript" | "audio"];
 
 export interface AnalysisReader {
+  failureDetails?(
+    assetId: string,
+    projectId: string,
+    sourceSha256: string,
+  ): Promise<AnalysisFailureDetails>;
   read(assetId: string, projectId: string, sourceSha256: string): Promise<AnalysisDocument | null>;
   retry?(
     assetId: string,

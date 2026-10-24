@@ -240,7 +240,9 @@ def phase_profiler(
 
 def measure() -> int:
     from editagent_ai_worker.composition.transcribe import main as transcribe
+    from editagent_ai_worker.infrastructure.asr_preflight import collect
 
+    preflight = collect(verify_models=True)
     before = cgroup_snapshot()
     if (
         before["cpuQuotaUs"] != 2 * before["cpuPeriodUs"]
@@ -270,6 +272,7 @@ def measure() -> int:
         json.dumps(
             {
                 "worker": json.loads(content),
+                "preflight": preflight,
                 "before": before,
                 "after": cgroup_snapshot(),
                 "phases": phases,

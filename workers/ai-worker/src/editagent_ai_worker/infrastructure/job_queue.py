@@ -178,6 +178,9 @@ class BullMqConsumer:
                     self._history.retry, job_id, outcome[1], int(envelope["attempt"])
                 )
                 return await self._settled(job, token, job_id, "Retrying", outcome[1])
+            if outcome[0] == "cancelled":
+                await asyncio.to_thread(self._history.cancel, job_id, int(envelope["attempt"]))
+                return await self._settled(job, token, job_id, "Cancelled", "cancelled")
             await asyncio.to_thread(
                 self._history.fail, job_id, outcome[1], envelope, int(envelope["attempt"])
             )
@@ -469,6 +472,14 @@ async def run_analysis_handler(
             return ("retry", "Analyzer is unavailable")
         if reply.get("error") == "Analysis timed out.":
             return ("permanent", "timed out")
+        from editagent_ai_worker.infrastructure.analysis_failures import SAFE_ANALYSIS_MESSAGES
+
+        category = reply.get("category")
+        if isinstance(category, str) and category in SAFE_ANALYSIS_MESSAGES:
+            return (
+                "cancelled" if category == "cancelled" else "permanent",
+                SAFE_ANALYSIS_MESSAGES[category],
+            )
         return ("permanent", "Analysis failed")
     finally:
         # A cancelled communicate does not mean the native model process has stopped.

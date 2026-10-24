@@ -1,10 +1,20 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { instant, MediaAsset, mediaAssetId, Project, projectId, userId } from "@editagent/domain";
+import {
+  DomainError,
+  instant,
+  MediaAsset,
+  mediaAssetId,
+  Project,
+  projectId,
+  userId,
+} from "@editagent/domain";
 import { InMemoryMediaAssetRepository } from "./in-memory-media-repository.js";
 import { GetMediaDetails } from "./media-details.js";
 import { InMemoryProjectRepository } from "./in-memory-project-repository.js";
 import { ProjectNotFoundError } from "./project-access.js";
+import { GetMediaAnalysis } from "./media-analysis.js";
+import type { AnalysisDocument } from "@editagent/analysis-core";
 
 const NOW = instant(1_700_000_000_000n);
 const OWNER = userId("018f6b6e-7c3a-7111-8d3e-9c0b1a2d3e4f");
@@ -103,4 +113,57 @@ test("non-members, unknown projects, and foreign assets are not found", async ()
   );
   await assert.rejects(() => details.execute(OWNER, PROJECT, OTHER_ASSET), ProjectNotFoundError);
   await assert.rejects(() => details.execute(OWNER, OTHER, OTHER_ASSET), ProjectNotFoundError);
+});
+
+test("inconsistent membership snapshots are opaque on private media reads", async () => {
+  const projects = new InMemoryProjectRepository();
+  projects.findById = async () => {
+    throw new DomainError("private account membership rows");
+  };
+  const details = new GetMediaDetails(projects, new InMemoryMediaAssetRepository());
+  for (const actor of [OWNER, STRANGER])
+    await assert.rejects(
+      details.execute(actor, PROJECT, ASSET),
+      (error) => error instanceof ProjectNotFoundError && !error.message.includes("private"),
+    );
+});
+
+test("failure details reauthorize after the durable companion read", async () => {
+  const { details, media } = await fixture();
+  const original = details.execute.bind(details);
+  let authorizationReads = 0,
+    companionRead = false;
+  details.execute = async (...args) => {
+    if (++authorizationReads === 3) throw new ProjectNotFoundError();
+    return original(...args);
+  };
+  const absent = { status: "not_available" } as const;
+  const document: AnalysisDocument = {
+    schemaVersion: "1.1.0",
+    mediaAssetId: ASSET,
+    source: { sha256: "ab".repeat(32) },
+    provenance: { producer: "unit", producerVersion: "1" },
+    sections: {
+      metadata: absent,
+      transcript: absent,
+      audio: absent,
+      scenes: absent,
+      faces: absent,
+      objects: absent,
+    },
+  };
+  const getter = new GetMediaAnalysis(
+    details,
+    {
+      read: async () => document,
+      failureDetails: async () => {
+        companionRead = true;
+        return { mediaAssetId: ASSET, sourceSha256: document.source.sha256, failures: [] };
+      },
+    },
+    media,
+  );
+  await assert.rejects(getter.failures(OWNER, PROJECT, ASSET), ProjectNotFoundError);
+  assert.equal(companionRead, true);
+  assert.equal(authorizationReads, 3);
 });

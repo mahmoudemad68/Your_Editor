@@ -1,4 +1,4 @@
-import { parseMediaAnalysis } from "@editagent/schemas";
+import { parseMediaAnalysis, parseAnalysisFailureDetails } from "@editagent/schemas";
 import { loadWebConfig } from "../infrastructure/config";
 import { correlationIdFromRequest } from "./project-actions";
 
@@ -11,6 +11,7 @@ export async function proxyMediaAnalysis(
   project: string,
   media: string,
   fetchImpl: typeof fetch = fetch,
+  failures = false,
 ): Promise<Response> {
   const failure = (status: number, message: string) =>
     Response.json({ ok: false, status, message }, { status, headers });
@@ -20,7 +21,7 @@ export async function proxyMediaAnalysis(
     const cookie = request.headers.get("cookie");
     if (cookie !== null) forwarded.set("cookie", cookie);
     const response = await fetchImpl(
-      `${loadWebConfig().apiBaseUrl}/projects/${project}/media/${media}/analysis`,
+      `${loadWebConfig().apiBaseUrl}/projects/${project}/media/${media}/analysis${failures ? "/failures" : ""}`,
       {
         headers: forwarded,
         cache: "no-store",
@@ -38,7 +39,9 @@ export async function proxyMediaAnalysis(
             : "Analysis could not be loaded. Try again.";
       return failure(response.status, message);
     }
-    const analysis = parseMediaAnalysis(await response.json());
+    const analysis = failures
+      ? parseAnalysisFailureDetails(await response.json())
+      : parseMediaAnalysis(await response.json());
     if (analysis.mediaAssetId !== media)
       return failure(502, "Analysis response could not be verified.");
     return Response.json({ ok: true, data: analysis }, { headers });
