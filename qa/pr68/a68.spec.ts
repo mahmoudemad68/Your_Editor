@@ -1,4 +1,4 @@
-/** PR #68 independent QA, part A: Issue #62 categories on real PostgreSQL/Redis/BullMQ/S3/AI worker. QA-authored. */
+﻿/** PR #68 independent QA, part A: Issue #62 categories on real PostgreSQL/Redis/BullMQ/S3/AI worker. QA-authored. */
 import { test, expect } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { writeFileSync, readFileSync } from "node:fs";
@@ -36,7 +36,7 @@ test("PR68 part A: failure categories, authorization and lifecycle", async ({ br
   await probe("A2", "Failures endpoint authorization and existence-hiding", "unauth 401; outsider/no-member/nonexistent all 404 with byte-identical bodies; malformed id 400", async () => {
     const un = await failures(null, P, M), out = await failures(outsider, P, M), mem = await failures(member, P, M);
     const ghost = await failures(owner, P, randomUUID().replace(/^(.{14})./, "$17"));
-    const otherProject = await failures(outsider, randomUUID(), M);
+    const otherProject = await failures(outsider, randomUUID().replace(/^(.{14})./, "$17"), M);
     const bad = await call(owner, "GET", `/projects/${P}/media/not-a-uuid/analysis/failures`);
     const same = new Set([out.text, mem.text, ghost.text, otherProject.text]).size === 1;
     return { pass: un.status === 401 && out.status === 404 && mem.status === 404 && ghost.status === 404 && otherProject.status === 404 && same && bad.status === 400,
@@ -87,26 +87,6 @@ test("PR68 part A: failure categories, authorization and lifecycle", async ({ br
   });
 
   // ---------- C: transport unavailability and true invalid input ----------
-  await probe("C1", "S3 unavailable during transcript retry -> analyzer_unavailable (retryable), then recovery clears the failure on the next generation", "terminal non-Completed; category analyzer_unavailable; retry after S3 restored completes and /failures no longer lists transcript", async () => {
-    await waitApplied((await latest(M, "transcript")).job_id);
-    docker("stop", "editagent-seaweed-s3");
-    let J = "", final = "", t: any, f: any, attempts = 0;
-    try {
-      const r = await retry(owner, M, "transcript", (await latest(M, "transcript")).job_id);
-      J = r.json?.jobId;
-      final = await waitStatus(J, terminal, 600_000, 1000);
-    } finally { docker("start", "editagent-seaweed-s3"); await sleep(8000); }
-    await waitApplied(J).catch(() => null);
-    [t] = await q("SELECT failure_category,failure,(SELECT count(*)::int FROM job_attempts a WHERE a.job_id=$1) AS attempts FROM analysis_tasks WHERE job_id=$1", [J]);
-    f = await failures(owner, P, M);
-    const tr = f.json?.failures?.find((x: any) => x.analyzer === "transcript");
-    const again = await retry(owner, M, "transcript", J);
-    const okAgain = again.json?.jobId ? await waitApplied(again.json.jobId) : null;
-    const f2 = await failures(owner, P, M);
-    return { pass: final !== "Completed" && t.failure_category === "analyzer_unavailable" && tr?.category === "analyzer_unavailable" && okAgain === "Completed" &&
-        !f2.json.failures.some((x: any) => x.analyzer === "transcript"),
-      actual: { jobStatus: final, attempts: t.attempts, persistedCategory: t.failure_category, persistedFailure: t.failure, detail: tr, recoveryJob: okAgain, failuresAfterRecovery: f2.json?.failures } };
-  });
   await probe("C2", "Tampered staged audio derivative (identity mismatch) -> invalid_input, distinct from timeout/unavailable", "category invalid_input, code invalid_input, retryable false; restoring the bytes and retrying completes", async () => {
     await waitApplied((await latest(M, "transcript")).job_id);
     const prev = await latest(M, "transcript");
@@ -227,10 +207,11 @@ test("PR68 part A: failure categories, authorization and lifecycle", async ({ br
   await probe("F3", "Generation fencing and immutable intent preserved", "document transcript equals newest completed generation; no non-completed task holds a result; deadline intent still immutable", async () => {
     await settled(M);
     const t = await tasks(M), d = await dbDoc(M);
-    const [tr] = await q("SELECT result FROM analysis_tasks WHERE media_asset_id=$1 AND analyzer='transcript' ORDER BY generation DESC LIMIT 1", [M]);
+    const [tr] = await q("SELECT t.result,j.status FROM analysis_tasks t JOIN jobs j ON j.id=t.job_id WHERE t.media_asset_id=$1 AND t.analyzer='transcript' ORDER BY t.generation DESC LIMIT 1", [M]);
+    const docOk = tr.status === "Completed" ? canon(tr.result) === canon(d.document.sections.transcript) : d.document.sections.transcript.status === "failed" && !d.document.sections.transcript.data;
     const imm = await q("UPDATE analysis_tasks SET deadline_at_ms=0 WHERE job_id=$1", [t[0].job_id]).then(() => "mutated", (e) => String(e.message).slice(0, 60));
-    return { pass: canon(tr.result) === canon(d.document.sections.transcript) && t.filter((x: any) => x.status !== "Completed" && x.has_result).length === 0 && imm !== "mutated",
-      actual: { newestEqualsDocument: canon(tr.result) === canon(d.document.sections.transcript), generations: t.map((x: any) => `${x.analyzer}:${x.generation}:${x.status}${x.failure_category ? ":" + x.failure_category : ""}`), intentMutation: imm } };
+    return { pass: docOk && t.filter((x: any) => x.status !== "Completed" && x.has_result).length === 0 && imm !== "mutated",
+      actual: { newestGenerationStatus: tr.status, documentMatchesNewestGeneration: docOk, generations: t.map((x: any) => `${x.analyzer}:${x.generation}:${x.status}${x.failure_category ? ":" + x.failure_category : ""}`), intentMutation: imm } };
   });
   await probe("F4", "Durable details survive API + workers restart", "/failures and document identical after restart", async () => {
     const a = (await failures(owner, P, MT)).text, b = (await call(owner, "GET", `/projects/${P}/media/${M}/analysis`)).text;
@@ -239,6 +220,26 @@ test("PR68 part A: failure categories, authorization and lifecycle", async ({ br
     const a2 = await until(async () => { const r = await failures(owner, P, MT); return r.status === 200 ? r.text : null; }, 120_000, "api back");
     const b2 = (await call(owner, "GET", `/projects/${P}/media/${M}/analysis`)).text;
     return { pass: a === a2 && b === b2, actual: { failuresIdentical: a === a2, documentIdentical: b === b2 } };
+  });
+  await probe("C1", "S3 unavailable during transcript retry -> analyzer_unavailable (retryable), then recovery clears the failure on the next generation", "terminal non-Completed; category analyzer_unavailable; retry after S3 restored completes and /failures no longer lists transcript", async () => {
+    await waitApplied((await latest(M, "transcript")).job_id);
+    docker("pause", "editagent-seaweed-s3");
+    let J = "", final = "", t: any, f: any, attempts = 0;
+    try {
+      const r = await retry(owner, M, "transcript", (await latest(M, "transcript")).job_id);
+      J = r.json?.jobId;
+      final = await waitStatus(J, terminal, 600_000, 1000);
+    } finally { docker("unpause", "editagent-seaweed-s3"); await until(async () => { const [a] = await q("SELECT storage_key FROM media_assets WHERE id=$1", [M]); await s3.send(new GetObjectCommand({ Bucket: "editagent", Key: a.storage_key })); return true; }, 180_000, "S3 healthy"); }
+    await waitApplied(J).catch(() => null);
+    [t] = await q("SELECT failure_category,failure,(SELECT count(*)::int FROM job_attempts a WHERE a.job_id=$1) AS attempts FROM analysis_tasks WHERE job_id=$1", [J]);
+    f = await failures(owner, P, M);
+    const tr = f.json?.failures?.find((x: any) => x.analyzer === "transcript");
+    const again = await retry(owner, M, "transcript", J);
+    const okAgain = again.json?.jobId ? await waitApplied(again.json.jobId) : null;
+    const f2 = await failures(owner, P, M);
+    return { pass: final !== "Completed" && t.failure_category === "analyzer_unavailable" && tr?.category === "analyzer_unavailable" && okAgain === "Completed" &&
+        !f2.json.failures.some((x: any) => x.analyzer === "transcript"),
+      actual: { jobStatus: final, attempts: t.attempts, persistedCategory: t.failure_category, persistedFailure: t.failure, detail: tr, recoveryJob: okAgain, failuresAfterRecovery: f2.json?.failures } };
   });
   writeFileSync(path.join(PRIVATE, "state.json"), JSON.stringify({ P, M, known, owner: { email: owner.email, password: owner.password } }));
   await pool.end();
