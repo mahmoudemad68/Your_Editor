@@ -79,6 +79,7 @@ test("0007 preserves historical memberships without creating accounts", async ()
       "0018_editing_media.sql",
       "0019_media_analysis.sql",
       "0020_analysis_failure_categories.sql",
+      "0021_analysis_language_metadata.sql",
     ]);
 
     const project = await pool.query<{ name: string }>("SELECT name FROM projects WHERE id = $1", [
