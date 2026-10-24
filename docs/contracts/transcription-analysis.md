@@ -1,10 +1,12 @@
 # Transcription and durable MediaAnalysis (US-201 / US-210)
 
 The JSON Schemas and generated bindings in `packages/schemas` own the persisted
-contract. New documents use MediaAnalysis **1.1.0**; the published 1.0.0 readers
-and explicit 1.0.0 → 1.1.0 migration remain available. Stored 1.0.0 documents
-are returned as 1.0.0; a new analyzer write explicitly validates and migrates them
-with the canonical pure migration before producing 1.1.0. Unknown versions fail closed. Timestamps are source-coordinate
+contract. New documents use MediaAnalysis **1.2.0** with optional
+[local language observations](segment-language-evidence.md). Published 1.0.0 and
+1.1.0 readers and the explicit 1.0.0 → 1.1.0 migration remain available. Stored
+documents retain their declared version on reads; a new analyzer write validates
+and upgrades the envelope to 1.2.0 without inventing language observations for
+old transcript receipts. Unknown versions fail closed. Timestamps are source-coordinate
 integer microseconds serialized as decimal strings. Model, application, dataset
 and schema versions are distinct.
 

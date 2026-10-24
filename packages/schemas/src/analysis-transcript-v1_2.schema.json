@@ -1,0 +1,292 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://editagent.local/schemas/analysis-transcript/1.2.0.schema.json",
+  "title": "Transcript",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "language": {
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 35,
+      "pattern": "^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$(?![\\s\\S])"
+    },
+    "languageConfidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "segments": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/TranscriptSegment"
+      },
+      "maxItems": 54000,
+      "minItems": 0
+    },
+    "languageSegments": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/LanguageSegment"
+      },
+      "maxItems": 450,
+      "minItems": 0,
+      "description": "Existing four-second source probe contexts, not word-level labels or new transcript segmentation. Mixed denotes conflicting model observations; confidence is not calibrated accuracy."
+    }
+  },
+  "required": ["language", "segments"],
+  "x-editagent-checks": [
+    {
+      "kind": "orderedRanges",
+      "field": "segments",
+      "start": "startUs",
+      "end": "endUs"
+    },
+    {
+      "kind": "unique",
+      "field": "segments",
+      "key": "id"
+    },
+    {
+      "kind": "nestedCount",
+      "field": "segments",
+      "child": "words",
+      "maximum": 54000
+    },
+    {
+      "kind": "orderedRanges",
+      "field": "languageSegments",
+      "start": "startUs",
+      "end": "endUs"
+    }
+  ],
+  "$defs": {
+    "TranscriptWord": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^[^\\ud800-\\udfff]*$(?![\\s\\S])"
+        },
+        "startUs": {
+          "$ref": "https://editagent.local/schemas/analysis-common/1.0.0.schema.json#/$defs/Time"
+        },
+        "endUs": {
+          "$ref": "https://editagent.local/schemas/analysis-common/1.0.0.schema.json#/$defs/Time"
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "speaker": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._+-]*$(?![\\s\\S])"
+        }
+      },
+      "required": ["text", "startUs", "endUs"],
+      "x-editagent-checks": [
+        {
+          "kind": "less",
+          "left": "startUs",
+          "right": "endUs",
+          "decimal": true
+        }
+      ]
+    },
+    "TranscriptSegment": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "https://editagent.local/schemas/analysis-common/1.0.0.schema.json#/$defs/LogicalId"
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16384,
+          "pattern": "^[^\\ud800-\\udfff]*$(?![\\s\\S])"
+        },
+        "startUs": {
+          "$ref": "https://editagent.local/schemas/analysis-common/1.0.0.schema.json#/$defs/Time"
+        },
+        "endUs": {
+          "$ref": "https://editagent.local/schemas/analysis-common/1.0.0.schema.json#/$defs/Time"
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "words": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TranscriptWord"
+          },
+          "maxItems": 54000,
+          "minItems": 0
+        }
+      },
+      "required": ["id", "text", "startUs", "endUs", "words"],
+      "x-editagent-checks": [
+        {
+          "kind": "less",
+          "left": "startUs",
+          "right": "endUs",
+          "decimal": true
+        },
+        {
+          "kind": "orderedRanges",
+          "field": "words",
+          "start": "startUs",
+          "end": "endUs"
+        },
+        {
+          "kind": "rangesWithin",
+          "field": "words",
+          "lower": "startUs",
+          "upper": "endUs",
+          "start": "startUs",
+          "end": "endUs"
+        }
+      ]
+    },
+    "LanguageSegment": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/DominantLanguageSegment"
+        },
+        {
+          "$ref": "#/$defs/MixedLanguageSegment"
+        },
+        {
+          "$ref": "#/$defs/UnknownLanguageSegment"
+        }
+      ]
+    },
+    "DominantLanguageSegment": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "startUs": {
+          "$ref": "https://editagent.local/schemas/analysis-common/1.0.0.schema.json#/$defs/Time"
+        },
+        "endUs": {
+          "$ref": "https://editagent.local/schemas/analysis-common/1.0.0.schema.json#/$defs/Time"
+        },
+        "method": {
+          "const": "ct2-source-context-v1"
+        },
+        "scope": {
+          "const": "audio_context_not_word_language"
+        },
+        "model": {
+          "$ref": "https://editagent.local/schemas/analysis-provenance/1.0.0.schema.json#/$defs/ModelIdentity"
+        },
+        "status": {
+          "const": "dominant"
+        },
+        "language": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 35,
+          "pattern": "^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$(?![\\s\\S])"
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0.5,
+          "maximum": 1
+        }
+      },
+      "required": [
+        "startUs",
+        "endUs",
+        "method",
+        "scope",
+        "model",
+        "status",
+        "language",
+        "confidence"
+      ],
+      "x-editagent-checks": [
+        {
+          "kind": "less",
+          "left": "startUs",
+          "right": "endUs",
+          "decimal": true
+        }
+      ]
+    },
+    "MixedLanguageSegment": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "startUs": {
+          "$ref": "https://editagent.local/schemas/analysis-common/1.0.0.schema.json#/$defs/Time"
+        },
+        "endUs": {
+          "$ref": "https://editagent.local/schemas/analysis-common/1.0.0.schema.json#/$defs/Time"
+        },
+        "method": {
+          "const": "ct2-source-context-v1"
+        },
+        "scope": {
+          "const": "audio_context_not_word_language"
+        },
+        "model": {
+          "$ref": "https://editagent.local/schemas/analysis-provenance/1.0.0.schema.json#/$defs/ModelIdentity"
+        },
+        "status": {
+          "const": "mixed"
+        }
+      },
+      "required": ["startUs", "endUs", "method", "scope", "model", "status"],
+      "x-editagent-checks": [
+        {
+          "kind": "less",
+          "left": "startUs",
+          "right": "endUs",
+          "decimal": true
+        }
+      ]
+    },
+    "UnknownLanguageSegment": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "startUs": {
+          "$ref": "https://editagent.local/schemas/analysis-common/1.0.0.schema.json#/$defs/Time"
+        },
+        "endUs": {
+          "$ref": "https://editagent.local/schemas/analysis-common/1.0.0.schema.json#/$defs/Time"
+        },
+        "method": {
+          "const": "ct2-source-context-v1"
+        },
+        "scope": {
+          "const": "audio_context_not_word_language"
+        },
+        "model": {
+          "$ref": "https://editagent.local/schemas/analysis-provenance/1.0.0.schema.json#/$defs/ModelIdentity"
+        },
+        "status": {
+          "const": "unknown"
+        }
+      },
+      "required": ["startUs", "endUs", "method", "scope", "model", "status"],
+      "x-editagent-checks": [
+        {
+          "kind": "less",
+          "left": "startUs",
+          "right": "endUs",
+          "decimal": true
+        }
+      ]
+    }
+  }
+}

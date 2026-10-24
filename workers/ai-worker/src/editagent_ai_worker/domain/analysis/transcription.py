@@ -6,6 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
 
+from .language_evidence import LanguageSegment
 from .voice_activity import AudioIdentity, Cancellation, integer, probability
 
 
@@ -60,6 +61,7 @@ class Transcript:
     language: str
     language_confidence: float
     words: tuple[Word, ...]
+    language_segments: tuple[LanguageSegment, ...] = ()
 
     def __post_init__(self) -> None:
         if (

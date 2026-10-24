@@ -25,12 +25,19 @@ export const sourceFilesV1 = [
 export const sourceFilesV1_1 = sourceFilesV1.map((path) =>
   path.replace(/(analysis-audio|media-analysis)\.schema\.json$/, "$1-v1_1.schema.json"),
 );
-export const sourceFiles = [...new Set([...sourceFilesV1, ...sourceFilesV1_1])];
+export const sourceFilesV1_2 = sourceFilesV1_1.map((path) =>
+  path
+    .replace(/analysis-transcript\.schema\.json$/, "analysis-transcript-v1_2.schema.json")
+    .replace(/media-analysis-v1_1\.schema\.json$/, "media-analysis-v1_2.schema.json"),
+);
+export const sourceFiles = [...new Set([...sourceFilesV1, ...sourceFilesV1_1, ...sourceFilesV1_2])];
 export const targets = [
   "packages/schemas/src/media-analysis.generated.ts",
   "workers/ai-worker/src/editagent_ai_worker/contracts/media_analysis_generated.py",
   "packages/schemas/src/media-analysis-v1_1.generated.ts",
   "workers/ai-worker/src/editagent_ai_worker/contracts/media_analysis_v1_1_generated.py",
+  "packages/schemas/src/media-analysis-v1_2.generated.ts",
+  "workers/ai-worker/src/editagent_ai_worker/contracts/media_analysis_v1_2_generated.py",
 ];
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const allowed = new Set([
@@ -303,7 +310,8 @@ export async function generate(root = repositoryRoot) {
   // Both complete graphs pass the same fail-closed compiler before any target is written.
   const graphs = await Promise.all([
     generateGraph(root, sourceFilesV1, targets.slice(0, 2)),
-    generateGraph(root, sourceFilesV1_1, targets.slice(2)),
+    generateGraph(root, sourceFilesV1_1, targets.slice(2, 4)),
+    generateGraph(root, sourceFilesV1_2, targets.slice(4, 6)),
   ]);
   return new Map(graphs.flatMap((graph) => [...graph]));
 }

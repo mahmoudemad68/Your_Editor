@@ -10,7 +10,6 @@ import time
 from pathlib import Path
 
 from editagent_ai_worker.contracts.media_analysis_generated import AnalyzerProvenance
-from editagent_ai_worker.contracts.media_analysis_generated import Transcript as TranscriptContract
 from editagent_ai_worker.domain.analysis.transcription import TranscriptionError
 from editagent_ai_worker.domain.analysis.voice_activity import AudioIdentity
 from editagent_ai_worker.infrastructure.asr_config import AsrSettings
@@ -18,6 +17,7 @@ from editagent_ai_worker.infrastructure.config import (
     ConfigurationError,
     configure_asr_native_environment,
 )
+from editagent_ai_worker.infrastructure.transcript_schema import to_document as transcript_document
 
 
 def main() -> int:
@@ -33,33 +33,7 @@ def main() -> int:
         identity = AudioIdentity(**json.loads(args.identity.read_text()))
         adapter = FasterWhisperAdapter(AsrSettings())
         transcript = adapter.transcribe(str(args.audio), identity)
-        segments = []
-        # Preserve every original word and confidence, without synthesized timing.
-        for i, word in enumerate(transcript.words):
-            segments.append(
-                {
-                    "id": f"word-{i}",
-                    "text": word.text,
-                    "startUs": str(word.start_us),
-                    "endUs": str(word.end_us),
-                    "confidence": word.confidence,
-                    "words": [
-                        {
-                            "text": word.text,
-                            "startUs": str(word.start_us),
-                            "endUs": str(word.end_us),
-                            "confidence": word.confidence,
-                        }
-                    ],
-                }
-            )
-        data = TranscriptContract.model_validate(
-            {
-                "language": transcript.language,
-                "languageConfidence": transcript.language_confidence,
-                "segments": segments,
-            }
-        ).model_dump(mode="json")
+        data = transcript_document(transcript)
         provenance = AnalyzerProvenance.model_validate(adapter.provenance(identity)).model_dump(
             mode="json"
         )

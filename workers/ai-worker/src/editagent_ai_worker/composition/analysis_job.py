@@ -25,7 +25,6 @@ from botocore.exceptions import ConnectionError as StorageConnectionError
 from psycopg.types.json import Jsonb
 
 from editagent_ai_worker.contracts.media_analysis_generated import AnalyzerProvenance, Failure
-from editagent_ai_worker.contracts.media_analysis_generated import Transcript as TranscriptContract
 from editagent_ai_worker.domain.analysis.transcription import (
     TranscriptionError,
     TranscriptionTimeout,
@@ -44,6 +43,7 @@ from editagent_ai_worker.infrastructure.config import (
     load_ai_worker_settings,
 )
 from editagent_ai_worker.infrastructure.faster_whisper import ASR_ALGORITHM, FasterWhisperAdapter
+from editagent_ai_worker.infrastructure.transcript_schema import to_document as transcript_document
 
 
 def detect_speech(
@@ -263,31 +263,7 @@ def main() -> int:
                             done * 100 // total,
                         ),
                     )
-                    segments = []
-                    for i, w in enumerate(transcript.words):
-                        word = {
-                            "text": w.text,
-                            "startUs": str(w.start_us),
-                            "endUs": str(w.end_us),
-                            "confidence": w.confidence,
-                        }
-                        segments.append(
-                            {
-                                "id": f"word-{i}",
-                                "text": w.text,
-                                "startUs": str(w.start_us),
-                                "endUs": str(w.end_us),
-                                "confidence": w.confidence,
-                                "words": [word],
-                            }
-                        )
-                    data = TranscriptContract.model_validate(
-                        {
-                            "language": transcript.language,
-                            "languageConfidence": transcript.language_confidence,
-                            "segments": segments,
-                        }
-                    ).model_dump(mode="json")
+                    data = transcript_document(transcript)
                     provenance = AnalyzerProvenance.model_validate(
                         adapter.provenance(identity)
                     ).model_dump(mode="json")

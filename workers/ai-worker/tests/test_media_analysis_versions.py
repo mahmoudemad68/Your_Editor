@@ -12,6 +12,7 @@ from editagent_ai_worker.contracts import (
     parse_media_analysis,
     validate_media_analysis_v1,
     validate_media_analysis_v1_1,
+    validate_media_analysis_v1_2,
 )
 
 FIXTURES = Path(__file__).resolve().parents[3] / "packages/schemas/fixtures/media-analysis"
@@ -28,13 +29,17 @@ def test_exact_readers_and_pure_migration(name: str) -> None:
     assert "shortTermLoudness" not in latest["sections"]["audio"].get("data", {})
     assert parse_media_analysis(latest).model_dump(mode="json") == latest
     validate_media_analysis_v1_1(latest)
+    current = {**latest, "schemaVersion": "1.2.0"}
+    assert validate_media_analysis_v1_2(current).model_dump(mode="json") == current
+    assert parse_media_analysis(current).model_dump(mode="json") == current
+    assert "languageSegments" not in current["sections"]["transcript"].get("data", {})
     with pytest.raises(ValueError):
         validate_media_analysis_v1(latest)
     with pytest.raises(ValueError):
         validate_media_analysis_v1_1(value)
 
 
-@pytest.mark.parametrize("version", ["1.2.0", "2.0.0", "1.1", 1, None])
+@pytest.mark.parametrize("version", ["1.3.0", "2.0.0", "1.1", 1, None])
 def test_unknown_version_and_invalid_migration_rejected(version: object) -> None:
     value = json.loads((FIXTURES / "minimal.json").read_text())
     value["schemaVersion"] = version

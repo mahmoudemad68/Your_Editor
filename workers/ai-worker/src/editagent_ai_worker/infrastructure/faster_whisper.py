@@ -20,6 +20,10 @@ from faster_whisper.tokenizer import Tokenizer  # type: ignore[import-untyped]
 from faster_whisper.transcribe import merge_punctuations  # type: ignore[import-untyped]
 from faster_whisper.vad import VadOptions, get_speech_timestamps  # type: ignore[import-untyped]
 
+from editagent_ai_worker.domain.analysis.language_evidence import (
+    LanguageObservation,
+    summarize_language_observations,
+)
 from editagent_ai_worker.domain.analysis.transcription import (
     Transcript,
     TranscriptionAlignmentError,
@@ -444,6 +448,8 @@ class FasterWhisperAdapter:
             # the existing verified Small model for one bounded source plan,
             # before decoding any words. Recognition remains the selected model.
             model = self._pinned_alignment_model(check)
+            if hasattr(self, "_language_observations"):
+                self._language_observations.clear()
             return self._planned_language_regions(wav, duration_us, check, model, refine=True)
 
     def _planned_language_regions(
@@ -486,6 +492,16 @@ class FasterWhisperAdapter:
                 if probability >= 0.5:
                     language = str(detected)
             cells.append((lower, upper, language, probabilities))
+            if hasattr(self, "_language_observations"):
+                self._language_observations.append(
+                    LanguageObservation(
+                        lower,
+                        upper,
+                        self.settings.model if model is self.model else "small",
+                        tuple(sorted(probabilities.items())),
+                        True,
+                    )
+                )
         # An uncertain/silent cell borrows a neighboring language only to give
         # the decoder a prompt; VAD still determines whether it contains speech.
         known = [(i, cell[2]) for i, cell in enumerate(cells) if cell[2] is not None]
@@ -515,6 +531,15 @@ class FasterWhisperAdapter:
                         encoded = model.encode(model.feature_extractor(pcm))
                         native = model.model.detect_language(encoded)[0]
                         corroboration = {str(token)[2:-2]: float(value) for token, value in native}
+                        if hasattr(self, "_language_observations"):
+                            self._language_observations.append(
+                                LanguageObservation(
+                                    probe_lower,
+                                    probe_upper,
+                                    self.settings.model if model is self.model else "small",
+                                    tuple(sorted(corroboration.items())),
+                                )
+                            )
                         check()
                 language = neighboring_language_prompt(str(neighbor), probabilities, corroboration)
             probability = probabilities.get(language, 0.0) if language is not None else 0.0
@@ -573,6 +598,15 @@ class FasterWhisperAdapter:
                     probabilities = {str(token)[2:-2]: float(value) for token, value in native}
                 check()
                 cache[lower, upper] = probabilities
+                if hasattr(self, "_language_observations"):
+                    self._language_observations.append(
+                        LanguageObservation(
+                            lower,
+                            upper,
+                            self.settings.model if model is self.model else "small",
+                            tuple(sorted(probabilities.items())),
+                        )
+                    )
             return cache[lower, upper]
 
         refined: list[tuple[int, int, str | None, float]] = []
@@ -1603,6 +1637,8 @@ class FasterWhisperAdapter:
 
         check()
         path = Path(audio_path)
+        observations: list[LanguageObservation] = []
+        self._language_observations = observations
         verify_audio_file(path, source, check)
         if wav_parameters(path, source) != (16000, 1, 2):
             raise TranscriptionError("Transcription requires verified canonical mono PCM16 WAV")
@@ -1798,11 +1834,18 @@ class FasterWhisperAdapter:
                 self._verify_coverage(audio, represented, check)
         check()
         if not merged:
-            return Transcript("und", 0.0, ())
+            return Transcript(
+                "und", 0.0, (), summarize_language_observations(observations, source.scope_start_us)
+            )
         language = max(sorted(languages), key=lambda key: languages[key][0])
         duration, total_probability = languages[language]
         try:
-            return Transcript(language, total_probability / duration, merged)
+            return Transcript(
+                language,
+                total_probability / duration,
+                merged,
+                summarize_language_observations(observations, source.scope_start_us),
+            )
         except ValueError as exc:
             raise TranscriptionAlignmentError("ASR output violates word integrity") from exc
 

@@ -255,6 +255,8 @@ jobs:
         uses: actions/checkout@v7
         with:
           lfs: true
+          # Offline base/head inference A/B reads the pinned published source from Git.
+          fetch-depth: 0
       - name: Setup Python
         uses: actions/setup-python@v7
         with:

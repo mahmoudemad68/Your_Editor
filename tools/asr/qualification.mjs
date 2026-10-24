@@ -223,6 +223,13 @@ function qualifyResult(result, model, threads = 2) {
   assert.equal(result.preflight?.status, "READY_FOR_QUALIFICATION");
   assert.equal(result.preflight.performanceGuaranteed, false);
   assert.equal(result.preflight.modelsVerified, true);
+  assert.deepEqual(result.preflight.resourceAssurance, {
+    scope: "visible_cgroup_namespace_only",
+    visibleProfileMatches: true,
+    hostParentLimits: "NOT_VERIFIED",
+    operatorVerificationRequired: true,
+    limitation: "Stricter host, pod or parent-slice limits may be invisible.",
+  });
   const worker = result.worker;
   assert.equal(worker.section.status, "completed");
   assert.deepEqual(result.versions, {
@@ -304,6 +311,12 @@ function qualifyResult(result, model, threads = 2) {
       status: "READY_FOR_QUALIFICATION",
       modelsVerified: true,
       performanceGuaranteed: false,
+      resourceAssurance: {
+        scope: "visible_cgroup_namespace_only",
+        visibleProfileMatches: true,
+        hostParentLimits: "NOT_VERIFIED",
+        operatorVerificationRequired: true,
+      },
     },
   };
 }

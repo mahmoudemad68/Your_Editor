@@ -3,9 +3,9 @@ import { createUuidV7, Job, jobId, mediaAssetId, instant, type JobQueue } from "
 import { PostgresJobRepository, enqueueJob } from "@editagent/job-queue";
 import {
   parseMediaAnalysis,
-  migrateMediaAnalysisV1ToV1_1,
-  validateMediaAnalysisV1_1,
-  type MediaAnalysisV1_1,
+  migrateMediaAnalysisToV1_2,
+  validateMediaAnalysisV1_2,
+  type MediaAnalysisV1_2,
 } from "@editagent/schemas";
 import { type Pool, type PoolClient } from "pg";
 import {
@@ -44,12 +44,12 @@ type Task = {
   input_sha256: string;
   storage_key: string;
   duration: string;
-  document: MediaAnalysisV1_1;
+  document: MediaAnalysisV1_2;
 };
 
-function currentVersion(document: unknown): MediaAnalysisV1_1 {
+function currentVersion(document: unknown): MediaAnalysisV1_2 {
   const parsed = parseMediaAnalysis(document);
-  return parsed.schemaVersion === "1.0.0" ? migrateMediaAnalysisV1ToV1_1(parsed) : parsed;
+  return migrateMediaAnalysisToV1_2(parsed);
 }
 const newId = () => createUuidV7(Date.now(), randomBytes(10));
 async function bounded<T>(operation: Promise<T>, milliseconds = 2000): Promise<T> {
@@ -279,8 +279,8 @@ export class PostgresAnalysis implements AnalysisReader {
             retryable: false,
           },
         };
-        const document = validateMediaAnalysisV1_1({
-          schemaVersion: "1.1.0",
+        const document = validateMediaAnalysisV1_2({
+          schemaVersion: "1.2.0",
           mediaAssetId: id,
           source: {
             sha256: m["content_sha256"],
@@ -464,7 +464,7 @@ export class PostgresAnalysis implements AnalysisReader {
         previous.configuration,
         actorId,
       );
-      const current = await c.query<{ document: MediaAnalysisV1_1 }>(
+      const current = await c.query<{ document: MediaAnalysisV1_2 }>(
         "SELECT document FROM media_analyses WHERE media_asset_id=$1",
         [id],
       );

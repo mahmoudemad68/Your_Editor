@@ -7,7 +7,7 @@ import { analysisFixture, ANALYSIS_MEDIA, ANALYSIS_PROJECT } from "../analysis-t
 import { MediaAnalysisPanel } from "./media-analysis";
 
 test("completed EN/AR transcript remains visible when audio analysis fails, for both schema versions", async () => {
-  for (const version of ["1.0.0", "1.1.0"]) {
+  for (const version of ["1.0.0", "1.1.0", "1.2.0"]) {
     cleanup();
     render(
       <MediaAnalysisPanel
@@ -22,6 +22,54 @@ test("completed EN/AR transcript remains visible when audio analysis fails, for 
     assert.equal(screen.getByText("Hello مرحبا").getAttribute("dir"), "auto");
     cleanup();
   }
+});
+
+test("local context metadata shows honest unknown/mixed scores without changing transcript text", async () => {
+  cleanup();
+  const fixture = analysisFixture("1.2.0");
+  const common = {
+    method: "ct2-source-context-v1",
+    scope: "audio_context_not_word_language",
+    model: { name: "faster-whisper-small", version: "fixture", sha256: "a".repeat(64) },
+  };
+  const data = parseMediaAnalysis({
+    ...fixture,
+    source: { ...fixture.source, durationUs: "6000000" },
+    sections: {
+      ...fixture.sections,
+      transcript: {
+        ...fixture.sections.transcript,
+        data: {
+          ...fixture.sections.transcript.data,
+          languageSegments: [
+            {
+              ...common,
+              startUs: "0",
+              endUs: "2000000",
+              status: "dominant",
+              language: "ar",
+              confidence: 0.8,
+            },
+            { ...common, startUs: "2000000", endUs: "4000000", status: "mixed" },
+            { ...common, startUs: "4000000", endUs: "6000000", status: "unknown" },
+          ],
+        },
+      },
+    },
+  });
+  render(
+    <MediaAnalysisPanel
+      projectId={ANALYSIS_PROJECT}
+      mediaId={ANALYSIS_MEDIA}
+      load={async () => ({ ok: true, data })}
+    />,
+  );
+  await screen.findByText("Hello مرحبا");
+  assert.ok(screen.getByText(/ar \(model score 0.80\)/));
+  assert.ok(screen.getByText(/mixed \/ uncertain/));
+  assert.ok(screen.getByText(/4–6s: unknown/));
+  assert.ok(screen.getByText(/these do not label individual words/));
+  cleanup();
 });
 
 test("refresh removes previously loaded text if authorization is revoked", async () => {
