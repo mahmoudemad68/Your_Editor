@@ -60,9 +60,13 @@ def cgroup_limits(root: Path = Path("/")) -> dict[str, Any]:
             fields = line.split()
             if len(fields) >= 10 and fields[4] == "/sys/fs/cgroup":
                 separator = fields.index("-")
-                if fields[separator + 1] == "cgroup2":
+                if (
+                    separator >= 6
+                    and len(fields) == separator + 4
+                    and fields[separator + 1] == "cgroup2"
+                ):
                     mounts.append(fields[3])
-        if len(mounts) != 1:
+        if mounts != ["/"]:
             raise ValueError("Unknown cgroup mount")
         quotas: list[float] = []
         memories: list[int] = []
@@ -76,6 +80,8 @@ def cgroup_limits(root: Path = Path("/")) -> dict[str, Any]:
             if current.is_symlink():
                 raise ValueError("Untrustworthy cgroup path")
             files = [current / name for name in ("cpu.max", "memory.max", "pids.max")]
+            if any(path.is_symlink() for path in files):
+                raise ValueError("Untrustworthy controller file")
             if (
                 current == mount
                 and leaf != mount
@@ -137,7 +143,8 @@ def assess(evidence: dict[str, Any]) -> dict[str, Any]:
         blockers.append("production_container_required")
     limits = evidence["cgroup"]
     if (
-        limits.get("visibleAncestorsChecked") is not True
+        limits.get("version") != 2
+        or limits.get("visibleAncestorsChecked") is not True
         or limits["quotaCpus"] != 2
         or limits["memoryBytes"] != 3 * 1024**3
         or limits["pids"] != 128

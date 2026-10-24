@@ -28,6 +28,7 @@ def profile() -> dict[str, Any]:
         "wsl": False,
         "container": True,
         "cgroup": {
+            "version": 2,
             "quotaCpus": 2,
             "memoryBytes": 3 * 1024**3,
             "pids": 128,
@@ -247,6 +248,25 @@ def test_unlimited_ancestors_do_not_erase_finite_child_limits(tmp_path: Path) ->
     evidence["cgroup"] = cgroup_limits(tmp_path)
     assert assess(evidence)["status"] == "READY_FOR_QUALIFICATION"
     evidence["cgroup"]["visibleAncestorsChecked"] = False
+    assert assess(evidence)["status"] == "NOT_QUALIFIED"
+
+
+def test_delegated_mount_cannot_hide_unknown_ancestors_even_with_valid_root_limits(
+    tmp_path: Path,
+) -> None:
+    mount = hierarchy(tmp_path)
+    for name, value in [
+        ("cpu.max", "200000 100000"),
+        ("memory.max", "3221225472"),
+        ("pids.max", "128"),
+    ]:
+        (mount / name).write_text(value)
+    (tmp_path / "proc/self/mountinfo").write_text(
+        "1 0 0:1 /hidden /sys/fs/cgroup ro - cgroup2 cgroup rw\n"
+    )
+    assert cgroup_limits(tmp_path)["visibleAncestorsChecked"] is False
+    evidence = profile()
+    evidence["cgroup"]["version"] = 1
     assert assess(evidence)["status"] == "NOT_QUALIFIED"
 
 
