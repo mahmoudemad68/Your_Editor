@@ -1,7 +1,19 @@
-import { PostgresAnalysis } from "@editagent/analysis-core";
+import {
+  AnalysisAdmissionError,
+  PostgresAnalysis,
+  legacyAnalysisFailure,
+  failureDetail,
+  type AnalysisFailureCategory,
+} from "@editagent/analysis-core";
 import { FFmpegAudioAnalyzer, DEFAULT_AUDIO_ANALYSIS_CONFIG } from "@editagent/media-core";
 import { type JobEnvelope } from "@editagent/domain";
-import { BullMqJobQueue, RedisJobEventPublisher, PermanentJobError } from "@editagent/job-queue";
+import {
+  BullMqJobQueue,
+  RedisJobEventPublisher,
+  PermanentJobError,
+  JobTimeoutError,
+  JobCancelledError,
+} from "@editagent/job-queue";
 import { Pool } from "pg";
 import Ajv2020 from "ajv/dist/2020.js";
 import { analysisJobSchema } from "@editagent/schemas";
@@ -9,6 +21,64 @@ import { loadMediaWorkerConfig } from "../infrastructure/config.js";
 import { FileObjectStager } from "../infrastructure/object-stager.js";
 import { S3ObjectByteSource, createMediaS3Client } from "../infrastructure/s3-object-stream.js";
 import { assertValidationSandbox } from "../infrastructure/media-validator.js";
+
+export function audioFailureCategory(error: unknown, signal: AbortSignal): AnalysisFailureCategory {
+  const constraint =
+    typeof error === "object" && error !== null && "constraint" in error
+      ? error.constraint
+      : undefined;
+  if (constraint === "analysis_deadline") return "timeout";
+  if (constraint === "analysis_result_admission") return "publication_fenced";
+  if (
+    signal.reason instanceof JobTimeoutError ||
+    error instanceof JobTimeoutError ||
+    (error instanceof DOMException && error.name === "TimeoutError")
+  )
+    return "timeout";
+  if (signal.aborted || error instanceof JobCancelledError) return "cancelled";
+  if (error instanceof AnalysisAdmissionError) return error.category;
+  const code =
+    typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
+  if (code === "EA001") return "authorization_revoked";
+  if (code === "42501") return "authorization_failed";
+  if (error instanceof PermanentJobError) return "invalid_input";
+  const metadata =
+    typeof error === "object" && error !== null && "$metadata" in error
+      ? error.$metadata
+      : undefined;
+  if (
+    typeof metadata === "object" &&
+    metadata !== null &&
+    "httpStatusCode" in metadata &&
+    typeof metadata.httpStatusCode === "number" &&
+    metadata.httpStatusCode >= 400
+  )
+    return "analyzer_unavailable";
+  if (error instanceof Error && error.name === "TimeoutError") return "analyzer_unavailable";
+  if (
+    typeof code === "string" &&
+    ["ECONNREFUSED", "ECONNRESET", "ETIMEDOUT", "EAI_AGAIN", "08006", "08001", "57P01"].includes(
+      code,
+    )
+  )
+    return "analyzer_unavailable";
+  return "internal";
+}
+
+export function audioFailureRetryable(error: unknown, category: AnalysisFailureCategory): boolean {
+  const metadata =
+    typeof error === "object" && error !== null && "$metadata" in error
+      ? error.$metadata
+      : undefined;
+  const status =
+    typeof metadata === "object" && metadata !== null && "httpStatusCode" in metadata
+      ? metadata.httpStatusCode
+      : undefined;
+  return (
+    category === "analyzer_unavailable" &&
+    !(typeof status === "number" && status < 500 && status !== 429)
+  );
+}
 
 export async function handleAudioAnalysis(
   envelope: JobEnvelope,
@@ -26,7 +96,9 @@ export async function handleAudioAnalysis(
   });
   let staged: Awaited<ReturnType<FileObjectStager["stage"]>> | undefined;
   const execute = async () => {
+    await store.clearAttemptFailure(envelope.jobId, envelope.attempt);
     const input = await store.input(envelope.jobId);
+    if (!input) throw new AnalysisAdmissionError(await store.admissionFailure(envelope.jobId));
     if (
       !input ||
       input.analyzer !== "audio" ||
@@ -78,18 +150,21 @@ export async function handleAudioAnalysis(
     await execute();
   } catch (error) {
     const permanent = error instanceof PermanentJobError;
+    const category = audioFailureCategory(error, signal);
+    const retryable = audioFailureRetryable(error, category);
     await store
-      .recordFailure(envelope.jobId, envelope.attempt, {
-        code: permanent ? "invalid_input" : "unavailable",
-        reason: permanent ? "Analysis input is invalid." : "Analyzer is unavailable.",
-        retryable: !permanent,
-      })
+      .recordFailure(
+        envelope.jobId,
+        envelope.attempt,
+        legacyAnalysisFailure(category, retryable),
+        category,
+      )
       .catch(() => undefined);
     failure = signal.aborted
       ? signal.reason
-      : permanent
-        ? Object.assign(new PermanentJobError("Analysis input is invalid."), { cause: error })
-        : new Error("Analyzer is unavailable.", { cause: error });
+      : permanent || !retryable
+        ? new PermanentJobError(failureDetail(category).message)
+        : new Error(failureDetail(category).message);
   }
   const cleanup = await Promise.allSettled([
     Promise.resolve().then(() => staged?.release()),

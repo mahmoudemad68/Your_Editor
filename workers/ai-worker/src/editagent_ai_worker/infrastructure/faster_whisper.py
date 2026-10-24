@@ -22,9 +22,11 @@ from faster_whisper.vad import VadOptions, get_speech_timestamps  # type: ignore
 
 from editagent_ai_worker.domain.analysis.transcription import (
     Transcript,
+    TranscriptionAlignmentError,
     TranscriptionCancelled,
     TranscriptionError,
     TranscriptionTimeout,
+    TranscriptionUnavailable,
     Word,
 )
 from editagent_ai_worker.domain.analysis.voice_activity import AudioIdentity, Cancellation
@@ -302,7 +304,9 @@ def boundary_alignment_failure(
         if anchors == 1
         else "no_shared_native_anchor"
     )
-    return TranscriptionError("ASR chunk boundary requires trustworthy realignment: " + category)
+    return TranscriptionAlignmentError(
+        "ASR chunk boundary requires trustworthy realignment: " + category
+    )
 
 
 def merge_owned_words(
@@ -376,7 +380,7 @@ class FasterWhisperAdapter:
             require_asr_native_environment()
             numpy_cpu_kernels()
         except ConfigurationError as exc:
-            raise TranscriptionError("ASR native execution profile is invalid") from exc
+            raise TranscriptionUnavailable("ASR native execution profile is invalid") from exc
         self.settings = settings
         ctranslate2.set_random_seed(settings.seed)
         self.model_identity = verify_asr_model(settings.model_path, settings.model)
@@ -387,12 +391,14 @@ class FasterWhisperAdapter:
             self.model = self._load(self.device, self.compute_type)
         except Exception as exc:
             if settings.device != "cuda" or not settings.cpu_fallback:
-                raise TranscriptionError("ASR runtime initialization failed") from exc
+                raise TranscriptionUnavailable("ASR runtime initialization failed") from exc
             self.device, self.compute_type = "cpu", "int8"
             try:
                 self.model = self._load(self.device, self.compute_type)
             except Exception as fallback:
-                raise TranscriptionError("ASR CPU fallback initialization failed") from fallback
+                raise TranscriptionUnavailable(
+                    "ASR CPU fallback initialization failed"
+                ) from fallback
 
     def _load(self, device: str, compute_type: str) -> Any:
         model = WhisperModel(
@@ -714,17 +720,21 @@ class FasterWhisperAdapter:
     ) -> list[Any]:
         try:
             return self._primary_aligned_chunk(segments, audio, language, check)
-        except (TranscriptionCancelled, TranscriptionTimeout):
+        except (TranscriptionCancelled, TranscriptionTimeout, TranscriptionUnavailable):
             raise
         except TranscriptionError as primary:
             if self.settings.model != "tiny":
-                raise
+                raise TranscriptionAlignmentError(
+                    "ASR words require trustworthy realignment"
+                ) from primary
             try:
                 return self._fallback_alignment(segments, audio, language, check)
-            except (TranscriptionCancelled, TranscriptionTimeout):
+            except (TranscriptionCancelled, TranscriptionTimeout, TranscriptionUnavailable):
                 raise
             except TranscriptionError as fallback:
-                raise primary from fallback
+                raise TranscriptionAlignmentError(
+                    "ASR words require trustworthy realignment"
+                ) from fallback
 
     def _fallback_alignment(
         self,
@@ -786,7 +796,7 @@ class FasterWhisperAdapter:
                 )
                 self._alignment_model = model
             except Exception as exc:
-                raise TranscriptionError("Pinned ASR alignment model is unavailable") from exc
+                raise TranscriptionUnavailable("Pinned ASR alignment model is unavailable") from exc
         if check is not None:
             check()
         return self._alignment_model

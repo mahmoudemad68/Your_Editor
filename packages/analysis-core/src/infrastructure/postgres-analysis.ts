@@ -18,6 +18,12 @@ import {
 } from "../contracts.js";
 
 import { type AnalysisConfiguration } from "../configuration.js";
+import {
+  AnalysisAdmissionError,
+  failureDetail,
+  legacyAnalysisFailure,
+  type AnalysisFailureCategory,
+} from "../failures.js";
 
 type Task = {
   job_id: string;
@@ -31,6 +37,7 @@ type Task = {
   configuration: AnalysisConfiguration;
   result: unknown;
   failure: unknown;
+  failure_category?: AnalysisFailureCategory | null;
   status: string;
   failure_reason?: string;
   applied: boolean;
@@ -88,6 +95,50 @@ export const configurationHash = (configuration: unknown) =>
 /** Source/result authority is PostgreSQL; Redis publication is recoverable at-least-once. */
 export class PostgresAnalysis implements AnalysisReader {
   constructor(private readonly pool: Pool) {}
+  async admissionFailure(id: string): Promise<"authorization_revoked" | "publication_fenced"> {
+    const row = await this.pool.query<{ revoked: boolean }>(
+      `SELECT t.initiated_by IS NOT NULL AND NOT EXISTS(
+      SELECT 1 FROM project_memberships pm WHERE pm.project_id=a.project_id AND pm.user_id=t.initiated_by
+      AND pm.role IN ('owner','editor')) AS revoked FROM analysis_tasks t JOIN media_analyses a ON a.media_asset_id=t.media_asset_id WHERE t.job_id=$1`,
+      [id],
+    );
+    return row.rows[0]?.revoked ? "authorization_revoked" : "publication_fenced";
+  }
+
+  async failureDetails(assetId: string, projectId: string, sourceSha256: string) {
+    const result = await this.pool.query<{
+      analyzer: Analyzer;
+      failure_category: unknown;
+      status: string;
+      failure_reason: string | null;
+      failure: { retryable?: boolean } | null;
+    }>(
+      `SELECT DISTINCT ON(t.analyzer) t.analyzer,t.failure_category,t.failure,j.status,j.failure_reason
+       FROM analysis_tasks t JOIN jobs j ON j.id=t.job_id JOIN media_analyses a ON a.media_asset_id=t.media_asset_id
+       WHERE a.media_asset_id=$1 AND a.project_id=$2 AND a.source_sha256=$3
+       ORDER BY t.analyzer,t.generation DESC`,
+      [assetId, projectId, sourceSha256],
+    );
+    return {
+      mediaAssetId: assetId,
+      sourceSha256,
+      failures: result.rows
+        .filter((row) => row.status === "Failed" || row.status === "Cancelled")
+        .map((row) => ({
+          analyzer: row.analyzer,
+          ...failureDetail(
+            row.failure_category ??
+              (row.failure_reason === "timed out"
+                ? "timeout"
+                : row.status === "Cancelled"
+                  ? "cancelled"
+                  : "internal"),
+          ),
+          retryable:
+            row.failure_category === "analyzer_unavailable" && row.failure?.retryable === true,
+        })),
+    };
+  }
 
   async scheduleDerivations(queue: JobQueue, queueName: string): Promise<void> {
     const jobs = new PostgresJobRepository(this.pool);
@@ -459,18 +510,27 @@ export class PostgresAnalysis implements AnalysisReader {
     id: string,
     attempt: number,
     failure: Extract<AnalysisSection, { status: "failed" }>["failure"],
+    category: AnalysisFailureCategory = "internal",
   ): Promise<void> {
     await this.pool.query(
-      `UPDATE analysis_tasks SET failure=$3 WHERE job_id=$1 AND result IS NULL
+      `UPDATE analysis_tasks SET failure=$3,failure_category=$4 WHERE job_id=$1 AND result IS NULL
       AND deadline_at_ms>(extract(epoch FROM clock_timestamp())*1000)::bigint AND EXISTS(SELECT 1 FROM jobs j
       WHERE j.id=job_id AND j.status='Running' AND j.attempt_count=$2)`,
-      [id, attempt, failure],
+      [id, attempt, failure, category],
+    );
+  }
+
+  async clearAttemptFailure(id: string, attempt: number): Promise<void> {
+    await this.pool.query(
+      `UPDATE analysis_tasks SET failure=NULL,failure_category=NULL WHERE job_id=$1 AND result IS NULL
+      AND EXISTS(SELECT 1 FROM jobs j WHERE j.id=job_id AND j.status='Running' AND j.attempt_count=$2)`,
+      [id, attempt],
     );
   }
 
   async record(id: string, section: AnalysisSection, attempt: number): Promise<void> {
     const input = await this.input(id);
-    if (!input) throw new Error("Analysis admission is unavailable.");
+    if (!input) throw new AnalysisAdmissionError(await this.admissionFailure(id));
     const validated = withSection(currentVersion(input.document), input.analyzer, section).sections[
       input.analyzer === "speech" ? "audio" : input.analyzer
     ];
@@ -507,7 +567,7 @@ export class PostgresAnalysis implements AnalysisReader {
           );
           if (changed.rowCount) {
             await c.query(
-              "UPDATE analysis_tasks SET failure=$2 WHERE job_id=$1 AND result IS NULL",
+              "UPDATE analysis_tasks SET failure=$2,failure_category='timeout' WHERE job_id=$1 AND result IS NULL",
               [id, { code: "timeout", reason: "Analysis timed out.", retryable: false }],
             );
             await c.query(
@@ -585,6 +645,32 @@ export class PostgresAnalysis implements AnalysisReader {
         "SELECT 1 FROM analysis_tasks WHERE media_asset_id=$1 AND analyzer=$2 AND generation>$3",
         [t.media_asset_id, t.analyzer, t.generation],
       );
+      // A cancelled/expired attempt must not inherit an earlier retry's failure.
+      const category =
+        t.status === "Cancelled"
+          ? t.failure_category === "timeout"
+            ? "timeout"
+            : "cancelled"
+          : t.failure_reason === "timed out"
+            ? "timeout"
+            : (t.failure_category ?? "internal");
+      if (t.status !== "Completed") {
+        t.failure_category = category;
+        const previousRetryable =
+          typeof t.failure === "object" &&
+          t.failure !== null &&
+          "retryable" in t.failure &&
+          t.failure.retryable === true;
+        t.failure = legacyAnalysisFailure(
+          category,
+          category === "analyzer_unavailable" && previousRetryable && t.status !== "Cancelled",
+        );
+        await c.query("UPDATE analysis_tasks SET failure=$2,failure_category=$3 WHERE job_id=$1", [
+          id,
+          t.failure,
+          category,
+        ]);
+      }
       if (!newer.rowCount) {
         let section =
           t.status === "Completed" && t.result != null

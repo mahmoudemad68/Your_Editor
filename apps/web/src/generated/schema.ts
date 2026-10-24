@@ -285,6 +285,23 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/projects/{projectId}/media/{mediaId}/analysis/failures": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Read safe failure categories without changing MediaAnalysis documents. */
+    get: operations["MediaAnalysisController_failures"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/media/{mediaId}/analysis/{analyzer}/retry": {
     parameters: {
       query?: never;
@@ -1465,6 +1482,65 @@ export interface operations {
     requestBody?: never;
     responses: {
       200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  MediaAnalysisController_failures: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        projectId: string;
+        mediaId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": {
+            /** Format: uuid */
+            mediaAssetId: string;
+            sourceSha256: string;
+            failures: {
+              /** @enum {string} */
+              analyzer: "transcript" | "audio" | "speech";
+              /** @enum {string} */
+              category:
+                | "authorization_failed"
+                | "authorization_revoked"
+                | "publication_fenced"
+                | "untrustworthy_alignment"
+                | "analyzer_unavailable"
+                | "cancelled"
+                | "timeout"
+                | "invalid_input"
+                | "internal";
+              /** @enum {string} */
+              code: "invalid_input" | "unsupported" | "timeout" | "unavailable" | "internal";
+              message: string;
+              retryable: boolean;
+            }[];
+          };
+        };
+      };
+      /** @description Authentication required. */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Analysis is unavailable. */
+      404: {
         headers: {
           [name: string]: unknown;
         };

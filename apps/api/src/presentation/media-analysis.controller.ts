@@ -8,7 +8,14 @@ import {
   Param,
   Req,
 } from "@nestjs/common";
-import { ApiOperation, ApiTags } from "@nestjs/swagger";
+import {
+  ApiOkResponse,
+  ApiOperation,
+  ApiTags,
+  ApiUnauthorizedResponse,
+  ApiNotFoundResponse,
+} from "@nestjs/swagger";
+import { ANALYSIS_FAILURES } from "@editagent/analysis-core";
 import { jobId, mediaAssetId, projectId } from "@editagent/domain";
 import { GetMediaAnalysis } from "../application/media-analysis.js";
 import { requireActor } from "./actor.js";
@@ -17,6 +24,57 @@ import { requireActor } from "./actor.js";
 @Controller()
 export class MediaAnalysisController {
   constructor(private readonly analysis: GetMediaAnalysis) {}
+  @Get("projects/:projectId/media/:mediaId/analysis/failures")
+  @Header("Cache-Control", "private, no-store")
+  @ApiOperation({
+    summary: "Read safe failure categories without changing MediaAnalysis documents.",
+  })
+  @ApiUnauthorizedResponse({ description: "Authentication required." })
+  @ApiNotFoundResponse({ description: "Analysis is unavailable." })
+  @ApiOkResponse({
+    schema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["mediaAssetId", "sourceSha256", "failures"],
+      properties: {
+        mediaAssetId: { type: "string", format: "uuid" },
+        sourceSha256: { type: "string", pattern: "^[a-f0-9]{64}$" },
+        failures: {
+          type: "array",
+          maxItems: 3,
+          items: {
+            type: "object",
+            additionalProperties: false,
+            required: ["analyzer", "category", "code", "message", "retryable"],
+            properties: {
+              analyzer: { type: "string", enum: ["transcript", "audio", "speech"] },
+              category: { type: "string", enum: Object.keys(ANALYSIS_FAILURES) },
+              code: {
+                type: "string",
+                enum: ["invalid_input", "unsupported", "timeout", "unavailable", "internal"],
+              },
+              message: { type: "string", maxLength: 256 },
+              retryable: { type: "boolean" },
+            },
+          },
+        },
+      },
+    },
+  })
+  failures(
+    @Param("projectId") project: string,
+    @Param("mediaId") asset: string,
+    @Req() request: object,
+  ) {
+    let p: ReturnType<typeof projectId>, m: ReturnType<typeof mediaAssetId>;
+    try {
+      p = projectId(project);
+      m = mediaAssetId(asset);
+    } catch {
+      throw new BadRequestException("Invalid media identity.");
+    }
+    return this.analysis.failures(requireActor(request), p, m);
+  }
   @Post("media/:mediaId/analysis/:analyzer/retry")
   @Header("Cache-Control", "private, no-store")
   async retry(

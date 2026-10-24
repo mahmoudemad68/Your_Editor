@@ -9,6 +9,7 @@ import pytest
 
 import editagent_ai_worker.infrastructure.faster_whisper as whisper
 from editagent_ai_worker.domain.analysis.transcription import (
+    TranscriptionAlignmentError,
     TranscriptionCancelled,
     TranscriptionError,
     TranscriptionTimeout,
@@ -188,7 +189,7 @@ def test_small_timing_fallback_rejects_untrustworthy_evidence(
         alignment_word(" word", 1, 1),
         alignment_word(" right", 2, 3),
     ]
-    with pytest.raises(TranscriptionError, match="trustworthy realignment"):
+    with pytest.raises(TranscriptionAlignmentError, match="trustworthy realignment"):
         adapter._aligned_chunk(
             [SimpleNamespace(text=" left word right", start=0, end=3, words=words)],
             np.zeros(48000),

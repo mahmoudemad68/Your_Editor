@@ -19,12 +19,38 @@ from typing import Any, Literal
 
 import pytest
 
-from editagent_ai_worker.domain.analysis.transcription import TranscriptionError
+from editagent_ai_worker.domain.analysis.transcription import (
+    TranscriptionAlignmentError,
+    TranscriptionError,
+)
 from editagent_ai_worker.domain.analysis.voice_activity import AudioIdentity
 from editagent_ai_worker.infrastructure.asr_config import AsrSettings
 from editagent_ai_worker.infrastructure.faster_whisper import FasterWhisperAdapter
 
 ROOT = Path(__file__).resolve().parents[3]
+
+
+def test_real_tiny_arabic_alignment_is_valid_or_safely_unsupported(tmp_path: Path) -> None:
+    from editagent_ai_worker.infrastructure.analysis_failures import classify_failure
+
+    path = tmp_path / "arabic.wav"
+    source = fixture(path, pcm("ar.wav"))
+    adapter = FasterWhisperAdapter(AsrSettings(model="tiny", model_root=ROOT / ".local/asr-models"))
+    try:
+        try:
+            result = adapter.transcribe(str(path), source)
+        except TranscriptionAlignmentError as error:
+            failure = classify_failure(error)
+            assert failure.category == "untrustworthy_alignment"
+            assert failure.code == "unsupported" and not failure.retryable
+        else:
+            assert result.words
+            assert all(
+                0 <= word.start_us < word.end_us <= source.source_duration_us
+                for word in result.words
+            )
+    finally:
+        adapter.close()
 
 
 def pcm(name: str) -> bytes:

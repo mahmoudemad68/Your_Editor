@@ -16,7 +16,12 @@ import boto3  # type: ignore[import-untyped]
 import jsonschema
 import psycopg
 from botocore.config import Config  # type: ignore[import-untyped]
-from botocore.exceptions import BotoCoreError, ClientError  # type: ignore[import-untyped]
+from botocore.exceptions import (  # type: ignore[import-untyped]
+    BotoCoreError,
+    ClientError,
+    HTTPClientError,
+)
+from botocore.exceptions import ConnectionError as StorageConnectionError
 from psycopg.types.json import Jsonb
 
 from editagent_ai_worker.contracts.media_analysis_generated import AnalyzerProvenance, Failure
@@ -25,8 +30,14 @@ from editagent_ai_worker.domain.analysis.transcription import (
     TranscriptionError,
     TranscriptionTimeout,
 )
-from editagent_ai_worker.domain.analysis.voice_activity import AudioIdentity, VadTimeout
+from editagent_ai_worker.domain.analysis.voice_activity import AudioIdentity
 from editagent_ai_worker.infrastructure.analysis_events import emit_progress
+from editagent_ai_worker.infrastructure.analysis_failures import (
+    AnalysisAuthorizationError,
+    AnalysisFencedError,
+    AnalysisInputError,
+    classify_failure,
+)
 from editagent_ai_worker.infrastructure.asr_config import AsrSettings
 from editagent_ai_worker.infrastructure.config import (
     analysis_workspace_root,
@@ -80,7 +91,7 @@ def main() -> int:
     try:
         raw = sys.stdin.buffer.read(65537)
         if len(raw) > 65536:
-            raise ValueError("Invalid analysis envelope")
+            raise AnalysisInputError("Invalid analysis envelope")
         envelope = json.loads(raw)
         schema = Path(__file__).resolve().parent.parent / "infrastructure/analysis-job.schema.json"
         if not schema.is_file():
@@ -116,7 +127,18 @@ def main() -> int:
                 (envelope["jobId"], envelope["jobType"], envelope["attempt"]),
             ).fetchone()
             if row is None:
-                raise ValueError("Analysis admission unavailable")
+                authority = connection.execute(
+                    "SELECT t.initiated_by IS NOT NULL AND NOT EXISTS(SELECT 1 FROM "
+                    "project_memberships pm WHERE pm.project_id=a.project_id "
+                    "AND pm.user_id=t.initiated_by AND pm.role IN ('owner','editor')) "
+                    "FROM analysis_tasks t JOIN media_analyses a "
+                    "ON a.media_asset_id=t.media_asset_id "
+                    "WHERE t.job_id=%s",
+                    (envelope["jobId"],),
+                ).fetchone()
+                if authority and authority[0]:
+                    raise AnalysisAuthorizationError()
+                raise AnalysisFencedError()
             (
                 asset,
                 artifact,
@@ -142,11 +164,11 @@ def main() -> int:
                 or p.get("analyzer") != analyzer
                 or p.get("generation") != generation
             ):
-                raise ValueError("Analysis intent mismatch")
+                raise AnalysisInputError("Analysis intent mismatch")
             if result is not None:
                 return 0
             if not str(key).startswith("projects/") or ".." in str(key):
-                raise ValueError("Invalid derivative identity")
+                raise AnalysisInputError("Invalid derivative identity")
             s3 = boto3.client(
                 "s3",
                 endpoint_url=str(settings.s3_endpoint),
@@ -168,7 +190,7 @@ def main() -> int:
                 response = s3.get_object(Bucket=settings.s3_bucket, Key=key)
                 size = int(response["ContentLength"])
                 if not 0 < size <= 64 * 1024**2:
-                    raise ValueError("Audio exceeds analysis staging bound")
+                    raise AnalysisInputError("Audio exceeds analysis staging bound")
                 digest = hashlib.sha256()
                 seen = 0
                 body = response["Body"]
@@ -176,15 +198,17 @@ def main() -> int:
                     with path.open("xb") as output:
                         while block := body.read(65536):
                             seen += len(block)
-                            if seen > size or time.time() * 1000 >= int(deadline):
-                                raise ValueError("Audio admission expired")
+                            if time.time() * 1000 >= int(deadline):
+                                raise TranscriptionTimeout()
+                            if seen > size:
+                                raise AnalysisInputError("Audio staging bound exceeded")
                             digest.update(block)
                             output.write(block)
                 finally:
                     body.close()
                     s3.close()
                 if seen != size or digest.hexdigest() != audio_hash:
-                    raise ValueError("Staged audio identity mismatch")
+                    raise AnalysisInputError("Staged audio identity mismatch")
                 identity = AudioIdentity(
                     str(asset),
                     source_hash,
@@ -215,7 +239,7 @@ def main() -> int:
                         adapter.model_identity["version"]
                         != configuration_parameters["modelRevision"]
                     ):
-                        raise ValueError("Analysis model identity mismatch")
+                        raise AnalysisInputError("Analysis model identity mismatch")
                     print(
                         json.dumps(
                             {
@@ -285,7 +309,7 @@ def main() -> int:
                     ),
                 ).fetchone()
                 if written is None:
-                    raise ValueError("Analysis result fenced")
+                    raise AnalysisFencedError()
         print('{"result":"complete"}')
         return 0
     except Exception as error:
@@ -295,30 +319,25 @@ def main() -> int:
             ),
             file=sys.stderr,
         )
-        retryable = isinstance(error, (BotoCoreError, psycopg.OperationalError))
-        if isinstance(error, ClientError):
-            retryable = (
-                int(error.response.get("ResponseMetadata", {}).get("HTTPStatusCode", 400)) >= 500
-            )
-        code = (
-            "unavailable"
-            if retryable or isinstance(error, ClientError)
-            else "timeout"
-            if isinstance(error, (TranscriptionTimeout, VadTimeout))
-            else "internal"
-            if isinstance(error, TranscriptionError)
-            else "invalid_input"
+        retryable = isinstance(
+            error, (StorageConnectionError, HTTPClientError, psycopg.OperationalError)
         )
-        reason = {
-            "unavailable": "Analyzer is unavailable.",
-            "internal": "Analysis failed.",
-            "timeout": "Analysis timed out.",
-            "invalid_input": "Analysis input is invalid.",
-        }[code]
+        if isinstance(error, ClientError):
+            status = int(error.response.get("ResponseMetadata", {}).get("HTTPStatusCode", 400))
+            retryable = status >= 500 or status == 429
+        if isinstance(error, (json.JSONDecodeError, jsonschema.ValidationError)):
+            error = AnalysisInputError()
+        failure = classify_failure(
+            error,
+            transport_retryable=retryable,
+            transport_unavailable=isinstance(error, (ClientError, BotoCoreError)),
+        )
+        code, reason, retryable = failure.code, failure.reason, failure.retryable
         try:
             with psycopg.connect(str(settings.database_url), connect_timeout=1) as receipt:
                 receipt.execute(
-                    "UPDATE analysis_tasks SET failure=%s WHERE job_id=%s AND result IS NULL "
+                    "UPDATE analysis_tasks SET failure=%s,failure_category=%s "
+                    "WHERE job_id=%s AND result IS NULL "
                     "AND deadline_at_ms>(extract(epoch FROM clock_timestamp())*1000)::bigint "
                     "AND EXISTS(SELECT 1 FROM jobs j WHERE j.id=job_id AND j.status='Running' "
                     "AND j.attempt_count=%s)",
@@ -328,13 +347,22 @@ def main() -> int:
                                 {"code": code, "reason": reason, "retryable": retryable}
                             ).model_dump(mode="json")
                         ),
+                        failure.category,
                         envelope["jobId"],
                         envelope["attempt"],
                     ),
                 )
         except Exception:
             pass
-        print(json.dumps({"error": reason, "mode": "retry" if retryable else "permanent"}))
+        print(
+            json.dumps(
+                {
+                    "error": reason,
+                    "category": failure.category,
+                    "mode": "retry" if retryable else "permanent",
+                }
+            )
+        )
         return 1
 
 

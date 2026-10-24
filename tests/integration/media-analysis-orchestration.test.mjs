@@ -581,6 +581,12 @@ asyncio.run(run())`,
       assert.equal(response.status, 200);
       assert.equal(response.headers.get("cache-control"), "private, no-store");
       assert.deepEqual(validateMediaAnalysisV1_1(await response.json()), document);
+      const failureUrl = `${apiUrl}/projects/${project}/media/${asset}/analysis/failures`;
+      assert.equal((await fetch(failureUrl)).status, 401);
+      const detailsResponse = await fetch(failureUrl, { headers });
+      assert.equal(detailsResponse.status, 200);
+      assert.equal(detailsResponse.headers.get("cache-control"), "private, no-store");
+      assert.deepEqual((await detailsResponse.json()).failures, []);
       assert.equal(
         (await fetch(`${apiUrl}/projects/${id()}/media/${asset}/analysis`, { headers })).status,
         404,
@@ -591,6 +597,7 @@ asyncio.run(run())`,
       ]);
       await assert.rejects(getter.executeForAsset(userId(editor), mediaAssetId(asset)));
       assert.equal((await fetch(`${apiUrl}/media/${asset}/analysis`, { headers })).status, 404);
+      assert.equal((await fetch(failureUrl, { headers })).status, 404);
       await app.close();
       app = undefined;
       console.info("US210_PHASE authenticated-get-and-revocation-complete");
@@ -861,6 +868,14 @@ asyncio.run(run())`,
       ).rows[0];
       assert.equal(expired.result, null);
       assert.equal(expired.failure.code, "timeout");
+      assert.equal(
+        (
+          await pool.query("SELECT failure_category FROM analysis_tasks WHERE job_id=$1", [
+            pending.job_id,
+          ])
+        ).rows[0].failure_category,
+        "timeout",
+      );
       assert.equal(expired.applied, true);
       const timeoutJob = await store.retry(
         deadlineAsset,
@@ -925,6 +940,60 @@ asyncio.run(run())`,
       );
       await until(() => notRunning(revokedChild.pid), "revoked inference process reaped");
       await store.recover(queue);
+      const revokedState = (
+        await pool.query(
+          "SELECT t.failure_category,t.failure,j.failure_reason FROM analysis_tasks t JOIN jobs j ON j.id=t.job_id WHERE t.job_id=$1",
+          [revokedJob],
+        )
+      ).rows[0];
+      assert.equal(revokedState.failure_category, "authorization_revoked");
+      assert.equal(revokedState.failure.code, "unavailable");
+      assert.equal(revokedState.failure.retryable, false);
+      assert.match(revokedState.failure_reason, /Analysis authorization is no longer valid/);
+      const ownerDetails = await getter.failures(
+        userId(owner),
+        projectId(project),
+        mediaAssetId(asset),
+      );
+      assert.equal(
+        ownerDetails.failures.find((entry) => entry.analyzer === "transcript").category,
+        "authorization_revoked",
+      );
+      assert.ok(!JSON.stringify(ownerDetails).includes(editor));
+      await assert.rejects(
+        getter.failures(userId(editor), projectId(project), mediaAssetId(asset)),
+      );
+      const preservedAudio = JSON.stringify(
+        (await store.read(asset, project, sourceHash)).sections.audio,
+      );
+      // A failed alignment receipt projects to the existing unsupported code; only its safe
+      // companion detail is new. This controlled receipt tests storage, not Tiny inference.
+      const unsupportedJob = await store.retry(asset, project, "transcript", revokedJob, owner);
+      await pool.query("UPDATE jobs SET status='Running',attempt_count=1 WHERE id=$1", [
+        unsupportedJob,
+      ]);
+      await store.recordFailure(
+        unsupportedJob,
+        1,
+        { code: "unsupported", reason: "This analysis is unsupported.", retryable: false },
+        "untrustworthy_alignment",
+      );
+      await pool.query("UPDATE jobs SET status='Failed' WHERE id=$1", [unsupportedJob]);
+      await store.recover(queue);
+      assert.equal(
+        (await store.read(asset, project, sourceHash)).sections.transcript.failure.code,
+        "unsupported",
+      );
+      assert.equal(
+        JSON.stringify((await store.read(asset, project, sourceHash)).sections.audio),
+        preservedAudio,
+      );
+      assert.equal(
+        (
+          await getter.failures(userId(owner), projectId(project), mediaAssetId(asset))
+        ).failures.find((entry) => entry.analyzer === "transcript").category,
+        "untrustworthy_alignment",
+      );
       const noAudioFile = path.join(temp, "no-audio.mp4");
       await command(
         "ffmpeg",

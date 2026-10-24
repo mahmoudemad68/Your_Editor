@@ -63,6 +63,36 @@ test("invalid identities never reach the API", async () => {
   assert.equal(calls, 0);
 });
 
+test("failure companion preserves authentication and reconstructs only allowlisted content", async () => {
+  const response = await proxyMediaAnalysis(
+    new Request("http://web.test", { headers: { cookie: "session=opaque" } }),
+    ANALYSIS_PROJECT,
+    ANALYSIS_MEDIA,
+    async (url, init) => {
+      assert.match(String(url), /\/analysis\/failures$/);
+      assert.equal(new Headers(init?.headers).get("cookie"), "session=opaque");
+      return Response.json({
+        mediaAssetId: ANALYSIS_MEDIA,
+        sourceSha256: "a".repeat(64),
+        failures: [
+          {
+            analyzer: "transcript",
+            category: "authorization_revoked",
+            message: "private account",
+            trace: "private",
+          },
+        ],
+      });
+    },
+    true,
+  );
+  assert.equal(response.status, 200);
+  const body = await response.text();
+  assert.ok(body.includes("authorization_revoked"));
+  assert.ok(!body.includes("private account"));
+  assert.equal(response.headers.get("cache-control"), "private, no-store");
+});
+
 test("authorization, missing analysis and upstream errors retain status without leaking bodies", async () => {
   for (const status of [401, 403, 404, 500]) {
     const response = await proxyMediaAnalysis(

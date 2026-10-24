@@ -1,4 +1,5 @@
 import {
+  DomainError,
   type MediaAsset,
   type MediaAssetId,
   type MediaAssetRepository,
@@ -23,7 +24,14 @@ export class GetMediaDetails {
     projectId: ProjectId,
     mediaAssetId: MediaAssetId,
   ): Promise<MediaAsset> {
-    const loaded = await this.projects.findById(projectId);
+    let loaded;
+    try {
+      loaded = await this.projects.findById(projectId);
+    } catch (error) {
+      // A corrupt membership snapshot cannot reveal existence through a distinct 400.
+      if (error instanceof DomainError) throw new ProjectNotFoundError();
+      throw error;
+    }
     if (
       loaded === null ||
       !loaded.project.isListed() ||
