@@ -242,7 +242,6 @@ def measure() -> int:
     from editagent_ai_worker.composition.transcribe import main as transcribe
     from editagent_ai_worker.infrastructure.asr_preflight import collect
 
-    preflight = collect(verify_models=True)
     before = cgroup_snapshot()
     if (
         before["cpuQuotaUs"] != 2 * before["cpuPeriodUs"]
@@ -268,13 +267,17 @@ def measure() -> int:
     content = captured.getvalue()
     if len(content) > 16_000_000:
         raise ValueError("Native result exceeds private output bound")
+    # Keep the read-only model hashing out of the inference accounting and do
+    # not warm its model files before the measured worker starts.
+    after = cgroup_snapshot()
+    preflight = collect(verify_models=True)
     print(
         json.dumps(
             {
                 "worker": json.loads(content),
                 "preflight": preflight,
                 "before": before,
-                "after": cgroup_snapshot(),
+                "after": after,
                 "phases": phases,
                 "numericalRuntime": numerical_runtime_evidence(),
                 "versions": {
