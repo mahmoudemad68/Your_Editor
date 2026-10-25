@@ -91,16 +91,14 @@ export async function setMembership(project: string, user: string, role: "viewer
     ON CONFLICT (project_id,user_id) DO UPDATE SET role=EXCLUDED.role`, [project, user, role, now]);
   await q("UPDATE projects SET updated_at=GREATEST(updated_at,$2), revision=revision+1 WHERE id=$1", [project, now]);
 }
+/** Creates through the product API and returns THAT project's id (never "the first project link"). */
 export async function newProject(u: User, name: string): Promise<string> {
-  const page = u.page;
-  await page.goto("/");
-  await page.getByRole("button", { name: "Create project", exact: true }).first().click();
-  await page.getByLabel("Project name", { exact: true }).fill(name);
-  await page.getByRole("button", { name: "Create", exact: true }).click();
-  await page.getByRole("link", { name: "Open project" }).first().click();
-  await expect(page.locator("#media-file")).toBeAttached();
-  return new URL(page.url()).pathname.split("/").pop()!;
+  const r = await call(u, "POST", "/projects", { name });
+  if (r.status !== 201 || typeof r.json?.id !== "string") throw new Error(`project create failed ${r.status}`);
+  return r.json.id as string;
 }
+/** Product canonical-JSON SHA-256 (tool-sdk contentHash) of a JSON value. */
+export const contentSha = (v: unknown) => sha(JSON.stringify(v));
 export async function upload(page: Page, project: string, file: string, known: string[]) {
   await page.goto(`/projects/${project}`);
   await page.locator("#media-file").setInputFiles(file);
