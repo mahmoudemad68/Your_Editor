@@ -418,6 +418,7 @@ export class PostgresAgentRuns implements AgentApi {
         )
       ).rows[0];
       if (!current || current.state_sha256 !== (await this.expectedBasis(db, row))) {
+        await this.unconfirmedStep(db, row);
         await this.transition(db, row, "Failed", "STALE_SOURCE");
         return null;
       }

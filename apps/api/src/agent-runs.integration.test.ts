@@ -18,7 +18,7 @@ import {
   type AgentExport,
   type AuditPage,
 } from "@editagent/agent-core";
-import { Timeline, userId, type TimelineSnapshot } from "@editagent/domain";
+import { Timeline, userId, applyCommand, type TimelineSnapshot } from "@editagent/domain";
 import {
   contentHash,
   ToolExecutor,
@@ -616,6 +616,63 @@ test(
           ]);
           await assert.rejects(
             executeAgentTool(runs, lease2, executor, call, new AbortController().signal),
+          );
+        },
+      );
+      await t.test(
+        "a changed original source fails closed and closes its unconfirmed tool receipt",
+        async () => {
+          const f = await fixture(),
+            run = await f.start(),
+            lease = await runs.claim(run.id);
+          assert.ok(lease);
+          await runs.move(lease, "Observing");
+          await runs.move(lease, "Planning");
+          await runs.move(lease, "Executing");
+          const authority = new PostgresToolAuthority(pool, async () =>
+            Timeline.restore(f.snapshot),
+          );
+          const executor = new ToolExecutor(
+            registerEditingTools(new ToolRegistry(), authority),
+            authority,
+            new PostgresToolAuditRepository(pool, 1_000_000),
+          );
+          const input = { clipId: f.clip, startUs: "200000", endUs: "1800000" },
+            intent = await runs.beginStep(lease, "editing.trim-video", "1.0.0", input);
+          assert.ok(intent);
+          const result = await executor.executeWithIdentity(intent.receiptId, {
+            name: "editing.trim-video",
+            version: "1.0.0",
+            callerId: owner,
+            projectId: f.project,
+            resource: { kind: "timeline", id: f.id },
+            input,
+          });
+          const manual = applyCommand(Timeline.restore(f.snapshot), {
+            ...result.commands[0]!,
+            id: newAgentId(),
+          }).timeline.toSnapshot();
+          await pool.query(
+            "UPDATE editing_timelines SET snapshot=$2::jsonb,state_sha256=$3 WHERE id=$1",
+            [f.id, JSON.stringify(manual), contentHash(manual)],
+          );
+          assert.equal(await runs.beginStep(lease, "editing.trim-video", "1.0.0", input), null);
+          assert.equal((await runs.get(owner, f.project, run.id)).stopReason, "STALE_SOURCE");
+          const events = await runs.events(owner, f.project, run.id);
+          assert.equal(
+            events.filter((e) => e.kind === "tool_result" && e.tool?.outcome === "unconfirmed")
+              .length,
+            1,
+          );
+          assert.equal(
+            (await pool.query("SELECT id FROM tool_executions WHERE project_id=$1", [f.project]))
+              .rowCount,
+            1,
+          );
+          assert.deepEqual(
+            (await pool.query("SELECT snapshot FROM editing_timelines WHERE id=$1", [f.id])).rows[0]
+              .snapshot,
+            manual,
           );
         },
       );
