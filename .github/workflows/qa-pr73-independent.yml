@@ -1,0 +1,347 @@
+# Independent QA for PR #73 (Issues #63/#72). QA-only branch; never merged.
+# The application under test is the immutable PR head, checked out separately from this harness.
+name: QA PR73 independent
+
+on:
+  push:
+    branches: [qa/pr73-fb706cf]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: qa-pr73-independent
+  cancel-in-progress: false
+
+env:
+  QA_APP_SHA: fb706cfbe46d0fae3c344cb98ba4d3ad19320a3b
+  QA_APP_TREE: 87035c886ce40103c4edbb875740b844da5607a4
+  QA_BASE_SHA: 69617c539681328466af4dc311ae45fdcb978225
+  QA_BASE_TREE: ec2de50857291a63130e6d0c875723e93f376049
+
+jobs:
+  compose-blackbox:
+    name: Real-service 1.2.0 language evidence + lifecycle + Issue 72 cgroup visibility
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    env:
+      COMPOSE_PROJECT_NAME: qapr73
+      EDITAGENT_RUNTIME: development
+      AUTH_COOKIE_SECURE: "false"
+      AUTH_TRUSTED_ORIGINS: http://localhost:3000
+    steps:
+      - name: Check out application at the immutable PR head
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ env.QA_APP_SHA }}
+          path: app
+          lfs: true
+          persist-credentials: false
+      - name: Check out QA harness (separate directory)
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          path: qa-src
+          sparse-checkout: qa/pr73
+          persist-credentials: false
+      - name: Verify exact application identity
+        run: |
+          set -eu
+          test "$(git -C app rev-parse HEAD)" = "$QA_APP_SHA"
+          test "$(git -C app rev-parse 'HEAD^{tree}')" = "$QA_APP_TREE"
+          test -z "$(git -C app status --porcelain)"
+          mkdir -p qa-out
+          printf '{"appSha":"%s","appTree":"%s","qaHarnessSha":"%s","runId":"%s"}\n' "$(git -C app rev-parse HEAD)" "$(git -C app rev-parse 'HEAD^{tree}')" "$GITHUB_SHA" "$GITHUB_RUN_ID" > qa-out/identity.json
+      - name: Runner, Docker and capacity
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
+          { echo "nproc=$(nproc)"; free -b | sed -n 2p; df -B1 / | tail -1; uname -sr; stat -fc %T /sys/fs/cgroup;
+            docker version --format 'docker client={{.Client.Version}} server={{.Server.Version}}'; docker info --format 'cgroup={{.CgroupVersion}} driver={{.CgroupDriver}}';
+            docker compose version; lsb_release -ds; } | tee qa-out/runner.txt
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: app/package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: app/.nvmrc
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+      - name: Install pinned workspace dependencies, FFmpeg and Chrome; build the schema package for QA parsing
+        working-directory: app
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm --filter @editagent/schemas build
+          sh tools/test/ensure-ffmpeg.sh
+          sh tools/test/ensure-chrome.sh
+          git status --porcelain --untracked-files=no | tee ../qa-out/app-status-after-build.txt
+      - name: Stage QA harness outside tracked application files
+        run: |
+          set -eu
+          mkdir -p app/apps/web/.qa-pr73
+          cp qa-src/qa/pr73/* app/apps/web/.qa-pr73/
+          ! git -C app status --porcelain --untracked-files=all | grep -v '^?? apps/web/.qa-pr73/' | grep -v '^?? packages/schemas/dist/'
+      - name: Generate QA media inputs
+        run: bash qa-src/qa/pr73/make_inputs.sh "$RUNNER_TEMP/qa-inputs" app
+      - name: Build production images (repository Dockerfiles, default Small)
+        working-directory: app
+        run: |
+          set -eu
+          docker compose config --quiet
+          docker compose build postgres redis api web media-worker ai-worker render-executor render-worker
+      - name: Start real Compose stack
+        working-directory: app
+        run: |
+          set -eu
+          docker compose up -d --wait --wait-timeout 180 postgres redis
+          sh infra/seaweedfs/start-storage.sh --from-boot
+          node apps/web/.qa-pr73/bucket.mjs
+          docker compose up -d --no-build --wait --wait-timeout 420 api web media-worker ai-worker render-executor render-worker
+          docker compose ps --format '{{.Service}} {{.State}} {{.Health}}' | tee ../qa-out/compose-ps.txt
+          docker compose exec -T postgres psql -U editagent -d editagent -AtX -c "SELECT id FROM schema_migrations ORDER BY id DESC LIMIT 3" | tee ../qa-out/migrations.txt
+      - name: Part A - categories, authorization and lifecycle regression (QA probes)
+        working-directory: app/apps/web
+        env:
+          QA_APP_ROOT: ${{ github.workspace }}/app
+          QA_OUT: ${{ github.workspace }}/qa-out
+          QA_INPUTS: ${{ runner.temp }}/qa-inputs
+          QA_PRIVATE: ${{ runner.temp }}/qa-private
+        run: node node_modules/@playwright/test/cli.js test --config .qa-pr73/playwright.config.ts a68.spec.ts
+      - name: Part L - Issue 63 language evidence and MediaAnalysis 1.2.0 (QA probes)
+        if: ${{ !cancelled() }}
+        working-directory: app/apps/web
+        env:
+          QA_APP_ROOT: ${{ github.workspace }}/app
+          QA_OUT: ${{ github.workspace }}/qa-out
+          QA_INPUTS: ${{ runner.temp }}/qa-inputs
+          QA_PRIVATE: ${{ runner.temp }}/qa-private
+        run: node node_modules/@playwright/test/cli.js test --config .qa-pr73/playwright.config.ts l73.spec.ts
+      - name: "Issue 72 preflight - namespaces, forged assurance, missing/delegated mounts, restrictive parent slice"
+        if: ${{ !cancelled() }}
+        run: bash qa-src/qa/pr73/preflight_container.sh qa-out/preflight-container.jsonl editagent-ai-worker:local
+      - name: Rebuild AI image with the optional Tiny model and restart analysis workers
+        if: ${{ !cancelled() }}
+        working-directory: app
+        env:
+          EDITAGENT_ASR_MODEL: tiny
+        run: |
+          docker compose build ai-worker
+          docker compose up -d --no-build --wait --wait-timeout 420 media-worker ai-worker
+      - name: Part B - real Tiny Arabic fail-closed (QA probe)
+        if: ${{ !cancelled() }}
+        working-directory: app/apps/web
+        env:
+          QA_APP_ROOT: ${{ github.workspace }}/app
+          QA_OUT: ${{ github.workspace }}/qa-out
+          QA_INPUTS: ${{ runner.temp }}/qa-inputs
+          QA_PRIVATE: ${{ runner.temp }}/qa-private
+        run: node node_modules/@playwright/test/cli.js test --config .qa-pr73/playwright.config.ts b68.spec.ts
+      - name: Collect sanitized service state
+        if: always()
+        working-directory: app
+        run: |
+          docker compose ps --all --format '{{.Service}} {{.State}} {{.Status}}' > ../qa-out/final-compose-ps.txt || true
+          docker compose exec -T postgres psql -U editagent -d editagent -AtX -c \
+            "SELECT analyzer||' gen'||generation||' '||j.status||' category='||coalesce(failure_category,'-')||' applied='||applied FROM analysis_tasks t JOIN jobs j ON j.id=t.job_id ORDER BY t.media_asset_id,analyzer,generation" \
+            > ../qa-out/final-analysis-tasks.txt 2>&1 || true
+          docker compose exec -T postgres psql -U editagent -d editagent -AtX -c \
+            "SELECT document->>'schemaVersion', count(*) FROM media_analyses GROUP BY 1 ORDER BY 1" > ../qa-out/final-document-versions.txt 2>&1 || true
+      - name: Upload sanitized QA evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: qa-pr73-compose-${{ github.run_id }}
+          path: qa-out
+          if-no-files-found: error
+          retention-days: 14
+      - name: Remove disposable stack
+        if: always()
+        working-directory: app
+        run: docker compose down -v --remove-orphans || true
+
+  upgrade:
+    name: Base main -> PR head upgrade on the same volumes (migration 0021, historical retrieval, cross-version words)
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    env:
+      COMPOSE_PROJECT_NAME: qapr73up
+      EDITAGENT_RUNTIME: development
+      AUTH_COOKIE_SECURE: "false"
+      AUTH_TRUSTED_ORIGINS: http://localhost:3000
+      QA_APP_ROOT: ${{ github.workspace }}/app
+      QA_OUT: ${{ github.workspace }}/qa-up
+      QA_INPUTS: ${{ runner.temp }}/qa-inputs
+      QA_PRIVATE: ${{ runner.temp }}/qa-private
+    steps:
+      - name: Check out application (full history for base and head)
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ env.QA_BASE_SHA }}
+          path: app
+          lfs: true
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check out QA harness (separate directory)
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          path: qa-src
+          sparse-checkout: qa/pr73
+          persist-credentials: false
+      - name: Verify exact base identity
+        run: |
+          set -eu
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
+          test "$(git -C app rev-parse HEAD)" = "$QA_BASE_SHA"
+          test "$(git -C app rev-parse 'HEAD^{tree}')" = "$QA_BASE_TREE"
+          git -C app merge-base --is-ancestor "$QA_BASE_SHA" "$QA_APP_SHA"
+          mkdir -p qa-up
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: app/package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: app/.nvmrc
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+      - name: Install base dependencies, FFmpeg, Chrome; stage harness; inputs
+        run: |
+          set -eu
+          (cd app && pnpm install --frozen-lockfile && sh tools/test/ensure-ffmpeg.sh && sh tools/test/ensure-chrome.sh)
+          mkdir -p app/apps/web/.qa-pr73 && cp qa-src/qa/pr73/* app/apps/web/.qa-pr73/
+          bash qa-src/qa/pr73/make_inputs.sh "$RUNNER_TEMP/qa-inputs" app
+      - name: Build and start the BASE stack
+        working-directory: app
+        run: |
+          set -eu
+          docker compose build postgres redis api web media-worker ai-worker render-executor render-worker
+          docker compose up -d --wait --wait-timeout 180 postgres redis
+          sh infra/seaweedfs/start-storage.sh --from-boot
+          node apps/web/.qa-pr73/bucket.mjs
+          docker compose up -d --no-build --wait --wait-timeout 420 api web media-worker ai-worker render-executor render-worker
+          docker compose exec -T postgres psql -U editagent -d editagent -AtX -c "SELECT id FROM schema_migrations ORDER BY id DESC LIMIT 2" | tee ../qa-up/base-migrations.txt
+      - name: Upgrade part 1 - historical analysis on base
+        working-directory: app/apps/web
+        run: node node_modules/@playwright/test/cli.js test --config .qa-pr73/playwright.config.ts u73-base.spec.ts
+      - name: Stop base application services (data volumes and storage kept), switch to the PR head
+        run: |
+          set -eu
+          (cd app && docker compose stop api web media-worker ai-worker render-executor render-worker)
+          git -C app checkout --detach "$QA_APP_SHA"
+          test "$(git -C app rev-parse HEAD)" = "$QA_APP_SHA"
+          test "$(git -C app rev-parse 'HEAD^{tree}')" = "$QA_APP_TREE"
+          ! git -C app status --porcelain --untracked-files=all | grep -v '^?? apps/web/.qa-pr73/'
+          (cd app && pnpm install --frozen-lockfile)
+      - name: Build and start the HEAD application on the same volumes
+        working-directory: app
+        run: |
+          set -eu
+          docker compose build api web media-worker ai-worker render-executor render-worker
+          docker compose up -d --no-build --wait --wait-timeout 420 api web media-worker ai-worker render-executor render-worker
+          docker compose exec -T postgres psql -U editagent -d editagent -AtX -c "SELECT id FROM schema_migrations ORDER BY id DESC LIMIT 2" | tee ../qa-up/head-migrations.txt
+      - name: Upgrade part 2 - historical retrieval and re-analysis at head
+        working-directory: app/apps/web
+        run: node node_modules/@playwright/test/cli.js test --config .qa-pr73/playwright.config.ts u73-head.spec.ts
+      - name: Upload sanitized evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: qa-pr73-upgrade-${{ github.run_id }}
+          path: qa-up
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Remove disposable stack
+        if: always()
+        working-directory: app
+        run: docker compose down -v --remove-orphans || true
+
+  graduation-rerun:
+    name: Frozen graduation workflow rerun + independent export validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    services:
+      postgres:
+        image: postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
+        env:
+          POSTGRES_USER: editagent
+          POSTGRES_PASSWORD: editagent-dev-password
+          POSTGRES_DB: editagent
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U editagent -d editagent" --health-interval 5s --health-timeout 5s --health-retries 20
+      redis:
+        image: redis:7.4-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.QA_APP_SHA }}
+          path: app
+          lfs: true
+          persist-credentials: false
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          path: qa-src
+          sparse-checkout: qa/pr73
+          persist-credentials: false
+      - name: Verify exact application identity
+        run: |
+          set -eu
+          test "$(git -C app rev-parse HEAD)" = "$QA_APP_SHA"
+          test "$(git -C app rev-parse 'HEAD^{tree}')" = "$QA_APP_TREE"
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
+          mkdir -p qa-grad
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: app/package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: app/.nvmrc
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@v10.2.0
+      - name: Install and build (pinned, as repository CI)
+        working-directory: app
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+          sh tools/test/ensure-ffmpeg.sh
+          sh tools/test/ensure-chrome.sh
+          python3 -m venv "$RUNNER_TEMP/qa-venv"
+          "$RUNNER_TEMP/qa-venv/bin/pip" install --quiet numpy==2.3.3
+      - name: Start SeaweedFS (repository script)
+        working-directory: app
+        run: sh infra/seaweedfs/start-storage.sh --from-boot
+      - name: Existing ASR container build, preflight (incl. restrictive parent) and US-210 orchestration test (unchanged)
+        working-directory: app
+        run: pnpm asr:container
+      - name: Existing graduation integration test (unchanged)
+        if: ${{ !cancelled() }}
+        working-directory: app
+        env:
+          PR_HEAD_SHA: ${{ env.QA_APP_SHA }}
+        run: pnpm render:test --graduation-demo
+      - name: Independent validation of the generated export
+        if: always()
+        run: |
+          set -eu
+          "$RUNNER_TEMP/qa-venv/bin/python" qa-src/qa/pr73/verify_media.py \
+            --source app/.local/graduation-demo/demo-input.mp4 \
+            --export app/.local/graduation-demo/private/export.mp4 \
+            --keep 0.2:7.8 --duration 8 --out qa-grad/graduation-export-verification.json
+          cp app/.local/graduation-demo-public/report.json qa-grad/ 2>/dev/null || true
+          cp app/.local/graduation-demo-public/*.png qa-grad/ 2>/dev/null || true
+          sha256sum app/.local/graduation-demo/private/export.mp4 | sed 's#app/.local/graduation-demo/##' > qa-grad/sha256.txt
+      - name: Upload sanitized evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: qa-pr73-graduation-${{ github.run_id }}
+          path: qa-grad
+          if-no-files-found: warn
+          retention-days: 14
