@@ -91,7 +91,7 @@ jobs:
           docker compose build postgres redis api web media-worker agent-worker render-executor render-worker
           for img in editagent-agent-worker:local editagent-api:local; do
             echo "== $img first-party test/fixture files (outside node_modules):"
-            docker run --rm --entrypoint sh "$img" -c 'find / -path /proc -prune -o -name node_modules -prune -o \( -name "*.test.js" -o -name "*agent-run-child*" -o -name "*.test.ts" \) -print 2>/dev/null; echo "third-party node_modules *.test.js: $(find / -path /proc -prune -o -path "*/node_modules/*" -name "*.test.js" -print 2>/dev/null | wc -l)"; echo "scripted driver references in first-party dist: $(grep -rl --exclude-dir=node_modules -e AGENT_TEST_MODE -e agent-run-child / 2>/dev/null | grep -v ^/proc | wc -l)"'
+            timeout 300 docker run --rm --entrypoint sh "$img" -c 'w=$(pwd); echo "workdir=$w"; find "$w" -name node_modules -prune -o \( -name "*.test.js" -o -name "*agent-run-child*" -o -name "*.test.ts" \) -print 2>/dev/null; echo "third-party node_modules *.test.js: $(find "$w" -path "*/node_modules/*" -name "*.test.js" -print 2>/dev/null | wc -l)"; echo "scripted driver references in first-party code: $(grep -rl --exclude-dir=node_modules -e AGENT_TEST_MODE -e agent-run-child "$w" 2>/dev/null | wc -l)"' || echo "scan timed out"
           done | tee ../qa-out/image-test-files.txt
       - name: Start real Compose stack
         working-directory: app
