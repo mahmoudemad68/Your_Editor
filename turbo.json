@@ -50,5 +50,5 @@
       "passThroughEnv": ["PYTEST_ADDOPTS"]
     }
   },
-  "globalDependencies": ["tools/test/vitest.config.mts"]
+  "globalDependencies": ["tools/test/vitest.config.mts", "prompts/*.prompt"]
 }
