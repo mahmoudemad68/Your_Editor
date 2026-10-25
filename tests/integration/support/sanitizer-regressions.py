@@ -39,6 +39,32 @@ class SanitizerRegression(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
+    def test_opaque_bearer_trace_values_and_marker_suffixes_are_fully_redacted(self):
+        # Trace source/resources can contain template syntax and opaque values,
+        # not only base64url-shaped tokens. The independent audit must keep
+        # rejecting them; redaction must consume the complete value instead.
+        source = (
+            'const a="Bearer ${OPAQUE_AUTH}"; '
+            'const b="Bearer ".concat(auth); '
+            'const c="Bearer %OPAQUE_AUTH%"; '
+            'const d="Bearer [REDACTED]OPAQUE_SUFFIX"; '
+            "status=503; stage=uploading"
+        )
+        path = self.artifacts / "browser-resource.js"
+        path.write_text(source)
+        with zipfile.ZipFile(self.artifacts / "trace.zip", "w") as archive:
+            archive.writestr("resources/browser.js", source)
+        with self.assertRaisesRegex(ValueError, "credential audit failed"):
+            artifact_audit.audit(self.artifacts, self.secret_file)
+        self.sanitize()
+        result = path.read_text()
+        self.assertNotIn("OPAQUE_AUTH", result)
+        self.assertNotIn("OPAQUE_SUFFIX", result)
+        self.assertIn("status=503", result)
+        self.assertIn("stage=uploading", result)
+        self.sanitize()
+        self.assertEqual(path.read_text(), result)
+
     def sanitize(self):
         san.sanitize(self.artifacts, self.secret_file)
         self.assertEqual(

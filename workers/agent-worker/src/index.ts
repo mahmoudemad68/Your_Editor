@@ -7,7 +7,7 @@ import {
   WORKER_HEALTH_PORT,
 } from "@editagent/shared";
 import { Pool } from "pg";
-import { loadAgentWorkerConfig, ConfigurationError } from "./infrastructure/config.js";
+import { loadAgentWorkerConfig, agentStartupMessage } from "./infrastructure/config.js";
 
 export async function main(): Promise<void> {
   const config = loadAgentWorkerConfig();
@@ -57,14 +57,6 @@ export async function main(): Promise<void> {
 }
 if (require.main === module)
   void main().catch((error: unknown) => {
-    const message =
-      error instanceof ConfigurationError
-        ? !process.env.DATABASE_URL?.trim()
-          ? "Agent worker configuration error. DATABASE_URL is required."
-          : !process.env.REDIS_URL?.trim()
-            ? "Agent worker configuration error. REDIS_URL is required."
-            : "Agent worker configuration error. Check database, Redis and optional provider settings."
-        : "agent_worker_start_failed";
-    process.stderr.write(`${message}\n`);
+    process.stderr.write(`${agentStartupMessage(error)}\n`);
     process.exitCode = 1;
   });
