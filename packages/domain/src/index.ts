@@ -42,6 +42,7 @@ export { frameIndex, frameRate, microseconds, frameTime, snapToFrame } from "./k
 export type { FrameIndex, FrameRate, Microseconds } from "./kernel/time.js";
 
 export { AgentRun, CreativeMemory } from "./modules/agent/index.js";
+export * from "./modules/agent/lifecycle.js";
 export { Component } from "./modules/components/index.js";
 export { Critique } from "./modules/critic/index.js";
 export * from "./modules/editing/index.js";

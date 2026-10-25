@@ -20,6 +20,7 @@ COPY packages/tool-sdk/package.json packages/tool-sdk/package.json
 COPY packages/media-core/package.json packages/media-core/package.json
 COPY packages/job-queue/package.json packages/job-queue/package.json
 COPY packages/analysis-core/package.json packages/analysis-core/package.json
+COPY packages/agent-core/package.json packages/agent-core/package.json
 COPY workers/agent-worker/package.json workers/agent-worker/package.json
 COPY workers/media-worker/package.json workers/media-worker/package.json
 COPY workers/render-worker/package.json workers/render-worker/package.json
@@ -30,6 +31,8 @@ FROM deps AS build
 COPY tsconfig.base.json ./
 COPY workers/agent-worker workers/agent-worker
 COPY packages/shared packages/shared
+COPY packages/agent-core packages/agent-core
+COPY packages/job-queue packages/job-queue
 COPY packages/tool-sdk packages/tool-sdk
 COPY packages/domain packages/domain
 COPY packages/schemas packages/schemas

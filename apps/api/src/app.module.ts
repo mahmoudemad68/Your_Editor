@@ -1,4 +1,6 @@
 import { MediaInspectionJobs, type InspectionJobs } from "./application/inspection-job.js";
+import { AGENT_RUNS, type AgentRuns } from "./application/agent-runs.js";
+import { AgentRunsController } from "./presentation/agent-runs.controller.js";
 import { TimelineEditor } from "./application/timeline-editor.js";
 import { TimelineEditorController } from "./presentation/timeline-editor.controller.js";
 import { TimelineExports } from "./application/timeline-exports.js";
@@ -65,6 +67,7 @@ import {
 import { type SessionTokens } from "./application/session-tokens.js";
 
 export interface ApiComposition {
+  readonly agentRuns?: AgentRuns;
   readonly editor?: Pick<TimelineEditor, "create" | "read" | "edit">;
   readonly timelineExports?: Pick<TimelineExports, "start" | "read" | "cancel" | "download">;
   readonly analysis?: AnalysisReader;
@@ -112,6 +115,7 @@ export class AppModule {
         ProjectsController,
         UploadsController,
         MediaController,
+        ...(composition.agentRuns === undefined ? [] : [AgentRunsController]),
         ...(composition.editor === undefined ? [] : [TimelineEditorController]),
         ...(composition.timelineExports === undefined ? [] : [TimelineExportsController]),
         ...(composition.analysis === undefined ? [] : [MediaAnalysisController]),
@@ -121,6 +125,9 @@ export class AppModule {
         ...(composition.auth === undefined ? [] : [AuthController]),
       ],
       providers: [
+        ...(composition.agentRuns === undefined
+          ? []
+          : [{ provide: AGENT_RUNS, useValue: composition.agentRuns }]),
         ...(composition.timelineExports === undefined
           ? []
           : [{ provide: TimelineExports, useValue: composition.timelineExports }]),

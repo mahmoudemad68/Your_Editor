@@ -85,6 +85,9 @@ importers:
       '@aws-sdk/s3-request-presigner':
         specifier: 3.1144.0
         version: 3.1144.0
+      '@editagent/agent-core':
+        specifier: workspace:*
+        version: link:../../packages/agent-core
       '@editagent/analysis-core':
         specifier: workspace:*
         version: link:../../packages/analysis-core
@@ -219,6 +222,34 @@ importers:
       tailwindcss:
         specifier: ^4.3.3
         version: 4.3.3
+      typescript:
+        specifier: 'catalog:'
+        version: 6.0.3
+
+  packages/agent-core:
+    dependencies:
+      '@editagent/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@editagent/job-queue':
+        specifier: workspace:*
+        version: link:../job-queue
+      '@editagent/schemas':
+        specifier: workspace:*
+        version: link:../schemas
+      '@editagent/tool-sdk':
+        specifier: workspace:*
+        version: link:../tool-sdk
+      pg:
+        specifier: 8.23.1
+        version: 8.23.1
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 22.20.4
+      '@types/pg':
+        specifier: 8.23.1
+        version: 8.23.1
       typescript:
         specifier: 'catalog:'
         version: 6.0.3
@@ -375,16 +406,28 @@ importers:
 
   workers/agent-worker:
     dependencies:
+      '@editagent/agent-core':
+        specifier: workspace:*
+        version: link:../../packages/agent-core
+      '@editagent/job-queue':
+        specifier: workspace:*
+        version: link:../../packages/job-queue
       '@editagent/shared':
         specifier: workspace:*
         version: link:../../packages/shared
       '@editagent/tool-sdk':
         specifier: workspace:*
         version: link:../../packages/tool-sdk
+      pg:
+        specifier: 8.23.1
+        version: 8.23.1
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
         version: 22.20.4
+      '@types/pg':
+        specifier: 8.23.1
+        version: 8.23.1
       typescript:
         specifier: 'catalog:'
         version: 6.0.3

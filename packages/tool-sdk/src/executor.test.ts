@@ -13,6 +13,34 @@ const setup = (
   r.register(manifest(change), { mode: "in-process", tool: impl });
   return { executor: new ToolExecutor(r, authority, audit), audit };
 };
+test("durable caller identity admits once and never reexecutes a receipt", async () => {
+  class UniqueAudit extends MemoryAudit {
+    override async begin(record: Parameters<MemoryAudit["begin"]>[0]): Promise<void> {
+      if (this.rows.has(record.id)) throw new Error("unique admission");
+      await super.begin(record);
+    }
+  }
+  let effects = 0;
+  const audit = new UniqueAudit();
+  const { executor } = setup(
+    tool((i) => {
+      effects++;
+      return { output: i, costMicros: 1 };
+    }),
+    {},
+    audit,
+  );
+  const attempts = await Promise.allSettled([
+    executor.executeWithIdentity(ids.tool, call),
+    executor.executeWithIdentity(ids.tool, call),
+  ]);
+  assert.equal(attempts.filter((x) => x.status === "fulfilled").length, 1);
+  assert.equal(effects, 1);
+  await assert.rejects(executor.executeWithIdentity(ids.tool, call));
+  assert.equal(effects, 1);
+  await assert.rejects(executor.executeWithIdentity("not-an-id", call));
+  assert.equal(audit.rows.size, 1);
+});
 test("valid execution and authorized durable-port query", async () => {
   const { executor, audit } = setup();
   const r = await executor.execute(call);

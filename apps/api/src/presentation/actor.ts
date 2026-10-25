@@ -2,6 +2,14 @@ import { UnauthorizedException } from "@nestjs/common";
 import { type UserId } from "@editagent/domain";
 
 const ACTOR_USER_ID = Symbol("editagent.actorUserId");
+const SESSION_CHECK = Symbol("editagent.sessionCheck");
+export function bindSessionCheck(request: object, check: () => Promise<boolean>): void {
+  Object.defineProperty(request, SESSION_CHECK, { value: check });
+}
+export async function sessionStillValid(request: object): Promise<boolean> {
+  const check = (request as { [SESSION_CHECK]?: () => Promise<boolean> })[SESSION_CHECK];
+  return check === undefined ? false : check();
+}
 
 /**
  * Authentication boundary for Project commands.

@@ -151,7 +151,7 @@ const forbidden = [
     from: { path: "^apps/api/" },
     to: {
       pathNot:
-        "^(apps/api/|packages/domain/|packages/schemas/|packages/shared/|packages/job-queue/|node_modules/)",
+        "^(apps/api/|packages/agent-core/|packages/domain/|packages/schemas/|packages/shared/|packages/job-queue/|node_modules/)",
       dependencyTypesNot: ["core"],
     },
   },
@@ -173,7 +173,7 @@ const forbidden = [
     from: { path: "^workers/agent-worker/" },
     to: {
       pathNot:
-        "^(workers/agent-worker/|packages/domain/|packages/schemas/|packages/tool-sdk/|packages/shared/|node_modules/)",
+        "^(workers/agent-worker/|packages/agent-core/|packages/job-queue/|packages/domain/|packages/schemas/|packages/tool-sdk/|packages/shared/|node_modules/)",
       dependencyTypesNot: ["core"],
     },
   },
