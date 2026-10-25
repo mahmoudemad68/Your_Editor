@@ -199,12 +199,12 @@ jobs:
           sh infra/seaweedfs/start-storage.sh --from-boot
           node apps/web/.qa-pr77/bucket.mjs
           docker compose up -d --no-build --wait --wait-timeout 420 api web media-worker agent-worker render-executor render-worker
+      - name: Baseline on unmodified main for findings L1/L3/L4 (before the upgrade snapshot)
+        working-directory: app/apps/web
+        run: node node_modules/@playwright/test/cli.js test --config .qa-pr77/playwright.config.ts b77-base.spec.ts
       - name: Upgrade part 1 - populate base
         working-directory: app/apps/web
         run: node node_modules/@playwright/test/cli.js test --config .qa-pr77/playwright.config.ts u77-base.spec.ts
-      - name: Baseline on unmodified main for findings L1/L3/L4
-        working-directory: app/apps/web
-        run: node node_modules/@playwright/test/cli.js test --config .qa-pr77/playwright.config.ts b77-base.spec.ts
       - name: Switch code to the PR head and build
         run: |
           set -eu
