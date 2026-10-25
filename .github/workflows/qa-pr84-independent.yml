@@ -1,0 +1,250 @@
+# Independent QA for PR #84 (US-302/US-304; Issue #85). QA-only branch; never merged.
+# The application under test is the immutable PR head, checked out separately from this harness.
+name: QA PR84 independent
+
+on:
+  push:
+    branches: [qa/pr84-c049cbc]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: qa-pr84-independent
+  cancel-in-progress: false
+
+env:
+  QA_APP_SHA: c049cbcd6c4ce8730bd64a1ba1d9016957f3fc59
+  QA_APP_TREE: 18924b6d1fbaba56f27b914bb75ce83adf2a9465
+  QA_BASE_SHA: 4833dfaaa5ff8bac1660016d146ec5b3c18566e4
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  qualify:
+    name: Prompt registry + safe context (real PG/Tool SDK, library, production image, tokenizer) + lifecycle security regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 210
+    env:
+      COMPOSE_PROJECT_NAME: qapr84
+      EDITAGENT_RUNTIME: development
+      AUTH_COOKIE_SECURE: "false"
+      AUTH_TRUSTED_ORIGINS: http://localhost:3000
+      QA_APP_ROOT: ${{ github.workspace }}/app
+      QA_OUT: ${{ github.workspace }}/qa-out
+      QA_INPUTS: ${{ github.workspace }}/qa-tmp/inputs
+      QA_PRIVATE: ${{ github.workspace }}/qa-tmp/private
+    steps:
+      - name: "Gate 0: PR #84 is still the frozen Draft head"
+        run: |
+          set -eu
+          gh api "repos/$GITHUB_REPOSITORY/pulls/84" | python3 -c "import json,sys,os;p=json.load(sys.stdin);print(p['state'],p['draft'],p['head']['sha'],p['base']['sha'],p['changed_files']);assert p['state']=='open' and p['draft'] is True and p['head']['sha']==os.environ['QA_APP_SHA'] and p['base']['sha']==os.environ['QA_BASE_SHA'] and p['changed_files']==20, 'HEAD_DRIFT'"
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.QA_APP_SHA }}
+          path: app
+          lfs: true
+          persist-credentials: false
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          path: qa-src
+          sparse-checkout: qa/pr84
+          persist-credentials: false
+      - name: Verify exact application identity
+        run: |
+          set -eu
+          test "$(git -C app rev-parse HEAD)" = "$QA_APP_SHA"
+          test "$(git -C app rev-parse 'HEAD^{tree}')" = "$QA_APP_TREE"
+          test -z "$(git -C app status --porcelain)"
+          mkdir -p qa-out
+          printf '{"appSha":"%s","appTree":"%s","qaHarnessSha":"%s","runId":"%s","runner":"%s/%s"}\n' "$(git -C app rev-parse HEAD)" "$(git -C app rev-parse 'HEAD^{tree}')" "$GITHUB_SHA" "$GITHUB_RUN_ID" "$ImageOS" "$ImageVersion" > qa-out/identity.json
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
+          { echo "nproc=$(nproc)"; free -b | sed -n 2p; uname -sr; docker version --format 'docker {{.Server.Version}}'; lsb_release -ds; } | tee qa-out/runner.txt
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: app/package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: app/.nvmrc
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+      - name: Install pinned dependencies, build the API closure (incl. prompt bundle), FFmpeg and Chrome
+        working-directory: app
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm --filter "@editagent/api..." build
+          sh tools/test/ensure-ffmpeg.sh
+          sh tools/test/ensure-chrome.sh
+          git status --porcelain --untracked-files=no | tee ../qa-out/app-status-after-build.txt
+      - name: Stage QA harness outside tracked application files; syntax checks; inputs
+        run: |
+          set -eu
+          mkdir -p app/apps/web/.qa-pr84 && cp qa-src/qa/pr84/* app/apps/web/.qa-pr84/
+          for f in app/apps/web/.qa-pr84/*.mjs; do node --check "$f"; done
+          python3 -m py_compile app/apps/web/.qa-pr84/tok84.py
+          bash qa-src/qa/pr84/make_inputs.sh "$QA_INPUTS" app
+      - name: Build production images (repository Dockerfiles, exact SHA)
+        working-directory: app
+        run: |
+          set -eu
+          docker compose config --quiet
+          docker compose build postgres redis api web media-worker agent-worker ai-worker render-executor render-worker
+      - name: Start real Compose stack (PostgreSQL, Redis/BullMQ, SeaweedFS S3, API, workers incl. real ASR)
+        working-directory: app
+        run: |
+          set -eu
+          docker compose up -d --wait --wait-timeout 180 postgres redis
+          sh infra/seaweedfs/start-storage.sh --from-boot
+          node apps/web/.qa-pr84/bucket.mjs
+          docker compose up -d --no-build --wait --wait-timeout 600 api web media-worker agent-worker ai-worker render-executor render-worker
+          docker compose ps --format '{{.Service}} {{.State}} {{.Health}}' | tee ../qa-out/compose-ps.txt
+      - name: Part PG - context over real PostgreSQL + Tool SDK authority
+        working-directory: app/apps/web
+        run: node node_modules/@playwright/test/cli.js test --config .qa-pr84/playwright.config.ts pg84.spec.ts
+      - name: Part L - registry/context library contract, adversarial, budget and resource probes
+        if: ${{ !cancelled() }}
+        working-directory: app/apps/web/.qa-pr84
+        run: timeout 1800 node lib84.mjs
+      - name: Part IMG - deployed production images
+        if: ${{ !cancelled() }}
+        working-directory: app/apps/web/.qa-pr84
+        run: timeout 900 node img84.mjs
+      - name: Part T - independent tokenizer cross-check (proxies)
+        if: ${{ !cancelled() }}
+        run: |
+          python3 -m venv "$RUNNER_TEMP/tok" && "$RUNNER_TEMP/tok/bin/pip" install --quiet tiktoken==0.8.0
+          "$RUNNER_TEMP/tok/bin/python" app/apps/web/.qa-pr84/tok84.py
+          rm -rf qa-out/tok-samples
+      - name: Regression - AgentRun lifecycle/auth/CSRF/SSE/audit security probes at this head (QA-authored, from PR #77 QA)
+        if: ${{ !cancelled() }}
+        working-directory: app/apps/web
+        run: node node_modules/@playwright/test/cli.js test --config .qa-pr84/playwright.config.ts s77.spec.ts
+      - name: Regression - real-PG driver crash/fence/replay probes at this head
+        if: ${{ !cancelled() }}
+        working-directory: app/apps/web/.qa-pr84
+        run: |
+          docker compose -f "$QA_APP_ROOT/compose.yaml" stop -t 5 agent-worker
+          node d77.mjs
+      - name: Collect sanitized state
+        if: always()
+        working-directory: app
+        run: |
+          docker compose ps --all --format '{{.Service}} {{.State}} {{.Status}}' > ../qa-out/final-compose-ps.txt || true
+          docker compose exec -T postgres psql -U editagent -d editagent -AtX -c "SELECT state||' '||coalesce(stop_reason,'-')||' '||count(*) FROM agent_runs GROUP BY state,stop_reason ORDER BY 1" > ../qa-out/final-agent-runs.txt 2>&1 || true
+          docker compose logs --no-color api agent-worker 2>&1 | grep -cE "QA84FAKEKEY|QA84DUMMY|QA84hunter2|QA84pw|exfil\.example" > ../qa-out/log-secret-hits.txt || true
+      - name: "Gate 0 (after): PR head unchanged"
+        if: always()
+        run: gh api "repos/$GITHUB_REPOSITORY/pulls/84" --jq '.head.sha + " draft=" + (.draft|tostring)' | tee -a qa-out/identity-after.txt
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: qa-pr84-qualify-${{ github.run_id }}
+          path: qa-out
+          if-no-files-found: error
+          retention-days: 14
+      - name: Remove disposable stack
+        if: always()
+        working-directory: app
+        run: docker compose down -v --remove-orphans || true
+      - name: "QA gate (fail-closed): PR #84 probes"
+        if: always()
+        run: node qa-src/qa/pr84/gate84.mjs qa-out/qa84-results.json "PG01-10,P01-12,C01-09,IMG01-04,T01" "P12,IMG04" "C08"
+      - name: "QA gate (fail-closed): lifecycle security regression"
+        if: always()
+        run: node qa-src/qa/pr84/gate84.mjs qa-out/qa77-results.json "S1-19,D1-18" "S10"
+
+  graduation:
+    name: Browser upload -> inspection -> analysis -> trim/split -> render -> playback -> download (regression)
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    services:
+      postgres:
+        image: postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
+        env:
+          POSTGRES_USER: editagent
+          POSTGRES_PASSWORD: editagent-dev-password
+          POSTGRES_DB: editagent
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U editagent -d editagent" --health-interval 5s --health-timeout 5s --health-retries 20
+      redis:
+        image: redis:7.4-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 5s --health-retries 20
+    steps:
+      - name: "Gate 0: PR #84 is still the frozen Draft head"
+        run: gh api "repos/$GITHUB_REPOSITORY/pulls/84" --jq '.head.sha' | grep -qx "$QA_APP_SHA"
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.QA_APP_SHA }}
+          path: app
+          lfs: true
+          persist-credentials: false
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          path: qa-src
+          sparse-checkout: qa/pr84
+          persist-credentials: false
+      - name: Verify exact application identity
+        run: |
+          set -eu
+          test "$(git -C app rev-parse HEAD)" = "$QA_APP_SHA"
+          test "$(git -C app rev-parse 'HEAD^{tree}')" = "$QA_APP_TREE"
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
+          mkdir -p qa-grad
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: app/package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: app/.nvmrc
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@v10.2.0
+      - name: Install and build (pinned, as repository CI)
+        working-directory: app
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+          sh tools/test/ensure-ffmpeg.sh
+          sh tools/test/ensure-chrome.sh
+          python3 -m venv "$RUNNER_TEMP/qa-venv"
+          "$RUNNER_TEMP/qa-venv/bin/pip" install --quiet numpy==2.3.3
+      - name: Start SeaweedFS (repository script)
+        working-directory: app
+        run: sh infra/seaweedfs/start-storage.sh --from-boot
+      - name: Existing ASR container build (unchanged)
+        working-directory: app
+        run: pnpm asr:container
+      - name: Existing graduation integration test (unchanged)
+        if: ${{ !cancelled() }}
+        working-directory: app
+        env:
+          PR_HEAD_SHA: ${{ env.QA_APP_SHA }}
+        run: pnpm render:test --graduation-demo
+      - name: Independent validation of the generated export (FFprobe/frames/audio)
+        if: always()
+        run: |
+          set -eu
+          "$RUNNER_TEMP/qa-venv/bin/python" qa-src/qa/pr84/verify_media.py \
+            --source app/.local/graduation-demo/demo-input.mp4 \
+            --export app/.local/graduation-demo/private/export.mp4 \
+            --keep 0.2:7.8 --duration 8 --out qa-grad/graduation-export-verification.json
+          cp app/.local/graduation-demo-public/report.json qa-grad/ 2>/dev/null || true
+          sha256sum app/.local/graduation-demo/private/export.mp4 | sed 's#app/.local/graduation-demo/##' > qa-grad/sha256.txt
+      - name: "Gate 0 (after): PR head unchanged"
+        if: always()
+        run: gh api "repos/$GITHUB_REPOSITORY/pulls/84" --jq '.head.sha + " draft=" + (.draft|tostring)' | tee qa-grad/identity-after.txt
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: qa-pr84-graduation-${{ github.run_id }}
+          path: qa-grad
+          if-no-files-found: warn
+          retention-days: 14
