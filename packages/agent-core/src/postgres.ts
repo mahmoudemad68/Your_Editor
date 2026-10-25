@@ -11,7 +11,12 @@ import {
 } from "@editagent/domain";
 import { contentHash } from "@editagent/tool-sdk";
 import type { Pool, PoolClient } from "pg";
-import { AgentStepEventV1Schema, AgentStepV1Schema } from "@editagent/schemas";
+import {
+  AgentStepEventV1Schema,
+  AgentStepV1Schema,
+  AgentExportV1Schema,
+  AgentAuditPageV1Schema,
+} from "@editagent/schemas";
 import {
   AgentError,
   AGENT_DEADLINE_MS,
@@ -326,6 +331,7 @@ export class PostgresAgentRuns implements AgentApi {
         await this.access(db, row.actor_id, row.project_id, true);
       } catch (error) {
         if (!(error instanceof AgentError)) throw error;
+        await this.unconfirmedStep(db, row);
         await this.transition(db, row, "Failed", "ACCESS_REVOKED");
         return null;
       }
@@ -333,6 +339,7 @@ export class PostgresAgentRuns implements AgentApi {
         (await db.query<{ now: string }>(`SELECT ${clockSql} AS now`)).rows[0]!.now,
       );
       if (Number(row.deadline_at_ms) <= now) {
+        await this.unconfirmedStep(db, row);
         await this.transition(db, row, "Failed", "DEADLINE_EXCEEDED");
         return null;
       }
@@ -375,6 +382,14 @@ export class PostgresAgentRuns implements AgentApi {
   ): Promise<void> {
     await this.tx(async (db) => {
       const row = await this.fenced(db, lease);
+      if (state === "Evaluating" || state === "Completed") {
+        const unfinished = await db.query(
+          "SELECT id FROM agent_steps WHERE run_id=$1 AND outcome<>'succeeded' LIMIT 1",
+          [row.id],
+        );
+        if (unfinished.rowCount !== 0) throw new AgentError("conflict");
+      }
+      if (state === "Failed" || state === "Cancelled") await this.unconfirmedStep(db, row);
       await this.transition(db, row, state, reason);
     });
   }
@@ -755,13 +770,16 @@ export class PostgresAgentRuns implements AgentApi {
           JSON.stringify([id, last.sequence, last.id, through, end.id]),
         ).toString("base64url");
       }
-      return {
+      const page: AuditPage = {
         schemaVersion: "1.0.0",
         run: view(row),
         events,
         nextCursor,
         throughSequence: through,
       };
+      if (!AgentAuditPageV1Schema.safeParse(page).success)
+        throw new Error("agent_audit_contract_invalid");
+      return page;
     });
   }
   async export(
@@ -789,7 +807,7 @@ export class PostgresAgentRuns implements AgentApi {
           [id, receipts],
         )
       ).rows;
-      return {
+      const result: AgentExport = {
         ...page,
         replay: {
           mode: "apply_commands_to_original_snapshot_only",
@@ -804,6 +822,9 @@ export class PostgresAgentRuns implements AgentApi {
           effects: "never_reexecute_tools",
         },
       };
+      if (!AgentExportV1Schema.safeParse(result).success)
+        throw new Error("agent_export_contract_invalid");
+      return result;
     });
   }
 }

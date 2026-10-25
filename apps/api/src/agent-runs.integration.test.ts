@@ -50,7 +50,7 @@ async function until(check: () => Promise<boolean>, ms = 8000): Promise<void> {
 }
 test(
   "US303/306 real PostgreSQL, BullMQ, ToolExecutor, authenticated audit and crash recovery",
-  { timeout: 100_000 },
+  { timeout: 180_000 },
   async (t) => {
     const adminUrl =
       process.env.DATABASE_URL ??
@@ -322,7 +322,12 @@ test(
             run = await f.start(),
             lease = await runs.claim(run.id);
           assert.ok(lease);
+          const fixed = await runs.audit(owner, f.project, run.id, undefined, 1);
+          assert.ok(fixed.nextCursor);
           await runs.move(lease, "Observing");
+          const history = await runs.audit(owner, f.project, run.id, fixed.nextCursor, 100);
+          assert.equal(history.throughSequence, fixed.throughSequence);
+          assert.ok(history.events.every((e) => e.sequence <= fixed.throughSequence));
           await runs.cancel(editor, f.project, run.id);
           await assert.rejects(runs.move(lease, "Planning"), AgentError);
           assert.equal((await runs.get(owner, f.project, run.id)).state, "Cancelled");
@@ -478,6 +483,11 @@ test(
           assert.equal(done.state, "Completed");
           assert.equal(done.checkpoint, 2);
           assert.equal(
+            (await pool.query("SELECT id FROM tool_executions WHERE project_id=$1", [f.project]))
+              .rowCount,
+            2,
+          );
+          assert.equal(
             (await pool.query("SELECT id FROM tool_executions WHERE id=$1", [receipt])).rowCount,
             1,
           );
@@ -520,6 +530,11 @@ test(
           const next = child(run.id, "complete");
           await message(next, "failed");
           await once(next, "exit");
+          assert.equal(
+            (await pool.query("SELECT id FROM tool_executions WHERE project_id=$1", [f.project]))
+              .rowCount,
+            1,
+          );
           assert.equal(
             (await runs.get(owner, f.project, run.id)).stopReason,
             "EXECUTION_UNCONFIRMED",
@@ -570,6 +585,7 @@ test(
           };
           const intent = await runs.beginStep(lease, call.name, call.version, call.input);
           assert.ok(intent);
+          await assert.rejects(runs.move(lease, "Evaluating"), AgentError);
           const result = await executor.executeWithIdentity(intent.receiptId, call);
           await runs.cancel(owner, f.project, run.id);
           await assert.rejects(
@@ -600,6 +616,148 @@ test(
           await assert.rejects(
             executeAgentTool(runs, lease2, executor, call, new AbortController().signal),
           );
+        },
+      );
+      await t.test(
+        "a lease expiring inside a blocked effect transaction rolls back both Timeline and checkpoint",
+        async () => {
+          const f = await fixture(),
+            run = await f.start(),
+            lease = await runs.claim(run.id);
+          assert.ok(lease);
+          await runs.move(lease, "Observing");
+          await runs.move(lease, "Planning");
+          await runs.move(lease, "Executing");
+          const authority = new PostgresToolAuthority(pool, async (project, id) =>
+            Timeline.restore(
+              (
+                await pool.query(
+                  "SELECT snapshot FROM editing_timelines WHERE id=$1 AND project_id=$2",
+                  [id, project],
+                )
+              ).rows[0].snapshot,
+            ),
+          );
+          const executor = new ToolExecutor(
+            registerEditingTools(new ToolRegistry(), authority),
+            authority,
+            new PostgresToolAuditRepository(pool, 1_000_000),
+          );
+          const call: ToolCall = {
+            name: "editing.trim-video",
+            version: "1.0.0",
+            callerId: owner,
+            projectId: f.project,
+            resource: { kind: "timeline", id: f.id },
+            input: { clipId: f.clip, startUs: "200000", endUs: "1800000" },
+          };
+          const intent = await runs.beginStep(lease, call.name, call.version, call.input);
+          assert.ok(intent);
+          const result = await executor.executeWithIdentity(intent.receiptId, call);
+          await pool.query(
+            `CREATE FUNCTION agent_test_slow_effect() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.id='${f.id}'::uuid THEN PERFORM pg_sleep(5.2); END IF; RETURN NEW; END; $$; CREATE TRIGGER agent_test_slow_effect BEFORE UPDATE ON editing_timelines FOR EACH ROW EXECUTE FUNCTION agent_test_slow_effect()`,
+          );
+          try {
+            await assert.rejects(
+              runs.finishStep(lease, intent, {
+                output: result.output,
+                commands: result.commands,
+                durationMs: result.record.durationMs!,
+                costMicros: result.record.costMicros,
+              }),
+              (error: unknown) => (error as { code?: string }).code === "23514",
+            );
+          } finally {
+            await pool.query(
+              "DROP TRIGGER agent_test_slow_effect ON editing_timelines; DROP FUNCTION agent_test_slow_effect()",
+            );
+          }
+          assert.equal((await runs.get(owner, f.project, run.id)).checkpoint, 0);
+          assert.equal(
+            (await pool.query("SELECT state_sha256 FROM editing_timelines WHERE id=$1", [f.id]))
+              .rows[0].state_sha256,
+            f.hash,
+          );
+        },
+      );
+      await t.test(
+        "actual agent-worker SIGKILL, readiness and broker redelivery preserve committed states",
+        async () => {
+          const f = await fixture(),
+            run = await f.start(),
+            blocker = await pool.connect();
+          const lock = 20_760_000 + process.pid;
+          const startWorker = () => {
+            const proc = fork(
+              path.resolve(__dirname, "../../../workers/agent-worker/dist/index.js"),
+              [],
+              {
+                env: { ...process.env, DATABASE_URL: url.href, REDIS_URL: redis.href },
+                stdio: ["ignore", "ignore", "ignore", "ipc"],
+              },
+            );
+            children.add(proc);
+            return proc;
+          };
+          let first: ChildProcess | undefined, second: ChildProcess | undefined;
+          try {
+            await blocker.query("SELECT pg_advisory_lock($1::bigint)", [lock]);
+            await pool.query(
+              `CREATE FUNCTION agent_test_checkpoint_pause() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.id='${run.id}'::uuid AND NEW.state='Planning' THEN PERFORM pg_advisory_xact_lock(${lock}::bigint); END IF; RETURN NEW; END; $$; CREATE TRIGGER agent_test_checkpoint_pause BEFORE UPDATE ON agent_runs FOR EACH ROW EXECUTE FUNCTION agent_test_checkpoint_pause()`,
+            );
+            first = startWorker();
+            await until(async () => {
+              try {
+                return (await fetch("http://127.0.0.1:3200/ready")).ok;
+              } catch {
+                return false;
+              }
+            }, 10_000);
+            await until(
+              async () =>
+                (await pool.query("SELECT state FROM agent_runs WHERE id=$1", [run.id])).rows[0]
+                  .state === "Observing",
+            );
+            first.kill("SIGKILL");
+            await once(first, "exit");
+            await blocker.query("SELECT pg_advisory_unlock($1::bigint)", [lock]);
+            await pool.query(
+              "DROP TRIGGER agent_test_checkpoint_pause ON agent_runs; DROP FUNCTION agent_test_checkpoint_pause()",
+            );
+            second = startWorker();
+            await until(
+              async () =>
+                (await pool.query("SELECT state,stop_reason FROM agent_runs WHERE id=$1", [run.id]))
+                  .rows[0].stop_reason === "PLANNER_NOT_CONFIGURED",
+              45_000,
+            );
+            const events = await runs.events(owner, f.project, run.id);
+            assert.equal(
+              events.filter((e) => e.kind === "transition" && e.state === "Observing").length,
+              1,
+            );
+            await until(
+              async () =>
+                (await pool.query("SELECT status FROM jobs WHERE id=$1", [run.id])).rows[0]
+                  ?.status === "Completed",
+            );
+            assert.ok(
+              (await pool.query("SELECT id FROM job_attempts WHERE job_id=$1", [run.id])).rows
+                .length >= 2,
+            );
+          } finally {
+            await blocker.query("SELECT pg_advisory_unlock($1::bigint)", [lock]);
+            blocker.release();
+            await pool.query(
+              "DROP TRIGGER IF EXISTS agent_test_checkpoint_pause ON agent_runs; DROP FUNCTION IF EXISTS agent_test_checkpoint_pause()",
+            );
+            for (const proc of [first, second])
+              if (proc && proc.exitCode === null && proc.signalCode === null) {
+                const exit = once(proc, "exit");
+                proc.kill("SIGKILL");
+                await exit;
+              }
+          }
         },
       );
       await t.test(

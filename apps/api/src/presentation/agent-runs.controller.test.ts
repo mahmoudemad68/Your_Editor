@@ -57,3 +57,40 @@ test("invalid audit limits and cancellation payloads fail before the repository"
     assert.throws(() => controller.audit(id, id, req, undefined, limit));
   assert.throws(() => controller.cancel(id, id, req, { tool: "arbitrary" }));
 });
+test("a disconnect during SSE headers cannot exhaust the actor stream quota", async () => {
+  const req = { headers: {} };
+  bindActor(req, userId(id));
+  bindSessionCheck(req, async () => true);
+  const controller = new AgentRunsController({ events: async () => [] } as unknown as AgentApi);
+  const broken = Object.assign(new EventEmitter(), {
+    setHeader() {},
+    flushHeaders() {
+      throw new Error("closed transport");
+    },
+    write() {
+      return false;
+    },
+    end() {},
+    destroy() {
+      broken.emit("close");
+    },
+  });
+  for (let count = 0; count < 5; count++) await controller.events(id, id, req, broken);
+  let written = false;
+  const healthy = Object.assign(new EventEmitter(), {
+    setHeader() {},
+    flushHeaders() {},
+    write(_chunk: string, callback: () => void) {
+      written = true;
+      callback();
+      healthy.emit("close");
+      return true;
+    },
+    end() {},
+    destroy() {
+      healthy.emit("close");
+    },
+  });
+  await controller.events(id, id, req, healthy);
+  assert.equal(written, true);
+});

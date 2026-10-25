@@ -7,7 +7,12 @@ import {
   type EditCommand,
 } from "@editagent/domain";
 import { AgentRunV1Schema } from "@editagent/schemas";
-export { agentRunOpenApiSchema, agentStepEventOpenApiSchema } from "@editagent/schemas";
+export {
+  agentRunOpenApiSchema,
+  agentStepEventOpenApiSchema,
+  agentAuditPageOpenApiSchema,
+  agentExportOpenApiSchema,
+} from "@editagent/schemas";
 
 export const AGENT_QUEUE = "agent-runs-v1";
 export const AGENT_JOB_TYPE = "agent.run.v1";

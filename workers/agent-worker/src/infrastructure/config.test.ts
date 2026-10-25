@@ -40,3 +40,19 @@ test("the agent-worker process exits when DATABASE_URL is absent", () => {
   assert.equal(result.status, 1);
   assert.match(result.stderr ?? "", /DATABASE_URL is required/);
 });
+test("invalid configuration never echoes URL credentials or private error details", () => {
+  const result = spawnSync(process.execPath, ["dist/index.js"], {
+    cwd: path.resolve(__dirname, "..", ".."),
+    env: {
+      PATH: process.env.PATH ?? "",
+      DATABASE_URL: databaseUrl,
+      REDIS_URL: "http://private-account:private-password@private-host.invalid/private-path",
+    },
+    encoding: "utf8",
+    timeout: 10_000,
+  });
+  assert.equal(result.error, undefined);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /configuration error/);
+  assert.doesNotMatch(result.stderr, /private-account|private-password|private-host|private-path/);
+});

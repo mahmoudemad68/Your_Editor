@@ -13,7 +13,11 @@ import {
   HttpException,
 } from "@nestjs/common";
 import { ApiBody, ApiProduces, ApiProperty, ApiTags, ApiResponse, ApiQuery } from "@nestjs/swagger";
-import { agentRunOpenApiSchema, agentStepEventOpenApiSchema } from "@editagent/agent-core";
+import {
+  agentRunOpenApiSchema,
+  agentAuditPageOpenApiSchema,
+  agentExportOpenApiSchema,
+} from "@editagent/agent-core";
 import type { ApiResponseSchemaHost } from "@nestjs/swagger";
 type SchemaObject = ApiResponseSchemaHost["schema"];
 import { AGENT_RUNS, type AgentRuns } from "../application/agent-runs.js";
@@ -80,21 +84,7 @@ export class AgentRunsController {
   @ApiQuery({ name: "limit", required: false, type: Number })
   @ApiResponse({
     status: 200,
-    schema: {
-      type: "object",
-      required: ["schemaVersion", "run", "events", "nextCursor", "throughSequence"],
-      properties: {
-        schemaVersion: { type: "string", enum: ["1.0.0"] },
-        run: agentRunOpenApiSchema as SchemaObject,
-        events: {
-          type: "array",
-          maxItems: 100,
-          items: agentStepEventOpenApiSchema as SchemaObject,
-        },
-        nextCursor: { type: "string", nullable: true },
-        throughSequence: { type: "integer", minimum: 0, maximum: 256 },
-      },
-    },
+    schema: agentAuditPageOpenApiSchema as SchemaObject,
   })
   audit(
     @Param("projectId") project: string,
@@ -110,6 +100,7 @@ export class AgentRunsController {
   @ApiQuery({ name: "limit", required: false, type: Number })
   @ApiResponse({
     status: 200,
+    schema: agentExportOpenApiSchema as SchemaObject,
     description:
       "Bounded audit page plus source hashes and versioned trim/split command receipts. See agent-runs.md.",
   })
@@ -156,11 +147,11 @@ export class AgentRunsController {
     res.once("close", close);
     const finish = Date.now() + 120_000;
     let count = 0;
-    res.setHeader("Content-Type", "text/event-stream");
-    res.setHeader("Cache-Control", "no-cache, no-store");
-    res.setHeader("X-Accel-Buffering", "no");
-    res.flushHeaders();
     try {
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache, no-store");
+      res.setHeader("X-Accel-Buffering", "no");
+      res.flushHeaders();
       while (!closed && Date.now() < finish && count < 256) {
         if (!(await sessionStillValid(req))) throw new Error("expired");
         if (page.length === 0) {

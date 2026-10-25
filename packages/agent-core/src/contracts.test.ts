@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { AgentRunV1Schema, AgentStepEventV1Schema, AgentStepV1Schema } from "@editagent/schemas";
+import {
+  AgentRunV1Schema,
+  AgentStepEventV1Schema,
+  AgentStepV1Schema,
+  AgentExportV1Schema,
+} from "@editagent/schemas";
 import { AgentError, assertRun, checkedUuid, type AgentRunView } from "./contracts.js";
 
 const id = "018fe277-6ec0-7000-8000-218222000000";
@@ -20,6 +25,50 @@ const run: AgentRunView = {
   source: null,
   runtime: { driver: "infrastructure-v1", planner: "not_configured" },
 };
+test("sanitized export schema rejects raw tool calls, private text and unbounded receipts", () => {
+  const page = {
+    schemaVersion: "1.0.0",
+    run,
+    events: [],
+    nextCursor: null,
+    throughSequence: 0,
+    replay: {
+      mode: "apply_commands_to_original_snapshot_only",
+      source: null,
+      commands: [],
+      effects: "never_reexecute_tools",
+    },
+  };
+  assert.equal(AgentExportV1Schema.safeParse(page).success, true);
+  assert.equal(
+    AgentExportV1Schema.safeParse({ ...page, toolInput: { private: "data" } }).success,
+    false,
+  );
+  const receipt = {
+    stepId: id,
+    receiptId: id,
+    basisSha256: "a".repeat(64),
+    resultSha256: "b".repeat(64),
+    commands: [
+      {
+        schemaVersion: 1,
+        id,
+        timelineId: id,
+        type: "AddCaption",
+        payload: { text: "private transcript" },
+      },
+    ],
+  };
+  assert.equal(
+    AgentExportV1Schema.safeParse({ ...page, replay: { ...page.replay, commands: [receipt] } })
+      .success,
+    false,
+  );
+  assert.equal(
+    AgentExportV1Schema.safeParse({ ...page, events: Array(101).fill({}) }).success,
+    false,
+  );
+});
 test("versioned AgentRun schema bounds counters and forbids private payloads", () => {
   assert.deepEqual(assertRun(run), run);
   for (const patch of [

@@ -22,21 +22,21 @@ method admits a persisted ToolExecutor identity once; no public route accepts it
 
 ## Acceptance evidence map
 
-| Requirement                                                                    | Executable evidence                                                                     | Qualification boundary                                 |
-| ------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------- | ------------------------------------------------------ |
-| Legal graph, terminal states, stop reasons                                     | domain `lifecycle.test.ts`, exhaustive edges and generated stop-reason cases            | Portable                                               |
-| Versioned bounded run/step/event schemas                                       | agent-core `contracts.test.ts`                                                          | Portable; strict unknown-field rejection               |
-| Authenticated start/get/cancel; owner/editor/viewer and foreign 404            | API `agent-runs.integration.test.ts`                                                    | Real PG/API/session/CSRF                               |
-| Unique admission, monotonic ordered events, fixed pagination, cursor rejection | same integration suite                                                                  | Real PG transactions                                   |
-| Durable cancellation/revocation, lease/deadline and publication fences         | same integration suite, migration 0022 triggers                                         | Real PG + actual ToolExecutor proposals                |
-| BullMQ delivery, duplicate admission, database rollback and Redis interruption | same integration suite                                                                  | Real PG + Redis/BullMQ, bounded proxy interruption     |
-| SIGKILL after checkpoint, restart, no completed tool replay                    | test-only `fixtures/agent-run-child.test.ts` driven by integration suite                | Real subprocess, ToolExecutor, PG and Timeline effects |
-| Unconfirmed tool result before checkpoint                                      | same child fixture and integration suite                                                | Explicit failure; no guessed/repeated effect           |
-| Ordered safe trail and original-snapshot command replay                        | export pagination plus `replayAgentCommands` integration assertions                     | Offline domain command replay, no tool execution       |
-| SSE resume, authorization revocation and token expiry                          | API integration suite                                                                   | Real HTTP stream/session + PG                          |
-| Slow-client cleanup, input bounds                                              | `presentation/agent-runs.controller.test.ts`                                            | Controlled stalled transport plus real-service tests   |
-| Tool SDK budgets/auth/security and existing editing proposals                  | existing complete Tool SDK unit suite plus stable-identity regression                   | Portable; real PG receipt checks in integration        |
-| Existing media analysis/edit/render/browser-export functionality               | existing CI regression, real ASR container, production render and graduation demo gates | Requires exact-head Linux execution                    |
+| Requirement                                                                    | Executable evidence                                                                                      | Qualification boundary                                 |
+| ------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| Legal graph, terminal states, stop reasons                                     | domain `lifecycle.test.ts`, exhaustive edges and generated stop-reason cases                             | Portable                                               |
+| Versioned bounded run/step/event schemas                                       | agent-core `contracts.test.ts`                                                                           | Portable; strict unknown-field rejection               |
+| Authenticated start/get/cancel; owner/editor/viewer and foreign 404            | API `agent-runs.integration.test.ts`                                                                     | Real PG/API/session/CSRF                               |
+| Unique admission, monotonic ordered events, fixed pagination, cursor rejection | same integration suite                                                                                   | Real PG transactions                                   |
+| Durable cancellation/revocation, lease/deadline and publication fences         | same integration suite, migration 0022 triggers                                                          | Real PG + actual ToolExecutor proposals                |
+| BullMQ delivery, duplicate admission, database rollback and Redis interruption | same integration suite                                                                                   | Real PG + Redis/BullMQ, bounded proxy interruption     |
+| SIGKILL after checkpoint, restart, no completed tool replay                    | test-only `fixtures/agent-run-child.test.ts` and actual agent-worker restart driven by integration suite | Real subprocess, ToolExecutor, PG and Timeline effects |
+| Unconfirmed tool result before checkpoint                                      | same child fixture and integration suite                                                                 | Explicit failure; no guessed/repeated effect           |
+| Ordered safe trail and original-snapshot command replay                        | export pagination plus `replayAgentCommands` integration assertions                                      | Offline domain command replay, no tool execution       |
+| SSE resume, authorization revocation and token expiry                          | API integration suite                                                                                    | Real HTTP stream/session + PG                          |
+| Slow-client cleanup, input bounds                                              | `presentation/agent-runs.controller.test.ts`                                                             | Controlled stalled transport plus real-service tests   |
+| Tool SDK budgets/auth/security and existing editing proposals                  | existing complete Tool SDK unit suite plus stable-identity regression                                    | Portable; real PG receipt checks in integration        |
+| Existing media analysis/edit/render/browser-export functionality               | existing CI regression, real ASR container, production render and graduation demo gates                  | Requires exact-head Linux execution                    |
 
 ## Reproduction
 

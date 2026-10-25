@@ -98,3 +98,53 @@ export const agentRunOpenApiSchema = z.toJSONSchema(AgentRunV1Schema, { target: 
 export const agentStepEventOpenApiSchema = z.toJSONSchema(AgentStepEventV1Schema, {
   target: "openapi-3.0",
 });
+export const AgentAuditPageV1Schema = z.strictObject({
+  schemaVersion: z.literal("1.0.0"),
+  run: AgentRunV1Schema,
+  events: z.array(AgentStepEventV1Schema).max(100),
+  nextCursor: z.string().max(220).nullable(),
+  throughSequence: count.max(256),
+});
+const us = z.string().regex(/^(0|[1-9][0-9]{0,9})$/);
+const commandBase = { schemaVersion: z.literal(1), id, timelineId: id };
+const safeCommand = z.discriminatedUnion("type", [
+  z.strictObject({
+    ...commandBase,
+    type: z.literal("TrimClip"),
+    payload: z.strictObject({ clipId: id, startUs: us, endUs: us }),
+  }),
+  z.strictObject({
+    ...commandBase,
+    type: z.literal("SplitClip"),
+    payload: z.strictObject({
+      clipId: id,
+      atUs: us,
+      rightClipId: id,
+      rightEffectIds: z.array(id).max(32),
+    }),
+  }),
+]);
+export const AgentExportV1Schema = AgentAuditPageV1Schema.extend({
+  replay: z.strictObject({
+    mode: z.literal("apply_commands_to_original_snapshot_only"),
+    source: AgentRunV1Schema.shape.source,
+    commands: z
+      .array(
+        z.strictObject({
+          stepId: id,
+          receiptId: id,
+          basisSha256: hash,
+          resultSha256: hash,
+          commands: z.array(safeCommand).length(1),
+        }),
+      )
+      .max(64),
+    effects: z.literal("never_reexecute_tools"),
+  }),
+});
+export const agentAuditPageOpenApiSchema = z.toJSONSchema(AgentAuditPageV1Schema, {
+  target: "openapi-3.0",
+});
+export const agentExportOpenApiSchema = z.toJSONSchema(AgentExportV1Schema, {
+  target: "openapi-3.0",
+});
