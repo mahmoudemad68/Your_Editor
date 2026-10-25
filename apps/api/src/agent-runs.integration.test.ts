@@ -16,6 +16,7 @@ import {
   executeAgentTool,
   type AgentRunView,
   type AgentExport,
+  type AuditPage,
 } from "@editagent/agent-core";
 import { Timeline, userId, type TimelineSnapshot } from "@editagent/domain";
 import {
@@ -756,6 +757,113 @@ test(
                 const exit = once(proc, "exit");
                 proc.kill("SIGKILL");
                 await exit;
+              }
+          }
+        },
+      );
+      await t.test(
+        "actual API SIGKILL/restart preserves authenticated audit cursors and SSE replay anchors",
+        async () => {
+          const f = await fixture(),
+            run = await f.start();
+          await runInfrastructure(runs, run.id, new AbortController().signal);
+          const reserve = createServer();
+          await new Promise<void>((resolve) => reserve.listen(0, "127.0.0.1", resolve));
+          const port = (reserve.address() as { port: number }).port;
+          await new Promise<void>((resolve) => reserve.close(() => resolve()));
+          const base = `http://127.0.0.1:${port}`,
+            route = `/projects/${f.project}/agent-runs/${run.id}`;
+          const bearer = {
+            authorization: `Bearer ${(await tokens.issueAccess(owner, now)).token}`,
+          };
+          const startApi = () => {
+            const endpoint = process.env.S3_ENDPOINT ?? "http://127.0.0.1:9000";
+            const proc = fork(path.join(__dirname, "main.js"), [], {
+              env: {
+                ...process.env,
+                DATABASE_URL: url.href,
+                REDIS_URL: redis.href,
+                HOST: "127.0.0.1",
+                PORT: String(port),
+                AUTH_JWT_SECRET: "agent-integration-document-signing-key-32chars",
+                EDITAGENT_RUNTIME: "development",
+                AUTH_COOKIE_SECURE: "true",
+                S3_ENDPOINT: endpoint,
+                S3_PUBLIC_ENDPOINT: process.env.S3_PUBLIC_ENDPOINT ?? endpoint,
+                S3_BUCKET: process.env.S3_BUCKET ?? "editagent",
+                S3_ACCESS_KEY_ID: process.env.S3_ACCESS_KEY_ID ?? "editagent",
+                S3_SECRET_ACCESS_KEY: process.env.S3_SECRET_ACCESS_KEY ?? "editagent-dev-secret",
+                S3_REGION: process.env.S3_REGION ?? "us-east-1",
+              },
+              stdio: ["ignore", "ignore", "ignore", "ipc"],
+            });
+            children.add(proc);
+            return proc;
+          };
+          const ready = () =>
+            until(async () => {
+              try {
+                const response = await fetch(`${base}/ready`, { signal: AbortSignal.timeout(250) });
+                await response.arrayBuffer();
+                return response.ok;
+              } catch {
+                return false;
+              }
+            }, 10_000);
+          let first: ChildProcess | undefined, second: ChildProcess | undefined;
+          try {
+            first = startApi();
+            await ready();
+            const initial = await fetch(base + route + "/audit?limit=2", { headers: bearer });
+            assert.equal(initial.status, 200);
+            const before = (await initial.json()) as AuditPage;
+            assert.ok(before.nextCursor);
+            const anchor = before.events.at(-1)!;
+            first.kill("SIGKILL");
+            await once(first, "exit");
+            second = startApi();
+            await ready();
+            const status = await fetch(base + route, { headers: bearer });
+            assert.equal(status.status, 200);
+            assert.equal(
+              ((await status.json()) as AgentRunView).stopReason,
+              "PLANNER_NOT_CONFIGURED",
+            );
+            const history = await fetch(
+              base + route + `/audit?cursor=${encodeURIComponent(before.nextCursor)}`,
+              { headers: bearer },
+            );
+            assert.equal(history.status, 200);
+            const after = (await history.json()) as AuditPage;
+            assert.equal(after.throughSequence, before.throughSequence);
+            assert.equal(after.events[0]!.sequence, anchor.sequence + 1);
+            const stop = new AbortController(),
+              stream = await fetch(base + route + "/events", {
+                headers: { ...bearer, "last-event-id": `${anchor.sequence}.${anchor.id}` },
+                signal: stop.signal,
+              });
+            assert.equal(stream.status, 200);
+            const reader = stream.body!.getReader(),
+              decoder = new TextDecoder();
+            let replay = "";
+            await until(async () => {
+              replay += decoder.decode((await reader.read()).value);
+              return replay.includes("event: agent-step");
+            });
+            assert.ok(replay.includes(`id: ${after.events[0]!.sequence}.${after.events[0]!.id}`));
+            assert.ok(!replay.includes(`id: ${anchor.sequence}.${anchor.id}`));
+            stop.abort();
+            await reader.cancel().catch(() => undefined);
+            assert.equal(
+              (await fetch(base + route + "/audit", { headers: await headers(foreign) })).status,
+              404,
+            );
+          } finally {
+            for (const proc of [first, second])
+              if (proc && proc.exitCode === null && proc.signalCode === null) {
+                const exited = once(proc, "exit");
+                proc.kill("SIGKILL");
+                await exited;
               }
           }
         },
