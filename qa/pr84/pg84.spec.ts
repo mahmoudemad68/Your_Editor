@@ -138,14 +138,17 @@ test("PR84 part PG: context over real PostgreSQL + Tool SDK", async ({ browser }
     try {
       for (const [k, d] of Object.entries({ v10, v11, v12: orig.document, failed, wrongId, wrongDur })) {
         let valid = true; try { parseMediaAnalysis(d); } catch { valid = false; }
-        await q("UPDATE media_analyses SET document=$2 WHERE media_asset_id=$1", [M, d]);
+        // Migration 0019 CHECKs (document.mediaAssetId / document.source.sha256 must match the row) may refuse a variant outright.
+        try { await q("UPDATE media_analyses SET document=$2 WHERE media_asset_id=$1", [M, d]); }
+        catch (e: any) { out[k] = { qaDocValid: valid, dbRejected: e.code === "23514" ? "check_violation" : String(e.code) }; continue; }
         const r = await build(source(), req(owner.id, P, R1, r1.source_sha256));
         const env = r.ok ? JSON.parse(r.serialized) : null, a = env?.untrustedData.analysis[0];
         out[k] = { qaDocValid: valid, ok: r.ok, error: r.error, schemaVersion: a?.schemaVersion, transcript: a?.sections?.transcript, transcriptUnits: env?.truncation.transcript.total,
           languageEvidence: env ? [...new Set(env.untrustedData.selection.transcript.map((u: any) => u.languageEvidence === null ? "null" : "array"))] : null };
       }
-      await q("UPDATE media_analyses SET document=$2 WHERE media_asset_id=$1", [M, orig.document]);
-      await q("UPDATE media_analyses SET source_sha256=$2 WHERE media_asset_id=$1", [M, "f".repeat(64)]);
+      // A persisted analysis for a DIFFERENT content hash (consistent row + document) must not attach to this asset.
+      const other = JSON.parse(JSON.stringify(orig.document)); other.source.sha256 = "f".repeat(64);
+      await q("UPDATE media_analyses SET document=$2, source_sha256=$3 WHERE media_asset_id=$1", [M, other, "f".repeat(64)]);
       const r = await build(source(), req(owner.id, P, R1, r1.source_sha256));
       out.hashMismatch = { ok: r.ok, analysis: r.ok ? JSON.parse(r.serialized).untrustedData.analysis[0] : r.error };
     } finally {
@@ -153,7 +156,7 @@ test("PR84 part PG: context over real PostgreSQL + Tool SDK", async ({ browser }
     }
     return { pass: out.v10.ok && out.v10.schemaVersion === "1.0.0" && !out.v10.languageEvidence.includes("array") && out.v11.ok && out.v11.schemaVersion === "1.1.0" && out.v12.ok &&
         out.failed.ok && out.failed.transcript.status === "unavailable" && out.failed.transcript.reason === "unsupported" && out.failed.transcriptUnits === 0 &&
-        out.wrongId.error === "invalid_analysis" && out.wrongDur.error === "invalid_analysis" && out.hashMismatch.ok && out.hashMismatch.analysis.status === "unavailable" && out.hashMismatch.analysis.documentSha256 === null,
+        (out.wrongId.error === "invalid_analysis" || out.wrongId.dbRejected === "check_violation") && (out.wrongDur.error === "invalid_analysis" || out.wrongDur.dbRejected === "check_violation") && out.hashMismatch.ok && out.hashMismatch.analysis.status === "unavailable" && out.hashMismatch.analysis.documentSha256 === null,
       actual: out };
   });
 
