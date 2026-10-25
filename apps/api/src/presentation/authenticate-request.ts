@@ -1,6 +1,6 @@
 import { type UserId } from "@editagent/domain";
 import { type SessionTokens } from "../application/session-tokens.js";
-import { bindActor } from "./actor.js";
+import { bindActor, bindSessionCheck } from "./actor.js";
 import { ACCESS_COOKIE, readCookie } from "./auth-cookies.js";
 
 interface HeaderRequest {
@@ -20,6 +20,7 @@ export function authenticateRequest(
       (actor) => {
         if (actor !== null) {
           bindActor(request, actor);
+          bindSessionCheck(request, async () => (await verify(request, tokens, now)) === actor);
         }
         next();
       },

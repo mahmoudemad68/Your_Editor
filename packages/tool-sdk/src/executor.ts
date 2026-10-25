@@ -55,6 +55,7 @@ export interface ExecutionRecord {
   readonly costBasis: "actual" | "reserved" | "none";
 }
 export interface ToolAuditRepository {
+  /** Atomic unique admission: an existing id MUST reject before any effect. */
   begin(record: ExecutionRecord, admission?: AdmissionLease): Promise<void>;
   /** Atomic per-project lifetime limit including concurrent reservations; trusted deployment config, never call payload. */
   reserve(id: string, projectId: string, costMicros: number, ownerId?: string): Promise<void>;
@@ -138,8 +139,28 @@ export class ToolExecutor {
       throw new ToolError("audit_recovery_failed");
     }
   }
-  private async executeOwned(call: ToolCall, signal?: AbortSignal): Promise<ToolExecution> {
-    const id = createUuidV7(Date.now(), randomBytes(10));
+  /** Trusted durable coordinators persist this identity BEFORE calling. The audit
+   * primary key admits it once; a duplicate/unknown outcome never reruns a tool.
+   * This identity is deliberately not part of the public ToolCall input contract. */
+  async executeWithIdentity(
+    id: string,
+    call: ToolCall,
+    signal?: AbortSignal,
+  ): Promise<ToolExecution> {
+    try {
+      checkedId(id);
+      return await this.executeOwned(call, signal, id);
+    } catch (error) {
+      if (error instanceof ToolError) throw error;
+      throw new ToolError("audit_recovery_failed");
+    }
+  }
+  private async executeOwned(
+    call: ToolCall,
+    signal?: AbortSignal,
+    identity?: string,
+  ): Promise<ToolExecution> {
+    const id = identity ?? createUuidV7(Date.now(), randomBytes(10));
     let malformed = false;
     try {
       call = jsonValue(call) as ToolCall;

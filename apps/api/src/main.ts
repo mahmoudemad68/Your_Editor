@@ -1,4 +1,5 @@
 import { PostgresInspectionJobs } from "./infrastructure/postgres-inspection-jobs.js";
+import { PostgresAgentRuns } from "@editagent/agent-core";
 import { PostgresAnalysis } from "@editagent/analysis-core";
 import { RedisJobEventPublisher, RedisJobEventSubscriber } from "@editagent/job-queue";
 import { PostgresUploadSessionRepository } from "./infrastructure/postgres-upload-sessions.js";
@@ -121,6 +122,7 @@ export async function bootstrap(): Promise<void> {
     config.renderVersion,
   );
   const app = await createApiApplication({
+    agentRuns: new PostgresAgentRuns(pool),
     editor,
     timelineExports: new TimelineExports(projects, editor, renders, objects, (key, ttl) =>
       objects.presignDownload(key, ttl),

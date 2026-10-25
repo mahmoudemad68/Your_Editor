@@ -1,4 +1,5 @@
 import { InspectionRetryConflict } from "../application/inspection-job.js";
+import { AgentError } from "@editagent/agent-core";
 import { TimelineConflict } from "../application/timeline-editor.js";
 import { RenderUnavailable } from "../application/timeline-exports.js";
 import { type ArgumentsHost, Catch, type ExceptionFilter, HttpException } from "@nestjs/common";
@@ -31,6 +32,29 @@ export class ProjectExceptionFilter implements ExceptionFilter {
   }
   catch(exception: unknown, host: ArgumentsHost): void {
     const response = host.switchToHttp().getResponse<HttpReply>();
+    if (exception instanceof AgentError) {
+      const code = exception.code;
+      const status =
+        code === "not_found"
+          ? 404
+          : code === "forbidden"
+            ? 403
+            : code === "invalid_input"
+              ? 400
+              : 409;
+      response.status(status).json({
+        statusCode: status,
+        message:
+          code === "not_found"
+            ? "Project not found."
+            : code === "forbidden"
+              ? "This operation requires editing access."
+              : code === "invalid_input"
+                ? "Invalid AgentRun request."
+                : "AgentRun state conflict.",
+      });
+      return;
+    }
     if (exception instanceof RenderUnavailable) {
       response.status(503).json({ statusCode: 503, message: exception.message });
       return;

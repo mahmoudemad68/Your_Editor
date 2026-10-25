@@ -12,10 +12,14 @@
   },
   "dependencies": {
     "@editagent/shared": "workspace:*",
-    "@editagent/tool-sdk": "workspace:*"
+    "@editagent/tool-sdk": "workspace:*",
+    "@editagent/agent-core": "workspace:*",
+    "@editagent/job-queue": "workspace:*",
+    "pg": "8.23.1"
   },
   "devDependencies": {
     "@types/node": "catalog:",
-    "typescript": "catalog:"
+    "typescript": "catalog:",
+    "@types/pg": "8.23.1"
   }
 }

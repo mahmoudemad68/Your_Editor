@@ -24,7 +24,10 @@ SENSITIVE = re.compile(
     re.IGNORECASE,
 )
 JWT = re.compile(r"eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+")
-BEARER = re.compile(r"\bBearer\s+(?!\[REDACTED\])[A-Za-z0-9._~+/=-]+", re.IGNORECASE)
+# Treat the whole opaque value as sensitive, including template/minified source
+# syntax and material appended to a redaction marker. Restricting this to a
+# base64url alphabet leaves trace resources that the independent audit rejects.
+BEARER = re.compile(r"\bBearer\s+\S+", re.IGNORECASE)
 URI = re.compile(r"[a-z][a-z0-9+.-]*://[^\s\"'<>\\]+", re.IGNORECASE)
 ASSIGNMENT = re.compile(
     r"(?i)(?<![\w-])([\"']?[\w-]{0,64}(?:authorization|cookie|password|passwd|secret|"

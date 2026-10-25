@@ -20,6 +20,7 @@ COPY packages/tool-sdk/package.json packages/tool-sdk/package.json
 COPY packages/media-core/package.json packages/media-core/package.json
 COPY packages/job-queue/package.json packages/job-queue/package.json
 COPY packages/analysis-core/package.json packages/analysis-core/package.json
+COPY packages/agent-core/package.json packages/agent-core/package.json
 COPY workers/agent-worker/package.json workers/agent-worker/package.json
 COPY workers/media-worker/package.json workers/media-worker/package.json
 COPY workers/render-worker/package.json workers/render-worker/package.json

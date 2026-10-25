@@ -329,7 +329,7 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    # Scaffold readiness is explicitly true after validated configuration.
+    # Readiness verifies PostgreSQL and Redis; PG AgentRun rows survive Redis loss.
     # HTTP /health is liveness. HTTP /ready means the process can accept work.
     healthcheck:
       test:
