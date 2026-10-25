@@ -13,7 +13,7 @@ afterEach(() => {
 });
 
 test("analysis proxy preserves both schema versions, credentials and private cache boundary", async () => {
-  for (const version of ["1.0.0", "1.1.0"]) {
+  for (const version of ["1.0.0", "1.1.0", "1.2.0"]) {
     const request = new Request("http://web.test/?url=http://untrusted.test", {
       headers: {
         cookie: "editagent_access=synthetic-example",

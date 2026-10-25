@@ -8,6 +8,53 @@ hardware or disable admission, cancellation or supervision controls.
 
 ## Supported implementation versus measured qualification
 
+### Visible resource profile is not host-level assurance (Issue #72)
+
+`READY_FOR_QUALIFICATION` verifies the resource limits **visible inside the
+current cgroup namespace only**. Under Docker `--cgroupns=private`, a container
+can expose 2 CPUs / 3 GiB / 128 PIDs while an invisible parent slice restricts
+the actual workload to 1 CPU / 1 GiB / 64 tasks. This affirmative status is not
+complete resource qualification. The backward-compatible status is retained;
+the additive `resourceAssurance` explicitly reports
+`scope=visible_cgroup_namespace_only`, `hostParentLimits=NOT_VERIFIED` and
+`operatorVerificationRequired=true`. A matching local profile never suppresses
+this limitation. Missing/malformed visible evidence still blocks readiness.
+
+Preflight has no authenticated host/orchestrator evidence channel. Neither
+caller-provided assertions nor environment flags can upgrade host assurance.
+No privileged attestation service is added. Even host-namespace observation is
+an observation of visible cgroups, not authenticated proof of all host capacity
+or runtime performance. The existing 600,000-ms deadline remains authoritative.
+
+Before deployment qualification, an authorized operator on the **actual Docker
+host** should identify the container's host PID using `docker inspect`, read
+`/proc/<pid>/cgroup` and the host cgroup2 mount, and inspect `cpu.max`,
+`memory.max` and `pids.max` at that leaf and every ancestor. Use each controller's
+most restrictive finite value; include affinity/cpuset, host contention and
+throttling. `docker inspect`'s configured child values alone are insufficient.
+For systemd, `systemctl show <owned-slice> -p ControlGroup -p MemoryMax
+-p TasksMax -p CPUQuotaPerSecUSec` identifies relevant limits; inspect its
+ancestor slices too. These inspection commands are read-only; do not change
+production cgroups to diagnose capacity.
+
+For Kubernetes, inspect the actual pod/container cgroups through an authorized
+node operator, including pod and ancestor limits, CPU allocation/cpuset, memory
+and node pressure. Pod YAML requests/limits are configuration intentions and
+do not prove effective parent resources. In managed/nested runtimes where that
+evidence is unavailable, retain host assurance as NOT_VERIFIED and perform
+real workload qualification without advertising complete host assurance.
+
+The disposable GitHub Linux test harness uses an explicitly requested
+`--restrictive-parent` fixture: a uniquely named temporary systemd slice with
+1 CPU / 1 GiB / 64 tasks, cleaned up after the test. A trusted test-host read
+corroborates those parent values; private/host containers then demonstrate the
+visibility difference. This fixture setup is separate from the read-only,
+no-network, no-installation, no-environment-mutation preflight. It is not a
+production attestation API. A read-only delegated bind of that owned slice must
+also remain unknown, rather than qualifying a relocated hierarchy as the root.
+Real unknown/unlimited mounts and the existing
+synthetic malformed/delegated/v1 cases remain conservative regression checks.
+
 | Property       | Evidence and limits                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Production CPU | Linux x86-64 with AVX2 and FMA verified on every reported processor. `configure_asr_native_environment` fails closed otherwise. ARM, missing/hidden ISA evidence and Windows native inference are unsupported by this production profile.                                                                                                                                                                                                                                                                                                                                                                                                    |

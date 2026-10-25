@@ -6,7 +6,7 @@ import { configurationHash } from "./infrastructure/postgres-analysis.js";
 test("configuration identity includes model, schema and actual deployment parameters", () => {
   const a = analysisConfiguration({}),
     b = analysisConfiguration({ EDITAGENT_ASR_MODEL: "tiny" });
-  assert.equal(a.schemaVersion, "1.1.0");
+  assert.equal(a.schemaVersion, "1.2.0");
   assert.notEqual(a.modelRevision, b.modelRevision);
   assert.notEqual(configurationHash(a), configurationHash(b));
   assert.notEqual(

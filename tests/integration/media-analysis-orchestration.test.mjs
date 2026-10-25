@@ -29,7 +29,7 @@ import {
 } from "../../packages/shared/dist/index.js";
 import {
   validateMediaAnalysisV1,
-  validateMediaAnalysisV1_1,
+  validateMediaAnalysisV1_2,
 } from "../../packages/schemas/dist/index.js";
 import { startIntegrationServices } from "./support/containers.mjs";
 import {
@@ -501,11 +501,23 @@ asyncio.run(run())`,
       await jobs.save(running);
       await jobs.save(running.fail(BigInt(Date.now() + 1), "Analysis input is invalid."));
       await store.recover(queue);
-      let document = validateMediaAnalysisV1_1(await store.read(asset, project, sourceHash));
+      let document = validateMediaAnalysisV1_2(await store.read(asset, project, sourceHash));
       assert.equal(document.sections.transcript.status, "completed");
+      const languageEvidence = document.sections.transcript.data.languageSegments;
+      assert.ok(languageEvidence.length > 0);
+      assert.ok(
+        languageEvidence.every((region) => region.scope === "audio_context_not_word_language"),
+      );
+      assert.deepEqual(
+        (await store.read(asset, project, sourceHash)).sections.transcript.data.languageSegments,
+        languageEvidence,
+      );
       assert.equal(document.sections.audio.status, "failed");
-      const before = JSON.stringify(document.sections.transcript);
-      const legacy = validateMediaAnalysisV1({ ...document, schemaVersion: "1.0.0" });
+      // Exercise an actual historical receipt without inventing fields it never had.
+      const legacyInput = globalThis.structuredClone(document);
+      delete legacyInput.sections.transcript.data.languageSegments;
+      const legacy = validateMediaAnalysisV1({ ...legacyInput, schemaVersion: "1.0.0" });
+      const before = JSON.stringify(legacy.sections.transcript);
       await pool.query("UPDATE media_analyses SET document=$2 WHERE media_asset_id=$1", [
         asset,
         legacy,
@@ -543,10 +555,17 @@ asyncio.run(run())`,
         env,
       );
       await Promise.all([store.recover(queue), new PostgresAnalysis(pool).recover(queue)]);
-      document = validateMediaAnalysisV1_1(await store.read(asset, project, sourceHash));
+      document = validateMediaAnalysisV1_2(await store.read(asset, project, sourceHash));
       assert.equal(document.sections.audio.status, "completed");
       assert.ok(document.sections.audio.data.speech);
       assert.equal(JSON.stringify(document.sections.transcript), before);
+      assert.equal(document.sections.transcript.data.languageSegments, undefined);
+      // Restore the real worker's additive observations for authenticated HTTP roundtrip.
+      document.sections.transcript.data.languageSegments = languageEvidence;
+      await pool.query("UPDATE media_analyses SET document=$2 WHERE media_asset_id=$1", [
+        asset,
+        document,
+      ]);
       console.info("US210_PHASE isolated-analyzer-retry-complete");
       const media = new PostgresMediaAssetRepository(pool);
       const getter = new GetMediaAnalysis(
@@ -580,7 +599,8 @@ asyncio.run(run())`,
       const response = await fetch(`${apiUrl}/media/${asset}/analysis`, { headers });
       assert.equal(response.status, 200);
       assert.equal(response.headers.get("cache-control"), "private, no-store");
-      assert.deepEqual(validateMediaAnalysisV1_1(await response.json()), document);
+      assert.deepEqual(validateMediaAnalysisV1_2(await response.json()), document);
+      assert.deepEqual(document.sections.transcript.data.languageSegments, languageEvidence);
       const failureUrl = `${apiUrl}/projects/${project}/media/${asset}/analysis/failures`;
       assert.equal((await fetch(failureUrl)).status, 401);
       const detailsResponse = await fetch(failureUrl, { headers });
@@ -909,7 +929,7 @@ asyncio.run(run())`,
         null,
       );
       assert.equal(
-        validateMediaAnalysisV1_1(await store.read(deadlineAsset, deadlineProject, sourceHash))
+        validateMediaAnalysisV1_2(await store.read(deadlineAsset, deadlineProject, sourceHash))
           .sections.transcript.failure.code,
         "timeout",
       );
@@ -1105,7 +1125,7 @@ except Exception as error: print(json.dumps(asdict(classify_failure(error))))`,
         ],
       );
       await store.discover(analysisConfiguration({ EDITAGENT_ASR_MODEL: "tiny" }));
-      const unsupported = validateMediaAnalysisV1_1(
+      const unsupported = validateMediaAnalysisV1_2(
         await store.read(noAudioId, project, noAudioHash),
       );
       assert.equal(unsupported.sections.metadata.status, "completed");

@@ -12,6 +12,11 @@ import { request } from "./browser-project-api";
 import { Button } from "./ui/button";
 
 type Analysis = ReturnType<typeof parseMediaAnalysis>;
+const seconds = (microseconds: string) => {
+  const value = BigInt(microseconds);
+  const fraction = (value % 1000000n).toString().padStart(6, "0").replace(/0+$/, "");
+  return `${value / 1000000n}${fraction ? `.${fraction}` : ""}`;
+};
 type Loader = (project: string, media: string, signal: AbortSignal) => Promise<ApiResult<Analysis>>;
 const loadAnalysis: Loader = (project, media, signal) =>
   request<Analysis>(
@@ -142,6 +147,28 @@ export function MediaAnalysisPanel({
           {transcript?.status === "completed" ? (
             <div className="mt-3 max-h-80 overflow-y-auto" aria-label="Transcript" dir="auto">
               <p className="mb-2 text-xs text-muted">Language: {transcript.data.language}</p>
+              {"languageSegments" in transcript.data && transcript.data.languageSegments ? (
+                <details className="mb-2 text-xs text-muted">
+                  <summary>Local language evidence</summary>
+                  <p>
+                    Audio context observations; these do not label individual words. Mixed includes
+                    conflicting evidence.
+                  </p>
+                  <ul>
+                    {transcript.data.languageSegments.map((region) => (
+                      <li key={`${region.startUs}-${region.endUs}`}>
+                        {seconds(region.startUs)}–{seconds(region.endUs)}s:{" "}
+                        {region.status === "dominant"
+                          ? `${region.language} (model score ${region.confidence.toFixed(2)})`
+                          : region.status === "mixed"
+                            ? "mixed / uncertain"
+                            : "unknown"}
+                        {` — ${region.model.name}`}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              ) : null}
               {transcript.data.segments.length === 0 ? (
                 <p>No speech was detected.</p>
               ) : (

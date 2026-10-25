@@ -9,7 +9,14 @@ import subprocess
 import sys
 from pathlib import Path
 
-SHARDS = ("native", "languages", "state-single", "state-multi", "long-input", "alignment")
+SHARDS = (
+    "native",
+    "languages",
+    "state-single",
+    "state-multi",
+    "long-input",
+    "alignment",
+)
 FILES = (
     "tests/test_real_asr.py",
     "tests/test_real_multilingual_asr.py",
@@ -25,7 +32,10 @@ def shard_for(node_id: str) -> str:
     function = node_id.split("::", 1)[1].split("[", 1)[0]
     if "native_kernel_alignment" in function:
         return "native"
-    if "multilingual_content_and_reused" in function:
+    if (
+        "multilingual_content_and_reused" in function
+        or "language_metadata_published_base" in function
+    ):
         return "languages"
     if "full_minute_languages" in function:
         if node_id.endswith("[1]"):
@@ -62,7 +72,16 @@ def main() -> int:
     environment = dict(os.environ)
     environment.pop("PYTEST_ADDOPTS", None)
     collected = subprocess.run(
-        [sys.executable, "-m", "pytest", "--collect-only", "-q", "-o", "addopts=", *FILES],
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "--collect-only",
+            "-q",
+            "-o",
+            "addopts=",
+            *FILES,
+        ],
         cwd=worker,
         env=environment,
         text=True,
@@ -82,7 +101,10 @@ def main() -> int:
         raise ValueError("Required real-test shard is empty")
     print(
         json.dumps(
-            {"realTests": len(node_ids), "partition": {k: len(v) for k, v in groups.items()}}
+            {
+                "realTests": len(node_ids),
+                "partition": {k: len(v) for k, v in groups.items()},
+            }
         ),
         flush=True,
     )

@@ -11,8 +11,10 @@ import process from "node:process";
 import {
   MediaAnalysisSchema,
   MediaAnalysisV1_1Schema,
+  MediaAnalysisV1_2Schema,
   parseMediaAnalysis,
   migrateMediaAnalysisV1ToV1_1,
+  migrateMediaAnalysisToV1_2,
   AnalysisTimeSchema,
   SpeechAnalysisSchema,
 } from "../../packages/schemas/dist/index.js";
@@ -66,6 +68,19 @@ function digest(outputs) {
     .update([...outputs].map(([p, s]) => `${p}\n${s}`).join("\n"))
     .digest("hex");
 }
+
+test("production Node builds include every Python reader required by schema drift validation", () => {
+  for (const file of [
+    "apps/api/Dockerfile",
+    "apps/web/Dockerfile",
+    "workers/media-worker/Dockerfile",
+    "workers/agent-worker/Dockerfile",
+  ]) {
+    const dockerfile = readFileSync(resolve(root, file), "utf8");
+    for (const binding of targets.filter((target) => target.endsWith(".py")))
+      assert.ok(dockerfile.includes(`COPY ${binding} ${binding}`), `${file}: ${binding}`);
+  }
+});
 
 test("US-208 canonical fixtures validate under offline JSON Schema, Zod and Pydantic", () => {
   const docs = names.map(fixture);
@@ -464,7 +479,7 @@ test("exact version dispatch, validated migration and both persisted readers agr
   );
   assert.ok(python(latest, { validatorVersion: "1.0.0" }).every((p) => !p.valid));
   assert.ok(python(originals, { validatorVersion: "1.1.0" }).every((p) => !p.valid));
-  for (const schemaVersion of ["1.2.0", "2.0.0", "1.1", 1, null]) {
+  for (const schemaVersion of ["1.3.0", "2.0.0", "1.1", 1, null]) {
     const invalid = { ...originals[0], schemaVersion };
     assert.throws(() => parseMediaAnalysis(invalid));
     assert.equal(python([invalid], { versionDispatch: true })[0].valid, false);
@@ -476,6 +491,48 @@ test("exact version dispatch, validated migration and both persisted readers agr
   invalid.sections.transcript.data.segments[0].endUs = "0";
   assert.throws(() => migrateMediaAnalysisV1ToV1_1(invalid));
   assert.equal(python([invalid], { migrate: true })[0].valid, false);
+});
+
+test("1.2 local language contexts are optional, cross-language compatible and never migrate invented labels", () => {
+  const legacy = fixture("full");
+  const upgraded = migrateMediaAnalysisToV1_2(legacy);
+  assert.equal(upgraded.schemaVersion, "1.2.0");
+  const { schemaVersion: _version, ...data } = upgraded;
+  assert.deepEqual(
+    data,
+    Object.fromEntries(Object.entries(legacy).filter(([key]) => key !== "schemaVersion")),
+  );
+  assert.equal(upgraded.sections.transcript.data.languageSegments, undefined);
+  const document = globalThis.structuredClone(upgraded);
+  const common = {
+    startUs: "0",
+    endUs: "1000000",
+    method: "ct2-source-context-v1",
+    scope: "audio_context_not_word_language",
+    model: { name: "faster-whisper-small", version: "fixture-v1", sha256: "a".repeat(64) },
+  };
+  document.sections.transcript.data.languageSegments = [
+    { ...common, status: "dominant", language: "ar", confidence: 0.8 },
+  ];
+  assert.equal(
+    ajv.getSchema("https://editagent.local/schemas/media-analysis/1.2.0.schema.json")(document),
+    true,
+  );
+  assert.deepEqual(MediaAnalysisV1_2Schema.parse(document), document);
+  assert.deepEqual(python([document], { versionDispatch: true })[0].document, document);
+  assert.equal(MediaAnalysisV1_1Schema.safeParse(document).success, false);
+  assert.deepEqual(
+    document.sections.transcript.data.segments,
+    legacy.sections.transcript.data.segments,
+  );
+  for (const status of ["unknown", "mixed"]) {
+    document.sections.transcript.data.languageSegments = [{ ...common, status }];
+    assert.deepEqual(parseMediaAnalysis(document), document);
+    const invalid = globalThis.structuredClone(document);
+    invalid.sections.transcript.data.languageSegments[0].confidence = 0.9;
+    assert.equal(MediaAnalysisV1_2Schema.safeParse(invalid).success, false);
+    assert.equal(python([invalid], { versionDispatch: true })[0].valid, false);
+  }
 });
 
 test("published 1.0.0 schema graph and both readers retain their merged US-208 content identities", () => {

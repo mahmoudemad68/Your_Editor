@@ -53,7 +53,24 @@ def test_preflight_never_asserts_inference_acceptance() -> None:
     assert result["status"] == "READY_FOR_QUALIFICATION"
     assert result["performanceGuaranteed"] is False
     assert result["nativeLibrariesLoaded"] is False
+    assert result["resourceAssurance"] == {
+        "scope": "visible_cgroup_namespace_only",
+        "visibleProfileMatches": True,
+        "hostParentLimits": "NOT_VERIFIED",
+        "operatorVerificationRequired": True,
+        "limitation": "Stricter host, pod or parent-slice limits may be invisible.",
+    }
     assert value == original
+
+
+def test_caller_supplied_host_claim_cannot_upgrade_resource_assurance() -> None:
+    value = profile()
+    value["hostParentLimits"] = "VERIFIED"
+    value["resourceAttestation"] = {"trusted": True, "quotaCpus": 2}
+    result = assess(value)
+    assert result["resourceAssurance"]["hostParentLimits"] == "NOT_VERIFIED"
+    value["cgroup"]["quotaCpus"] = 1
+    assert assess(value)["status"] == "NOT_QUALIFIED"
 
 
 def test_native_override_probe_is_read_only_at_configuration_boundary(

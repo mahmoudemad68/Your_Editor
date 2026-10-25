@@ -88,6 +88,113 @@ def report(name: str, value: Any) -> None:
     )
 
 
+@pytest.mark.parametrize("model", ["tiny", "small"])
+def test_real_language_metadata_published_base_words_and_timestamps_unchanged(
+    tmp_path: Path, model: Literal["tiny", "small"]
+) -> None:
+    """Execute pinned published code and head sequentially; no copied word gold."""
+    import types
+
+    base = "69617c539681328466af4dc311ae45fdcb978225"
+    source_code = subprocess.check_output(
+        [
+            "git",
+            "show",
+            f"{base}:workers/ai-worker/src/editagent_ai_worker/infrastructure/faster_whisper.py",
+        ],
+        cwd=ROOT,
+        timeout=20,
+    )
+    assert (
+        hashlib.sha256(source_code).hexdigest()
+        == "32f09e60741e2f6078fbf848a6666d8cdbe076b3d16a6a52b0db73b4bfe1f33c"
+    )
+    baseline = types.ModuleType("published_language_metadata_baseline")
+    baseline.__file__ = "published-baseline/faster_whisper.py"
+    exec(compile(source_code, baseline.__file__, "exec"), baseline.__dict__)
+    en, ar = pcm("en.wav"), pcm("ar.wav")
+    samples = {
+        "english": en,
+        "arabic": ar,
+        "mixed-en-ar": en + ar,
+        "ar-to-en": ar + en,
+        "codeswitch-boundary": pcm("en-chunks.wav")[: 20 * 32000] + ar + en,
+        "multiple-switches": en + ar + en + ar,
+        "short": en[:6400],
+        "silence": bytes(64000),
+    }
+    fixtures = {name: (tmp_path / f"{name}.wav", value) for name, value in samples.items()}
+    identities = {name: fixture(path, value) for name, (path, value) in fixtures.items()}
+    original = {}
+    for label, adapter_type in [
+        ("base", baseline.FasterWhisperAdapter),
+        ("head", FasterWhisperAdapter),
+    ]:
+        adapter = adapter_type(AsrSettings(model=model, model_root=ROOT / ".local/asr-models"))
+        try:
+            for name, (path, _) in fixtures.items():
+                try:
+                    value = canonical(adapter, path, identities[name])
+                except TranscriptionAlignmentError:
+                    # Tiny Arabic and this 0.2-second excerpt can be rejected
+                    # by the published baseline. Compare fail-closed outcomes;
+                    # never manufacture accepted words or count them as success.
+                    assert model == "tiny" and name in {
+                        "arabic",
+                        "mixed-en-ar",
+                        "ar-to-en",
+                        "codeswitch-boundary",
+                        "multiple-switches",
+                        "short",
+                    }, (label, name)
+                    value = {"unsupportedAlignment": True}
+                legacy = json.loads(json.dumps(value))
+                evidence = legacy.get("transcript", {}).pop("language_segments", [])
+                if label == "base":
+                    original[name] = legacy
+                else:
+                    assert legacy == original[name], (model, name)
+                    if "unsupportedAlignment" in legacy:
+                        continue
+                    assert evidence
+                    assert all(
+                        0 <= s["start_us"] < s["end_us"] <= identities[name].duration_us
+                        for s in evidence
+                    )
+                    assert all(
+                        s["confidence"] is None for s in evidence if s["status"] != "dominant"
+                    )
+                    if name in {"silence", "short"}:
+                        assert all(s["status"] == "unknown" for s in evidence)
+                    if name in {
+                        "mixed-en-ar",
+                        "ar-to-en",
+                        "codeswitch-boundary",
+                        "multiple-switches",
+                    }:
+                        assert {v for s in evidence for v in s["languages"]} >= {"en", "ar"}
+        finally:
+            adapter.close()
+    print(
+        json.dumps(
+            {
+                "ASR_LANGUAGE_METADATA_AB": "PASS",
+                "model": model,
+                "base": base,
+                "cases": len(fixtures),
+                "completedCases": sum(
+                    "unsupportedAlignment" not in value for value in original.values()
+                ),
+                "unchangedUnsupportedAlignmentCases": sum(
+                    "unsupportedAlignment" in value for value in original.values()
+                ),
+                "legacyWordsTimesConfidenceProvenanceParametersExactlyEqual": True,
+                "annotationAccuracy": "NOT_MEASURED_NO_QUALIFIED_REFERENCE",
+            }
+        )
+    )
+
+
 @pytest.mark.parametrize("threads", [1, 2])
 def test_real_pinned_fallback_repairs_captured_native_collapse_without_decoding_text(
     threads: int,
@@ -441,6 +548,8 @@ def fresh_for_cross_mode(
 
 
 def assert_fresh_matches_reused(fresh: dict[str, Any], reused: dict[str, Any]) -> None:
+    from editagent_ai_worker.infrastructure.asr_model import model_identity
+
     transcript = reused["transcript"]
     segments = []
     for index, word in enumerate(transcript["words"]):
@@ -451,14 +560,32 @@ def assert_fresh_matches_reused(fresh: dict[str, Any], reused: dict[str, Any]) -
             "confidence": word["confidence"],
         }
         segments.append({"id": f"word-{index}", **canonical_word, "words": [canonical_word]})
+    data = {
+        "language": transcript["language"],
+        "languageConfidence": transcript["language_confidence"],
+        "segments": segments,
+    }
+    if transcript.get("language_segments"):
+        # Independently compare every context coordinate, raw score and model
+        # identity across native reused output and the fresh serialized receipt.
+        contexts = []
+        for context in transcript["language_segments"]:
+            expected = {
+                "startUs": str(context["start_us"]),
+                "endUs": str(context["end_us"]),
+                "model": model_identity(context["model"]),
+                "method": "ct2-source-context-v1",
+                "scope": "audio_context_not_word_language",
+                "status": context["status"],
+            }
+            if context["status"] == "dominant":
+                expected.update(language=context["languages"][0], confidence=context["confidence"])
+            contexts.append(expected)
+        data["languageSegments"] = contexts
     assert fresh["section"] == {
         "status": "completed",
         "provenance": reused["provenance"],
-        "data": {
-            "language": transcript["language"],
-            "languageConfidence": transcript["language_confidence"],
-            "segments": segments,
-        },
+        "data": data,
     }
     assert fresh["inferenceParameters"] == reused["inferenceParameters"]
 

@@ -1,8 +1,4 @@
-import {
-  parseMediaAnalysis,
-  validateMediaAnalysisV1_1,
-  type MediaAnalysisV1_1,
-} from "@editagent/schemas";
+import { parseMediaAnalysis } from "@editagent/schemas";
 import type { AnalysisFailureDetails } from "@editagent/schemas";
 export type { AnalysisFailureDetails } from "@editagent/schemas";
 
@@ -10,7 +6,7 @@ export const ANALYSIS_VERSION = "us210-v1";
 export const ANALYSIS_QUEUE = "media-analysis-v1";
 export type Analyzer = "transcript" | "audio" | "speech";
 export type AnalysisDocument = ReturnType<typeof parseMediaAnalysis>;
-export type AnalysisSection = MediaAnalysisV1_1["sections"]["transcript" | "audio"];
+export type AnalysisSection = AnalysisDocument["sections"]["transcript" | "audio"];
 
 export interface AnalysisReader {
   failureDetails?(
@@ -30,11 +26,11 @@ export interface AnalysisReader {
 
 /** Only produced sections change; unsupported analyzers never acquire invented data. */
 export function withSection(
-  document: MediaAnalysisV1_1,
+  document: AnalysisDocument,
   analyzer: Analyzer,
   section: AnalysisSection,
-): MediaAnalysisV1_1 {
-  return validateMediaAnalysisV1_1({
+): AnalysisDocument {
+  return parseMediaAnalysis({
     ...document,
     sections: { ...document.sections, [analyzer === "speech" ? "audio" : analyzer]: section },
   });

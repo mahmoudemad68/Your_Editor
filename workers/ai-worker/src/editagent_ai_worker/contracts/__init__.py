@@ -4,10 +4,12 @@ from .media_analysis_generated import MediaAnalysis, SpeechAnalysis
 from .versions import (
     MediaAnalysisV1,
     MediaAnalysisV1_1,
+    MediaAnalysisV1_2,
     migrate_media_analysis_v1_to_v1_1,
     parse_media_analysis,
     validate_media_analysis_v1,
     validate_media_analysis_v1_1,
+    validate_media_analysis_v1_2,
 )
 
 __all__ = [
@@ -15,8 +17,10 @@ __all__ = [
     "SpeechAnalysis",
     "MediaAnalysisV1",
     "MediaAnalysisV1_1",
+    "MediaAnalysisV1_2",
     "migrate_media_analysis_v1_to_v1_1",
     "parse_media_analysis",
     "validate_media_analysis_v1",
     "validate_media_analysis_v1_1",
+    "validate_media_analysis_v1_2",
 ]

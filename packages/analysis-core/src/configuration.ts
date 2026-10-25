@@ -27,7 +27,7 @@ export type AnalysisConfiguration = {
   version: "us210-v1";
   audioVersion: "us204-v1";
   vadVersion: "us202-v1";
-  schemaVersion: "1.1.0";
+  schemaVersion: "1.2.0";
   modelRevision: string;
   fasterWhisperVersion: "1.2.1";
   asrAlgorithm: "ct2-contextual-v29";
@@ -111,7 +111,7 @@ export function analysisConfiguration(
       throw new Error("Invalid analysis deployment configuration.");
   return {
     vad: vad as typeof VAD_DEFAULTS,
-    schemaVersion: "1.1.0",
+    schemaVersion: "1.2.0",
     modelRevision:
       asr["model"] === "tiny"
         ? "d90ca5fe260221311c53c58e660288d3deb8d356"

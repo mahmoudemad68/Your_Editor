@@ -177,6 +177,13 @@ def assess(evidence: dict[str, Any]) -> dict[str, Any]:
         "performanceGuaranteed": False,
         "nativeLibrariesLoaded": False,
         "deadlineMs": 600000,
+        "resourceAssurance": {
+            "scope": "visible_cgroup_namespace_only",
+            "visibleProfileMatches": "resource_profile_not_qualified" not in blockers,
+            "hostParentLimits": "NOT_VERIFIED",
+            "operatorVerificationRequired": True,
+            "limitation": "Stricter host, pod or parent-slice limits may be invisible.",
+        },
     }
 
 
