@@ -169,8 +169,8 @@ jobs:
       AUTH_TRUSTED_ORIGINS: http://localhost:3000
       QA_APP_ROOT: ${{ github.workspace }}/app
       QA_OUT: ${{ github.workspace }}/qa-up
-      QA_INPUTS: ${{ runner.temp }}/qa-inputs
-      QA_PRIVATE: ${{ runner.temp }}/qa-private
+      QA_INPUTS: ${{ github.workspace }}/qa-tmp/inputs
+      QA_PRIVATE: ${{ github.workspace }}/qa-tmp/private
     steps:
       - name: Check out application (full history for base and head)
         uses: actions/checkout@v7
@@ -208,7 +208,7 @@ jobs:
           set -eu
           (cd app && pnpm install --frozen-lockfile && sh tools/test/ensure-ffmpeg.sh && sh tools/test/ensure-chrome.sh)
           mkdir -p app/apps/web/.qa-pr73 && cp qa-src/qa/pr73/* app/apps/web/.qa-pr73/
-          bash qa-src/qa/pr73/make_inputs.sh "$RUNNER_TEMP/qa-inputs" app
+          bash qa-src/qa/pr73/make_inputs.sh "$QA_INPUTS" app
       - name: Build and start the BASE stack
         working-directory: app
         run: |
