@@ -117,8 +117,15 @@ test("PR73 part L: language evidence and MediaAnalysis 1.2.0 on real services", 
   await probe("L4", "Historical 1.1.0 and 1.0.0 documents: served unchanged, no invented evidence, UI renders transcript without evidence; later publication upgrades envelope only", "GET returns the stored 1.1.0/1.0.0 bytes canonically; no languageSegments; BFF ok; UI has transcript and no 'Local language evidence'; after audio retry: 1.2.0 with transcript section byte-identical to stored legacy section", async () => {
     const out: Record<string, unknown> = {};
     let ok = true;
+    try {
     for (const v of ["1.1.0", "1.0.0"]) {
-      const old = { ...original, schemaVersion: v, sections: { ...original.sections, transcript: { ...original.sections.transcript, data: legacy(original.sections.transcript.data) } } };
+      const old: any = { ...original, schemaVersion: v, sections: { ...original.sections, transcript: { ...original.sections.transcript, data: legacy(original.sections.transcript.data) } } };
+      if (v === "1.0.0" && old.sections.audio.status === "completed") {
+        // 1.0.0 predates the 1.1 audio shortTermLoudness field; a genuine 1.0.0 receipt cannot carry it.
+        const { shortTermLoudness: _stl, ...audio } = old.sections.audio.data;
+        old.sections = { ...old.sections, audio: { ...old.sections.audio, data: audio } };
+      }
+      S.parseMediaAnalysis(old); // QA-crafted historical document must itself be valid for its version
       await setDocument(ME, old);
       const g = await call(owner, "GET", `/projects/${P}/media/${ME}/analysis`);
       const bj = await (await page.request.get(`/api/projects/${P}/media/${ME}/analysis`)).json().catch(() => null);
@@ -136,7 +143,10 @@ test("PR73 part L: language evidence and MediaAnalysis 1.2.0 on real services", 
     const up = (await dbDoc(ME)).document;
     out.afterPublication = { retry: r.status, status: st, schemaVersion: up.schemaVersion, transcriptUnchanged: canon(up.sections.transcript) === canon(legacyTranscript), inventedEvidence: "languageSegments" in (up.sections.transcript.data ?? {}) };
     ok = ok && up.schemaVersion === "1.2.0" && canon(up.sections.transcript) === canon(legacyTranscript);
-    await setDocument(ME, { ...up, sections: { ...up.sections, transcript: original.sections.transcript } });
+    } finally {
+      const now = (await dbDoc(ME)).document;
+      await setDocument(ME, { ...original, sections: { ...original.sections, audio: now.schemaVersion === "1.2.0" ? now.sections.audio : original.sections.audio } });
+    }
     return { pass: ok, actual: out };
   });
 
