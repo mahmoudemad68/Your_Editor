@@ -243,6 +243,32 @@ test(
             return Timeline.restore(row!.snapshot);
           });
           const registry = registerEditingTools(new ToolRegistry(), authority);
+          // QA84-F1: an authorized Owner still cannot advertise an asset renderer
+          // using only a Timeline resource check. Mixed policies reject entirely.
+          const invalidPolicy = (error: unknown) =>
+            error instanceof Error &&
+            "code" in error &&
+            error.code === "invalid_policy" &&
+            error.message === "invalid_policy";
+          for (const name of [
+            "editing.crop-video",
+            "editing.concat-clips",
+            "editing.normalize-audio",
+          ]) {
+            const pins = [
+              { name: "editing.trim-video", version: "1.0.0" },
+              { name: "editing.split-video", version: "1.0.0" },
+              { name, version: "1.0.0" },
+            ];
+            assert.throws(
+              () =>
+                new PostgresAgentContextSource(pool, registry, {
+                  pins,
+                  creativity: ["conservative"],
+                }),
+              invalidPolicy,
+            );
+          }
           const source = new PostgresAgentContextSource(pool, registry, {
             pins: [
               { name: "editing.trim-video", version: "1.0.0" },

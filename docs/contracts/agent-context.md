@@ -32,6 +32,15 @@ cannot create a second system/developer field. This structural boundary is not a
 claim that an LLM will resist all persuasion; ToolExecutor must still authorize
 every future call. Registry templates are deployment-owned code, never user input.
 
+File loading uses fatal UTF-8 decoding and hashes the original byte buffer. Invalid
+sequences are rejected as `bundle_unavailable`; they cannot become replacement
+characters with different hash provenance. Direct string or byte-buffer templates
+reject malformed encoding as `invalid_template`. Lone UTF-16 surrogates are rejected
+before string encoding; parsed metadata remains under the strict existing schema.
+Valid bilingual text, paired emoji and genuinely encoded U+FFFD remain valid. BOM
+and CRLF rejection remain unchanged. Accepted strings must round-trip losslessly to
+UTF-8, and input byte buffers are copied so later mutation cannot change provenance.
+
 The build validates and packages assets into agent-core's `dist/prompts`. Docker
 builds copy the source assets. The production agent-image gate loads the deployed
 registry offline/non-root/read-only and verifies absent bundles fail closed. A
@@ -68,7 +77,14 @@ versions, parameter schemas, relational validation rules and fingerprints come
 from the existing ToolRegistry; each candidate is checked through the existing
 PostgresToolAuthority. The output is their intersection, not permissions extracted
 from descriptions or creator text. This initial substrate binds timeline-resource
-tools only. Empty or denied sets remain empty. There is no SDK execution or
+tools only. Context contract v1 accepts only the complete reviewed SDK manifests
+for `editing.trim-video@1.0.0` and `editing.split-video@1.0.0`, including their
+registered identity, permission set and parameter schemas. A non-timeline,
+unreviewed or altered pin rejects the entire policy deterministically with
+`invalid_policy`; mixed valid/invalid pins never return partial authority. Manifest
+descriptions and caller text do not determine resource scope. A new manifest/version
+requires explicit scope review before this allowlist grows. Empty or role-denied
+sets remain empty. There is no SDK execution or
 EditCommand in context generation. Normal ToolExecutor checks remain mandatory.
 
 ## Budget, source coordinates and privacy
@@ -118,3 +134,25 @@ tool/audit effects, tests foreign/revoked identities and preserves existing life
 recovery. The production image probe and exact-head CI/Walking Skeleton/Supply Chain
 remain mandatory. The final handoff records actual executed results separately from
 these executable test definitions. Independent QA is assigned separately.
+
+## Independent QA informational risks — unchanged by F1/F2 repairs
+
+- **P12 / O1:** The AST prompt lint is a heuristic. Alternate names such as
+  `SYSTEM_PROMPT`/`agentPrompt`, concatenation, array joins, reassignment, role
+  indirection/type assertions and provider-shaped calls can evade it. It is not
+  a security boundary or exhaustive prompt-use detector.
+- **IMG04 / O2:** The loader has no separately pinned expected bundle hash. A
+  test-only replacement bundle with the same valid metadata can load and will
+  report its changed byte hash. Trust still rests on reviewed source and the
+  immutable production image, not tamper-proof filesystem attestation.
+- **O3:** Context processing remains synchronous and repeatedly serializes the
+  envelope while PostgreSQL share locks are held. Independent QA measured
+  0.41–0.74 seconds for 60-minute/262k contexts and 0.72–1.13 seconds for 4096
+  clips in its runner profile. These observations indicate a future concurrency
+  risk, not universal latency guarantees. No optimization or cap relaxation is
+  claimed by these repairs.
+- **O4:** Redaction remains best-effort. Content split across separate words,
+  such as a credential scheme followed by a separate value, can survive
+  per-word filtering. This repair does not claim multiword detection or stronger
+  secret protection. Do not feed sensitive material into content fields or log
+  raw contexts; normal artifact controls and security review remain required.

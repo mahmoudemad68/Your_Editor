@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { mkdtempSync, writeFileSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import {
   PromptRegistry,
   PromptTemplate,
@@ -90,4 +91,89 @@ test("packaged runtime loads and missing or malformed bundle fails closed", () =
     rmSync(dir, { recursive: true });
   }
   assert.throws(() => loadPromptDirectory(path.join(dir, "missing")), PromptError);
+});
+
+test("QA84-F2: malformed UTF-8 files fail closed instead of hashing replacement characters", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "prompt-encoding-"));
+  try {
+    for (const invalid of [
+      [0xc3, 0x28, 0xff, 0xfe],
+      [0xc3],
+      [0x80],
+      [0xc0, 0xaf],
+      [0xed, 0xa0, 0x80],
+      [0xed, 0xb0, 0x80],
+      [0xf4, 0x90, 0x80, 0x80],
+    ]) {
+      const bytes = Buffer.concat([Buffer.from(template), Buffer.from(invalid)]);
+      writeFileSync(path.join(dir, "agent-context@1.0.0.prompt"), bytes);
+      assert.throws(
+        () => loadPromptDirectory(dir),
+        (e) => e instanceof PromptError && e.code === "bundle_unavailable",
+      );
+    }
+  } finally {
+    rmSync(dir, { recursive: true });
+  }
+});
+
+test("QA84-F2: direct lone surrogates and escaped malformed metadata cannot acquire provenance", () => {
+  for (const lone of ["\ud800", "\udbff", "\udc00", "\udfff"]) {
+    assert.throws(
+      () => new PromptTemplate(template + lone),
+      (e) => e instanceof PromptError && e.code === "invalid_template",
+    );
+    const lines = template.split("\n"),
+      metadata = JSON.parse(lines[1]!);
+    for (const field of ["id", "version", "purpose"] as const) {
+      const bad = { ...metadata, [field]: lone };
+      assert.throws(
+        () => new PromptTemplate([lines[0], JSON.stringify(bad), ...lines.slice(2)].join("\n")),
+        (e) => e instanceof PromptError && e.code === "invalid_template",
+      );
+    }
+  }
+});
+
+test("QA84-F2: bilingual and emoji file/string hashes are byte-exact and immutable", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "prompt-byte-hash-"));
+  try {
+    const source = template + "\nEnglish العربية 😀 �\n",
+      bytes = Buffer.from(source, "utf8");
+    writeFileSync(path.join(dir, "agent-context@1.0.0.prompt"), bytes);
+    const expected = createHash("sha256").update(bytes).digest("hex");
+    const direct = new PromptTemplate(source),
+      file = loadPromptDirectory(dir).load("agent-context", "1.0.0");
+    assert.equal(direct.templateHash, expected);
+    assert.equal(file.templateHash, expected);
+    const byteTemplate = new PromptTemplate(bytes),
+      byteRegistry = new PromptRegistry([bytes]);
+    assert.equal(byteRegistry.load("agent-context", "1.0.0").templateHash, expected);
+    bytes.fill(0); // Accepted templates own their original bytes/provenance.
+    assert.equal(byteTemplate.templateHash, expected);
+    assert.equal(new PromptTemplate(source).templateHash, expected);
+    assert.deepEqual(
+      file.render({ request: "مرحبا 😀", creativity: "conservative" }),
+      direct.render({ request: "مرحبا 😀", creativity: "conservative" }),
+    );
+    assert.ok(
+      Object.isFrozen(file.render({ request: "مرحبا", creativity: "balanced" }).provenance),
+    );
+    assert.throws(() => new PromptTemplate("\ufeff" + template), PromptError);
+    writeFileSync(
+      path.join(dir, "agent-context@1.0.0.prompt"),
+      Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(template)]),
+    );
+    assert.throws(
+      () => loadPromptDirectory(dir),
+      (e) => e instanceof PromptError && e.code === "bundle_unavailable",
+    );
+    const packaged = readFileSync(path.join(__dirname, "prompts/agent-context@1.0.0.prompt"));
+    assert.equal(
+      packagedPrompts().load("agent-context", "1.0.0").templateHash,
+      createHash("sha256").update(packaged).digest("hex"),
+    );
+  } finally {
+    rmSync(dir, { recursive: true });
+  }
 });

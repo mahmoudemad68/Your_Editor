@@ -1,6 +1,7 @@
 import { readFileSync, readdirSync, lstatSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
+import { TextDecoder } from "node:util";
 import { contentHash, canonicalJson } from "@editagent/tool-sdk";
 
 export type PromptFailure =
@@ -57,15 +58,18 @@ export class PromptTemplate {
   readonly metadata: Readonly<PromptMetadata>;
   readonly templateHash: string;
   private readonly body: string;
-  constructor(source: string) {
+  constructor(input: string | Uint8Array) {
     try {
-      if (
-        typeof source !== "string" ||
-        Buffer.byteLength(source) > 32768 ||
-        source.includes("\r") ||
-        !source.startsWith("---\n")
-      )
-        throw 0;
+      // Reject lone UTF-16 surrogates before Buffer can replace them with U+FFFD.
+      // Ignore-BOM=true keeps the BOM in decoded text so the existing strict
+      // front-matter check still rejects it instead of silently stripping it.
+      if (typeof input === "string" && /[\ud800-\udfff]/u.test(input)) throw 0;
+      if (typeof input !== "string" && !(input instanceof Uint8Array)) throw 0;
+      const bytes = typeof input === "string" ? Buffer.from(input, "utf8") : Buffer.from(input);
+      if (bytes.length > 32768) throw 0;
+      const source = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+      if (!Buffer.from(source, "utf8").equals(bytes)) throw 0;
+      if (source.includes("\r") || !source.startsWith("---\n")) throw 0;
       const end = source.indexOf("\n---\n", 4);
       if (end < 0) throw 0;
       const m: unknown = JSON.parse(source.slice(4, end));
@@ -122,7 +126,7 @@ export class PromptTemplate {
         throw 0;
       this.metadata = deepFreeze(m as unknown as PromptMetadata);
       this.body = body;
-      this.templateHash = createHash("sha256").update(source, "utf8").digest("hex");
+      this.templateHash = createHash("sha256").update(bytes).digest("hex");
       Object.freeze(this);
     } catch {
       throw new PromptError("invalid_template");
@@ -175,7 +179,7 @@ export function deepFreeze<T>(value: T): Readonly<T> {
 }
 export class PromptRegistry {
   private readonly templates = new Map<string, PromptTemplate>();
-  constructor(sources: readonly string[]) {
+  constructor(sources: readonly (string | Uint8Array)[]) {
     if (!Array.isArray(sources) || sources.length < 1 || sources.length > 64)
       throw new PromptError("bundle_unavailable");
     for (const source of sources) {
@@ -218,10 +222,10 @@ export function loadPromptDirectory(directory: string): PromptRegistry {
           path.dirname(realpathSync(p)) !== root
         )
           throw 0;
-        const text = readFileSync(p, "utf8"),
-          t = new PromptTemplate(text);
+        const bytes = readFileSync(p),
+          t = new PromptTemplate(bytes);
         if (file !== `${t.metadata.id}@${t.metadata.version}.prompt`) throw 0;
-        return text;
+        return bytes;
       }),
     );
   } catch {

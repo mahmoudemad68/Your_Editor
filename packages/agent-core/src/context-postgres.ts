@@ -4,6 +4,7 @@ import {
   contentHash,
   PostgresToolAuthority,
   ToolError,
+  editingToolManifests,
   type ToolRegistry,
 } from "@editagent/tool-sdk";
 import {
@@ -13,6 +14,18 @@ import {
   type AgentContextSource,
   type ContextSnapshot,
 } from "./context.js";
+
+/** Context contract v1 has no asset/render target binding. Match the complete
+ * reviewed SDK manifests, not tool descriptions or a permissive permission test.
+ * New tools/versions require explicit scope review before this allowlist grows. */
+const timelineManifests = new Map(
+  editingToolManifests()
+    .filter(
+      (m) =>
+        ["editing.trim-video", "editing.split-video"].includes(m.name) && m.version === "1.0.0",
+    )
+    .map((m) => [`${m.name}@${m.version}`, contentHash(m)]),
+);
 
 export interface ContextToolPolicy {
   readonly pins: readonly { name: string; version: string }[];
@@ -35,7 +48,9 @@ export class PostgresAgentContextSource implements AgentContextSource {
       throw new ContextError("invalid_policy");
     for (const p of policy.pins)
       try {
-        registry.lookup(p.name, p.version);
+        const tool = registry.lookup(p.name, p.version);
+        if (timelineManifests.get(`${p.name}@${p.version}`) !== tool.fingerprint)
+          throw new ContextError("invalid_policy");
       } catch {
         throw new ContextError("invalid_policy");
       }
@@ -93,7 +108,10 @@ export class PostgresAgentContextSource implements AgentContextSource {
       });
       const tools = [];
       for (const pin of this.policy.pins) {
-        const m = this.registry.lookup(pin.name, pin.version).manifest;
+        const registered = this.registry.lookup(pin.name, pin.version);
+        if (timelineManifests.get(`${pin.name}@${pin.version}`) !== registered.fingerprint)
+          throw new ContextError("invalid_policy");
+        const m = registered.manifest;
         // This substrate supports existing timeline-scoped tools only. Other resource
         // consumers need their own bound, reviewed context policy before exposure.
         try {
