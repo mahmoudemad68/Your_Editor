@@ -112,6 +112,10 @@ jobs:
         run: |
           docker compose -f "$QA_APP_ROOT/compose.yaml" stop -t 5 agent-worker
           node d77.mjs
+      - name: Part X - slow-client deadline, 64 streams/process, token expiry mid-stream, API SIGKILL resume, open-run 120 s bound
+        if: ${{ !cancelled() }}
+        working-directory: app/apps/web
+        run: node node_modules/@playwright/test/cli.js test --config .qa-pr77/playwright.config.ts x77.spec.ts
       - name: Collect sanitized state
         if: always()
         working-directory: app
@@ -133,6 +137,9 @@ jobs:
         if: always()
         working-directory: app
         run: docker compose down -v --remove-orphans || true
+      - name: "QA gate (fail-closed): every required probe ran and passed"
+        if: always()
+        run: node qa-src/qa/pr77/gate77.mjs qa-out/qa77-results.json "S1-19,D1-18,X1-5" "S10" "X1"
 
   upgrade:
     name: Populated main -> PR head (atomic failed 0022, successful 0022, code rollback)
@@ -195,6 +202,9 @@ jobs:
       - name: Upgrade part 1 - populate base
         working-directory: app/apps/web
         run: node node_modules/@playwright/test/cli.js test --config .qa-pr77/playwright.config.ts u77-base.spec.ts
+      - name: Baseline on unmodified main for findings L1/L3/L4
+        working-directory: app/apps/web
+        run: node node_modules/@playwright/test/cli.js test --config .qa-pr77/playwright.config.ts b77-base.spec.ts
       - name: Switch code to the PR head and build
         run: |
           set -eu
@@ -259,6 +269,12 @@ jobs:
         if: always()
         working-directory: app
         run: docker compose down -v --remove-orphans || true
+      - name: "QA gate (fail-closed): upgrade probes passed, baselines observed, rollback evidence present"
+        if: always()
+        run: |
+          set -eu
+          node qa-src/qa/pr77/gate77.mjs qa-up/qa77-results.json "U1-3,B1-3" "B1-3"
+          python3 -c "import json;l=[json.loads(x) for x in open('qa-up/rollback-code.json')];assert l[0]['baseApiReadyOnMigratedDb'] is True and l[0]['agentRunsPreserved']>=1 and l[1]['headRestoredRows']==l[0]['agentRunsPreserved'];print('rollback evidence OK',l)"
 
   graduation:
     name: Browser upload -> inspection -> analysis -> trim/split -> render -> playback -> download (regression)

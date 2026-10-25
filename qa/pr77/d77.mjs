@@ -86,10 +86,13 @@ await probe("D1", "Happy path through the guarded primitive: 2 real trim tools -
   const r = await run(v.id), st = await steps(v.id), rc = await receiptsOf(v.id), e = await evs(v.id);
   d1 = { tl, id: v.id };
   const results = e.filter((x) => x.kind === "tool_result");
-  return { pass: ok.every(Boolean) && r.state === "Completed" && st.length === 2 && st.every((s) => s.outcome === "succeeded") && new Set(st.map((s) => s.receipt_id)).size === 2 &&
+  // TL item 9: runtime passes `durationMs ?? 0`; the persisted/exported value must be the real receipt measurement.
+  const measured = await q("SELECT id,(finished_at_ms-started_at_ms)::int AS d,cost_micros::bigint AS c,cost_basis FROM tool_executions WHERE id=ANY($1::uuid[])", [results.map((x) => x.tool.receiptId)]);
+  const durationsFromReceipts = results.every((x) => { const m = measured.find((r) => r.id === x.tool.receiptId); return m && m.d === x.tool.durationMs && Number(m.c) === x.tool.costMicros; });
+  return { pass: durationsFromReceipts && ok.every(Boolean) && r.state === "Completed" && st.length === 2 && st.every((s) => s.outcome === "succeeded") && new Set(st.map((s) => s.receipt_id)).size === 2 &&
       rc.length === 2 && rc.every((x) => x.outcome === "succeeded") && (await tlSha(tl)) === st[1].result_sha256 && st[1].basis_sha256 === st[0].result_sha256 && st[0].basis_sha256 === tl.sha && invariant(e) &&
       e.filter((x) => x.kind === "tool_intent").length === 2 && results.every((x) => Number.isInteger(x.tool.durationMs) && Number.isInteger(x.tool.costMicros)),
-    actual: { state: r.state, steps: st.map((s) => s.outcome), receipts: rc.map((x) => x.outcome), kinds: e.map((x) => x.kind), toolResults: results.map((x) => ({ d: x.tool.durationMs, c: x.tool.costMicros })) } };
+    actual: { state: r.state, steps: st.map((s) => s.outcome), receipts: rc.map((x) => x.outcome), kinds: e.map((x) => x.kind), toolResults: results.map((x) => ({ d: x.tool.durationMs, c: x.tool.costMicros })), receiptMeasurements: measured.map((m) => ({ d: m.d, c: Number(m.c), basis: m.cost_basis })), durationsFromReceipts } };
 });
 
 await probe("D2", "Offline replay of the paged export from the authorized original snapshot reproduces the committed Timeline and never executes tools", "replay(original, all pages limit=3) hash = DB timeline hash; tool_executions count and timeline rows unchanged by replay", async () => {

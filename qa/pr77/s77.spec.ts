@@ -238,7 +238,7 @@ test("PR77 part S: AgentRun service probes", async ({ browser }) => {
     await settledRun(s.json.id, 60_000);
     const r = await streaming;
     const reconnect = await sse(ck, `${base(P)}/${s.json.id}/events`, { timeoutMs: 3000 });
-    return { pass: null, actual: { logout: logout.status, deliveredAfterLogout: r.events.map((e) => e.data.sequence), closedBy: r.closed, reconnectWithOldAccessCookie: [reconnect.status, reconnect.events.length] } };
+    return { pass: null, observed: true, actual: { logout: logout.status, deliveredAfterLogout: r.events.map((e) => e.data.sequence), closedBy: r.closed, reconnectWithOldAccessCookie: [reconnect.status, reconnect.events.length] } };
   });
 
   await probe("S11", "SSE across API restart and Redis outage: PG-backed reconnect resumes exactly once (no gap, no duplicate, no false Redis replay)", "stream terminated by API restart; reconnect with last id after restart returns only later sequences; while Redis paused the catch-up still serves PG history", async () => {

@@ -15,17 +15,19 @@ export const PG = "postgresql://editagent:editagent-dev-password@localhost:5432/
 export const pool = new Pool({ connectionString: PG, max: 6 });
 mkdirSync(OUT, { recursive: true }); mkdirSync(PRIVATE, { recursive: true });
 
-type Status = "PASS" | "FAIL" | "ERROR" | "NOT_RUN";
+type Status = "PASS" | "FAIL" | "ERROR" | "NOT_RUN" | "OBSERVED" | "NOT_VERIFIED";
 const RESULTS = path.join(OUT, "qa77-results.json");
 export const results: { id: string; title: string; status: Status; expected: string; actual: unknown; ms: number; mode: string }[] =
   existsSync(RESULTS) ? JSON.parse(readFileSync(RESULTS, "utf8")).results : [];
 const save = () => writeFileSync(RESULTS, JSON.stringify({ appSha: process.env.QA_APP_SHA, generatedAt: new Date().toISOString(), results }, null, 2));
 /** mode: "real-service" (HTTP to production containers) or "real-pg-driver" (QA driver over real PG/ToolExecutor). */
-export async function probe(id: string, title: string, expected: string, fn: () => Promise<{ pass: boolean | null; actual: unknown }>, mode = "real-service") {
+/** observed: informational behaviour recorded (not an acceptance control). notVerified: control could not be qualified (reason required). */
+export async function probe(id: string, title: string, expected: string, fn: () => Promise<{ pass: boolean | null; actual: unknown; observed?: boolean; notVerified?: string }>, mode = "real-service") {
   const start = Date.now();
   try {
     const r = await fn();
-    results.push({ id, title, status: r.pass === null ? "NOT_RUN" : r.pass ? "PASS" : "FAIL", expected, actual: r.actual, ms: Date.now() - start, mode });
+    const status: Status = r.notVerified ? "NOT_VERIFIED" : r.observed ? "OBSERVED" : r.pass === null ? "NOT_RUN" : r.pass ? "PASS" : "FAIL";
+    results.push({ id, title, status, expected, actual: r.notVerified ? { reason: r.notVerified, ...(r.actual as object) } : r.actual, ms: Date.now() - start, mode });
   } catch (e) {
     results.push({ id, title, status: "ERROR", expected, actual: String((e as Error)?.stack ?? e).slice(0, 900), ms: Date.now() - start, mode });
   }
