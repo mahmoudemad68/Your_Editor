@@ -39,7 +39,9 @@ async function effects() {
     (SELECT coalesce(max(updated_at),0) FROM jobs)::text ju,(SELECT md5(string_agg(state_sha256,',' ORDER BY id)) FROM editing_timelines) tl,
     (SELECT coalesce(sum(revision),0) FROM media_analyses)::int ma,(SELECT count(*) FROM project_memberships)::int pm`))[0];
 }
-const idleInTx = async () => (await q("SELECT count(*)::int n FROM pg_stat_activity WHERE datname=current_database() AND state LIKE 'idle in transaction%'"))[0].n;
+/** Idle-in-transaction backends, attributed: `mine` = same client address as this QA pool (the pool handed to the product's context source); others are Compose services. Records no query text. */
+const idleInTxDetail = async () => q(`SELECT pid, application_name app, coalesce(host(client_addr),'local') addr, (client_addr IS NOT DISTINCT FROM inet_client_addr()) mine,
+  extract(epoch FROM now()-state_change)::int "idleSeconds" FROM pg_stat_activity WHERE datname=current_database() AND state LIKE 'idle in transaction%' ORDER BY pid`);
 
 test("PR84 part PG: context over real PostgreSQL + Tool SDK", async ({ browser }) => {
   const owner = await newUser(browser, "owner"), editor = await newUser(browser, "editor"), viewer = await newUser(browser, "viewer"), outsider = await newUser(browser, "outsider");
@@ -266,16 +268,21 @@ test("PR84 part PG: context over real PostgreSQL + Tool SDK", async ({ browser }
       actual: { alteredRegistry: cases, afterCallerPolicyMutation: names } };
   });
 
-  await probe("PG09", "Read-only + resource hygiene: zero writes to receipts/events/runs/jobs/timelines/analyses/memberships across all context builds; no connection left idle-in-transaction", "effects counters equal to before (allowing only the QA fixture rows of PG02/PG04/PG06), idle-in-transaction = 0", async () => {
+  await probe("PG09", "Read-only + resource hygiene: zero writes to receipts/events/runs/jobs/timelines/analyses/memberships across all context builds; no context-source connection left idle-in-transaction or checked out", "effects counters equal to before (allowing only the QA fixture rows of PG02/PG04/PG06); 0 idle-in-transaction backends from the QA/product pool; pool fully idle; other services' idle transactions recorded", async () => {
     // PG02 trims via the product API and PG04/PG06 add QA rows intentionally; measure a clean before/after window here.
     const b = await effects();
     for (let i = 0; i < 5; i++) await build(source(), req(owner.id, P, R1, r1.source_sha256));
     await build(source(), req(outsider.id, P, R1, r1.source_sha256));
     await build(source(), req(owner.id, P, R1, "0".repeat(64)));
     const a = await effects();
-    await sleep(300);
-    const idle = await idleInTx();
-    return { pass: JSON.stringify(a) === JSON.stringify(b) && idle === 0, actual: { before: b, after: a, idleInTransaction: idle, sessionStart: before } };
+    // pg_stat_activity is database-wide: attribute each idle-in-transaction backend instead of counting other services'
+    // transient transactions against the context source. The product's connections come from this QA pool.
+    let detail: any[] = [];
+    for (let i = 0; i < 10; i++) { await sleep(300); detail = await idleInTxDetail(); if (!detail.some((d) => d.mine)) break; }
+    const pooled = { total: pool.totalCount, idle: pool.idleCount, waiting: pool.waitingCount };
+    const mine = detail.filter((d) => d.mine), others = detail.filter((d) => !d.mine);
+    return { pass: JSON.stringify(a) === JSON.stringify(b) && mine.length === 0 && pooled.waiting === 0 && pooled.idle === pooled.total,
+      actual: { before: b, after: a, idleInTransactionFromQaPool: mine.length, qaPool: pooled, idleInTransactionOtherServices: others.map((d) => ({ app: d.app || "(none)", addr: d.addr, idleSeconds: d.idleSeconds })), sessionStart: before } };
   });
 
   await probe("PG10", "Determinism under the same pinned snapshot/source: repeated builds have identical serialized hash, input hash and prompt provenance", "5 builds -> one contextSha256/inputSha256; templateHash = sha256 of the packaged prompt file bytes", async () => {

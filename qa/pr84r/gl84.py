@@ -14,11 +14,12 @@ import sys
 import tempfile
 from pathlib import Path
 
-APP, BASE = Path(sys.argv[1]), sys.argv[2]
+APP, BASE = Path(sys.argv[1]).resolve(), sys.argv[2]  # absolute: probes run git/gitleaks from other working directories
 OUT = Path(os.environ["QA_OUT"])
 EXPECTED_SHA = "3eddba83701c1d63d7d7cab7b45eda5b9b8280e15a89904a269e391228265a7f"
 QA_COMMITS = {"5a966d47a12d3117febe42621c1f868711a6d432", "05f75891866ac297dd522e29499f519024e3f539"}
 results = []
+version = subprocess.run(["gitleaks", "version"], capture_output=True, text=True).stdout.strip()
 
 
 def probe(pid, title, expected, fn):
@@ -26,7 +27,7 @@ def probe(pid, title, expected, fn):
         status, actual = fn()
     except Exception as exc:  # noqa: BLE001
         status, actual = "ERROR", f"{type(exc).__name__}: {str(exc)[:300]}"
-    results.append({"id": pid, "title": title, "status": status, "expected": expected, "actual": actual, "ms": 0, "mode": "secret-scanner"})
+    results.append({"id": pid, "title": title, "status": status, "expected": expected, "actual": actual, "ms": 0, "mode": "secret-scanner", "scanner": version})
     print(f"[QA84R] {pid} {status} {title}", flush=True)
 
 
@@ -96,7 +97,7 @@ def g02():
     tmp = Path(tempfile.mkdtemp(prefix="qa84r-noignore-"))
     try:
         git(tmp, "init", "-q")
-        git(tmp, "fetch", "-q", str(APP), "+refs/heads/*:refs/heads/*", "+refs/remotes/*:refs/remotes/*", "+refs/tags/*:refs/tags/*")
+        git(tmp, "fetch", "-q", "--update-head-ok", str(APP), "+HEAD:refs/qa-scan/head", "+refs/heads/*:refs/heads/*", "+refs/remotes/*:refs/remotes/*", "+refs/tags/*:refs/tags/*")
         empty = Path(tempfile.mkdtemp(prefix="qa84r-empty-"))
         commits_clone = int(git(tmp, "rev-list", "--all", "--count").strip())
         code_without, without = scan(str(tmp), empty, ignore_path=empty)
@@ -165,7 +166,6 @@ def g05():
     return ("PASS" if r.returncode == 0 and "SECRET_EXCEPTION_CONTROLS PASS" in r.stdout else "FAIL"), {"exit": r.returncode, "lastLine": tail[:120], "note": "Coding Agent control, supplementary only"}
 
 
-version = subprocess.run(["gitleaks", "version"], capture_output=True, text=True).stdout.strip()
 probe("G01", "Exception inventory: exactly six commit:path:rule:line fingerprints with the authorized hash; scanner config, version pin, canary and workflow scan steps unchanged from base", "sha256 3eddba83…; 6 unique lines in exact form; only the two QA commits; .gitleaks.toml / canary / install script / workflow scan lines identical to base; no nested ignore files", g01)
 probe("G02", "Pinned full-history scan across every ref at the product head: 0 findings with the exception; exactly the six fingerprints without it (no new findings from any branch, incl. QA re-QA commits)", "with ignore exit 0 / 0 findings; without ignore exit 1 / findings == the six ignore lines; same commit count", g02)
 probe("G03", "Original secret canary still detects", "infra/scripts/secret-canary.py exit 0", g03)
