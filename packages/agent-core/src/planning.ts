@@ -212,7 +212,7 @@ export interface AgentRenderPort {
   ): Promise<
     { status: "pending" } | { status: "failed" } | { status: "completed"; proof: AgentRenderProof }
   >;
-  cancel(runId: string, projectId: string, jobId: string): Promise<void>;
+  cancel(runId: string, projectId: string, jobId: string | null): Promise<void>;
 }
 export function validateRenderProof(
   proof: AgentRenderProof,

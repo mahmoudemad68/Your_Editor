@@ -31,8 +31,10 @@ export class PostgresRenderValidation {
     if (saved.rowCount === 1) return;
     const prior = (
       await this.pool.query<{ proof: unknown }>(
-        "SELECT proof FROM render_output_validations WHERE job_id=$1 AND project_id=$2",
-        [envelope.jobId, envelope.subject.id],
+        `SELECT v.proof FROM render_output_validations v JOIN jobs j ON j.id=v.job_id
+        WHERE v.job_id=$1 AND v.project_id=$2 AND j.subject_kind='project' AND j.subject_id=$2
+        AND j.job_type='render.remotion' AND j.status='Running' AND j.attempt_count=$3 FOR SHARE OF j`,
+        [envelope.jobId, envelope.subject.id, envelope.attempt],
       )
     ).rows[0];
     if (!prior || contentHash(prior.proof) !== contentHash(proof))

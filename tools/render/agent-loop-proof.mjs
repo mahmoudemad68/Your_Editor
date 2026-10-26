@@ -384,6 +384,69 @@ export async function runAgentLoopProof({ root, hostEnv, webUrl, result, probe, 
     )
       throw new Error("actual_export_integrity_failed");
     await copyFile(outputFile, path.join(directory, "agent-export.mp4"));
+    phase = "unacknowledged-render-cancellation";
+    // Separate adversarial lifecycle probe, not a second model/planning claim:
+    // simulate a crash after real API admission but before attachRender commits.
+    const cancelRun = await json(`/projects/${result.projectId}/agent-runs`, {
+      idempotencyKey: core.newAgentId(),
+      timelineId: snapshot.id,
+      stateSha256: edited.stateSha256,
+    });
+    const savedCleanup = {
+      node: process.env.NODE_ENV,
+      gate: process.env.EDITAGENT_REPLAY_QUALIFICATION,
+    };
+    try {
+      process.env.NODE_ENV = "test";
+      process.env.EDITAGENT_REPLAY_QUALIFICATION = "isolated-v1";
+      await runs.enableControlledReplay(
+        actor,
+        result.projectId,
+        cancelRun.id,
+        configuration,
+        sdk.contentHash(capabilities),
+      );
+      const lease = await runs.claim(cancelRun.id);
+      if (!lease) throw new Error("cleanup_lease_missing");
+      for (const state of ["Observing", "Planning", "Executing", "Rendering"])
+        await runs.move(lease, state);
+      const intent = await runs.beginRender(lease);
+      const accepted = await json(`/projects/${result.projectId}/timelines/${snapshot.id}/render`, {
+        stateSha256: edited.stateSha256,
+        requestId: "req_" + intent.receiptId.replaceAll("-", ""),
+      });
+      await json(`/projects/${result.projectId}/agent-runs/${cancelRun.id}/cancel`, {});
+      const { AuthenticatedTimelineRenderPort } = require(
+        path.join(root, "workers/agent-worker/dist/render-port.js"),
+      );
+      // Uses the already opened real queue; this probe needs no consumer.
+      const jobs = require("@editagent/job-queue"),
+        cleanupQueue = new jobs.BullMqJobQueue(hostEnv.REDIS_URL);
+      try {
+        const port = new AuthenticatedTimelineRenderPort(
+          pool,
+          cleanupQueue,
+          apiOrigin,
+          async () => headers,
+        );
+        await port.cancel(cancelRun.id, result.projectId, null);
+      } finally {
+        await cleanupQueue.close(true);
+      }
+      const cancelled = await json(`/projects/${result.projectId}/exports/${accepted.jobId}`);
+      if (cancelled.status !== "Cancelled") throw new Error("unacknowledged_render_not_cancelled");
+      const forbiddenLink = await globalThis.fetch(
+        apiOrigin + `/projects/${result.projectId}/exports/${accepted.jobId}/download`,
+        { headers, signal: globalThis.AbortSignal.timeout(5000) },
+      );
+      if (forbiddenLink.status !== 409) throw new Error("cancelled_export_not_fenced");
+      await forbiddenLink.body?.cancel();
+    } finally {
+      if (savedCleanup.node === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = savedCleanup.node;
+      if (savedCleanup.gate === undefined) delete process.env.EDITAGENT_REPLAY_QUALIFICATION;
+      else process.env.EDITAGENT_REPLAY_QUALIFICATION = savedCleanup.gate;
+    }
     await writeFile(
       path.join(directory, "report.json"),
       JSON.stringify(
@@ -404,6 +467,7 @@ export async function runAgentLoopProof({ root, hostEnv, webUrl, result, probe, 
           actualBrowser: true,
           actualPlayback: true,
           actualDownload: true,
+          actualUnacknowledgedRenderCancellation: true,
           providerMeasuredUsage: null,
           syntheticUsage: {
             unit: "synthetic_model_tokens",

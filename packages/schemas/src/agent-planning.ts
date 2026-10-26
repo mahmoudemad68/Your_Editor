@@ -256,3 +256,6 @@ export const RenderValidationV1Schema = z.strictObject({
   validation: z.literal("render_worker_ffprobe_v1"),
 });
 export type RenderValidationV1 = z.infer<typeof RenderValidationV1Schema>;
+export const renderValidationOpenApiSchema = z.toJSONSchema(RenderValidationV1Schema, {
+  target: "openapi-3.0",
+});

@@ -43,6 +43,7 @@ export type QualificationScenario =
   | "blocked"
   | "unavailable"
   | "unknown"
+  | "hostile"
   | "refused";
 export function qualificationModel(
   snapshot: TimelineSnapshot,
@@ -139,7 +140,7 @@ export function qualificationModel(
             ? [
                 {
                   idSha256: contentHash({ step: step.id }),
-                  name: protocolToolName(step.tool),
+                  name: scenario === "hostile" ? "unreviewed_shell" : protocolToolName(step.tool),
                   arguments: args,
                 },
               ]

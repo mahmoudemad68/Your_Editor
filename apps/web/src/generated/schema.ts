@@ -3024,7 +3024,32 @@ export interface operations {
         headers: {
           [name: string]: unknown;
         };
-        content?: never;
+        content: {
+          "application/json": {
+            /** @enum {string} */
+            schemaVersion: "1.0.0";
+            jobId: string;
+            artifactSha256: string;
+            inputSha256: string;
+            timelineSha256: string;
+            renderVersion: string;
+            durationUs: string;
+            videoFrames: number;
+            audioPresent: boolean;
+            /** @enum {string} */
+            videoCodec: "h264";
+            /** @enum {string|null} */
+            audioCodec: "aac" | null;
+            width: number;
+            height: number;
+            frameRate: {
+              numerator: string;
+              denominator: string;
+            };
+            /** @enum {string} */
+            validation: "render_worker_ffprobe_v1";
+          };
+        };
       };
     };
   };

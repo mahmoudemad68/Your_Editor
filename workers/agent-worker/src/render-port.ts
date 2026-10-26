@@ -114,12 +114,16 @@ export class AuthenticatedTimelineRenderPort implements AgentRenderPort {
       )
     ).rows[0];
     if (!row) return null;
-    const payload = row.payload as { compositionId?: unknown; props?: { timeline?: unknown } };
-    if (
-      payload.compositionId !== "TimelineV1" ||
-      contentHash(payload.props?.timeline) !== contentHash(input.timeline.toSnapshot())
-    )
+    try {
+      const payload = row.payload as { compositionId?: unknown; props?: { timeline?: unknown } };
+      if (
+        payload.compositionId !== "TimelineV1" ||
+        contentHash(payload.props?.timeline) !== contentHash(input.timeline.toSnapshot())
+      )
+        throw new Error();
+    } catch {
       throw new PlanningError("RENDER_UNCONFIRMED");
+    }
     return { jobId: row.id };
   }
   async inspect(project: string, id: string, signal: AbortSignal) {
@@ -140,12 +144,18 @@ export class AuthenticatedTimelineRenderPort implements AgentRenderPort {
     if (!proof.success) throw new PlanningError("OUTPUT_INVALID");
     return { status: "completed" as const, proof: proof.data };
   }
-  async cancel(runId: string, project: string, id: string): Promise<void> {
-    const bound = await this.pool.query(
-      `SELECT j.id FROM jobs j JOIN agent_loop_sessions s ON s.render_job_id=j.id JOIN agent_runs r ON r.id=s.run_id
-      WHERE r.id=$1 AND r.project_id=$2 AND j.id=$3 AND j.subject_kind='project' AND j.subject_id=$2 AND j.job_type='render.remotion'`,
+  async cancel(runId: string, project: string, id: string | null): Promise<void> {
+    // A render may be accepted before its acknowledgement is persisted. Match
+    // the exact durable receipt, actor and project; never enumerate or resubmit.
+    const bound = await this.pool.query<{ id: string }>(
+      `SELECT j.id FROM agent_runs r JOIN agent_loop_sessions s ON s.run_id=r.id
+      JOIN jobs j ON j.idempotency_key='render:'||r.project_id::text||':'||r.actor_id::text||':req_'||replace(s.render_receipt_id::text,'-','')
+      WHERE r.id=$1 AND r.project_id=$2 AND r.runtime_driver='controlled-loop-v1'
+      AND ($3::uuid IS NULL OR j.id=$3) AND (s.render_job_id IS NULL OR s.render_job_id=j.id)
+      AND j.subject_kind='project' AND j.subject_id=$2 AND j.job_type='render.remotion'`,
       [runId, project, id],
     );
+    if (bound.rowCount === 0 && id === null) return;
     if (bound.rowCount !== 1) throw new AgentError("not_found");
     await cancelJob(
       {
@@ -159,7 +169,7 @@ export class AuthenticatedTimelineRenderPort implements AgentRenderPort {
           },
         },
       },
-      jobId(id),
+      jobId(bound.rows[0]!.id),
     );
   }
 }

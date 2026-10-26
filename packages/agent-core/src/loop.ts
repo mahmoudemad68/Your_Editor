@@ -140,7 +140,7 @@ export async function runControlledAgentLoop(
       };
       if (
         !envelope.untrustedData.analysis.length ||
-        envelope.untrustedData.analysis.some((a) => a.sections?.transcript?.status !== "completed")
+        envelope.untrustedData.analysis.some((a) => a.sections?.transcript?.status !== "measured")
       )
         throw new PlanningError("ANALYSIS_UNAVAILABLE");
     }
@@ -246,6 +246,9 @@ export async function runControlledAgentLoop(
         reply.receipt.requestSha256 !== digest ||
         reply.receipt.modelId !== deps.model.capabilities.modelId ||
         reply.receipt.modelVersion !== deps.model.capabilities.modelVersion ||
+        reply.receipt.provider !== deps.model.capabilities.provider ||
+        reply.receipt.mode !== mode ||
+        reply.receipt.deadlineAtMs !== request.deadlineAtMs ||
         reply.receipt.evidence !== deps.model.capabilities.evidence
       ) {
         await runs.finishModelCall(lease, {
@@ -415,9 +418,9 @@ export async function runControlledAgentLoop(
     if (e instanceof AgentError || signal.aborted) throw new AgentError("fenced");
   } finally {
     clearInterval(heartbeat);
-    if (!completed && renderJob && project)
+    if (!completed && project)
       await boundedOperation(
-        () => deps.render.cancel(id, project!, renderJob!),
+        () => deps.render.cancel(id, project!, renderJob),
         AbortSignal.timeout(5000),
       );
   }

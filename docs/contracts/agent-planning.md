@@ -109,7 +109,9 @@ a repeated submission. The actual render worker persists an append-only FFprobe
 receipt bound to job, input, Timeline, artifact and render version. The new
 authenticated `/projects/:id/exports/:jobId/validation` endpoint returns it only for
 a completed accessible job. Evaluating verifies duration, frames, dimensions,
-codecs and frame rate before completion. Cancellation cleans up the bound render.
+codecs and frame rate before completion. Cancellation cleans up the bound render,
+including admission whose acknowledgement was not saved: cleanup matches only the
+exact durable receipt, actor, project and render job type, without resubmitting.
 
 The separate `qualification-entry.js` is invoked explicitly in an isolated test
 container with `NODE_ENV=test`, `EDITAGENT_RUNTIME=development` and

@@ -8,6 +8,7 @@ import {
 } from "@editagent/domain";
 import { TimelineConflict, TimelineEditor } from "./timeline-editor.js";
 import { ProjectForbiddenError, ProjectNotFoundError } from "./project-access.js";
+import { RenderValidationV1Schema } from "@editagent/schemas";
 
 export interface TimelineRenderSnapshot {
   readonly jobId: string;
@@ -83,8 +84,10 @@ export class TimelineExports {
     const result = await this.jobs.read(project, id);
     await this.access(actor, project, false);
     if (!result) throw new ProjectNotFoundError();
-    if (result.job.status !== "Completed" || !result.validation) throw new TimelineConflict();
-    return result.validation;
+    const parsed = RenderValidationV1Schema.safeParse(result.validation);
+    if (result.job.status !== "Completed" || !parsed.success || parsed.data.jobId !== id)
+      throw new TimelineConflict();
+    return parsed.data;
   }
 
   async download(actor: UserId, project: ProjectId, id: string) {
