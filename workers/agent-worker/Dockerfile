@@ -37,6 +37,7 @@ COPY packages/tool-sdk packages/tool-sdk
 COPY packages/domain packages/domain
 COPY packages/schemas packages/schemas
 COPY tools/schema tools/schema
+COPY prompts prompts
 COPY workers/ai-worker/src/editagent_ai_worker/contracts/media_analysis_generated.py workers/ai-worker/src/editagent_ai_worker/contracts/media_analysis_generated.py
 COPY workers/ai-worker/src/editagent_ai_worker/contracts/media_analysis_v1_1_generated.py workers/ai-worker/src/editagent_ai_worker/contracts/media_analysis_v1_1_generated.py
 COPY workers/ai-worker/src/editagent_ai_worker/contracts/media_analysis_v1_2_generated.py workers/ai-worker/src/editagent_ai_worker/contracts/media_analysis_v1_2_generated.py

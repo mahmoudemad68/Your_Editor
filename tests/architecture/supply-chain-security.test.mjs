@@ -393,6 +393,15 @@ test("a placeholder allowlist does not hide another secret on the same line", ()
   assert.equal(mixed.status, 1, spawnText(mixed));
 });
 
+test("the six reviewed secret exceptions preserve positive-control detection", () => {
+  const result = run("python3", [
+    path.join(root, "infra/scripts/test-secret-exceptions.py"),
+    gitleaksCommand(),
+  ]);
+  assert.equal(result.status, 0, spawnText(result));
+  assert.match(result.stdout, /SECRET_EXCEPTION_CONTROLS PASS/);
+});
+
 test("the Python audit includes locked development dependencies", () => {
   const script = read("infra/scripts/audit-python.sh");
   assert.equal(script.includes("--no-dev"), false);
