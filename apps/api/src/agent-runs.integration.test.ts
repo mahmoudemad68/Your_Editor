@@ -241,7 +241,7 @@ test(
         });
       await t.test(
         "US301/305 controlled loop: real PG/BullMQ/SDK and versioned audit (render boundary explicitly stubbed)",
-        async () => {
+        async (loopTest) => {
           const savedNode = process.env.NODE_ENV,
             savedGate = process.env.EDITAGENT_REPLAY_QUALIFICATION;
           // Bounded diagnostics for failed qualification only: fixed state/phase
@@ -404,7 +404,7 @@ test(
             return run;
           };
           try {
-            await t.test(
+            await loopTest.test(
               "controlled activation is internal, immutable and current-owner scoped",
               async () => {
                 const f = await fixture(),
@@ -460,7 +460,7 @@ test(
                 );
               },
             );
-            await t.test(
+            await loopTest.test(
               "measured bilingual transcript is usable as untrusted observation without changing words or timing",
               async () => {
                 const f = await fixture(),
@@ -550,7 +550,7 @@ test(
                 );
               },
             );
-            await t.test(
+            await loopTest.test(
               "mixed-language prompt injection cannot grant an unreviewed tool or expose creator data",
               async () => {
                 const f = await fixture(),
@@ -579,7 +579,7 @@ test(
                 assert(!JSON.stringify(exported).includes("unreviewed_shell"));
               },
             );
-            await t.test(
+            await loopTest.test(
               "source mutation after planning is fenced before a tool effect",
               async () => {
                 const f = await fixture(),
@@ -609,7 +609,7 @@ test(
               },
             );
             for (const invalid of [false, true])
-              await t.test(
+              await loopTest.test(
                 `render ${invalid ? "invalid proof" : "failure"} cannot complete the run`,
                 async () => {
                   const f = await fixture(),
@@ -644,7 +644,7 @@ test(
                   assert.equal(cancelled, 1);
                 },
               );
-            await t.test(
+            await loopTest.test(
               "queue completion, duplicate delivery, two durable edits, old admission and v1.1 receipts",
               async () => {
                 const f = await fixture(),
@@ -738,7 +738,7 @@ test(
               },
             );
             for (const scenario of ["bad-plan-once", "bad-tool-once"] as const)
-              await t.test(
+              await loopTest.test(
                 `bounded ${scenario} feedback repairs before any extra effect`,
                 async () => {
                   const f = await fixture(),
@@ -761,7 +761,7 @@ test(
                   );
                 },
               );
-            await t.test(
+            await loopTest.test(
               "confirmed clean ToolExecutor failure feeds bounded feedback and uses a new receipt without repeating a committed edit",
               async () => {
                 const f = await fixture(),
@@ -856,7 +856,7 @@ test(
               ["unknown", "PROVIDER_OUTCOME_UNCONFIRMED"],
               ["refused", "PROVIDER_REFUSED"],
             ] as const)
-              await t.test(`typed ${scenario} stop without tool effects`, async () => {
+              await loopTest.test(`typed ${scenario} stop without tool effects`, async () => {
                 const f = await fixture(),
                   deps = await compose(f, qualificationModel(f.snapshot, scenario)),
                   run = await enable(f, deps.model, {
@@ -883,7 +883,7 @@ test(
               [{ limits: { ...configuration.limits, reservedTokens: 1024 } }, "TOKEN_BUDGET"],
               [{ limits: { ...configuration.limits, maxTools: 1 } }, "TOOL_BUDGET"],
             ] as const)
-              await t.test(`bounded prerequisite/budget refusal ${reason}`, async () => {
+              await loopTest.test(`bounded prerequisite/budget refusal ${reason}`, async () => {
                 const f = await fixture(),
                   deps = await compose(f),
                   config = { ...configuration, ...change } as LoopConfigurationV1,
@@ -901,7 +901,7 @@ test(
                   0,
                 );
               });
-            await t.test("cost reservations reject before provider use", async () => {
+            await loopTest.test("cost reservations reject before provider use", async () => {
               const f = await fixture(),
                 capabilities = {
                   ...qualificationCapabilities,
@@ -931,7 +931,7 @@ test(
                 0,
               );
             });
-            await t.test(
+            await loopTest.test(
               "cancellation during inference settles unknown usage and prevents tool admission",
               async () => {
                 const f = await fixture();
@@ -972,7 +972,7 @@ test(
                 );
               },
             );
-            await t.test(
+            await loopTest.test(
               "membership revocation during inference fails closed and never publishes an edit",
               async () => {
                 const f = await fixture();
@@ -1025,7 +1025,7 @@ test(
                 );
               },
             );
-            await t.test("expired deadline does not call provider", async () => {
+            await loopTest.test("expired deadline does not call provider", async () => {
               const f = await fixture(),
                 deps = await compose(f),
                 run = await enable(f, deps.model);
@@ -1044,7 +1044,7 @@ test(
               );
             });
             for (const phase of ["checkpoint", "unconfirmed"] as const)
-              await t.test(
+              await loopTest.test(
                 `actual controlled-loop SIGKILL at ${phase} preserves completed effects`,
                 async () => {
                   const f = await fixture(),
