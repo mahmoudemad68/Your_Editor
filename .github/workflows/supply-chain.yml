@@ -179,6 +179,10 @@ jobs:
         if: matrix.service == 'agent-worker'
         run: sh infra/scripts/verify-agent-prompts.sh "editagent-${{ matrix.service }}:${GITHUB_SHA}"
 
+      - name: Verify offline provider conformance in packaged agent image
+        if: matrix.service == 'agent-worker'
+        run: sh infra/scripts/verify-agent-provider.sh "editagent-${{ matrix.service }}:${GITHUB_SHA}"
+
       - name: Install Syft and Trivy
         run: ./infra/scripts/install-supply-chain-tools.sh
 

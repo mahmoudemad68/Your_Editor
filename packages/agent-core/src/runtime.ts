@@ -42,6 +42,7 @@ export async function executeAgentTool(
   executor: ToolExecutor,
   call: ToolCall,
   signal: AbortSignal,
+  recoverConfirmedRejection = false,
 ): Promise<boolean> {
   const run = await runs.workerView(lease);
   if (
@@ -76,7 +77,9 @@ export async function executeAgentTool(
     return true;
   } catch (error) {
     if (error instanceof ToolError) {
-      await runs.failTool(lease).catch(() => undefined);
+      if (recoverConfirmedRejection && (await runs.rejectToolAndContinue(lease))) return false;
+      if (recoverConfirmedRejection) await runs.failTool(lease);
+      else await runs.failTool(lease).catch(() => undefined);
       return false;
     }
     throw error;
@@ -134,6 +137,31 @@ export async function consumeAgentRuns(
   signal: AbortSignal,
   onError: () => void,
 ): Promise<void> {
+  return consumeRuns(runs, queue, signal, onError, runInfrastructure);
+}
+/** Separate trusted qualification composition. Production main never selects
+ * this consumer and no admission payload chooses a driver. */
+export async function consumeControlledAgentRuns(
+  runs: PostgresAgentRuns,
+  queue: JobQueue,
+  signal: AbortSignal,
+  onError: () => void,
+  driver: (runs: PostgresAgentRuns, id: string, signal: AbortSignal) => Promise<void>,
+): Promise<void> {
+  if (
+    process.env.NODE_ENV !== "test" ||
+    process.env.EDITAGENT_REPLAY_QUALIFICATION !== "isolated-v1"
+  )
+    throw new AgentError("forbidden");
+  return consumeRuns(runs, queue, signal, onError, driver);
+}
+async function consumeRuns(
+  runs: PostgresAgentRuns,
+  queue: JobQueue,
+  signal: AbortSignal,
+  onError: () => void,
+  driver: (runs: PostgresAgentRuns, id: string, signal: AbortSignal) => Promise<void>,
+): Promise<void> {
   const jobs = new PostgresJobRepository(runs.pool);
   while (!signal.aborted) {
     try {
@@ -157,7 +185,7 @@ export async function consumeAgentRuns(
               )
                 throw new AgentError("invalid_input");
               try {
-                await runInfrastructure(runs, envelope.jobId, AbortSignal.any([signal, jobSignal]));
+                await driver(runs, envelope.jobId, AbortSignal.any([signal, jobSignal]));
               } catch {
                 if (jobSignal.aborted) throw jobSignal.reason;
                 throw new Error("agent_runtime_failed");

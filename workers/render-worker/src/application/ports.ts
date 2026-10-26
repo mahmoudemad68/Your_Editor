@@ -22,6 +22,7 @@ export interface RenderArtifact {
   readonly byteSize: number;
   readonly renderVersion: string;
   readonly inputSha256: string;
+  readonly validation?: import("@editagent/schemas").RenderValidationV1;
 }
 export interface IRenderStrategy {
   discard(artifact: RenderArtifact): Promise<void>;

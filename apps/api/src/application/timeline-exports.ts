@@ -20,7 +20,11 @@ export interface TimelineRenderJobs {
   read(
     project: ProjectId,
     id: string,
-  ): Promise<{ job: TimelineRenderSnapshot; outputKey: string | null } | null>;
+  ): Promise<{
+    job: TimelineRenderSnapshot;
+    outputKey: string | null;
+    validation?: unknown;
+  } | null>;
   cancel(actor: UserId, project: ProjectId, id: string): Promise<void>;
 }
 export class RenderUnavailable extends Error {
@@ -73,6 +77,14 @@ export class TimelineExports {
     if (!(await this.jobs.read(project, id))) throw new ProjectNotFoundError();
     await this.jobs.cancel(actor, project, id);
     return this.read(actor, project, id);
+  }
+  async validation(actor: UserId, project: ProjectId, id: string) {
+    await this.access(actor, project, false);
+    const result = await this.jobs.read(project, id);
+    await this.access(actor, project, false);
+    if (!result) throw new ProjectNotFoundError();
+    if (result.job.status !== "Completed" || !result.validation) throw new TimelineConflict();
+    return result.validation;
   }
 
   async download(actor: UserId, project: ProjectId, id: string) {

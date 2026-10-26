@@ -6,12 +6,12 @@ import {
   type AgentStopReason,
   type EditCommand,
 } from "@editagent/domain";
-import { AgentRunV1Schema } from "@editagent/schemas";
+import { AgentRunSchema, type ModelAuditV1, type PlanningStop } from "@editagent/schemas";
 export {
-  agentRunOpenApiSchema,
-  agentStepEventOpenApiSchema,
-  agentAuditPageOpenApiSchema,
-  agentExportOpenApiSchema,
+  agentRunCurrentOpenApiSchema as agentRunOpenApiSchema,
+  agentEventCurrentOpenApiSchema as agentStepEventOpenApiSchema,
+  agentAuditCurrentOpenApiSchema as agentAuditPageOpenApiSchema,
+  agentExportCurrentOpenApiSchema as agentExportOpenApiSchema,
 } from "@editagent/schemas";
 
 export const AGENT_QUEUE = "agent-runs-v1";
@@ -24,7 +24,7 @@ export class AgentError extends Error {
   }
 }
 export interface AgentRunView {
-  schemaVersion: "1.0.0";
+  schemaVersion: "1.0.0" | "1.1.0";
   id: string;
   projectId: string;
   state: AgentState;
@@ -37,18 +37,47 @@ export interface AgentRunView {
   updatedAtMs: number;
   deadlineAtMs: number;
   source: { timelineId: string; stateSha256: string } | null;
-  runtime: { driver: "infrastructure-v1"; planner: "not_configured" };
+  runtime:
+    | { driver: "infrastructure-v1"; planner: "not_configured" }
+    | { driver: "controlled-loop-v1"; planner: "replay_only" };
+  planning?: {
+    schemaVersion: "1.0.0";
+    stopReason: PlanningStop | null;
+    renderJobId: string | null;
+    toolAttempts: number;
+  };
 }
 export interface AgentEvent {
-  schemaVersion: "1.0.0";
+  schemaVersion: "1.0.0" | "1.1.0";
   id: string;
   runId: string;
   sequence: number;
   revision: number;
   state: AgentState;
-  kind: "admitted" | "transition" | "tool_intent" | "tool_result" | "recovered";
+  kind:
+    | "admitted"
+    | "transition"
+    | "tool_intent"
+    | "tool_result"
+    | "recovered"
+    | "model_intent"
+    | "model_result"
+    | "planning_feedback"
+    | "plan_committed"
+    | "render_intent"
+    | "render_result";
   summary:
-    "RUN_ADMITTED" | "STATE_CHANGED" | "TOOL_STARTED" | "TOOL_FINISHED" | "CHECKPOINT_RESTORED";
+    | "RUN_ADMITTED"
+    | "STATE_CHANGED"
+    | "TOOL_STARTED"
+    | "TOOL_FINISHED"
+    | "CHECKPOINT_RESTORED"
+    | "MODEL_STARTED"
+    | "MODEL_FINISHED"
+    | "PLAN_REJECTED"
+    | "PLAN_COMMITTED"
+    | "RENDER_STARTED"
+    | "RENDER_FINISHED";
   atMs: number;
   correlationId: string;
   requestCorrelationSha256: string;
@@ -63,12 +92,18 @@ export interface AgentEvent {
     durationMs: number | null;
     costMicros: number | null;
   } | null;
-  tokens: null;
-  tokenMeasurement: "not_applicable";
-  decision: "no_llm";
+  tokens: { input: number | null; output: number | null } | null;
+  tokenMeasurement:
+    | "not_applicable"
+    | "provider_reported"
+    | "offline_http_fixture"
+    | "synthetic_replay"
+    | "unavailable";
+  decision: "no_llm" | "runtime" | "model" | "tool_execution";
+  model?: ModelAuditV1 | null;
 }
 export interface AuditPage {
-  schemaVersion: "1.0.0";
+  schemaVersion: "1.0.0" | "1.1.0";
   run: AgentRunView;
   events: AgentEvent[];
   nextCursor: string | null;
@@ -121,11 +156,11 @@ export function checkedUuid(value: string): string {
   }
 }
 export function assertRun(value: AgentRunView): AgentRunView {
-  if (!AgentRunV1Schema.safeParse(value).success) throw new AgentError("invalid_input");
+  if (!AgentRunSchema.safeParse(value).success) throw new AgentError("invalid_input");
   checkedUuid(value.id);
   checkedUuid(value.projectId);
   if (
-    value.schemaVersion !== "1.0.0" ||
+    !["1.0.0", "1.1.0"].includes(value.schemaVersion) ||
     !AGENT_STATES.includes(value.state) ||
     (value.stopReason !== null && !AGENT_STOP_REASONS.includes(value.stopReason)) ||
     ![

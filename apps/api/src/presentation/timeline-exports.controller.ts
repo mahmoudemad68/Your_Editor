@@ -47,4 +47,12 @@ export class TimelineExportsController {
   ) {
     return this.exports.download(requireActor(request), projectId(project), uuidV7(id));
   }
+  @Get("exports/:jobId/validation")
+  validation(
+    @Param("projectId") project: string,
+    @Param("jobId") id: string,
+    @Req() request: object,
+  ) {
+    return this.exports.validation(requireActor(request), projectId(project), uuidV7(id));
+  }
 }

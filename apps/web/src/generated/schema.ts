@@ -381,6 +381,22 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/projects/{projectId}/exports/{jobId}/validation": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["TimelineExportsController_validation"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/projects/{projectId}/media/{mediaId}/analysis/failures": {
     parameters: {
       query?: never;
@@ -1436,52 +1452,122 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            /** @enum {string} */
-            schemaVersion: "1.0.0";
-            id: string;
-            projectId: string;
-            /** @enum {string} */
-            state:
-              | "Pending"
-              | "Observing"
-              | "Planning"
-              | "Executing"
-              | "Rendering"
-              | "Evaluating"
-              | "Completed"
-              | "Failed"
-              | "Cancelled";
-            revision: number;
-            sequence: number;
-            checkpoint: number;
-            generation: number;
-            /** @enum {string|null} */
-            stopReason:
-              | "PLANNER_NOT_CONFIGURED"
-              | "CANCELLED"
-              | "ACCESS_REVOKED"
-              | "DEADLINE_EXCEEDED"
-              | "EXECUTION_UNCONFIRMED"
-              | "TOOL_FAILED"
-              | "STALE_SOURCE"
-              | "STEP_LIMIT"
-              | "INTERNAL"
-              | null;
-            createdAtMs: number;
-            updatedAtMs: number;
-            deadlineAtMs: number;
-            source: {
-              timelineId: string;
-              stateSha256: string;
-            } | null;
-            runtime: {
-              /** @enum {string} */
-              driver: "infrastructure-v1";
-              /** @enum {string} */
-              planner: "not_configured";
-            };
-          };
+          "application/json":
+            | {
+                /** @enum {string} */
+                schemaVersion: "1.0.0";
+                id: string;
+                projectId: string;
+                /** @enum {string} */
+                state:
+                  | "Pending"
+                  | "Observing"
+                  | "Planning"
+                  | "Executing"
+                  | "Rendering"
+                  | "Evaluating"
+                  | "Completed"
+                  | "Failed"
+                  | "Cancelled";
+                revision: number;
+                sequence: number;
+                checkpoint: number;
+                generation: number;
+                /** @enum {string|null} */
+                stopReason:
+                  | "PLANNER_NOT_CONFIGURED"
+                  | "CANCELLED"
+                  | "ACCESS_REVOKED"
+                  | "DEADLINE_EXCEEDED"
+                  | "EXECUTION_UNCONFIRMED"
+                  | "TOOL_FAILED"
+                  | "STALE_SOURCE"
+                  | "STEP_LIMIT"
+                  | "INTERNAL"
+                  | null;
+                createdAtMs: number;
+                updatedAtMs: number;
+                deadlineAtMs: number;
+                source: {
+                  timelineId: string;
+                  stateSha256: string;
+                } | null;
+                runtime: {
+                  /** @enum {string} */
+                  driver: "infrastructure-v1";
+                  /** @enum {string} */
+                  planner: "not_configured";
+                };
+              }
+            | {
+                /** @enum {string} */
+                schemaVersion: "1.1.0";
+                id: string;
+                projectId: string;
+                /** @enum {string} */
+                state:
+                  | "Pending"
+                  | "Observing"
+                  | "Planning"
+                  | "Executing"
+                  | "Rendering"
+                  | "Evaluating"
+                  | "Completed"
+                  | "Failed"
+                  | "Cancelled";
+                revision: number;
+                sequence: number;
+                checkpoint: number;
+                generation: number;
+                /** @enum {string|null} */
+                stopReason:
+                  | "PLANNER_NOT_CONFIGURED"
+                  | "CANCELLED"
+                  | "ACCESS_REVOKED"
+                  | "DEADLINE_EXCEEDED"
+                  | "EXECUTION_UNCONFIRMED"
+                  | "TOOL_FAILED"
+                  | "STALE_SOURCE"
+                  | "STEP_LIMIT"
+                  | "INTERNAL"
+                  | null;
+                createdAtMs: number;
+                updatedAtMs: number;
+                deadlineAtMs: number;
+                source: {
+                  timelineId: string;
+                  stateSha256: string;
+                } | null;
+                runtime: {
+                  /** @enum {string} */
+                  driver: "controlled-loop-v1";
+                  /** @enum {string} */
+                  planner: "replay_only";
+                };
+                planning: {
+                  /** @enum {string} */
+                  schemaVersion: "1.0.0";
+                  /** @enum {string|null} */
+                  stopReason:
+                    | "PROVIDER_INVALID_RESPONSE"
+                    | "PROVIDER_UNAVAILABLE"
+                    | "PROVIDER_OUTCOME_UNCONFIRMED"
+                    | "PROVIDER_REFUSED"
+                    | "PLAN_INVALID"
+                    | "CAPABILITY_UNAVAILABLE"
+                    | "ITERATION_BUDGET"
+                    | "TOOL_BUDGET"
+                    | "TOKEN_BUDGET"
+                    | "COST_BUDGET"
+                    | "RENDER_FAILED"
+                    | "RENDER_UNCONFIRMED"
+                    | "OUTPUT_INVALID"
+                    | "ANALYSIS_UNAVAILABLE"
+                    | null;
+                  renderJobId: string | null;
+                  toolAttempts: number;
+                };
+              };
         };
       };
     };
@@ -1503,52 +1589,122 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            /** @enum {string} */
-            schemaVersion: "1.0.0";
-            id: string;
-            projectId: string;
-            /** @enum {string} */
-            state:
-              | "Pending"
-              | "Observing"
-              | "Planning"
-              | "Executing"
-              | "Rendering"
-              | "Evaluating"
-              | "Completed"
-              | "Failed"
-              | "Cancelled";
-            revision: number;
-            sequence: number;
-            checkpoint: number;
-            generation: number;
-            /** @enum {string|null} */
-            stopReason:
-              | "PLANNER_NOT_CONFIGURED"
-              | "CANCELLED"
-              | "ACCESS_REVOKED"
-              | "DEADLINE_EXCEEDED"
-              | "EXECUTION_UNCONFIRMED"
-              | "TOOL_FAILED"
-              | "STALE_SOURCE"
-              | "STEP_LIMIT"
-              | "INTERNAL"
-              | null;
-            createdAtMs: number;
-            updatedAtMs: number;
-            deadlineAtMs: number;
-            source: {
-              timelineId: string;
-              stateSha256: string;
-            } | null;
-            runtime: {
-              /** @enum {string} */
-              driver: "infrastructure-v1";
-              /** @enum {string} */
-              planner: "not_configured";
-            };
-          };
+          "application/json":
+            | {
+                /** @enum {string} */
+                schemaVersion: "1.0.0";
+                id: string;
+                projectId: string;
+                /** @enum {string} */
+                state:
+                  | "Pending"
+                  | "Observing"
+                  | "Planning"
+                  | "Executing"
+                  | "Rendering"
+                  | "Evaluating"
+                  | "Completed"
+                  | "Failed"
+                  | "Cancelled";
+                revision: number;
+                sequence: number;
+                checkpoint: number;
+                generation: number;
+                /** @enum {string|null} */
+                stopReason:
+                  | "PLANNER_NOT_CONFIGURED"
+                  | "CANCELLED"
+                  | "ACCESS_REVOKED"
+                  | "DEADLINE_EXCEEDED"
+                  | "EXECUTION_UNCONFIRMED"
+                  | "TOOL_FAILED"
+                  | "STALE_SOURCE"
+                  | "STEP_LIMIT"
+                  | "INTERNAL"
+                  | null;
+                createdAtMs: number;
+                updatedAtMs: number;
+                deadlineAtMs: number;
+                source: {
+                  timelineId: string;
+                  stateSha256: string;
+                } | null;
+                runtime: {
+                  /** @enum {string} */
+                  driver: "infrastructure-v1";
+                  /** @enum {string} */
+                  planner: "not_configured";
+                };
+              }
+            | {
+                /** @enum {string} */
+                schemaVersion: "1.1.0";
+                id: string;
+                projectId: string;
+                /** @enum {string} */
+                state:
+                  | "Pending"
+                  | "Observing"
+                  | "Planning"
+                  | "Executing"
+                  | "Rendering"
+                  | "Evaluating"
+                  | "Completed"
+                  | "Failed"
+                  | "Cancelled";
+                revision: number;
+                sequence: number;
+                checkpoint: number;
+                generation: number;
+                /** @enum {string|null} */
+                stopReason:
+                  | "PLANNER_NOT_CONFIGURED"
+                  | "CANCELLED"
+                  | "ACCESS_REVOKED"
+                  | "DEADLINE_EXCEEDED"
+                  | "EXECUTION_UNCONFIRMED"
+                  | "TOOL_FAILED"
+                  | "STALE_SOURCE"
+                  | "STEP_LIMIT"
+                  | "INTERNAL"
+                  | null;
+                createdAtMs: number;
+                updatedAtMs: number;
+                deadlineAtMs: number;
+                source: {
+                  timelineId: string;
+                  stateSha256: string;
+                } | null;
+                runtime: {
+                  /** @enum {string} */
+                  driver: "controlled-loop-v1";
+                  /** @enum {string} */
+                  planner: "replay_only";
+                };
+                planning: {
+                  /** @enum {string} */
+                  schemaVersion: "1.0.0";
+                  /** @enum {string|null} */
+                  stopReason:
+                    | "PROVIDER_INVALID_RESPONSE"
+                    | "PROVIDER_UNAVAILABLE"
+                    | "PROVIDER_OUTCOME_UNCONFIRMED"
+                    | "PROVIDER_REFUSED"
+                    | "PLAN_INVALID"
+                    | "CAPABILITY_UNAVAILABLE"
+                    | "ITERATION_BUDGET"
+                    | "TOOL_BUDGET"
+                    | "TOKEN_BUDGET"
+                    | "COST_BUDGET"
+                    | "RENDER_FAILED"
+                    | "RENDER_UNCONFIRMED"
+                    | "OUTPUT_INVALID"
+                    | "ANALYSIS_UNAVAILABLE"
+                    | null;
+                  renderJobId: string | null;
+                  toolAttempts: number;
+                };
+              };
         };
       };
     };
@@ -1570,52 +1726,122 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            /** @enum {string} */
-            schemaVersion: "1.0.0";
-            id: string;
-            projectId: string;
-            /** @enum {string} */
-            state:
-              | "Pending"
-              | "Observing"
-              | "Planning"
-              | "Executing"
-              | "Rendering"
-              | "Evaluating"
-              | "Completed"
-              | "Failed"
-              | "Cancelled";
-            revision: number;
-            sequence: number;
-            checkpoint: number;
-            generation: number;
-            /** @enum {string|null} */
-            stopReason:
-              | "PLANNER_NOT_CONFIGURED"
-              | "CANCELLED"
-              | "ACCESS_REVOKED"
-              | "DEADLINE_EXCEEDED"
-              | "EXECUTION_UNCONFIRMED"
-              | "TOOL_FAILED"
-              | "STALE_SOURCE"
-              | "STEP_LIMIT"
-              | "INTERNAL"
-              | null;
-            createdAtMs: number;
-            updatedAtMs: number;
-            deadlineAtMs: number;
-            source: {
-              timelineId: string;
-              stateSha256: string;
-            } | null;
-            runtime: {
-              /** @enum {string} */
-              driver: "infrastructure-v1";
-              /** @enum {string} */
-              planner: "not_configured";
-            };
-          };
+          "application/json":
+            | {
+                /** @enum {string} */
+                schemaVersion: "1.0.0";
+                id: string;
+                projectId: string;
+                /** @enum {string} */
+                state:
+                  | "Pending"
+                  | "Observing"
+                  | "Planning"
+                  | "Executing"
+                  | "Rendering"
+                  | "Evaluating"
+                  | "Completed"
+                  | "Failed"
+                  | "Cancelled";
+                revision: number;
+                sequence: number;
+                checkpoint: number;
+                generation: number;
+                /** @enum {string|null} */
+                stopReason:
+                  | "PLANNER_NOT_CONFIGURED"
+                  | "CANCELLED"
+                  | "ACCESS_REVOKED"
+                  | "DEADLINE_EXCEEDED"
+                  | "EXECUTION_UNCONFIRMED"
+                  | "TOOL_FAILED"
+                  | "STALE_SOURCE"
+                  | "STEP_LIMIT"
+                  | "INTERNAL"
+                  | null;
+                createdAtMs: number;
+                updatedAtMs: number;
+                deadlineAtMs: number;
+                source: {
+                  timelineId: string;
+                  stateSha256: string;
+                } | null;
+                runtime: {
+                  /** @enum {string} */
+                  driver: "infrastructure-v1";
+                  /** @enum {string} */
+                  planner: "not_configured";
+                };
+              }
+            | {
+                /** @enum {string} */
+                schemaVersion: "1.1.0";
+                id: string;
+                projectId: string;
+                /** @enum {string} */
+                state:
+                  | "Pending"
+                  | "Observing"
+                  | "Planning"
+                  | "Executing"
+                  | "Rendering"
+                  | "Evaluating"
+                  | "Completed"
+                  | "Failed"
+                  | "Cancelled";
+                revision: number;
+                sequence: number;
+                checkpoint: number;
+                generation: number;
+                /** @enum {string|null} */
+                stopReason:
+                  | "PLANNER_NOT_CONFIGURED"
+                  | "CANCELLED"
+                  | "ACCESS_REVOKED"
+                  | "DEADLINE_EXCEEDED"
+                  | "EXECUTION_UNCONFIRMED"
+                  | "TOOL_FAILED"
+                  | "STALE_SOURCE"
+                  | "STEP_LIMIT"
+                  | "INTERNAL"
+                  | null;
+                createdAtMs: number;
+                updatedAtMs: number;
+                deadlineAtMs: number;
+                source: {
+                  timelineId: string;
+                  stateSha256: string;
+                } | null;
+                runtime: {
+                  /** @enum {string} */
+                  driver: "controlled-loop-v1";
+                  /** @enum {string} */
+                  planner: "replay_only";
+                };
+                planning: {
+                  /** @enum {string} */
+                  schemaVersion: "1.0.0";
+                  /** @enum {string|null} */
+                  stopReason:
+                    | "PROVIDER_INVALID_RESPONSE"
+                    | "PROVIDER_UNAVAILABLE"
+                    | "PROVIDER_OUTCOME_UNCONFIRMED"
+                    | "PROVIDER_REFUSED"
+                    | "PLAN_INVALID"
+                    | "CAPABILITY_UNAVAILABLE"
+                    | "ITERATION_BUDGET"
+                    | "TOOL_BUDGET"
+                    | "TOKEN_BUDGET"
+                    | "COST_BUDGET"
+                    | "RENDER_FAILED"
+                    | "RENDER_UNCONFIRMED"
+                    | "OUTPUT_INVALID"
+                    | "ANALYSIS_UNAVAILABLE"
+                    | null;
+                  renderJobId: string | null;
+                  toolAttempts: number;
+                };
+              };
         };
       };
     };
@@ -1640,120 +1866,419 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            /** @enum {string} */
-            schemaVersion: "1.0.0";
-            run: {
-              /** @enum {string} */
-              schemaVersion: "1.0.0";
-              id: string;
-              projectId: string;
-              /** @enum {string} */
-              state:
-                | "Pending"
-                | "Observing"
-                | "Planning"
-                | "Executing"
-                | "Rendering"
-                | "Evaluating"
-                | "Completed"
-                | "Failed"
-                | "Cancelled";
-              revision: number;
-              sequence: number;
-              checkpoint: number;
-              generation: number;
-              /** @enum {string|null} */
-              stopReason:
-                | "PLANNER_NOT_CONFIGURED"
-                | "CANCELLED"
-                | "ACCESS_REVOKED"
-                | "DEADLINE_EXCEEDED"
-                | "EXECUTION_UNCONFIRMED"
-                | "TOOL_FAILED"
-                | "STALE_SOURCE"
-                | "STEP_LIMIT"
-                | "INTERNAL"
-                | null;
-              createdAtMs: number;
-              updatedAtMs: number;
-              deadlineAtMs: number;
-              source: {
-                timelineId: string;
-                stateSha256: string;
-              } | null;
-              runtime: {
+          "application/json":
+            | {
                 /** @enum {string} */
-                driver: "infrastructure-v1";
+                schemaVersion: "1.0.0";
+                run: {
+                  /** @enum {string} */
+                  schemaVersion: "1.0.0";
+                  id: string;
+                  projectId: string;
+                  /** @enum {string} */
+                  state:
+                    | "Pending"
+                    | "Observing"
+                    | "Planning"
+                    | "Executing"
+                    | "Rendering"
+                    | "Evaluating"
+                    | "Completed"
+                    | "Failed"
+                    | "Cancelled";
+                  revision: number;
+                  sequence: number;
+                  checkpoint: number;
+                  generation: number;
+                  /** @enum {string|null} */
+                  stopReason:
+                    | "PLANNER_NOT_CONFIGURED"
+                    | "CANCELLED"
+                    | "ACCESS_REVOKED"
+                    | "DEADLINE_EXCEEDED"
+                    | "EXECUTION_UNCONFIRMED"
+                    | "TOOL_FAILED"
+                    | "STALE_SOURCE"
+                    | "STEP_LIMIT"
+                    | "INTERNAL"
+                    | null;
+                  createdAtMs: number;
+                  updatedAtMs: number;
+                  deadlineAtMs: number;
+                  source: {
+                    timelineId: string;
+                    stateSha256: string;
+                  } | null;
+                  runtime: {
+                    /** @enum {string} */
+                    driver: "infrastructure-v1";
+                    /** @enum {string} */
+                    planner: "not_configured";
+                  };
+                };
+                events: {
+                  /** @enum {string} */
+                  schemaVersion: "1.0.0";
+                  id: string;
+                  runId: string;
+                  sequence: number;
+                  revision: number;
+                  /** @enum {string} */
+                  state:
+                    | "Pending"
+                    | "Observing"
+                    | "Planning"
+                    | "Executing"
+                    | "Rendering"
+                    | "Evaluating"
+                    | "Completed"
+                    | "Failed"
+                    | "Cancelled";
+                  /** @enum {string} */
+                  kind: "admitted" | "transition" | "tool_intent" | "tool_result" | "recovered";
+                  /** @enum {string} */
+                  summary:
+                    | "RUN_ADMITTED"
+                    | "STATE_CHANGED"
+                    | "TOOL_STARTED"
+                    | "TOOL_FINISHED"
+                    | "CHECKPOINT_RESTORED";
+                  atMs: number;
+                  correlationId: string;
+                  requestCorrelationSha256: string;
+                  /** @enum {string|null} */
+                  stopReason:
+                    | "PLANNER_NOT_CONFIGURED"
+                    | "CANCELLED"
+                    | "ACCESS_REVOKED"
+                    | "DEADLINE_EXCEEDED"
+                    | "EXECUTION_UNCONFIRMED"
+                    | "TOOL_FAILED"
+                    | "STALE_SOURCE"
+                    | "STEP_LIMIT"
+                    | "INTERNAL"
+                    | null;
+                  tool: {
+                    /** @enum {string} */
+                    name: "editing.trim-video" | "editing.split-video";
+                    /** @enum {string} */
+                    version: "1.0.0";
+                    inputSha256: string;
+                    outputSha256: string | null;
+                    receiptId: string;
+                    /** @enum {string} */
+                    outcome: "running" | "succeeded" | "failed" | "unconfirmed";
+                    durationMs: number | null;
+                    costMicros: number | null;
+                  } | null;
+                  /** @enum {string|null} */
+                  tokens: null;
+                  /** @enum {string} */
+                  tokenMeasurement: "not_applicable";
+                  /** @enum {string} */
+                  decision: "no_llm";
+                }[];
+                nextCursor: string | null;
+                throughSequence: number;
+              }
+            | {
                 /** @enum {string} */
-                planner: "not_configured";
+                schemaVersion: "1.1.0";
+                run: {
+                  /** @enum {string} */
+                  schemaVersion: "1.1.0";
+                  id: string;
+                  projectId: string;
+                  /** @enum {string} */
+                  state:
+                    | "Pending"
+                    | "Observing"
+                    | "Planning"
+                    | "Executing"
+                    | "Rendering"
+                    | "Evaluating"
+                    | "Completed"
+                    | "Failed"
+                    | "Cancelled";
+                  revision: number;
+                  sequence: number;
+                  checkpoint: number;
+                  generation: number;
+                  /** @enum {string|null} */
+                  stopReason:
+                    | "PLANNER_NOT_CONFIGURED"
+                    | "CANCELLED"
+                    | "ACCESS_REVOKED"
+                    | "DEADLINE_EXCEEDED"
+                    | "EXECUTION_UNCONFIRMED"
+                    | "TOOL_FAILED"
+                    | "STALE_SOURCE"
+                    | "STEP_LIMIT"
+                    | "INTERNAL"
+                    | null;
+                  createdAtMs: number;
+                  updatedAtMs: number;
+                  deadlineAtMs: number;
+                  source: {
+                    timelineId: string;
+                    stateSha256: string;
+                  } | null;
+                  runtime: {
+                    /** @enum {string} */
+                    driver: "controlled-loop-v1";
+                    /** @enum {string} */
+                    planner: "replay_only";
+                  };
+                  planning: {
+                    /** @enum {string} */
+                    schemaVersion: "1.0.0";
+                    /** @enum {string|null} */
+                    stopReason:
+                      | "PROVIDER_INVALID_RESPONSE"
+                      | "PROVIDER_UNAVAILABLE"
+                      | "PROVIDER_OUTCOME_UNCONFIRMED"
+                      | "PROVIDER_REFUSED"
+                      | "PLAN_INVALID"
+                      | "CAPABILITY_UNAVAILABLE"
+                      | "ITERATION_BUDGET"
+                      | "TOOL_BUDGET"
+                      | "TOKEN_BUDGET"
+                      | "COST_BUDGET"
+                      | "RENDER_FAILED"
+                      | "RENDER_UNCONFIRMED"
+                      | "OUTPUT_INVALID"
+                      | "ANALYSIS_UNAVAILABLE"
+                      | null;
+                    renderJobId: string | null;
+                    toolAttempts: number;
+                  };
+                };
+                events: (
+                  | {
+                      /** @enum {string} */
+                      schemaVersion: "1.0.0";
+                      id: string;
+                      runId: string;
+                      sequence: number;
+                      revision: number;
+                      /** @enum {string} */
+                      state:
+                        | "Pending"
+                        | "Observing"
+                        | "Planning"
+                        | "Executing"
+                        | "Rendering"
+                        | "Evaluating"
+                        | "Completed"
+                        | "Failed"
+                        | "Cancelled";
+                      /** @enum {string} */
+                      kind: "admitted" | "transition" | "tool_intent" | "tool_result" | "recovered";
+                      /** @enum {string} */
+                      summary:
+                        | "RUN_ADMITTED"
+                        | "STATE_CHANGED"
+                        | "TOOL_STARTED"
+                        | "TOOL_FINISHED"
+                        | "CHECKPOINT_RESTORED";
+                      atMs: number;
+                      correlationId: string;
+                      requestCorrelationSha256: string;
+                      /** @enum {string|null} */
+                      stopReason:
+                        | "PLANNER_NOT_CONFIGURED"
+                        | "CANCELLED"
+                        | "ACCESS_REVOKED"
+                        | "DEADLINE_EXCEEDED"
+                        | "EXECUTION_UNCONFIRMED"
+                        | "TOOL_FAILED"
+                        | "STALE_SOURCE"
+                        | "STEP_LIMIT"
+                        | "INTERNAL"
+                        | null;
+                      tool: {
+                        /** @enum {string} */
+                        name: "editing.trim-video" | "editing.split-video";
+                        /** @enum {string} */
+                        version: "1.0.0";
+                        inputSha256: string;
+                        outputSha256: string | null;
+                        receiptId: string;
+                        /** @enum {string} */
+                        outcome: "running" | "succeeded" | "failed" | "unconfirmed";
+                        durationMs: number | null;
+                        costMicros: number | null;
+                      } | null;
+                      /** @enum {string|null} */
+                      tokens: null;
+                      /** @enum {string} */
+                      tokenMeasurement: "not_applicable";
+                      /** @enum {string} */
+                      decision: "no_llm";
+                    }
+                  | {
+                      /** @enum {string} */
+                      schemaVersion: "1.1.0";
+                      id: string;
+                      runId: string;
+                      sequence: number;
+                      revision: number;
+                      /** @enum {string} */
+                      state:
+                        | "Pending"
+                        | "Observing"
+                        | "Planning"
+                        | "Executing"
+                        | "Rendering"
+                        | "Evaluating"
+                        | "Completed"
+                        | "Failed"
+                        | "Cancelled";
+                      /** @enum {string} */
+                      kind:
+                        | "admitted"
+                        | "transition"
+                        | "tool_intent"
+                        | "tool_result"
+                        | "recovered"
+                        | "model_intent"
+                        | "model_result"
+                        | "planning_feedback"
+                        | "plan_committed"
+                        | "render_intent"
+                        | "render_result";
+                      /** @enum {string} */
+                      summary:
+                        | "RUN_ADMITTED"
+                        | "STATE_CHANGED"
+                        | "TOOL_STARTED"
+                        | "TOOL_FINISHED"
+                        | "CHECKPOINT_RESTORED"
+                        | "MODEL_STARTED"
+                        | "MODEL_FINISHED"
+                        | "PLAN_REJECTED"
+                        | "PLAN_COMMITTED"
+                        | "RENDER_STARTED"
+                        | "RENDER_FINISHED";
+                      atMs: number;
+                      correlationId: string;
+                      requestCorrelationSha256: string;
+                      /** @enum {string|null} */
+                      stopReason:
+                        | "PLANNER_NOT_CONFIGURED"
+                        | "CANCELLED"
+                        | "ACCESS_REVOKED"
+                        | "DEADLINE_EXCEEDED"
+                        | "EXECUTION_UNCONFIRMED"
+                        | "TOOL_FAILED"
+                        | "STALE_SOURCE"
+                        | "STEP_LIMIT"
+                        | "INTERNAL"
+                        | null;
+                      tool: {
+                        /** @enum {string} */
+                        name: "editing.trim-video" | "editing.split-video";
+                        /** @enum {string} */
+                        version: "1.0.0";
+                        inputSha256: string;
+                        outputSha256: string | null;
+                        receiptId: string;
+                        /** @enum {string} */
+                        outcome: "running" | "succeeded" | "failed" | "unconfirmed";
+                        durationMs: number | null;
+                        costMicros: number | null;
+                      } | null;
+                      tokens: {
+                        input: number | null;
+                        output: number | null;
+                      } | null;
+                      /** @enum {string} */
+                      tokenMeasurement:
+                        | "not_applicable"
+                        | "provider_reported"
+                        | "offline_http_fixture"
+                        | "synthetic_replay"
+                        | "unavailable";
+                      /** @enum {string} */
+                      decision: "runtime" | "model" | "tool_execution";
+                      model: {
+                        callId: string;
+                        ordinal: number;
+                        requestSha256: string;
+                        contextSha256: string;
+                        promptId: string;
+                        promptVersion: string;
+                        templateHash: string;
+                        /** @enum {string} */
+                        outcome: "running" | "succeeded" | "failed" | "unconfirmed";
+                        reservation: {
+                          tokens: number;
+                          costMicros: number;
+                        };
+                        receipt: {
+                          /** @enum {string} */
+                          schemaVersion: "1.0.0";
+                          /** @enum {string} */
+                          provider: "openai-compatible" | "anthropic" | "replay";
+                          modelId: string;
+                          modelVersion: string;
+                          profileSha256: string;
+                          requestSha256: string;
+                          requestIdSha256: string | null;
+                          /** @enum {string} */
+                          mode: "chat" | "tools" | "structured" | "vision";
+                          /** @enum {string} */
+                          evidence:
+                            | "operator_declared_unqualified"
+                            | "offline_http_fixture"
+                            | "synthetic_replay";
+                          usage: {
+                            /** @enum {string} */
+                            source:
+                              | "provider_reported"
+                              | "offline_http_fixture"
+                              | "synthetic_replay"
+                              | "unavailable";
+                            inputTokens: number | null;
+                            outputTokens: number | null;
+                            /** @enum {string|null} */
+                            actualCostMicros: null;
+                            /** @enum {string} */
+                            tokenAccounting:
+                              | "provider_reported_total"
+                              | "native_input_and_cache_sum"
+                              | "synthetic_replay"
+                              | "unavailable";
+                          };
+                          estimatedInputTokens: number;
+                          estimatedCostMicros: number | null;
+                          pricingVersion: string | null;
+                          attempts: number;
+                          durationMs: number;
+                          deadlineAtMs: number;
+                        } | null;
+                        /** @enum {string|null} */
+                        failure:
+                          | "invalid_response"
+                          | "refused"
+                          | "truncated"
+                          | "cancelled"
+                          | "timeout"
+                          | "rate_limited"
+                          | "unavailable"
+                          | "authentication"
+                          | "transport_unknown"
+                          | "budget_exceeded"
+                          | "invalid_request"
+                          | "unsupported_mode"
+                          | "endpoint_denied"
+                          | null;
+                      } | null;
+                    }
+                )[];
+                nextCursor: string | null;
+                throughSequence: number;
               };
-            };
-            events: {
-              /** @enum {string} */
-              schemaVersion: "1.0.0";
-              id: string;
-              runId: string;
-              sequence: number;
-              revision: number;
-              /** @enum {string} */
-              state:
-                | "Pending"
-                | "Observing"
-                | "Planning"
-                | "Executing"
-                | "Rendering"
-                | "Evaluating"
-                | "Completed"
-                | "Failed"
-                | "Cancelled";
-              /** @enum {string} */
-              kind: "admitted" | "transition" | "tool_intent" | "tool_result" | "recovered";
-              /** @enum {string} */
-              summary:
-                | "RUN_ADMITTED"
-                | "STATE_CHANGED"
-                | "TOOL_STARTED"
-                | "TOOL_FINISHED"
-                | "CHECKPOINT_RESTORED";
-              atMs: number;
-              correlationId: string;
-              requestCorrelationSha256: string;
-              /** @enum {string|null} */
-              stopReason:
-                | "PLANNER_NOT_CONFIGURED"
-                | "CANCELLED"
-                | "ACCESS_REVOKED"
-                | "DEADLINE_EXCEEDED"
-                | "EXECUTION_UNCONFIRMED"
-                | "TOOL_FAILED"
-                | "STALE_SOURCE"
-                | "STEP_LIMIT"
-                | "INTERNAL"
-                | null;
-              tool: {
-                /** @enum {string} */
-                name: "editing.trim-video" | "editing.split-video";
-                /** @enum {string} */
-                version: "1.0.0";
-                inputSha256: string;
-                outputSha256: string | null;
-                receiptId: string;
-                /** @enum {string} */
-                outcome: "running" | "succeeded" | "failed" | "unconfirmed";
-                durationMs: number | null;
-                costMicros: number | null;
-              } | null;
-              /** @enum {string|null} */
-              tokens: null;
-              /** @enum {string} */
-              tokenMeasurement: "not_applicable";
-              /** @enum {string} */
-              decision: "no_llm";
-            }[];
-            nextCursor: string | null;
-            throughSequence: number;
-          };
         };
       };
     };
@@ -1779,165 +2304,509 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            /** @enum {string} */
-            schemaVersion: "1.0.0";
-            run: {
-              /** @enum {string} */
-              schemaVersion: "1.0.0";
-              id: string;
-              projectId: string;
-              /** @enum {string} */
-              state:
-                | "Pending"
-                | "Observing"
-                | "Planning"
-                | "Executing"
-                | "Rendering"
-                | "Evaluating"
-                | "Completed"
-                | "Failed"
-                | "Cancelled";
-              revision: number;
-              sequence: number;
-              checkpoint: number;
-              generation: number;
-              /** @enum {string|null} */
-              stopReason:
-                | "PLANNER_NOT_CONFIGURED"
-                | "CANCELLED"
-                | "ACCESS_REVOKED"
-                | "DEADLINE_EXCEEDED"
-                | "EXECUTION_UNCONFIRMED"
-                | "TOOL_FAILED"
-                | "STALE_SOURCE"
-                | "STEP_LIMIT"
-                | "INTERNAL"
-                | null;
-              createdAtMs: number;
-              updatedAtMs: number;
-              deadlineAtMs: number;
-              source: {
-                timelineId: string;
-                stateSha256: string;
-              } | null;
-              runtime: {
+          "application/json":
+            | {
                 /** @enum {string} */
-                driver: "infrastructure-v1";
+                schemaVersion: "1.0.0";
+                run: {
+                  /** @enum {string} */
+                  schemaVersion: "1.0.0";
+                  id: string;
+                  projectId: string;
+                  /** @enum {string} */
+                  state:
+                    | "Pending"
+                    | "Observing"
+                    | "Planning"
+                    | "Executing"
+                    | "Rendering"
+                    | "Evaluating"
+                    | "Completed"
+                    | "Failed"
+                    | "Cancelled";
+                  revision: number;
+                  sequence: number;
+                  checkpoint: number;
+                  generation: number;
+                  /** @enum {string|null} */
+                  stopReason:
+                    | "PLANNER_NOT_CONFIGURED"
+                    | "CANCELLED"
+                    | "ACCESS_REVOKED"
+                    | "DEADLINE_EXCEEDED"
+                    | "EXECUTION_UNCONFIRMED"
+                    | "TOOL_FAILED"
+                    | "STALE_SOURCE"
+                    | "STEP_LIMIT"
+                    | "INTERNAL"
+                    | null;
+                  createdAtMs: number;
+                  updatedAtMs: number;
+                  deadlineAtMs: number;
+                  source: {
+                    timelineId: string;
+                    stateSha256: string;
+                  } | null;
+                  runtime: {
+                    /** @enum {string} */
+                    driver: "infrastructure-v1";
+                    /** @enum {string} */
+                    planner: "not_configured";
+                  };
+                };
+                events: {
+                  /** @enum {string} */
+                  schemaVersion: "1.0.0";
+                  id: string;
+                  runId: string;
+                  sequence: number;
+                  revision: number;
+                  /** @enum {string} */
+                  state:
+                    | "Pending"
+                    | "Observing"
+                    | "Planning"
+                    | "Executing"
+                    | "Rendering"
+                    | "Evaluating"
+                    | "Completed"
+                    | "Failed"
+                    | "Cancelled";
+                  /** @enum {string} */
+                  kind: "admitted" | "transition" | "tool_intent" | "tool_result" | "recovered";
+                  /** @enum {string} */
+                  summary:
+                    | "RUN_ADMITTED"
+                    | "STATE_CHANGED"
+                    | "TOOL_STARTED"
+                    | "TOOL_FINISHED"
+                    | "CHECKPOINT_RESTORED";
+                  atMs: number;
+                  correlationId: string;
+                  requestCorrelationSha256: string;
+                  /** @enum {string|null} */
+                  stopReason:
+                    | "PLANNER_NOT_CONFIGURED"
+                    | "CANCELLED"
+                    | "ACCESS_REVOKED"
+                    | "DEADLINE_EXCEEDED"
+                    | "EXECUTION_UNCONFIRMED"
+                    | "TOOL_FAILED"
+                    | "STALE_SOURCE"
+                    | "STEP_LIMIT"
+                    | "INTERNAL"
+                    | null;
+                  tool: {
+                    /** @enum {string} */
+                    name: "editing.trim-video" | "editing.split-video";
+                    /** @enum {string} */
+                    version: "1.0.0";
+                    inputSha256: string;
+                    outputSha256: string | null;
+                    receiptId: string;
+                    /** @enum {string} */
+                    outcome: "running" | "succeeded" | "failed" | "unconfirmed";
+                    durationMs: number | null;
+                    costMicros: number | null;
+                  } | null;
+                  /** @enum {string|null} */
+                  tokens: null;
+                  /** @enum {string} */
+                  tokenMeasurement: "not_applicable";
+                  /** @enum {string} */
+                  decision: "no_llm";
+                }[];
+                nextCursor: string | null;
+                throughSequence: number;
+                replay: {
+                  /** @enum {string} */
+                  mode: "apply_commands_to_original_snapshot_only";
+                  source: {
+                    timelineId: string;
+                    stateSha256: string;
+                  } | null;
+                  commands: {
+                    stepId: string;
+                    receiptId: string;
+                    basisSha256: string;
+                    resultSha256: string;
+                    commands: (
+                      | {
+                          /** @enum {number} */
+                          schemaVersion: 1;
+                          id: string;
+                          timelineId: string;
+                          /** @enum {string} */
+                          type: "TrimClip";
+                          payload: {
+                            clipId: string;
+                            startUs: string;
+                            endUs: string;
+                          };
+                        }
+                      | {
+                          /** @enum {number} */
+                          schemaVersion: 1;
+                          id: string;
+                          timelineId: string;
+                          /** @enum {string} */
+                          type: "SplitClip";
+                          payload: {
+                            clipId: string;
+                            atUs: string;
+                            rightClipId: string;
+                            rightEffectIds: string[];
+                          };
+                        }
+                    )[];
+                  }[];
+                  /** @enum {string} */
+                  effects: "never_reexecute_tools";
+                };
+              }
+            | {
                 /** @enum {string} */
-                planner: "not_configured";
-              };
-            };
-            events: {
-              /** @enum {string} */
-              schemaVersion: "1.0.0";
-              id: string;
-              runId: string;
-              sequence: number;
-              revision: number;
-              /** @enum {string} */
-              state:
-                | "Pending"
-                | "Observing"
-                | "Planning"
-                | "Executing"
-                | "Rendering"
-                | "Evaluating"
-                | "Completed"
-                | "Failed"
-                | "Cancelled";
-              /** @enum {string} */
-              kind: "admitted" | "transition" | "tool_intent" | "tool_result" | "recovered";
-              /** @enum {string} */
-              summary:
-                | "RUN_ADMITTED"
-                | "STATE_CHANGED"
-                | "TOOL_STARTED"
-                | "TOOL_FINISHED"
-                | "CHECKPOINT_RESTORED";
-              atMs: number;
-              correlationId: string;
-              requestCorrelationSha256: string;
-              /** @enum {string|null} */
-              stopReason:
-                | "PLANNER_NOT_CONFIGURED"
-                | "CANCELLED"
-                | "ACCESS_REVOKED"
-                | "DEADLINE_EXCEEDED"
-                | "EXECUTION_UNCONFIRMED"
-                | "TOOL_FAILED"
-                | "STALE_SOURCE"
-                | "STEP_LIMIT"
-                | "INTERNAL"
-                | null;
-              tool: {
-                /** @enum {string} */
-                name: "editing.trim-video" | "editing.split-video";
-                /** @enum {string} */
-                version: "1.0.0";
-                inputSha256: string;
-                outputSha256: string | null;
-                receiptId: string;
-                /** @enum {string} */
-                outcome: "running" | "succeeded" | "failed" | "unconfirmed";
-                durationMs: number | null;
-                costMicros: number | null;
-              } | null;
-              /** @enum {string|null} */
-              tokens: null;
-              /** @enum {string} */
-              tokenMeasurement: "not_applicable";
-              /** @enum {string} */
-              decision: "no_llm";
-            }[];
-            nextCursor: string | null;
-            throughSequence: number;
-            replay: {
-              /** @enum {string} */
-              mode: "apply_commands_to_original_snapshot_only";
-              source: {
-                timelineId: string;
-                stateSha256: string;
-              } | null;
-              commands: {
-                stepId: string;
-                receiptId: string;
-                basisSha256: string;
-                resultSha256: string;
-                commands: (
+                schemaVersion: "1.1.0";
+                run: {
+                  /** @enum {string} */
+                  schemaVersion: "1.1.0";
+                  id: string;
+                  projectId: string;
+                  /** @enum {string} */
+                  state:
+                    | "Pending"
+                    | "Observing"
+                    | "Planning"
+                    | "Executing"
+                    | "Rendering"
+                    | "Evaluating"
+                    | "Completed"
+                    | "Failed"
+                    | "Cancelled";
+                  revision: number;
+                  sequence: number;
+                  checkpoint: number;
+                  generation: number;
+                  /** @enum {string|null} */
+                  stopReason:
+                    | "PLANNER_NOT_CONFIGURED"
+                    | "CANCELLED"
+                    | "ACCESS_REVOKED"
+                    | "DEADLINE_EXCEEDED"
+                    | "EXECUTION_UNCONFIRMED"
+                    | "TOOL_FAILED"
+                    | "STALE_SOURCE"
+                    | "STEP_LIMIT"
+                    | "INTERNAL"
+                    | null;
+                  createdAtMs: number;
+                  updatedAtMs: number;
+                  deadlineAtMs: number;
+                  source: {
+                    timelineId: string;
+                    stateSha256: string;
+                  } | null;
+                  runtime: {
+                    /** @enum {string} */
+                    driver: "controlled-loop-v1";
+                    /** @enum {string} */
+                    planner: "replay_only";
+                  };
+                  planning: {
+                    /** @enum {string} */
+                    schemaVersion: "1.0.0";
+                    /** @enum {string|null} */
+                    stopReason:
+                      | "PROVIDER_INVALID_RESPONSE"
+                      | "PROVIDER_UNAVAILABLE"
+                      | "PROVIDER_OUTCOME_UNCONFIRMED"
+                      | "PROVIDER_REFUSED"
+                      | "PLAN_INVALID"
+                      | "CAPABILITY_UNAVAILABLE"
+                      | "ITERATION_BUDGET"
+                      | "TOOL_BUDGET"
+                      | "TOKEN_BUDGET"
+                      | "COST_BUDGET"
+                      | "RENDER_FAILED"
+                      | "RENDER_UNCONFIRMED"
+                      | "OUTPUT_INVALID"
+                      | "ANALYSIS_UNAVAILABLE"
+                      | null;
+                    renderJobId: string | null;
+                    toolAttempts: number;
+                  };
+                };
+                events: (
                   | {
-                      /** @enum {number} */
-                      schemaVersion: 1;
-                      id: string;
-                      timelineId: string;
                       /** @enum {string} */
-                      type: "TrimClip";
-                      payload: {
-                        clipId: string;
-                        startUs: string;
-                        endUs: string;
-                      };
+                      schemaVersion: "1.0.0";
+                      id: string;
+                      runId: string;
+                      sequence: number;
+                      revision: number;
+                      /** @enum {string} */
+                      state:
+                        | "Pending"
+                        | "Observing"
+                        | "Planning"
+                        | "Executing"
+                        | "Rendering"
+                        | "Evaluating"
+                        | "Completed"
+                        | "Failed"
+                        | "Cancelled";
+                      /** @enum {string} */
+                      kind: "admitted" | "transition" | "tool_intent" | "tool_result" | "recovered";
+                      /** @enum {string} */
+                      summary:
+                        | "RUN_ADMITTED"
+                        | "STATE_CHANGED"
+                        | "TOOL_STARTED"
+                        | "TOOL_FINISHED"
+                        | "CHECKPOINT_RESTORED";
+                      atMs: number;
+                      correlationId: string;
+                      requestCorrelationSha256: string;
+                      /** @enum {string|null} */
+                      stopReason:
+                        | "PLANNER_NOT_CONFIGURED"
+                        | "CANCELLED"
+                        | "ACCESS_REVOKED"
+                        | "DEADLINE_EXCEEDED"
+                        | "EXECUTION_UNCONFIRMED"
+                        | "TOOL_FAILED"
+                        | "STALE_SOURCE"
+                        | "STEP_LIMIT"
+                        | "INTERNAL"
+                        | null;
+                      tool: {
+                        /** @enum {string} */
+                        name: "editing.trim-video" | "editing.split-video";
+                        /** @enum {string} */
+                        version: "1.0.0";
+                        inputSha256: string;
+                        outputSha256: string | null;
+                        receiptId: string;
+                        /** @enum {string} */
+                        outcome: "running" | "succeeded" | "failed" | "unconfirmed";
+                        durationMs: number | null;
+                        costMicros: number | null;
+                      } | null;
+                      /** @enum {string|null} */
+                      tokens: null;
+                      /** @enum {string} */
+                      tokenMeasurement: "not_applicable";
+                      /** @enum {string} */
+                      decision: "no_llm";
                     }
                   | {
-                      /** @enum {number} */
-                      schemaVersion: 1;
-                      id: string;
-                      timelineId: string;
                       /** @enum {string} */
-                      type: "SplitClip";
-                      payload: {
-                        clipId: string;
-                        atUs: string;
-                        rightClipId: string;
-                        rightEffectIds: string[];
-                      };
+                      schemaVersion: "1.1.0";
+                      id: string;
+                      runId: string;
+                      sequence: number;
+                      revision: number;
+                      /** @enum {string} */
+                      state:
+                        | "Pending"
+                        | "Observing"
+                        | "Planning"
+                        | "Executing"
+                        | "Rendering"
+                        | "Evaluating"
+                        | "Completed"
+                        | "Failed"
+                        | "Cancelled";
+                      /** @enum {string} */
+                      kind:
+                        | "admitted"
+                        | "transition"
+                        | "tool_intent"
+                        | "tool_result"
+                        | "recovered"
+                        | "model_intent"
+                        | "model_result"
+                        | "planning_feedback"
+                        | "plan_committed"
+                        | "render_intent"
+                        | "render_result";
+                      /** @enum {string} */
+                      summary:
+                        | "RUN_ADMITTED"
+                        | "STATE_CHANGED"
+                        | "TOOL_STARTED"
+                        | "TOOL_FINISHED"
+                        | "CHECKPOINT_RESTORED"
+                        | "MODEL_STARTED"
+                        | "MODEL_FINISHED"
+                        | "PLAN_REJECTED"
+                        | "PLAN_COMMITTED"
+                        | "RENDER_STARTED"
+                        | "RENDER_FINISHED";
+                      atMs: number;
+                      correlationId: string;
+                      requestCorrelationSha256: string;
+                      /** @enum {string|null} */
+                      stopReason:
+                        | "PLANNER_NOT_CONFIGURED"
+                        | "CANCELLED"
+                        | "ACCESS_REVOKED"
+                        | "DEADLINE_EXCEEDED"
+                        | "EXECUTION_UNCONFIRMED"
+                        | "TOOL_FAILED"
+                        | "STALE_SOURCE"
+                        | "STEP_LIMIT"
+                        | "INTERNAL"
+                        | null;
+                      tool: {
+                        /** @enum {string} */
+                        name: "editing.trim-video" | "editing.split-video";
+                        /** @enum {string} */
+                        version: "1.0.0";
+                        inputSha256: string;
+                        outputSha256: string | null;
+                        receiptId: string;
+                        /** @enum {string} */
+                        outcome: "running" | "succeeded" | "failed" | "unconfirmed";
+                        durationMs: number | null;
+                        costMicros: number | null;
+                      } | null;
+                      tokens: {
+                        input: number | null;
+                        output: number | null;
+                      } | null;
+                      /** @enum {string} */
+                      tokenMeasurement:
+                        | "not_applicable"
+                        | "provider_reported"
+                        | "offline_http_fixture"
+                        | "synthetic_replay"
+                        | "unavailable";
+                      /** @enum {string} */
+                      decision: "runtime" | "model" | "tool_execution";
+                      model: {
+                        callId: string;
+                        ordinal: number;
+                        requestSha256: string;
+                        contextSha256: string;
+                        promptId: string;
+                        promptVersion: string;
+                        templateHash: string;
+                        /** @enum {string} */
+                        outcome: "running" | "succeeded" | "failed" | "unconfirmed";
+                        reservation: {
+                          tokens: number;
+                          costMicros: number;
+                        };
+                        receipt: {
+                          /** @enum {string} */
+                          schemaVersion: "1.0.0";
+                          /** @enum {string} */
+                          provider: "openai-compatible" | "anthropic" | "replay";
+                          modelId: string;
+                          modelVersion: string;
+                          profileSha256: string;
+                          requestSha256: string;
+                          requestIdSha256: string | null;
+                          /** @enum {string} */
+                          mode: "chat" | "tools" | "structured" | "vision";
+                          /** @enum {string} */
+                          evidence:
+                            | "operator_declared_unqualified"
+                            | "offline_http_fixture"
+                            | "synthetic_replay";
+                          usage: {
+                            /** @enum {string} */
+                            source:
+                              | "provider_reported"
+                              | "offline_http_fixture"
+                              | "synthetic_replay"
+                              | "unavailable";
+                            inputTokens: number | null;
+                            outputTokens: number | null;
+                            /** @enum {string|null} */
+                            actualCostMicros: null;
+                            /** @enum {string} */
+                            tokenAccounting:
+                              | "provider_reported_total"
+                              | "native_input_and_cache_sum"
+                              | "synthetic_replay"
+                              | "unavailable";
+                          };
+                          estimatedInputTokens: number;
+                          estimatedCostMicros: number | null;
+                          pricingVersion: string | null;
+                          attempts: number;
+                          durationMs: number;
+                          deadlineAtMs: number;
+                        } | null;
+                        /** @enum {string|null} */
+                        failure:
+                          | "invalid_response"
+                          | "refused"
+                          | "truncated"
+                          | "cancelled"
+                          | "timeout"
+                          | "rate_limited"
+                          | "unavailable"
+                          | "authentication"
+                          | "transport_unknown"
+                          | "budget_exceeded"
+                          | "invalid_request"
+                          | "unsupported_mode"
+                          | "endpoint_denied"
+                          | null;
+                      } | null;
                     }
                 )[];
-              }[];
-              /** @enum {string} */
-              effects: "never_reexecute_tools";
-            };
-          };
+                nextCursor: string | null;
+                throughSequence: number;
+                replay: {
+                  /** @enum {string} */
+                  mode: "apply_commands_to_original_snapshot_only";
+                  source: {
+                    timelineId: string;
+                    stateSha256: string;
+                  } | null;
+                  commands: {
+                    stepId: string;
+                    receiptId: string;
+                    basisSha256: string;
+                    resultSha256: string;
+                    commands: (
+                      | {
+                          /** @enum {number} */
+                          schemaVersion: 1;
+                          id: string;
+                          timelineId: string;
+                          /** @enum {string} */
+                          type: "TrimClip";
+                          payload: {
+                            clipId: string;
+                            startUs: string;
+                            endUs: string;
+                          };
+                        }
+                      | {
+                          /** @enum {number} */
+                          schemaVersion: 1;
+                          id: string;
+                          timelineId: string;
+                          /** @enum {string} */
+                          type: "SplitClip";
+                          payload: {
+                            clipId: string;
+                            atUs: string;
+                            rightClipId: string;
+                            rightEffectIds: string[];
+                          };
+                        }
+                    )[];
+                  }[];
+                  /** @enum {string} */
+                  effects: "never_reexecute_tools";
+                };
+              };
         };
       };
     };
@@ -2120,6 +2989,26 @@ export interface operations {
     };
   };
   TimelineExportsController_download: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        projectId: string;
+        jobId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  TimelineExportsController_validation: {
     parameters: {
       query?: never;
       header?: never;

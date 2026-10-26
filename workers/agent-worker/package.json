@@ -11,6 +11,8 @@
     "start": "node dist/index.js"
   },
   "dependencies": {
+    "@editagent/domain": "workspace:*",
+    "@editagent/schemas": "workspace:*",
     "@editagent/shared": "workspace:*",
     "@editagent/tool-sdk": "workspace:*",
     "@editagent/agent-core": "workspace:*",

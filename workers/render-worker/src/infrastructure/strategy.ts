@@ -16,6 +16,8 @@ import { validateOutput } from "./probe-output.js";
 import { compositionTiming } from "../application/timeline-mapping.js";
 import { renderEngine } from "../application/strategy-selection.js";
 import { expectedTimelineAudio } from "./audio-contract.js";
+import { contentHash } from "@editagent/tool-sdk";
+import { RenderValidationV1Schema } from "@editagent/schemas";
 class StoredRenderStrategy implements IRenderStrategy {
   constructor(
     private objects: RenderObjects,
@@ -57,12 +59,24 @@ class StoredRenderStrategy implements IRenderStrategy {
       const output = path.join(stage.work, "output.mp4");
       if (existing) {
         await this.objects.stage(key, output, existing, signal);
-        await validateOutput(output, input, signal, audioPresent);
+        const measured = await validateOutput(output, input, signal, audioPresent);
         return {
           objectKey: key,
           ...existing,
           renderVersion: input.renderVersion,
           inputSha256: signature,
+          ...(input.compositionId === "TimelineV1"
+            ? {
+                validation: renderProof(
+                  measured,
+                  input,
+                  jobId,
+                  existing.sha256,
+                  signature,
+                  audioPresent,
+                ),
+              }
+            : {}),
         };
       }
       const staged = new Set<string>();
@@ -104,7 +118,7 @@ class StoredRenderStrategy implements IRenderStrategy {
         resolved.map(({ objectKey: _key, audioPresent: _audio, ...asset }) => asset),
         engine,
       );
-      await validateOutput(output, input, signal, audioPresent);
+      const measured = await validateOutput(output, input, signal, audioPresent);
       const saved = await this.objects.put(key, signature, output, signal);
       signal.throwIfAborted();
       return {
@@ -112,6 +126,18 @@ class StoredRenderStrategy implements IRenderStrategy {
         ...saved,
         renderVersion: input.renderVersion,
         inputSha256: signature,
+        ...(input.compositionId === "TimelineV1"
+          ? {
+              validation: renderProof(
+                measured,
+                input,
+                jobId,
+                saved.sha256,
+                signature,
+                audioPresent,
+              ),
+            }
+          : {}),
       };
     } finally {
       if (signal.aborted)
@@ -123,6 +149,32 @@ class StoredRenderStrategy implements IRenderStrategy {
       else await stage.close();
     }
   }
+}
+function renderProof(
+  measured: Awaited<ReturnType<typeof validateOutput>>,
+  input: Extract<RenderInput, { compositionId: "TimelineV1" }>,
+  jobId: string,
+  sha: string,
+  signature: string,
+  audioPresent: boolean,
+) {
+  return RenderValidationV1Schema.parse({
+    schemaVersion: "1.0.0",
+    jobId,
+    artifactSha256: sha,
+    inputSha256: signature,
+    timelineSha256: contentHash(input.props.timeline),
+    renderVersion: input.renderVersion,
+    durationUs: measured.videoDurationUs,
+    videoFrames: measured.decodedFrames,
+    audioPresent,
+    videoCodec: "h264",
+    audioCodec: audioPresent ? "aac" : null,
+    width: measured.width,
+    height: measured.height,
+    frameRate: measured.frameRate,
+    validation: "render_worker_ffprobe_v1",
+  });
 }
 export class RemotionRenderStrategy extends StoredRenderStrategy {}
 export class FFmpegRenderStrategy extends StoredRenderStrategy {

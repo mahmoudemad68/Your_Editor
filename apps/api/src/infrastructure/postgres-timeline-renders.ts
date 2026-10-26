@@ -15,6 +15,7 @@ import {
 } from "../application/timeline-exports.js";
 import { TimelineConflict } from "../application/timeline-editor.js";
 import { ProjectNotFoundError } from "../application/project-access.js";
+import { RenderValidationV1Schema } from "@editagent/schemas";
 
 /** Fixed producer for existing render.remotion/SelectingRenderStrategy; no paths or filters from HTTP. */
 export class PostgresTimelineRenders implements TimelineRenderJobs {
@@ -106,6 +107,13 @@ export class PostgresTimelineRenders implements TimelineRenderJobs {
       !/^[a-f0-9]{64}$/.test(version)
     )
       return null;
+    const validation = (
+      await this.pool.query<{ proof: unknown }>(
+        "SELECT proof FROM render_output_validations WHERE job_id=$1 AND project_id=$2",
+        [row.id, project],
+      )
+    ).rows[0]?.proof;
+    const parsed = RenderValidationV1Schema.safeParse(validation);
     return {
       job: {
         jobId: row.id,
@@ -114,6 +122,7 @@ export class PostgresTimelineRenders implements TimelineRenderJobs {
         updatedAt: String(row.updatedAt),
       },
       outputKey: row.status === "Completed" ? `renders/${version}/${project}/${row.id}.mp4` : null,
+      ...(parsed.success ? { validation: parsed.data } : {}),
     };
   }
 

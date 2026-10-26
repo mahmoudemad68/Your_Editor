@@ -14,6 +14,11 @@ export class RenderJobSupervisor implements JobSupervisor {
     private strategy: IRenderStrategy,
     private onProgress: (id: string, percentage: number, attempt: number) => Promise<void>,
     private shutdown?: AbortSignal,
+    private readonly validated?: (
+      envelope: JobEnvelope,
+      input: ReturnType<typeof parseRenderInput>,
+      artifact: RenderArtifact,
+    ) => Promise<void>,
   ) {}
   async run(envelope: JobEnvelope, _handler: IsolatedHandler, signal: AbortSignal): Promise<void> {
     if (envelope.jobType !== "render.remotion" || envelope.subject.kind !== "project")
@@ -57,6 +62,8 @@ export class RenderJobSupervisor implements JobSupervisor {
         },
       );
       await chain;
+      abort.signal.throwIfAborted();
+      await this.validated?.(envelope, input, artifact);
       abort.signal.throwIfAborted();
       await this.onProgress(envelope.jobId, 100, envelope.attempt);
       abort.signal.throwIfAborted();

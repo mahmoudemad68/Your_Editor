@@ -21,11 +21,22 @@ import {
   type AgentRunView,
   type AgentExport,
   type AuditPage,
+  runControlledAgentLoop,
+  consumeControlledAgentRuns,
+  type AgentRenderPort,
+  type AgentRenderProof,
+  type LanguageModel,
 } from "@editagent/agent-core";
+import { AgentRunSchema, AgentExportSchema, type LoopConfigurationV1 } from "@editagent/schemas";
+import {
+  qualificationModel,
+  qualificationCapabilities,
+} from "./fixtures/agent-loop-provider.test.js";
 import { Timeline, userId, applyCommand, type TimelineSnapshot } from "@editagent/domain";
 import {
   contentHash,
   ToolExecutor,
+  ToolError,
   ToolRegistry,
   registerEditingTools,
   PostgresToolAuthority,
@@ -227,6 +238,612 @@ test(
           headers: await headers(actor),
           body: JSON.stringify(body),
         });
+      await t.test(
+        "US301/305 controlled loop: real PG/BullMQ/SDK and versioned audit (render boundary explicitly stubbed)",
+        async () => {
+          const savedNode = process.env.NODE_ENV,
+            savedGate = process.env.EDITAGENT_REPLAY_QUALIFICATION;
+          process.env.NODE_ENV = "test";
+          process.env.EDITAGENT_REPLAY_QUALIFICATION = "isolated-v1";
+          const configuration: LoopConfigurationV1 = {
+            schemaVersion: "1.0.0",
+            creator: {
+              request: "Trim and split the existing source.",
+              preferences: "",
+              creativity: "conservative",
+            },
+            requiredCapabilities: ["trim", "split", "render"],
+            analysisRequirement: "none",
+            limits: {
+              maxIterations: 8,
+              maxTools: 8,
+              reservedTokens: 500000,
+              reservedCostMicros: 10000,
+              maxOutputTokens: 2048,
+            },
+          };
+          const compose = async (
+            f: Awaited<ReturnType<typeof fixture>>,
+            model = qualificationModel(f.snapshot),
+          ) => {
+            const authority = new PostgresToolAuthority(pool, async (project, id) =>
+              Timeline.restore(
+                (
+                  await pool.query(
+                    "SELECT snapshot FROM editing_timelines WHERE id=$1 AND project_id=$2",
+                    [id, project],
+                  )
+                ).rows[0]!.snapshot,
+              ),
+            );
+            const registry = registerEditingTools(new ToolRegistry(), authority),
+              source = new PostgresAgentContextSource(pool, registry, {
+                pins: [
+                  { name: "editing.trim-video", version: "1.0.0" },
+                  { name: "editing.split-video", version: "1.0.0" },
+                ],
+                creativity: ["conservative"],
+              });
+            let proof: AgentRenderProof | null = null;
+            const renderId = newAgentId();
+            let starts = 0;
+            const render: AgentRenderPort = {
+              async start(input) {
+                starts++;
+                const s = input.timeline.toSnapshot();
+                proof = {
+                  schemaVersion: "1.0.0",
+                  jobId: renderId,
+                  artifactSha256: "a".repeat(64),
+                  inputSha256: "b".repeat(64),
+                  timelineSha256: contentHash(s),
+                  renderVersion: "c".repeat(64),
+                  durationUs: s.composition.durationUs,
+                  videoFrames: 50,
+                  audioPresent: true,
+                  videoCodec: "h264",
+                  audioCodec: "aac",
+                  width: 320,
+                  height: 180,
+                  frameRate: { numerator: "25", denominator: "1" },
+                  validation: "render_worker_ffprobe_v1",
+                };
+                return { jobId: renderId };
+              },
+              async reconcile() {
+                return null;
+              },
+              async inspect() {
+                assert(proof);
+                return { status: "completed", proof };
+              },
+              async cancel() {},
+            };
+            return {
+              runs,
+              source,
+              registry,
+              authority,
+              executor: new ToolExecutor(
+                registry,
+                authority,
+                new PostgresToolAuditRepository(pool, 1_000_000),
+              ),
+              model,
+              render,
+              starts: () => starts,
+            };
+          };
+          const enable = async (
+            f: Awaited<ReturnType<typeof fixture>>,
+            model: LanguageModel,
+            config = configuration,
+          ) => {
+            const run = await f.start();
+            await runs.enableControlledReplay(
+              owner,
+              f.project,
+              run.id,
+              config,
+              contentHash(model.capabilities),
+            );
+            return run;
+          };
+          try {
+            await t.test(
+              "queue completion, duplicate delivery, two durable edits, old admission and v1.1 receipts",
+              async () => {
+                const f = await fixture(),
+                  deps = await compose(f),
+                  run = await enable(f, deps.model),
+                  stop = new AbortController();
+                let errors = 0;
+                const consuming = consumeControlledAgentRuns(
+                  runs,
+                  queue,
+                  stop.signal,
+                  () => {
+                    errors++;
+                  },
+                  async (_runs, id, signal) => {
+                    if (id === run.id) await runControlledAgentLoop(deps, id, signal);
+                    else await runInfrastructure(runs, id, signal);
+                  },
+                );
+                try {
+                  await Promise.all([
+                    publishAgentRun(runs, queue, run.id),
+                    publishAgentRun(runs, queue, run.id),
+                  ]);
+                  await until(
+                    async () =>
+                      ["Completed", "Failed"].includes(
+                        (await runs.get(owner, f.project, run.id)).state,
+                      ),
+                    15000,
+                  );
+                } finally {
+                  stop.abort();
+                  await consuming;
+                }
+                const result = await runs.get(owner, f.project, run.id);
+                assert.equal(result.state, "Completed");
+                assert.equal(result.checkpoint, 2);
+                assert.equal(deps.starts(), 1);
+                assert.equal(errors, 0);
+                assert.equal(
+                  (
+                    await pool.query("SELECT id FROM tool_executions WHERE project_id=$1", [
+                      f.project,
+                    ])
+                  ).rowCount,
+                  2,
+                );
+                const response = await fetch(`${root}/${f.project}/agent-runs/${run.id}`, {
+                  headers: await headers(),
+                });
+                assert.equal(response.status, 200);
+                assert(AgentRunSchema.safeParse(await response.json()).success);
+                const pages: AgentExport[] = [];
+                let cursor: string | undefined;
+                do {
+                  const page = await runs.export(owner, f.project, run.id, cursor, 3);
+                  assert(AgentExportSchema.safeParse(page).success);
+                  pages.push(page);
+                  cursor = page.nextCursor ?? undefined;
+                } while (cursor);
+                const all = pages.flatMap((p) => p.events);
+                assert.equal(all[0]!.schemaVersion, "1.0.0");
+                assert.equal(all[0]!.decision, "no_llm");
+                const modelResults = all.filter((e) => e.kind === "model_result");
+                assert.equal(modelResults.length, 3);
+                for (const event of modelResults) {
+                  assert.equal(event.schemaVersion, "1.1.0");
+                  assert.equal(event.decision, "model");
+                  assert.equal(event.tokenMeasurement, "synthetic_replay");
+                  assert.equal(event.model?.receipt?.usage.actualCostMicros, null);
+                }
+                assert(!JSON.stringify(pages).includes(configuration.creator.request));
+                const restored = replayAgentCommands(f.snapshot, pages),
+                  actual = (
+                    await pool.query("SELECT state_sha256 FROM editing_timelines WHERE id=$1", [
+                      f.id,
+                    ])
+                  ).rows[0]!.state_sha256;
+                assert.equal(contentHash(restored.toSnapshot()), actual);
+                assert.equal(
+                  (
+                    await post(`/${f.project}/agent-runs`, {
+                      idempotencyKey: newAgentId(),
+                      provider: "replay",
+                      plan: {},
+                    })
+                  ).status,
+                  400,
+                );
+              },
+            );
+            for (const scenario of ["bad-plan-once", "bad-tool-once"] as const)
+              await t.test(
+                `bounded ${scenario} feedback repairs before any extra effect`,
+                async () => {
+                  const f = await fixture(),
+                    deps = await compose(f, qualificationModel(f.snapshot, scenario)),
+                    run = await enable(f, deps.model);
+                  await runControlledAgentLoop(deps, run.id, new AbortController().signal);
+                  assert.equal((await runs.get(owner, f.project, run.id)).state, "Completed");
+                  assert.equal(
+                    (
+                      await pool.query("SELECT id FROM tool_executions WHERE project_id=$1", [
+                        f.project,
+                      ])
+                    ).rowCount,
+                    2,
+                  );
+                  const events = await runs.audit(owner, f.project, run.id, undefined, 100);
+                  assert.equal(
+                    events.events.filter((e) => e.kind === "planning_feedback").length,
+                    1,
+                  );
+                },
+              );
+            await t.test(
+              "confirmed clean ToolExecutor failure feeds bounded feedback and uses a new receipt without repeating a committed edit",
+              async () => {
+                const f = await fixture(),
+                  deps = await compose(f);
+                let first = true;
+                const registry = new ToolRegistry();
+                for (const name of ["editing.trim-video", "editing.split-video"]) {
+                  const original = deps.registry.lookup(name, "1.0.0");
+                  if (name !== "editing.trim-video") {
+                    registry.register(original.manifest, original.binding);
+                    continue;
+                  }
+                  assert.equal(original.binding.mode, "in-process");
+                  const binding = original.binding;
+                  if (binding.mode !== "in-process") throw new Error("fixture_binding_invalid");
+                  registry.register(original.manifest, {
+                    mode: "in-process",
+                    tool: {
+                      start(input, context) {
+                        if (!first) return binding.tool.start(input, context);
+                        first = false;
+                        const failed = Promise.reject(new ToolError("invalid_input"));
+                        return {
+                          result: failed,
+                          async cancel() {
+                            await failed.catch(() => undefined);
+                          },
+                          async forceStop() {
+                            await failed.catch(() => undefined);
+                          },
+                        };
+                      },
+                    },
+                  });
+                }
+                const source = new PostgresAgentContextSource(pool, registry, {
+                  pins: [
+                    { name: "editing.trim-video", version: "1.0.0" },
+                    { name: "editing.split-video", version: "1.0.0" },
+                  ],
+                  creativity: ["conservative"],
+                });
+                const configured = {
+                  ...deps,
+                  registry,
+                  source,
+                  executor: new ToolExecutor(
+                    registry,
+                    deps.authority,
+                    new PostgresToolAuditRepository(pool, 1_000_000),
+                  ),
+                };
+                const run = await enable(f, deps.model);
+                await runControlledAgentLoop(configured, run.id, new AbortController().signal);
+                const result = await runs.get(owner, f.project, run.id);
+                assert.equal(result.state, "Completed");
+                assert.equal(result.checkpoint, 2);
+                assert.equal(result.planning?.toolAttempts, 3);
+                const rows = (
+                  await pool.query<{ outcome: string }>(
+                    "SELECT outcome FROM agent_steps WHERE run_id=$1 ORDER BY ordinal",
+                    [run.id],
+                  )
+                ).rows;
+                assert.deepEqual(
+                  rows.map((r) => r.outcome),
+                  ["failed", "succeeded", "succeeded"],
+                );
+                assert.equal(
+                  (
+                    await pool.query("SELECT id FROM tool_executions WHERE project_id=$1", [
+                      f.project,
+                    ])
+                  ).rowCount,
+                  3,
+                );
+                const exported = await runs.export(owner, f.project, run.id, undefined, 100);
+                assert.equal(exported.replay.commands.length, 2);
+                assert.equal(
+                  contentHash(replayAgentCommands(f.snapshot, [exported]).toSnapshot()),
+                  (
+                    await pool.query("SELECT state_sha256 FROM editing_timelines WHERE id=$1", [
+                      f.id,
+                    ])
+                  ).rows[0]!.state_sha256,
+                );
+              },
+            );
+            for (const [scenario, reason] of [
+              ["invalid-always", "ITERATION_BUDGET"],
+              ["unavailable", "PROVIDER_UNAVAILABLE"],
+              ["unknown", "PROVIDER_OUTCOME_UNCONFIRMED"],
+              ["refused", "PROVIDER_REFUSED"],
+            ] as const)
+              await t.test(`typed ${scenario} stop without tool effects`, async () => {
+                const f = await fixture(),
+                  deps = await compose(f, qualificationModel(f.snapshot, scenario)),
+                  run = await enable(f, deps.model, {
+                    ...configuration,
+                    limits: { ...configuration.limits, maxIterations: 2 },
+                  });
+                await runControlledAgentLoop(deps, run.id, new AbortController().signal);
+                const result = await runs.get(owner, f.project, run.id);
+                assert.equal(result.state, "Failed");
+                assert.equal(result.planning?.stopReason, reason);
+                assert.equal(
+                  (
+                    await pool.query("SELECT id FROM tool_executions WHERE project_id=$1", [
+                      f.project,
+                    ])
+                  ).rowCount,
+                  0,
+                );
+              });
+            for (const [change, reason] of [
+              [{ requiredCapabilities: ["remove_silences"] }, "CAPABILITY_UNAVAILABLE"],
+              [{ requiredCapabilities: ["captions"] }, "CAPABILITY_UNAVAILABLE"],
+              [{ analysisRequirement: "transcript" }, "ANALYSIS_UNAVAILABLE"],
+              [{ limits: { ...configuration.limits, reservedTokens: 1024 } }, "TOKEN_BUDGET"],
+              [{ limits: { ...configuration.limits, maxTools: 1 } }, "TOOL_BUDGET"],
+            ] as const)
+              await t.test(`bounded prerequisite/budget refusal ${reason}`, async () => {
+                const f = await fixture(),
+                  deps = await compose(f),
+                  config = { ...configuration, ...change } as LoopConfigurationV1,
+                  run = await enable(f, deps.model, config);
+                await runControlledAgentLoop(deps, run.id, new AbortController().signal);
+                const result = await runs.get(owner, f.project, run.id);
+                assert.equal(result.state, "Failed");
+                assert.equal(result.planning?.stopReason, reason);
+                assert.equal(
+                  (
+                    await pool.query("SELECT id FROM tool_executions WHERE project_id=$1", [
+                      f.project,
+                    ])
+                  ).rowCount,
+                  0,
+                );
+              });
+            await t.test("cost reservations reject before provider use", async () => {
+              const f = await fixture(),
+                capabilities = {
+                  ...qualificationCapabilities,
+                  pricing: {
+                    version: "synthetic-cost-v1",
+                    provenance: "synthetic_fixture" as const,
+                    inputMicrosPerMillionTokens: 1000000,
+                    outputMicrosPerMillionTokens: 1000000,
+                  },
+                },
+                deps = await compose(
+                  f,
+                  qualificationModel(f.snapshot, "success", undefined, capabilities),
+                ),
+                run = await enable(f, deps.model, {
+                  ...configuration,
+                  limits: { ...configuration.limits, reservedCostMicros: 0 },
+                });
+              await runControlledAgentLoop(deps, run.id, new AbortController().signal);
+              assert.equal(
+                (await runs.get(owner, f.project, run.id)).planning?.stopReason,
+                "COST_BUDGET",
+              );
+              assert.equal(
+                (await pool.query("SELECT id FROM agent_model_calls WHERE run_id=$1", [run.id]))
+                  .rowCount,
+                0,
+              );
+            });
+            await t.test(
+              "cancellation during inference settles unknown usage and prevents tool admission",
+              async () => {
+                const f = await fixture();
+                let called = false;
+                const deps = await compose(
+                    f,
+                    qualificationModel(f.snapshot, "blocked", () => {
+                      called = true;
+                    }),
+                  ),
+                  run = await enable(f, deps.model);
+                const executing = runControlledAgentLoop(
+                  deps,
+                  run.id,
+                  new AbortController().signal,
+                ).catch(() => undefined);
+                await until(async () => called);
+                await runs.cancel(owner, f.project, run.id);
+                await executing;
+                const result = await runs.get(owner, f.project, run.id);
+                assert.equal(result.state, "Cancelled");
+                assert.equal(
+                  (
+                    await pool.query(
+                      "SELECT id FROM agent_model_calls WHERE run_id=$1 AND outcome='unconfirmed'",
+                      [run.id],
+                    )
+                  ).rowCount,
+                  1,
+                );
+                assert.equal(
+                  (
+                    await pool.query("SELECT id FROM tool_executions WHERE project_id=$1", [
+                      f.project,
+                    ])
+                  ).rowCount,
+                  0,
+                );
+              },
+            );
+            await t.test(
+              "membership revocation during inference fails closed and never publishes an edit",
+              async () => {
+                const f = await fixture();
+                let called = false;
+                const deps = await compose(
+                    f,
+                    qualificationModel(f.snapshot, "blocked", () => {
+                      called = true;
+                    }),
+                  ),
+                  run = await enable(f, deps.model);
+                const executing = runControlledAgentLoop(
+                  deps,
+                  run.id,
+                  new AbortController().signal,
+                ).catch(() => undefined);
+                await until(async () => called);
+                await pool.query(
+                  "DELETE FROM project_memberships WHERE project_id=$1 AND user_id=$2",
+                  [f.project, owner],
+                );
+                await executing;
+                await until(async () => {
+                  await runs.claim(run.id);
+                  return (
+                    (await pool.query("SELECT state FROM agent_runs WHERE id=$1", [run.id])).rows[0]
+                      ?.state === "Failed"
+                  );
+                }, 8000);
+                assert.equal(
+                  (await pool.query("SELECT stop_reason FROM agent_runs WHERE id=$1", [run.id]))
+                    .rows[0]!.stop_reason,
+                  "ACCESS_REVOKED",
+                );
+                assert.equal(
+                  (
+                    await pool.query("SELECT id FROM tool_executions WHERE project_id=$1", [
+                      f.project,
+                    ])
+                  ).rowCount,
+                  0,
+                );
+                assert.equal(
+                  (
+                    await fetch(`${root}/${f.project}/agent-runs/${run.id}/audit`, {
+                      headers: await headers(),
+                    })
+                  ).status,
+                  404,
+                );
+              },
+            );
+            await t.test("expired deadline does not call provider", async () => {
+              const f = await fixture(),
+                deps = await compose(f),
+                run = await enable(f, deps.model);
+              await pool.query("UPDATE agent_runs SET deadline_at_ms=created_at_ms WHERE id=$1", [
+                run.id,
+              ]);
+              await runControlledAgentLoop(deps, run.id, new AbortController().signal);
+              assert.equal(
+                (await runs.get(owner, f.project, run.id)).stopReason,
+                "DEADLINE_EXCEEDED",
+              );
+              assert.equal(
+                (await pool.query("SELECT id FROM agent_model_calls WHERE run_id=$1", [run.id]))
+                  .rowCount,
+                0,
+              );
+            });
+            for (const phase of ["checkpoint", "unconfirmed"] as const)
+              await t.test(
+                `actual controlled-loop SIGKILL at ${phase} preserves completed effects`,
+                async () => {
+                  const f = await fixture(),
+                    deps = await compose(f),
+                    run = await enable(f, deps.model),
+                    lock = phase === "checkpoint" ? 887701 : 887702;
+                  const client = await pool.connect();
+                  let proc: ChildProcess | undefined;
+                  try {
+                    await client.query("SELECT pg_advisory_lock($1::bigint)", [lock]);
+                    if (phase === "checkpoint")
+                      await pool.query(
+                        `CREATE FUNCTION loop_test_pause() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.run_id='${run.id}'::uuid AND NEW.ordinal=2 THEN PERFORM pg_advisory_xact_lock(${lock}::bigint); END IF; RETURN NEW; END; $$; CREATE TRIGGER loop_test_pause BEFORE INSERT ON agent_model_calls FOR EACH ROW EXECUTE FUNCTION loop_test_pause()`,
+                      );
+                    else
+                      await pool.query(
+                        `CREATE FUNCTION loop_test_pause() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.id='${f.id}'::uuid THEN PERFORM pg_advisory_xact_lock(${lock}::bigint); END IF; RETURN NEW; END; $$; CREATE TRIGGER loop_test_pause BEFORE UPDATE ON editing_timelines FOR EACH ROW EXECUTE FUNCTION loop_test_pause()`,
+                      );
+                    proc = fork(path.join(__dirname, "fixtures/agent-loop-child.test.js"), [], {
+                      env: { ...process.env, DATABASE_URL: url.href, AGENT_TEST_RUN: run.id },
+                      stdio: ["ignore", "ignore", "ignore", "ipc"],
+                    });
+                    children.add(proc);
+                    await until(
+                      async () =>
+                        phase === "checkpoint"
+                          ? (
+                              await pool.query("SELECT checkpoint FROM agent_runs WHERE id=$1", [
+                                run.id,
+                              ])
+                            ).rows[0]?.checkpoint === 1
+                          : (
+                              await pool.query(
+                                "SELECT id FROM tool_executions WHERE project_id=$1 AND outcome='succeeded'",
+                                [f.project],
+                              )
+                            ).rowCount === 1,
+                      12000,
+                    );
+                    const exit = once(proc, "exit");
+                    proc.kill("SIGKILL");
+                    await exit;
+                    await client.query("SELECT pg_advisory_unlock($1::bigint)", [lock]);
+                    await pool.query(
+                      `DROP TRIGGER loop_test_pause ON ${phase === "checkpoint" ? "agent_model_calls" : "editing_timelines"}; DROP FUNCTION loop_test_pause()`,
+                    );
+                    await pool.query(
+                      "UPDATE agent_runs SET lease_until=clock_timestamp()-interval '1 second' WHERE id=$1",
+                      [run.id],
+                    );
+                    await runControlledAgentLoop(deps, run.id, new AbortController().signal);
+                    const result = await runs.get(owner, f.project, run.id),
+                      count = (
+                        await pool.query("SELECT id FROM tool_executions WHERE project_id=$1", [
+                          f.project,
+                        ])
+                      ).rowCount;
+                    assert.equal(result.state, phase === "checkpoint" ? "Completed" : "Failed");
+                    assert.equal(count, phase === "checkpoint" ? 2 : 1);
+                    if (phase === "unconfirmed") {
+                      assert.equal(result.stopReason, "EXECUTION_UNCONFIRMED");
+                      assert.equal(
+                        (
+                          await pool.query(
+                            "SELECT state_sha256 FROM editing_timelines WHERE id=$1",
+                            [f.id],
+                          )
+                        ).rows[0]!.state_sha256,
+                        f.hash,
+                      );
+                    }
+                  } finally {
+                    proc?.kill("SIGKILL");
+                    await client
+                      .query("SELECT pg_advisory_unlock($1::bigint)", [lock])
+                      .catch(() => undefined);
+                    client.release();
+                    await pool
+                      .query(
+                        `DROP TRIGGER IF EXISTS loop_test_pause ON ${phase === "checkpoint" ? "agent_model_calls" : "editing_timelines"}; DROP FUNCTION IF EXISTS loop_test_pause()`,
+                      )
+                      .catch(() => undefined);
+                  }
+                },
+              );
+          } finally {
+            if (savedNode === undefined) delete process.env.NODE_ENV;
+            else process.env.NODE_ENV = savedNode;
+            if (savedGate === undefined) delete process.env.EDITAGENT_REPLAY_QUALIFICATION;
+            else process.env.EDITAGENT_REPLAY_QUALIFICATION = savedGate;
+          }
+        },
+      );
       await t.test(
         "US302/304 real PostgreSQL MediaAnalysis and Tool SDK context is scoped, read-only and original-snapshot pinned",
         async () => {
