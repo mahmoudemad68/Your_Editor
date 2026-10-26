@@ -2223,6 +2223,7 @@ export interface operations {
                           modelId: string;
                           modelVersion: string;
                           profileSha256: string;
+                          configurationVersion: string;
                           requestSha256: string;
                           requestIdSha256: string | null;
                           /** @enum {string} */
@@ -2706,6 +2707,7 @@ export interface operations {
                           modelId: string;
                           modelVersion: string;
                           profileSha256: string;
+                          configurationVersion: string;
                           requestSha256: string;
                           requestIdSha256: string | null;
                           /** @enum {string} */

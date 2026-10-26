@@ -81,6 +81,7 @@ export interface ProviderReceipt {
   readonly modelId: string;
   readonly modelVersion: string;
   readonly profileSha256: string;
+  readonly configurationVersion: string;
   readonly requestSha256: string;
   readonly requestIdSha256: string | null;
   readonly mode: ProviderMode;

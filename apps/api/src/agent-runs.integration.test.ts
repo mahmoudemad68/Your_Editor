@@ -4,6 +4,7 @@ import { fork, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import { createServer, connect, type Socket } from "node:net";
 import path from "node:path";
+import { mkdir, writeFile } from "node:fs/promises";
 import { Pool } from "pg";
 import {
   AgentError,
@@ -243,6 +244,59 @@ test(
         async () => {
           const savedNode = process.env.NODE_ENV,
             savedGate = process.env.EDITAGENT_REPLAY_QUALIFICATION;
+          // Bounded diagnostics for failed qualification only: fixed state/phase
+          // names and counts, never SQL text, parameters, identities or payloads.
+          const diagnosticTimer = setTimeout(() => {
+            void (async () => {
+              const diagnostic = new Pool({
+                connectionString: url.href,
+                max: 1,
+                connectionTimeoutMillis: 2000,
+                statement_timeout: 2000,
+              });
+              try {
+                const states = (
+                  await diagnostic.query(
+                    "SELECT state,checkpoint,tool_attempts FROM agent_runs ORDER BY created_at_ms DESC LIMIT 1",
+                  )
+                ).rows;
+                const waits = (
+                  await diagnostic.query(
+                    `SELECT state,wait_event_type,wait_event,cardinality(pg_blocking_pids(pid)) AS blockers,
+                  CASE WHEN query LIKE '%agent_model_calls%' THEN 'model_ledger'
+                    WHEN query LIKE '%agent_loop_sessions%' THEN 'loop_session'
+                    WHEN query LIKE '%agent_steps%' THEN 'tool_ledger'
+                    WHEN query LIKE '%editing_timelines%' THEN 'timeline'
+                    WHEN query LIKE '%agent_runs%' THEN 'run_lease'
+                    ELSE 'other' END AS phase
+                  FROM pg_stat_activity WHERE datname=$1 AND pid<>pg_backend_pid() AND state<>'idle' ORDER BY phase LIMIT 16`,
+                    [name],
+                  )
+                ).rows;
+                const report = {
+                  schemaVersion: "1.0.0",
+                  purpose: "bounded_wait_diagnostic_not_acceptance",
+                  sourceCommit: process.env.GITHUB_SHA ?? null,
+                  states,
+                  waits,
+                };
+                console.info("CONTROLLED_LOOP_WAIT_DIAGNOSTIC " + JSON.stringify(report));
+                const directory = path.resolve(
+                  __dirname,
+                  "../../../.local/agent-loop-lifecycle-public",
+                );
+                await mkdir(directory, { recursive: true });
+                await writeFile(
+                  path.join(directory, "diagnostic.json"),
+                  JSON.stringify(report) + "\n",
+                );
+              } catch {
+                console.info("CONTROLLED_LOOP_WAIT_DIAGNOSTIC unavailable");
+              } finally {
+                await diagnostic.end();
+              }
+            })();
+          }, 5000);
           process.env.NODE_ENV = "test";
           process.env.EDITAGENT_REPLAY_QUALIFICATION = "isolated-v1";
           const configuration: LoopConfigurationV1 = {
@@ -1077,6 +1131,7 @@ test(
                 },
               );
           } finally {
+            clearTimeout(diagnosticTimer);
             if (savedNode === undefined) delete process.env.NODE_ENV;
             else process.env.NODE_ENV = savedNode;
             if (savedGate === undefined) delete process.env.EDITAGENT_REPLAY_QUALIFICATION;

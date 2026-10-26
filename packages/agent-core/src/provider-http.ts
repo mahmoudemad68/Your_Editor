@@ -220,6 +220,7 @@ export abstract class HttpLanguageModel implements LanguageModel {
           modelId: this.capabilities.modelId,
           modelVersion: this.capabilities.modelVersion,
           profileSha256: contentHash(this.capabilities),
+          configurationVersion: this.capabilities.configurationVersion,
           requestSha256: requestHash(mode, r),
           requestIdSha256: decoded.requestId === null ? null : hash(decoded.requestId),
           mode,

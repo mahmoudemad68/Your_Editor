@@ -247,6 +247,7 @@ export async function runControlledAgentLoop(
         reply.receipt.modelId !== deps.model.capabilities.modelId ||
         reply.receipt.modelVersion !== deps.model.capabilities.modelVersion ||
         reply.receipt.provider !== deps.model.capabilities.provider ||
+        reply.receipt.configurationVersion !== deps.model.capabilities.configurationVersion ||
         reply.receipt.mode !== mode ||
         reply.receipt.deadlineAtMs !== request.deadlineAtMs ||
         reply.receipt.evidence !== deps.model.capabilities.evidence

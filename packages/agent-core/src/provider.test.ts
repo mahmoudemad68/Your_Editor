@@ -209,6 +209,7 @@ for (const provider of ["openai-compatible", "anthropic", "replay"] as const) {
       for (const { mode, r } of requests) {
         const reply = await model[mode](r, new AbortController().signal);
         assert.equal(reply.receipt.modelId, "qualification-model");
+        assert.equal(reply.receipt.configurationVersion, caps(provider).configurationVersion);
         assert.equal(reply.receipt.requestSha256, requestHash(mode, r));
         assert.equal(reply.receipt.usage.actualCostMicros, null);
         assert.equal(reply.receipt.usage.inputTokens, 10);
