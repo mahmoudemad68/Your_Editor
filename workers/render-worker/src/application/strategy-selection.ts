@@ -2,7 +2,8 @@ import { Timeline, frameTime } from "@editagent/domain";
 import type { IRenderStrategy, RenderInput } from "./ports.js";
 /** Conservative supported subset. Unsupported features retain the Remotion implementation. */
 export function renderEngine(input: RenderInput): "ffmpeg" | "remotion" {
-  if (input.compositionId !== "TimelineV1") return "remotion";
+  if (input.compositionId !== "TimelineV1" || input.props.timeline.captionsV1?.length)
+    return "remotion";
   const t = Timeline.restore(input.props.timeline).toSnapshot();
   const active = t.tracks.filter((track) => track.clips.length > 0);
   if (

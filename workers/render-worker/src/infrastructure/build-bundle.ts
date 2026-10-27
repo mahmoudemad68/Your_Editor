@@ -75,6 +75,15 @@ async function main() {
       JSON.stringify({
         renderVersion,
         compositions: ["FixtureV1", "TimelineV1"],
+        components: [
+          {
+            type: "word-captions-v1",
+            propsVersion: "1.0.0",
+            implementationSha256: createHash("sha256")
+              .update(await readFile(path.join(__dirname, "../composition/word-captions.js")))
+              .digest("hex"),
+          },
+        ],
         bundleInvocationCount,
       }) + "\n",
     );

@@ -29,6 +29,9 @@ import { NodeProjectIdGenerator } from "./infrastructure/node-project-id-generat
 import { NodeMediaAssetIdGenerator } from "./infrastructure/node-media-asset-id-generator.js";
 import { authenticateRequest } from "./presentation/authenticate-request.js";
 import { requireCookieCsrf } from "./presentation/csrf.js";
+import { TimelineCaptions } from "./application/timeline-captions.js";
+import { PostgresCaptionEdits } from "./infrastructure/postgres-caption-edits.js";
+import { checkCaptionLifecycle } from "./caption.integration-support.js";
 type EditorView = Awaited<ReturnType<TimelineEditor["read"]>>;
 
 test(
@@ -99,6 +102,7 @@ test(
     const app = await createApiApplication(
       {
         editor,
+        timelineCaptions: new TimelineCaptions(new PostgresCaptionEdits(pool)),
         timelineExports: new TimelineExports(projects, editor, renders, objects, (key) =>
           objects.presignGet(key),
         ),
@@ -313,6 +317,21 @@ test(
         await fetch(base + `/${project}/timelines/${timeline}`, { headers: await headers() })
       ).json()) as EditorView;
       assert.equal(current.timeline.tracks[0]!.clips.length, 1);
+      await checkCaptionLifecycle({
+        pool,
+        url: url.href,
+        owner,
+        viewer,
+        stranger,
+        project,
+        other,
+        source,
+        current,
+        base,
+        headers,
+        post,
+        newId,
+      });
     } finally {
       await app.close();
       await queue.close(true);

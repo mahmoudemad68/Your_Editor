@@ -5,10 +5,55 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { ManualEditor, secondsToUs } from "./manual-editor";
 import type { EditorApi } from "./editor-api";
 import type { EditorTimeline } from "../editor-contract";
+import { CaptionControls } from "./caption-controls";
 
 const PROJECT = "018f6b6e-7c3a-7000-8000-000000000001";
 const ID = "018f6b6e-7c3a-7000-8000-000000000002";
 const CLIP = "018f6b6e-7c3a-7000-8000-000000000003";
+test("caption controls request current evidence and persist through fixed routes without client words", async () => {
+  const stored = fixture(),
+    calls: { url: string; body: Record<string, unknown> | null }[] = [];
+  let saved: EditorTimeline | null = null;
+  render(
+    <CaptionControls
+      projectId={PROJECT}
+      stored={stored}
+      assetId={ID}
+      disabled={false}
+      onSaved={(value) => {
+        saved = value;
+      }}
+      api={async <T,>(url: string, options?: RequestInit) => {
+        const body = options?.body
+          ? (JSON.parse(String(options.body)) as Record<string, unknown>)
+          : null;
+        calls.push({ url, body });
+        return {
+          ok: true,
+          data: (url.includes("/sources/")
+            ? { assetId: ID, sourceSha256: "b".repeat(64), analysisSha256: "c".repeat(64) }
+            : stored) as T,
+        };
+      }}
+    />,
+  );
+  try {
+    fireEvent.click(screen.getByRole("button", { name: "Add word-synchronized captions" }));
+    await waitFor(() => assert.notEqual(saved, null));
+    assert.equal(calls.length, 2);
+    assert.ok(calls[0]!.url.endsWith(`/captions/sources/${ID}`));
+    assert.ok(calls[1]!.url.endsWith("/captions"));
+    assert.equal(calls[1]!.body!.stateSha256, stored.stateSha256);
+    assert.match(
+      String(calls[1]!.body!.requestId),
+      /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
+    assert.equal("words" in calls[1]!.body!, false);
+    assert.equal("callerId" in calls[1]!.body!, false);
+  } finally {
+    cleanup();
+  }
+});
 const fixture = (): EditorTimeline => ({
   stateSha256: "a".repeat(64),
   timeline: {

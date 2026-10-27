@@ -3,9 +3,15 @@ import { uuidV7 } from "../../kernel/id.js";
 import { microseconds } from "../../kernel/time.js";
 import { Caption, Clip, Timeline, type ClipSnapshot, type TimelineSnapshot } from "./timeline.js";
 import { object, list, text, numeric, unique } from "./validation.js";
+import {
+  restoreCaptionTrack,
+  captionStyle,
+  type CaptionTrackV1,
+  type CaptionStyleV1,
+} from "./captions.js";
 
 interface Base {
-  readonly schemaVersion: 1;
+  readonly schemaVersion: 1 | 2;
   readonly id: string;
   readonly timelineId: string;
 }
@@ -16,6 +22,11 @@ export interface FragmentIds {
 }
 export type EditCommand = Base &
   (
+    | { readonly type: "AddTimedCaption"; readonly payload: { caption: CaptionTrackV1 } }
+    | {
+        readonly type: "UpdateCaptionStyle";
+        readonly payload: { captionId: string; style: CaptionStyleV1 };
+      }
     | {
         readonly type: "TrimClip";
         readonly payload: { clipId: string; startUs: string; endUs: string };
@@ -58,7 +69,7 @@ export type EditCommand = Base &
       }
   );
 export interface InverseCommand {
-  schemaVersion: 1;
+  schemaVersion: 1 | "1.1.0";
   type: "RestoreTimeline";
   expected: TimelineSnapshot;
   restore: TimelineSnapshot;
@@ -69,7 +80,7 @@ export interface AppliedEdit {
   readonly command: EditCommand;
 }
 export interface CommandLog {
-  schemaVersion: 1;
+  schemaVersion: 1 | "1.1.0";
   timelineId: string;
   commands: EditCommand[];
 }
@@ -78,7 +89,7 @@ export interface HistoryEntry {
   inverse: InverseCommand;
 }
 export interface CommandHistory {
-  schemaVersion: 1;
+  schemaVersion: 1 | "1.1.0";
   snapshot: TimelineSnapshot;
   entries: HistoryEntry[];
   cursor: number;
@@ -119,10 +130,30 @@ export function parseCommand(value: unknown): EditCommand {
     "type",
     "payload",
   ]);
-  if (d.schemaVersion !== 1) throw new DomainError("Unsupported command schema version.");
-  const base = { schemaVersion: 1 as const, id: id(d.id), timelineId: id(d.timelineId) };
+  const timed = d.type === "AddTimedCaption" || d.type === "UpdateCaptionStyle";
+  if (d.schemaVersion !== (timed ? 2 : 1))
+    throw new DomainError("Unsupported command schema version.");
+  const base = {
+    schemaVersion: d.schemaVersion as 1 | 2,
+    id: id(d.id),
+    timelineId: id(d.timelineId),
+  };
   let command: EditCommand;
   switch (d.type) {
+    case "AddTimedCaption": {
+      const p = object(d.payload, ["caption"]);
+      command = { ...base, type: d.type, payload: { caption: restoreCaptionTrack(p.caption) } };
+      break;
+    }
+    case "UpdateCaptionStyle": {
+      const p = object(d.payload, ["captionId", "style"]);
+      command = {
+        ...base,
+        type: d.type,
+        payload: { captionId: id(p.captionId), style: captionStyle(p.style) },
+      };
+      break;
+    }
     case "TrimClip": {
       const p = object(d.payload, ["clipId", "startUs", "endUs"]);
       const startUs = time(p.startUs),
@@ -218,7 +249,13 @@ function make<K extends EditCommand["type"]>(
   timelineId: string,
   payload: Payload<K>,
 ): EditCommand {
-  return parseCommand({ schemaVersion: 1, id: commandId, timelineId, type, payload });
+  return parseCommand({
+    schemaVersion: type === "AddTimedCaption" || type === "UpdateCaptionStyle" ? 2 : 1,
+    id: commandId,
+    timelineId,
+    type,
+    payload,
+  });
 }
 export const TrimClip = (id: string, timeline: string, payload: Payload<"TrimClip">) =>
   make("TrimClip", id, timeline, payload);
@@ -234,6 +271,16 @@ export const SetProperty = (id: string, timeline: string, payload: Payload<"SetP
   make("SetProperty", id, timeline, payload);
 export const AddCaption = (id: string, timeline: string, payload: Payload<"AddCaption">) =>
   make("AddCaption", id, timeline, payload);
+export const AddTimedCaption = (
+  id: string,
+  timeline: string,
+  payload: Payload<"AddTimedCaption">,
+) => make("AddTimedCaption", id, timeline, payload);
+export const UpdateCaptionStyle = (
+  id: string,
+  timeline: string,
+  payload: Payload<"UpdateCaptionStyle">,
+) => make("UpdateCaptionStyle", id, timeline, payload);
 
 function locate(snapshot: TimelineSnapshot, clipId: string) {
   for (const track of snapshot.tracks) {
@@ -278,6 +325,19 @@ export function applyCommand(timeline: Timeline, value: unknown): AppliedEdit {
   const before = timeline.toSnapshot(),
     s = timeline.toSnapshot();
   switch (command.type) {
+    case "AddTimedCaption": {
+      const caption = command.payload.caption;
+      if ((s.captionsV1 ?? []).some((c) => c.id === caption.id || c.assetId === caption.assetId))
+        throw new DomainError("Caption identity or source already exists.");
+      s.captionsV1 = [...(s.captionsV1 ?? []), caption];
+      break;
+    }
+    case "UpdateCaptionStyle": {
+      const caption = s.captionsV1?.find((c) => c.id === command.payload.captionId);
+      if (!caption) throw new DomainError("Caption does not exist.");
+      caption.style = command.payload.style;
+      break;
+    }
     case "TrimClip": {
       const p = command.payload,
         { track, index, clip } = locate(s, p.clipId);
@@ -393,7 +453,8 @@ export function applyCommand(timeline: Timeline, value: unknown): AppliedEdit {
     timeline: result,
     command,
     inverse: freeze({
-      schemaVersion: 1 as const,
+      schemaVersion:
+        before.captionsV1?.length || result.captionsV1.length ? ("1.1.0" as const) : (1 as const),
       type: "RestoreTimeline" as const,
       expected: result.toSnapshot(),
       restore: before,
@@ -402,10 +463,12 @@ export function applyCommand(timeline: Timeline, value: unknown): AppliedEdit {
 }
 export function applyInverse(timeline: Timeline, value: unknown): Timeline {
   const d = object(value, ["schemaVersion", "type", "expected", "restore"]);
-  if (d.schemaVersion !== 1 || d.type !== "RestoreTimeline")
+  if ((d.schemaVersion !== 1 && d.schemaVersion !== "1.1.0") || d.type !== "RestoreTimeline")
     throw new DomainError("Unsupported inverse command.");
   const expected = Timeline.restore(d.expected),
     restore = Timeline.restore(d.restore);
+  if (d.schemaVersion === 1 && (expected.captionsV1.length || restore.captionsV1.length))
+    throw new DomainError("Caption inverse requires schema 1.1.0.");
   if (
     restore.id !== timeline.id ||
     restore.projectId !== timeline.projectId ||
@@ -420,7 +483,8 @@ export function parseCommandLog(value: unknown): CommandLog {
     "timelineId",
     "commands",
   ]);
-  if (d.schemaVersion !== 1) throw new DomainError("Unsupported log schema version.");
+  if (d.schemaVersion !== 1 && d.schemaVersion !== "1.1.0")
+    throw new DomainError("Unsupported log schema version.");
   const commands = list(d.commands);
   if (commands.length > 1000) throw new DomainError("Command log exceeds its explicit bound.");
   const parsed = commands.map((command, index) => {
@@ -430,6 +494,8 @@ export function parseCommandLog(value: unknown): CommandLog {
       throw new DomainError(`Replay failed at command index ${index}: malformed command.`);
     }
   });
+  if (d.schemaVersion === 1 && parsed.some((c) => c.schemaVersion === 2))
+    throw new DomainError("Caption commands require log 1.1.0.");
   const timelineId = id(d.timelineId),
     seen = new Set<string>();
   parsed.forEach((command, index) => {
@@ -437,7 +503,7 @@ export function parseCommandLog(value: unknown): CommandLog {
       throw new DomainError(`Replay failed at command index ${index}: command identity differs.`);
     seen.add(command.id);
   });
-  return freeze({ schemaVersion: 1, timelineId, commands: parsed });
+  return freeze({ schemaVersion: d.schemaVersion as 1 | "1.1.0", timelineId, commands: parsed });
 }
 export function replay(snapshot: Timeline | TimelineSnapshot, log: unknown): Timeline {
   let current = snapshot instanceof Timeline ? snapshot : Timeline.restore(snapshot);
@@ -508,7 +574,7 @@ export class CommandBus {
   }
   commandLog(): CommandLog {
     return freeze({
-      schemaVersion: 1,
+      schemaVersion: this.entries.some((e) => e.command.schemaVersion === 2) ? "1.1.0" : 1,
       timelineId: this.current.id,
       commands: this.entries.slice(0, this.cursor).map((e) => e.command),
     });
@@ -519,7 +585,11 @@ export class CommandBus {
   serializeHistory(): string {
     return JSON.stringify(
       canonical({
-        schemaVersion: 1,
+        schemaVersion:
+          this.entries.some((e) => e.command.schemaVersion === 2) ||
+          this.baseline.captionsV1?.length
+            ? "1.1.0"
+            : 1,
         snapshot: this.baseline,
         entries: this.entries,
         cursor: this.cursor,
@@ -535,18 +605,23 @@ export class CommandBus {
       "cursor",
       "maxEntries",
     ]);
-    if (d.schemaVersion !== 1) throw new DomainError("Unsupported history schema version.");
+    if (d.schemaVersion !== 1 && d.schemaVersion !== "1.1.0")
+      throw new DomainError("Unsupported history schema version.");
     const bus = new CommandBus(Timeline.restore(d.snapshot), numeric(d.maxEntries, 1, 1000, true)),
       entries = list(d.entries);
     if (entries.length > bus.maxEntries)
       throw new DomainError("History exceeds its explicit bound.");
     const cursor = numeric(d.cursor, 0, entries.length, true);
+    if (d.schemaVersion === 1 && bus.baseline.captionsV1?.length)
+      throw new DomainError("Caption history requires schema 1.1.0.");
     let current = bus.current;
     const checked: HistoryEntry[] = [];
     for (let index = 0; index < entries.length; index++) {
       try {
         const e = object(entries[index], ["command", "inverse"]),
           applied = applyCommand(current, e.command);
+        if (d.schemaVersion === 1 && applied.command.schemaVersion === 2)
+          throw new DomainError("Caption history requires schema 1.1.0.");
         const before = applyInverse(applied.timeline, e.inverse);
         if (JSON.stringify(before.toSnapshot()) !== JSON.stringify(current.toSnapshot()))
           throw new DomainError("History inverse differs.");

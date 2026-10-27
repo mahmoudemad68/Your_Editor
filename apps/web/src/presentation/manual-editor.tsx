@@ -6,6 +6,7 @@ import type { JobEventStream } from "../job-contract";
 import { browserEditorApi, type EditorApi } from "./editor-api";
 import { projectJobEvents } from "./job-event-stream";
 import { Button } from "./ui/button";
+import { CaptionControls } from "./caption-controls";
 
 export function secondsToUs(text: string): string {
   const match = /^(0|[1-9][0-9]{0,3})(?:\.([0-9]{1,6}))?$/.exec(text);
@@ -280,6 +281,23 @@ export function ManualEditor({
               </Button>
             </div>
           </section>
+          <CaptionControls
+            projectId={projectId}
+            stored={stored}
+            assetId={clip?.sourceId ?? null}
+            disabled={busy || running}
+            onBusyChange={setBusy}
+            onUnavailable={() => {
+              setStored(null);
+              setJob(null);
+              setDownload(null);
+            }}
+            onSaved={(next) => {
+              setStored(next);
+              setDownload(null);
+              setJob(null);
+            }}
+          />
           {job ? (
             <section
               aria-label="Export job"

@@ -113,7 +113,304 @@
           "required": ["timeline", "background", "captionStyle", "components"],
           "properties": {
             "timeline": {
-              "$ref": "https://editagent.local/schemas/project.schema.json#/$defs/timeline"
+              "oneOf": [
+                {
+                  "$ref": "https://editagent.local/schemas/project.schema.json#/$defs/timeline"
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "id",
+                    "projectId",
+                    "createdAt",
+                    "composition",
+                    "sources",
+                    "tracks",
+                    "captionsV1"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+                    },
+                    "projectId": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "pattern": "^(0|[1-9][0-9]*)$"
+                    },
+                    "composition": {
+                      "$ref": "https://editagent.local/schemas/project.schema.json#/$defs/composition"
+                    },
+                    "sources": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "https://editagent.local/schemas/project.schema.json#/$defs/source"
+                      }
+                    },
+                    "tracks": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "https://editagent.local/schemas/project.schema.json#/$defs/track"
+                      }
+                    },
+                    "captionsV1": {
+                      "type": "array",
+                      "minItems": 1,
+                      "maxItems": 16,
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "schemaVersion": {
+                            "type": "string",
+                            "const": "1.0.0"
+                          },
+                          "id": {
+                            "type": "string",
+                            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                            "minLength": 36,
+                            "maxLength": 36
+                          },
+                          "createdBy": {
+                            "type": "string",
+                            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                            "minLength": 36,
+                            "maxLength": 36
+                          },
+                          "assetId": {
+                            "type": "string",
+                            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                            "minLength": 36,
+                            "maxLength": 36
+                          },
+                          "sourceSha256": {
+                            "type": "string",
+                            "pattern": "^[a-f0-9]{64}$",
+                            "minLength": 64,
+                            "maxLength": 64
+                          },
+                          "sourceDurationUs": {
+                            "type": "string",
+                            "pattern": "^(0|[1-9][0-9]{0,9})$(?![\\s\\S])",
+                            "maxLength": 10
+                          },
+                          "evidence": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                              "kind": {
+                                "enum": ["media-analysis", "human-timed"],
+                                "type": "string"
+                              },
+                              "documentSha256": {
+                                "type": "string",
+                                "pattern": "^[a-f0-9]{64}$",
+                                "minLength": 64,
+                                "maxLength": 64
+                              },
+                              "version": {
+                                "type": "string",
+                                "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$(?![\\s\\S])",
+                                "maxLength": 32
+                              }
+                            },
+                            "required": ["kind", "documentSha256", "version"]
+                          },
+                          "style": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                              "color": {
+                                "type": "string",
+                                "pattern": "^#[a-f0-9]{6}$",
+                                "minLength": 7,
+                                "maxLength": 7
+                              },
+                              "background": {
+                                "type": "string",
+                                "pattern": "^#[a-f0-9]{6}$",
+                                "minLength": 7,
+                                "maxLength": 7
+                              },
+                              "highlight": {
+                                "type": "string",
+                                "pattern": "^#[a-f0-9]{6}$",
+                                "minLength": 7,
+                                "maxLength": 7
+                              },
+                              "outline": {
+                                "type": "string",
+                                "pattern": "^#[a-f0-9]{6}$",
+                                "minLength": 7,
+                                "maxLength": 7
+                              },
+                              "outlinePx": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 2
+                              },
+                              "shadowPx": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 4
+                              },
+                              "font": {
+                                "const": "DejaVu Sans",
+                                "type": "string"
+                              },
+                              "fontSize": {
+                                "type": "integer",
+                                "minimum": 8,
+                                "maximum": 96
+                              },
+                              "direction": {
+                                "enum": ["auto", "ltr", "rtl"],
+                                "type": "string"
+                              },
+                              "preset": {
+                                "enum": ["vertical", "square", "landscape"],
+                                "type": "string"
+                              },
+                              "marginPermille": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 100
+                              }
+                            },
+                            "required": [
+                              "color",
+                              "background",
+                              "highlight",
+                              "outline",
+                              "outlinePx",
+                              "shadowPx",
+                              "font",
+                              "fontSize",
+                              "direction",
+                              "preset",
+                              "marginPermille"
+                            ]
+                          },
+                          "rules": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                              "maxCharacters": {
+                                "type": "integer",
+                                "minimum": 8,
+                                "maximum": 42
+                              },
+                              "maxLines": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 2
+                              },
+                              "maxCharactersPerSecond": {
+                                "type": "integer",
+                                "minimum": 8,
+                                "maximum": 30
+                              },
+                              "minDurationUs": {
+                                "type": "string",
+                                "pattern": "^(0|[1-9][0-9]{0,9})$(?![\\s\\S])",
+                                "maxLength": 10
+                              }
+                            },
+                            "required": [
+                              "maxCharacters",
+                              "maxLines",
+                              "maxCharactersPerSecond",
+                              "minDurationUs"
+                            ]
+                          },
+                          "blocks": {
+                            "type": "array",
+                            "minItems": 1,
+                            "maxItems": 2000,
+                            "items": {
+                              "type": "object",
+                              "additionalProperties": false,
+                              "properties": {
+                                "startUs": {
+                                  "type": "string",
+                                  "pattern": "^(0|[1-9][0-9]{0,9})$(?![\\s\\S])",
+                                  "maxLength": 10
+                                },
+                                "endUs": {
+                                  "type": "string",
+                                  "pattern": "^(0|[1-9][0-9]{0,9})$(?![\\s\\S])",
+                                  "maxLength": 10
+                                },
+                                "lines": {
+                                  "type": "array",
+                                  "minItems": 1,
+                                  "maxItems": 2,
+                                  "items": {
+                                    "type": "array",
+                                    "minItems": 1,
+                                    "maxItems": 42,
+                                    "items": {
+                                      "type": "object",
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "text": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 256
+                                        },
+                                        "startUs": {
+                                          "type": "string",
+                                          "pattern": "^(0|[1-9][0-9]{0,9})$(?![\\s\\S])",
+                                          "maxLength": 10
+                                        },
+                                        "endUs": {
+                                          "type": "string",
+                                          "pattern": "^(0|[1-9][0-9]{0,9})$(?![\\s\\S])",
+                                          "maxLength": 10
+                                        },
+                                        "confidence": {
+                                          "anyOf": [
+                                            {
+                                              "type": "null"
+                                            },
+                                            {
+                                              "type": "number",
+                                              "minimum": 0,
+                                              "maximum": 1
+                                            }
+                                          ]
+                                        }
+                                      },
+                                      "required": ["text", "startUs", "endUs", "confidence"]
+                                    }
+                                  }
+                                }
+                              },
+                              "required": ["startUs", "endUs", "lines"]
+                            }
+                          }
+                        },
+                        "required": [
+                          "schemaVersion",
+                          "id",
+                          "createdBy",
+                          "assetId",
+                          "sourceSha256",
+                          "sourceDurationUs",
+                          "evidence",
+                          "style",
+                          "rules",
+                          "blocks"
+                        ]
+                      }
+                    }
+                  }
+                }
+              ]
             },
             "background": {
               "type": "string",

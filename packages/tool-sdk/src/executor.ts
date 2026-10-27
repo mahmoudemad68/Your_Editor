@@ -465,6 +465,20 @@ export async function validateCommands(
         ["project.read", "asset.read"],
       );
     }
+    if (command.type === "AddTimedCaption") {
+      if (command.payload.caption.createdBy !== call.callerId) throw new ToolError("denied");
+      await authority.authorize(
+        { ...call, resource: { kind: "asset", id: command.payload.caption.assetId } },
+        ["project.read", "asset.read", "analysis.read"],
+      );
+    }
+    if (
+      command.type === "UpdateCaptionStyle" &&
+      !timeline.captionsV1.some(
+        (c) => c.id === command.payload.captionId && c.createdBy === call.callerId,
+      )
+    )
+      throw new ToolError("denied");
     ids.add(command.id);
     timeline = applyCommand(timeline, command).timeline;
     commands.push(command);

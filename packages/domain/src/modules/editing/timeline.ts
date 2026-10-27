@@ -21,6 +21,11 @@ import {
 } from "../../kernel/id.js";
 import { microseconds, frameRate, type Microseconds, type FrameRate } from "../../kernel/time.js";
 import { object, list, numeric, text, unique } from "./validation.js";
+import {
+  validateCaptionTracks,
+  validateCaptionReadability,
+  type CaptionTrackV1,
+} from "./captions.js";
 
 export const trackKinds = Object.freeze([
   "video",
@@ -85,6 +90,7 @@ export interface TrackSnapshot {
   transitions: TransitionSnapshot[];
 }
 export interface TimelineSnapshot {
+  captionsV1?: CaptionTrackV1[];
   id: string;
   projectId: string;
   createdAt: string;
@@ -437,11 +443,13 @@ export class Track {
   }
 }
 export interface TimelineOptions {
+  captionsV1?: readonly CaptionTrackV1[];
   composition?: Composition;
   sources?: readonly TimelineSource[];
   tracks?: readonly Track[];
 }
 export class Timeline {
+  readonly captionsV1: readonly CaptionTrackV1[];
   readonly id: TimelineId;
   readonly projectId: ProjectId;
   readonly createdAt: Instant;
@@ -458,7 +466,7 @@ export class Timeline {
     createdAt: Instant | string,
     options: TimelineOptions = {},
   ) {
-    object(options, [], ["composition", "sources", "tracks"]);
+    object(options, [], ["composition", "sources", "tracks", "captionsV1"]);
     this.id = timelineId(id);
     this.projectId = projectId(project);
     this.createdAt = instant(createdAt);
@@ -527,6 +535,22 @@ export class Timeline {
       }
     }
     unique(ids);
+    this.captionsV1 = validateCaptionTracks(options.captionsV1 ?? []);
+    for (const caption of this.captionsV1) {
+      const source = this.sources.find((s) => s.id === caption.assetId);
+      if (!source || String(source.durationUs) !== caption.sourceDurationUs)
+        throw new DomainError("Caption source identity or duration differs.");
+      validateCaptionReadability(caption, this.composition.width, this.composition.height);
+      ids.push(caption.id);
+    }
+    unique(ids);
+    const freeze = (v: unknown): void => {
+      if (v && typeof v === "object") {
+        Object.values(v).forEach(freeze);
+        Object.freeze(v);
+      }
+    };
+    freeze(this.captionsV1);
     Object.freeze(this);
   }
   static create(
@@ -539,6 +563,9 @@ export class Timeline {
   }
   toSnapshot(): TimelineSnapshot {
     return {
+      ...(this.captionsV1.length
+        ? { captionsV1: structuredClone(this.captionsV1) as CaptionTrackV1[] }
+        : {}),
       id: this.id,
       projectId: this.projectId,
       createdAt: String(this.createdAt),
@@ -560,10 +587,17 @@ export class Timeline {
     };
   }
   static restore(value: unknown): Timeline {
-    const d = object(value, ["id", "projectId", "createdAt", "composition", "sources", "tracks"]),
+    const d = object(
+        value,
+        ["id", "projectId", "createdAt", "composition", "sources", "tracks"],
+        ["captionsV1"],
+      ),
       c = object(d.composition, ["width", "height", "frameRate", "durationUs"]),
       f = object(c.frameRate, ["numerator", "denominator"]);
     return new Timeline(text(d.id), text(d.projectId), text(d.createdAt), {
+      ...(d.captionsV1 === undefined
+        ? {}
+        : { captionsV1: validateCaptionTracks(list(d.captionsV1)) }),
       composition: {
         width: c.width as number,
         height: c.height as number,

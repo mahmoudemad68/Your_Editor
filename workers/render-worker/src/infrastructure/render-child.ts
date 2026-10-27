@@ -5,7 +5,11 @@ import { openBrowser, selectComposition, renderMedia, makeCancelSignal } from "@
 import { parseRenderInput } from "./contract.js";
 import { startBundleServer } from "./local-bundle-server.js";
 import { validateOutput } from "./probe-output.js";
-import { compositionTiming, mapTimeline } from "../application/timeline-mapping.js";
+import {
+  compositionTiming,
+  mapTimeline,
+  captionFrameBoundaries,
+} from "../application/timeline-mapping.js";
 import type { VerifiedAsset } from "../application/ports.js";
 import { verifyStagedAssets } from "./verified-assets.js";
 import { exactEncoderTiming } from "./encoder-timing.js";
@@ -70,11 +74,13 @@ async function run(
     });
     controller.signal.throwIfAborted();
     const plan = input.compositionId === "TimelineV1" ? mapTimeline(input) : undefined;
-    const componentBoundaries =
-      plan?.clips
+    const componentBoundaries = [
+      ...(plan ? captionFrameBoundaries(plan) : []),
+      ...(plan?.clips
         .filter((m) => m.clip.kind === "caption" || m.clip.kind === "graphics")
         .flatMap((m) => [m.from, m.from + m.durationInFrames + m.holdFrames])
-        .filter((n) => n > 0 && n < timing.durationInFrames) ?? [];
+        .filter((n) => n > 0 && n < timing.durationInFrames) ?? []),
+    ];
     const props = {
       ...(input.compositionId === "FixtureV1" ? input.props : { ...input.props, plan, assets }),
       width: timing.width,

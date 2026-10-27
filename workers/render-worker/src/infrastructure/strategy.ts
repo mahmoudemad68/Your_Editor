@@ -49,6 +49,19 @@ class StoredRenderStrategy implements IRenderStrategy {
         ? await this.assets?.resolve(projectId, input.props.timeline.sources, signal)
         : [];
     if (!resolved) throw new PermanentJobError("Asset resolver unavailable.");
+    if (
+      input.compositionId === "TimelineV1" &&
+      input.props.timeline.captionsV1?.some(
+        (c) =>
+          !resolved.some(
+            (a) =>
+              a.sourceId === c.assetId &&
+              a.sha256 === c.sourceSha256 &&
+              a.durationUs === c.sourceDurationUs,
+          ),
+      )
+    )
+      throw new PermanentJobError("Caption source provenance differs from verified media.");
     const audioPresent = expectedTimelineAudio(input, resolved);
     const signature = createHash("sha256")
       .update(canonicalJson({ input, assets: resolved }))

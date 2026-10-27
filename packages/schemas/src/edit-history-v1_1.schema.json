@@ -1,0 +1,140 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://editagent.local/schemas/edit-history-v1_1.schema.json",
+  "title": "Caption-capable edit log, history and inverse 1.1.0",
+  "description": "Pure data. The domain additionally validates references, ranges, inverse preconditions and history cursor bounds.",
+  "$defs": {
+    "command": {
+      "oneOf": [
+        {
+          "$ref": "https://editagent.local/schemas/edit-command.schema.json#/$defs/command"
+        },
+        {
+          "$ref": "https://editagent.local/schemas/edit-command-v2.schema.json"
+        }
+      ]
+    },
+    "inverse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "type", "expected", "restore"],
+      "properties": {
+        "schemaVersion": {
+          "const": "1.1.0"
+        },
+        "type": {
+          "const": "RestoreTimeline"
+        },
+        "expected": {
+          "oneOf": [
+            {
+              "$ref": "https://editagent.local/schemas/project.schema.json#/$defs/timeline"
+            },
+            {
+              "$ref": "https://editagent.local/schemas/project-v1_1.schema.json#/$defs/timeline"
+            }
+          ]
+        },
+        "restore": {
+          "oneOf": [
+            {
+              "$ref": "https://editagent.local/schemas/project.schema.json#/$defs/timeline"
+            },
+            {
+              "$ref": "https://editagent.local/schemas/project-v1_1.schema.json#/$defs/timeline"
+            }
+          ]
+        }
+      }
+    },
+    "entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["command", "inverse"],
+      "properties": {
+        "command": {
+          "$ref": "#/$defs/command"
+        },
+        "inverse": {
+          "oneOf": [
+            {
+              "$ref": "https://editagent.local/schemas/edit-command.schema.json#/$defs/inverse"
+            },
+            {
+              "$ref": "#/$defs/inverse"
+            }
+          ]
+        }
+      }
+    },
+    "log": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "timelineId", "commands"],
+      "properties": {
+        "schemaVersion": {
+          "const": "1.1.0"
+        },
+        "timelineId": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "commands": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/command"
+          },
+          "maxItems": 1000
+        }
+      }
+    },
+    "history": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "snapshot", "entries", "cursor", "maxEntries"],
+      "properties": {
+        "schemaVersion": {
+          "const": "1.1.0"
+        },
+        "snapshot": {
+          "oneOf": [
+            {
+              "$ref": "https://editagent.local/schemas/project.schema.json#/$defs/timeline"
+            },
+            {
+              "$ref": "https://editagent.local/schemas/project-v1_1.schema.json#/$defs/timeline"
+            }
+          ]
+        },
+        "entries": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/entry"
+          },
+          "maxItems": 1000
+        },
+        "cursor": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000
+        },
+        "maxEntries": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        }
+      }
+    }
+  },
+  "oneOf": [
+    {
+      "$ref": "#/$defs/log"
+    },
+    {
+      "$ref": "#/$defs/history"
+    },
+    {
+      "$ref": "#/$defs/inverse"
+    }
+  ]
+}

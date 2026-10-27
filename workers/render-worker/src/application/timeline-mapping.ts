@@ -4,6 +4,8 @@ import {
   type TimelineSnapshot,
   type ClipSnapshot,
   type FrameRate,
+  projectTimedCaptions,
+  type ProjectedCaptionV1,
 } from "@editagent/domain";
 import type { RenderInput, TimelineInput } from "./ports.js";
 /** First frame whose rounded canonical microsecond clock is >= boundary. No accumulation. */
@@ -48,6 +50,7 @@ export interface MappedClip {
   layer: number;
 }
 export interface TimelinePlan {
+  captionsV1?: ProjectedCaptionV1[];
   clips: MappedClip[];
   timing: ReturnType<typeof compositionTiming>;
 }
@@ -125,5 +128,29 @@ export function mapTimeline(input: TimelineInput): TimelinePlan {
     }
   });
   if (clips.length > 2048) throw new Error("Timeline clip budget exceeded.");
-  return { clips, timing };
+  const captionsV1 = projectTimedCaptions(snapshot);
+  if (
+    clips.length + captionsV1.length > 2048 ||
+    captionFrameBoundaries({ clips, timing, captionsV1 }).length > 4096
+  )
+    throw new Error("Caption frame budget exceeded.");
+  return { clips, timing, ...(captionsV1.length ? { captionsV1 } : {}) };
+}
+export function captionFrameBoundaries(plan: TimelinePlan): number[] {
+  const rate = {
+    numerator: BigInt(plan.timing.frameRate.numerator),
+    denominator: BigInt(plan.timing.frameRate.denominator),
+  };
+  return [
+    ...new Set(
+      (plan.captionsV1 ?? [])
+        .flatMap((c) => [
+          c.startUs,
+          c.endUs,
+          ...c.lines.flat().flatMap((w) => [w.startUs, w.endUs]),
+        ])
+        .map((t) => firstFrameAt(BigInt(t), rate))
+        .filter((n) => n > 0 && n < plan.timing.durationInFrames),
+    ),
+  ].sort((a, b) => a - b);
 }

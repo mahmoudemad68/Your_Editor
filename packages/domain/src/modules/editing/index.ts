@@ -4,3 +4,4 @@ export const editingModule = "editing" as const;
 export * from "./timeline.js";
 
 export * from "./commands.js";
+export * from "./captions.js";

@@ -53,6 +53,16 @@ export async function verifyStagedAssets(
     )
       throw new Error("Staged asset checksum mismatch.");
     ids.add(a.sourceId);
+    if (
+      !("kind" in input) &&
+      input.compositionId === "TimelineV1" &&
+      input.props.timeline.captionsV1?.some(
+        (c) =>
+          c.assetId === a.sourceId &&
+          (c.sourceSha256 !== a.sha256 || c.sourceDurationUs !== a.durationUs),
+      )
+    )
+      throw new Error("Caption source provenance mismatch.");
     assets.push(a);
   }
   return assets;

@@ -5,7 +5,7 @@ import { object, list, text } from "./modules/editing/validation.js";
 import { DomainError } from "./kernel/error.js";
 
 export interface ProjectJson {
-  schemaVersion: 1;
+  schemaVersion: 1 | "1.1.0";
   project: {
     id: string;
     name: string;
@@ -20,7 +20,7 @@ export function projectDocument(project: Project, timeline: Timeline): ProjectJs
   if (project.id !== timeline.projectId)
     throw new DomainError("Project/Timeline identity differs.");
   return {
-    schemaVersion: 1,
+    schemaVersion: timeline.captionsV1.length ? "1.1.0" : 1,
     project: {
       id: project.id,
       name: project.name,
@@ -45,7 +45,8 @@ export function deserializeProject(value: unknown): { project: Project; timeline
     "project",
     "timeline",
   ]);
-  if (d.schemaVersion !== 1) throw new DomainError("Unsupported project schema version.");
+  if (d.schemaVersion !== 1 && d.schemaVersion !== "1.1.0")
+    throw new DomainError("Unsupported project schema version.");
   const p = object(d.project, ["id", "name", "memberships", "createdAt", "updatedAt", "deletedAt"]);
   const snapshot: ProjectSnapshot = {
     id: text(p.id),
@@ -60,6 +61,8 @@ export function deserializeProject(value: unknown): { project: Project; timeline
   };
   const project = Project.restore(snapshot),
     timeline = Timeline.restore(d.timeline);
+  if (d.schemaVersion === 1 && timeline.captionsV1.length)
+    throw new DomainError("Timed captions require project 1.1.0.");
   if (project.id !== timeline.projectId)
     throw new DomainError("Project/Timeline identity differs.");
   return { project, timeline };

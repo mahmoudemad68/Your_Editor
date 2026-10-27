@@ -4,6 +4,34 @@ import { proxyEditor } from "./editor-proxy";
 const PROJECT = "018f6b6e-7c3a-7000-8000-000000000001",
   ID = "018f6b6e-7c3a-7000-8000-000000000002";
 const prior = process.env.API_BASE_URL;
+test("caption proxy admits fixed caption paths and source hashes, refuses arbitrary routing", async () => {
+  const response = await proxyEditor(
+    new Request("http://web.test/", { method: "GET" }),
+    PROJECT,
+    [ID, "captions", "sources", ID],
+    async (url) => {
+      assert.equal(
+        String(url),
+        `http://api.test/projects/${PROJECT}/timelines/${ID}/captions/sources/${ID}`,
+      );
+      return Response.json({
+        assetId: ID,
+        sourceSha256: "a".repeat(64),
+        analysisSha256: "b".repeat(64),
+      });
+    },
+  );
+  assert.equal(response.status, 200);
+  const failed = await proxyEditor(
+    new Request("http://web.test/", { method: "GET" }),
+    PROJECT,
+    [ID, "captions", "sources", "https://example.com"],
+    async () => {
+      throw new Error("Must not fetch");
+    },
+  );
+  assert.equal(failed.status, 400);
+});
 beforeEach(() => {
   process.env.API_BASE_URL = "http://api.test";
 });
