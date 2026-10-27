@@ -1,0 +1,528 @@
+# Independent QA for PR #88 (US-301/US-305; Issue #89). QA-only branch; never merged.
+# The frozen product is checked out separately at the pinned SHA; QA code lives only under qa/pr88 on this branch.
+# Every job checks PR drift before/after and ends with a fail-closed gate (any required FAIL/ERROR/NOT_RUN/MISSING -> red).
+name: QA PR88 independent
+
+on:
+  push:
+    branches: [qa/pr88-03630df]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: qa-pr88
+  cancel-in-progress: false
+
+env:
+  QA_APP_SHA: 03630dfff07d16fe27a24a0e3aee35611cb6b519
+  QA_APP_TREE: 25df10c29d3d33f1dd83de428afe32126f0d05a6
+  QA_BASE_SHA: a789540f9b49d05d214374472bcc4fedd8751227
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  provenance:
+    name: "G: Gate 0 provenance, inventory, unweakened gates, held-file retention"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: "Gate 0 (before)"
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/pulls/88" | python3 -c "import json,sys,os;p=json.load(sys.stdin);assert p['state']=='open' and p['draft'] is True and p['head']['sha']==os.environ['QA_APP_SHA'] and p['base']['sha']==os.environ['QA_BASE_SHA'], 'HEAD_DRIFT'"
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.QA_APP_SHA }}
+          path: app
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          path: qa-src
+          sparse-checkout: qa/pr88
+          persist-credentials: false
+      - name: Part G
+        run: python3 -I qa-src/qa/pr88/gate0_88.py app qa-out/qa88-provenance.json
+      - name: "Gate 0 (after)"
+        if: always()
+        run: gh api "repos/$GITHUB_REPOSITORY/pulls/88" --jq '.head.sha + " draft=" + (.draft|tostring)' | tee qa-out/identity-after.txt | grep -qx "$QA_APP_SHA draft=true" || { echo HEAD_DRIFT; exit 1; }
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: qa-pr88-provenance-${{ github.run_id }}
+          path: qa-out
+          retention-days: 14
+      - name: "QA gate (fail-closed): provenance"
+        if: always()
+        run: node qa-src/qa/pr88/gate88.mjs qa-out/qa88-provenance.json "G01-08" "G08" "G07"
+
+  provider:
+    name: "P: US-301 offline adapters + replay (host build and packaged agent-worker image)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      QA_TLS: ${{ github.workspace }}/qa-tmp/tls
+    steps:
+      - name: "Gate 0 (before)"
+        run: gh api "repos/$GITHUB_REPOSITORY/pulls/88" --jq '.head.sha' | grep -qx "$QA_APP_SHA" || { echo HEAD_DRIFT; exit 1; }
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.QA_APP_SHA }}
+          path: app
+          persist-credentials: false
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          path: qa-src
+          sparse-checkout: qa/pr88
+          persist-credentials: false
+      - name: Verify identity
+        run: |
+          set -eu
+          test "$(git -C app rev-parse HEAD)" = "$QA_APP_SHA"
+          test "$(git -C app rev-parse 'HEAD^{tree}')" = "$QA_APP_TREE"
+          mkdir -p qa-out
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: app/package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: app/.nvmrc
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+      - name: Install and build the agent-worker closure from the frozen product
+        working-directory: app
+        run: pnpm install --frozen-lockfile && pnpm --filter "@editagent/agent-worker..." build
+      - name: Ephemeral TLS fixtures; syntax
+        run: |
+          bash qa-src/qa/pr88/tls88.sh "$QA_TLS"
+          node --check qa-src/qa/pr88/prov88.mjs
+      - name: Part P (host build)
+        run: |
+          QA88_RESOLVE_FROM="$PWD/app/workers/agent-worker/package.json" QA88_PREFIX=PH QA88_TLS="$QA_TLS" NODE_EXTRA_CA_CERTS="$QA_TLS/ca.crt" \
+            timeout 900 node qa-src/qa/pr88/prov88.mjs > qa-tmp/ph.out || echo "host battery exit $?"
+      - name: Build the production agent-worker image (repository Dockerfile)
+        if: ${{ !cancelled() }}
+        working-directory: app
+        run: docker compose build agent-worker
+      - name: Part P (actual packaged image, network none, read-only, non-root)
+        if: ${{ !cancelled() }}
+        run: |
+          docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges:true --user 10001:10001 \
+            --memory 512m --pids-limit 128 --tmpfs /tmp:rw,nosuid,nodev,noexec,size=32m \
+            -v "$PWD/qa-src/qa/pr88:/qa:ro" -v "$QA_TLS:/qa-tls:ro" \
+            -e QA88_RESOLVE_FROM=/app/package.json -e QA88_PREFIX=PI -e QA88_TLS=/qa-tls -e NODE_EXTRA_CA_CERTS=/qa-tls/ca.crt \
+            --entrypoint node editagent-agent-worker:local /qa/prov88.mjs > qa-tmp/pi.out || echo "image battery exit $?"
+      - name: Collect
+        if: always()
+        run: node qa-src/qa/pr88/collect88.mjs qa-out/qa88-provider.json qa-tmp/ph.out qa-tmp/pi.out
+      - name: "Gate 0 (after)"
+        if: always()
+        run: gh api "repos/$GITHUB_REPOSITORY/pulls/88" --jq '.head.sha + " draft=" + (.draft|tostring)' | tee qa-out/identity-after.txt | grep -qx "$QA_APP_SHA draft=true" || { echo HEAD_DRIFT; exit 1; }
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: qa-pr88-provider-${{ github.run_id }}
+          path: qa-out
+          retention-days: 14
+      - name: "QA gate (fail-closed): provider"
+        if: always()
+        run: node qa-src/qa/pr88/gate88.mjs qa-out/qa88-provider.json "PH01-32,PI01-32"
+
+  stack:
+    name: "R/A/L/K/X: controlled loop over real services, authority, crash/fence, isolation + lifecycle regression"
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    env:
+      COMPOSE_PROJECT_NAME: qapr88
+      EDITAGENT_RUNTIME: development
+      AUTH_COOKIE_SECURE: "false"
+      AUTH_TRUSTED_ORIGINS: http://localhost:3000
+      QA_APP_ROOT: ${{ github.workspace }}/app
+      QA_DIR: ${{ github.workspace }}/app/apps/web/.qa-pr88
+      QA_OUT: ${{ github.workspace }}/qa-out
+      QA_INPUTS: ${{ github.workspace }}/qa-tmp/inputs
+      QA_PRIVATE: ${{ github.workspace }}/qa-tmp/private
+      QA_PY: ${{ github.workspace }}/qa-tmp/venv/bin/python
+    steps:
+      - name: "Gate 0 (before)"
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/pulls/88" | python3 -c "import json,sys,os;p=json.load(sys.stdin);print(p['state'],p['draft'],p['head']['sha'],p['changed_files']);assert p['state']=='open' and p['draft'] is True and p['head']['sha']==os.environ['QA_APP_SHA'] and p['base']['sha']==os.environ['QA_BASE_SHA'] and p['changed_files']==49, 'HEAD_DRIFT'"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)" = "$QA_BASE_SHA" || { echo HEAD_DRIFT main; exit 1; }
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.QA_APP_SHA }}
+          path: app
+          lfs: true
+          persist-credentials: false
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          path: qa-src
+          sparse-checkout: qa/pr88
+          persist-credentials: false
+      - name: Verify identity
+        run: |
+          set -eu
+          test "$(git -C app rev-parse HEAD)" = "$QA_APP_SHA"
+          test "$(git -C app rev-parse 'HEAD^{tree}')" = "$QA_APP_TREE"
+          test -z "$(git -C app status --porcelain)"
+          mkdir -p qa-out
+          printf '{"productSha":"%s","productTree":"%s","qaHarnessSha":"%s","runId":"%s","runAttempt":"%s","runner":"%s/%s","startedAt":"%s"}\n' "$(git -C app rev-parse HEAD)" "$(git -C app rev-parse 'HEAD^{tree}')" "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$ImageOS" "$ImageVersion" "$(date -u +%FT%TZ)" > qa-out/identity.json
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: app/package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: app/.nvmrc
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+      - name: Install and build the product API + agent-worker closures, FFmpeg, Chrome; QA numpy venv
+        run: |
+          set -eu
+          (cd app && pnpm install --frozen-lockfile && pnpm --filter "@editagent/api..." build && pnpm --filter "@editagent/agent-worker..." build && sh tools/test/ensure-ffmpeg.sh && sh tools/test/ensure-chrome.sh)
+          python3 -m venv qa-tmp/venv && qa-tmp/venv/bin/pip install --quiet numpy==2.3.3
+          git -C app status --porcelain --untracked-files=no | tee qa-out/app-status-after-build.txt
+      - name: Stage QA harness outside tracked files; syntax; inputs
+        run: |
+          set -eu
+          mkdir -p "$QA_DIR" && cp qa-src/qa/pr88/* "$QA_DIR"/
+          for f in "$QA_DIR"/*.mjs; do node --check "$f"; done
+          bash qa-src/qa/pr88/make_inputs88.sh "$QA_INPUTS" app
+      - name: Build production images from the frozen product (repository Dockerfiles)
+        working-directory: app
+        run: |
+          set -eu
+          docker compose config --quiet
+          docker compose build postgres redis api web media-worker agent-worker ai-worker render-executor render-worker
+      - name: Start real Compose stack (PostgreSQL, Redis/BullMQ, SeaweedFS S3, API, workers incl. real ASR and render)
+        working-directory: app
+        run: |
+          set -eu
+          docker compose up -d --wait --wait-timeout 180 postgres redis
+          sh infra/seaweedfs/start-storage.sh --from-boot
+          node apps/web/.qa-pr88/bucket.mjs
+          docker compose up -d --no-build --wait --wait-timeout 600 api web media-worker agent-worker ai-worker render-executor render-worker
+          docker compose ps --format '{{.Service}} {{.State}} {{.Health}}' | tee ../qa-out/compose-ps.txt
+      - name: Parts R/A/L/K/X - controlled loop over real services (QA drivers)
+        if: ${{ !cancelled() }}
+        working-directory: app/apps/web
+        run: node node_modules/@playwright/test/cli.js test --config .qa-pr88/playwright.config.ts loop88.spec.ts
+      - name: Regression - AgentRun lifecycle/auth/CSRF/SSE/audit security probes (QA-authored, PR #77)
+        if: ${{ !cancelled() }}
+        working-directory: app/apps/web
+        run: |
+          docker compose -f "$QA_APP_ROOT/compose.yaml" unpause >/dev/null 2>&1 || true
+          docker compose -f "$QA_APP_ROOT/compose.yaml" up -d --no-build --wait --wait-timeout 180 agent-worker render-worker postgres redis
+          node node_modules/@playwright/test/cli.js test --config .qa-pr88/playwright.config.ts s77.spec.ts
+      - name: Regression - real-PG driver crash/fence/replay probes (QA-authored, PR #77)
+        if: ${{ !cancelled() }}
+        working-directory: app/apps/web/.qa-pr88
+        run: |
+          docker compose -f "$QA_APP_ROOT/compose.yaml" stop -t 5 agent-worker
+          node d77.mjs
+      - name: Collect sanitized state
+        if: always()
+        working-directory: app
+        run: |
+          docker compose ps --all --format '{{.Service}} {{.State}} {{.Status}}' > ../qa-out/final-compose-ps.txt || true
+          docker compose exec -T postgres psql -U editagent -d editagent -AtX -c "SELECT runtime_driver||' '||state||' '||coalesce(stop_reason,'-')||' '||coalesce(planning_stop_reason,'-')||' '||count(*) FROM agent_runs GROUP BY 1 ORDER BY 1" > ../qa-out/final-agent-runs.txt 2>&1 || true
+          docker compose exec -T postgres psql -U editagent -d editagent -AtX -c "SELECT outcome||' '||count(*) FROM agent_model_calls GROUP BY outcome ORDER BY 1" > ../qa-out/final-model-calls.txt 2>&1 || true
+          docker compose logs --no-color api agent-worker render-worker 2>&1 | grep -cE "exfil\.invalid|qa88-not-a-key|IGNORE ALL PREVIOUS|you are root|qa88-fixture-" > ../qa-out/log-sensitive-hits.txt || true
+          docker compose logs --no-color api agent-worker 2>&1 | grep -cE "22P02|invalid input syntax for type uuid" > ../qa-out/log-22p02-hits.txt || true
+          date -u +%FT%TZ > ../qa-out/finishedAt.txt
+      - name: "Gate 0 (after): PR head unchanged"
+        if: always()
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/pulls/88" | python3 -c "import json,sys;p=json.load(sys.stdin);print(p['head']['sha'],'draft='+str(p['draft']).lower(),p['state'],p['base']['sha'])" | tee qa-out/identity-after.txt
+          grep -q "^$QA_APP_SHA draft=true open $QA_BASE_SHA$" qa-out/identity-after.txt || { echo HEAD_DRIFT; exit 1; }
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: qa-pr88-stack-${{ github.run_id }}
+          path: qa-out
+          retention-days: 14
+      - name: Remove disposable stack
+        if: always()
+        working-directory: app
+        run: docker compose down -v --remove-orphans || true
+      - name: "QA gate (fail-closed): controlled loop / authority / crash-fence / isolation"
+        if: always()
+        run: node qa-src/qa/pr88/gate88.mjs qa-out/qa88-results.json "R01-10,A01-07,L01-13,K01-10,X01-06"
+      - name: "QA gate (fail-closed): lifecycle security regression"
+        if: always()
+        run: node qa-src/qa/pr88/gate88.mjs qa-out/qa77-results.json "S1-19,D1-18" "S10"
+      - name: "QA gate (fail-closed): no sensitive marker or 22P02 in service logs"
+        if: always()
+        run: test "$(cat qa-out/log-sensitive-hits.txt)" = "0" && test "$(cat qa-out/log-22p02-hits.txt)" = "0"
+
+  upgrade:
+    name: "M: populated main -> PR head (atomic failed 0023, additive 0023, pooled-connection fence)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    env:
+      COMPOSE_PROJECT_NAME: qapr88up
+      EDITAGENT_RUNTIME: development
+      AUTH_COOKIE_SECURE: "false"
+      AUTH_TRUSTED_ORIGINS: http://localhost:3000
+      QA_APP_ROOT: ${{ github.workspace }}/app
+      QA_DIR: ${{ github.workspace }}/app/apps/web/.qa-pr88
+      QA_OUT: ${{ github.workspace }}/qa-up
+      QA_INPUTS: ${{ github.workspace }}/qa-tmp/inputs
+      QA_PRIVATE: ${{ github.workspace }}/qa-tmp/private
+    steps:
+      - name: "Gate 0 (before)"
+        run: gh api "repos/$GITHUB_REPOSITORY/pulls/88" --jq '.head.sha' | grep -qx "$QA_APP_SHA" || { echo HEAD_DRIFT; exit 1; }
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.QA_BASE_SHA }}
+          path: app
+          lfs: true
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          path: qa-src
+          sparse-checkout: qa/pr88
+          persist-credentials: false
+      - name: Verify base identity and ancestry
+        run: |
+          set -eu
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
+          test "$(git -C app rev-parse HEAD)" = "$QA_BASE_SHA"
+          test "$(git -C app merge-base "$QA_BASE_SHA" "$QA_APP_SHA")" = "$QA_BASE_SHA"
+          mkdir -p qa-up
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: app/package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: app/.nvmrc
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+      - name: Base install, harness, inputs
+        run: |
+          set -eu
+          (cd app && pnpm install --frozen-lockfile && sh tools/test/ensure-ffmpeg.sh && sh tools/test/ensure-chrome.sh)
+          mkdir -p "$QA_DIR" && cp qa-src/qa/pr88/* "$QA_DIR"/
+          bash qa-src/qa/pr88/make_inputs88.sh "$QA_INPUTS" app
+      - name: Build and start the BASE stack
+        working-directory: app
+        run: |
+          set -eu
+          docker compose build postgres redis api web media-worker agent-worker render-executor render-worker
+          docker compose up -d --wait --wait-timeout 180 postgres redis
+          sh infra/seaweedfs/start-storage.sh --from-boot
+          node apps/web/.qa-pr88/bucket.mjs
+          docker compose up -d --no-build --wait --wait-timeout 600 api web media-worker agent-worker render-executor render-worker
+      - name: Upgrade part 1 - populate base
+        working-directory: app/apps/web
+        run: node node_modules/@playwright/test/cli.js test --config .qa-pr88/playwright.config.ts u88-base.spec.ts
+      - name: Switch code to the frozen PR head and build
+        run: |
+          set -eu
+          (cd app && docker compose stop api web media-worker agent-worker render-executor render-worker)
+          git -C app checkout --detach "$QA_APP_SHA"
+          test "$(git -C app rev-parse HEAD)" = "$QA_APP_SHA"
+          ! git -C app status --porcelain --untracked-files=all | grep -v '^?? apps/web/.qa-pr88/'
+          (cd app && pnpm install --frozen-lockfile && pnpm --filter "@editagent/api..." build && pnpm --filter "@editagent/agent-worker..." build && docker compose build api web media-worker agent-worker render-executor render-worker)
+      - name: "Atomicity - failed 0023 (QA pre-creates a conflicting object)"
+        working-directory: app
+        run: |
+          set -u
+          psql() { docker compose exec -T postgres psql -U editagent -d editagent -AtX -c "$1"; }
+          psql "CREATE TABLE agent_loop_sessions (qa88_conflict integer)"
+          docker compose up -d --no-build api || true
+          ready=false
+          for i in $(seq 1 30); do sleep 3; if curl -fsS -m 3 http://localhost:3001/ready >/dev/null 2>&1; then ready=true; break; fi; done
+          has=$(psql "SELECT count(*) FROM schema_migrations WHERE id LIKE '0023%'")
+          cols=$(psql "SELECT count(*) FROM information_schema.columns WHERE table_name='agent_runs' AND column_name IN ('runtime_driver','planning_stop_reason','tool_attempts')")
+          rv=$(psql "SELECT coalesce(to_regclass('render_output_validations')::text,'null')")
+          runs=$(psql "SELECT count(*) FROM agent_runs")
+          tl=$(python3 -c 'import json,os;print(json.load(open(os.environ["QA_PRIVATE"]+"/upgrade88.json"))["timeline"])')
+          sha=$(psql "SELECT state_sha256 FROM editing_timelines WHERE id='$tl'")
+          python3 - "$ready" "$has" "$cols" "$rv" "$runs" "$sha" > "$QA_PRIVATE/failed-migration88.json" <<'EOF'
+          import json,sys
+          r,h,c,rv,runs,sha=sys.argv[1:7]
+          print(json.dumps({"apiReady":r=="true","has0023":h.strip()!="0","columns":int(c),"renderValidations":None if rv.strip()=="null" else rv.strip(),"runs":int(runs),"timelineSha":sha.strip()}))
+          EOF
+          cp "$QA_PRIVATE/failed-migration88.json" ../qa-up/
+          docker compose stop api
+          psql "DROP TABLE agent_loop_sessions"
+      - name: Start the HEAD application on the same volumes
+        working-directory: app
+        run: |
+          set -eu
+          docker compose up -d --no-build --wait --wait-timeout 600 api web media-worker agent-worker render-executor render-worker
+          docker compose exec -T postgres psql -U editagent -d editagent -AtX -c "SELECT id FROM schema_migrations ORDER BY id DESC LIMIT 2" | tee ../qa-up/head-migrations.txt
+      - name: Upgrade part 2 - migrated head
+        working-directory: app/apps/web
+        run: node node_modules/@playwright/test/cli.js test --config .qa-pr88/playwright.config.ts u88-head.spec.ts
+      - name: "Gate 0 (after)"
+        if: always()
+        run: gh api "repos/$GITHUB_REPOSITORY/pulls/88" --jq '.head.sha + " draft=" + (.draft|tostring)' | tee qa-up/identity-after.txt | grep -qx "$QA_APP_SHA draft=true" || { echo HEAD_DRIFT; exit 1; }
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: qa-pr88-upgrade-${{ github.run_id }}
+          path: qa-up
+          retention-days: 14
+      - name: Remove disposable stack
+        if: always()
+        working-directory: app
+        run: docker compose down -v --remove-orphans || true
+      - name: "QA gate (fail-closed): migration 0023"
+        if: always()
+        run: node qa-src/qa/pr88/gate88.mjs qa-up/qa88-results.json "UB1,M01-07"
+
+  graduation:
+    name: "Regression: browser upload -> analysis -> edit -> render -> playback/download (product journey) + independent FFprobe"
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    services:
+      postgres:
+        image: postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
+        env:
+          POSTGRES_USER: editagent
+          POSTGRES_PASSWORD: editagent-dev-password
+          POSTGRES_DB: editagent
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U editagent -d editagent" --health-interval 5s --health-timeout 5s --health-retries 20
+      redis:
+        image: redis:7.4-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 5s --health-retries 20
+    steps:
+      - name: "Gate 0 (before)"
+        run: gh api "repos/$GITHUB_REPOSITORY/pulls/88" --jq '.head.sha' | grep -qx "$QA_APP_SHA" || { echo HEAD_DRIFT; exit 1; }
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.QA_APP_SHA }}
+          path: app
+          lfs: true
+          persist-credentials: false
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          path: qa-src
+          sparse-checkout: qa/pr88
+          persist-credentials: false
+      - name: Verify exact application identity
+        run: |
+          set -eu
+          test "$(git -C app rev-parse HEAD)" = "$QA_APP_SHA"
+          test "$(git -C app rev-parse 'HEAD^{tree}')" = "$QA_APP_TREE"
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
+          mkdir -p qa-grad
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: app/package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: app/.nvmrc
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@v10.2.0
+      - name: Install and build (pinned, as repository CI)
+        working-directory: app
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+          sh tools/test/ensure-ffmpeg.sh
+          sh tools/test/ensure-chrome.sh
+          python3 -m venv "$RUNNER_TEMP/qa-venv"
+          "$RUNNER_TEMP/qa-venv/bin/pip" install --quiet numpy==2.3.3
+      - name: Start SeaweedFS (repository script)
+        working-directory: app
+        run: sh infra/seaweedfs/start-storage.sh --from-boot
+      - name: Existing ASR container build (unchanged)
+        working-directory: app
+        run: pnpm asr:container
+      - name: Existing graduation integration test (unchanged product driver, regression only)
+        id: grad
+        if: ${{ !cancelled() }}
+        working-directory: app
+        env:
+          PR_HEAD_SHA: ${{ env.QA_APP_SHA }}
+        run: pnpm render:test --graduation-demo
+      - name: Independent validation of the generated manual-edit export (FFprobe/frames/audio)
+        if: always()
+        run: |
+          set -eu
+          "$RUNNER_TEMP/qa-venv/bin/python" qa-src/qa/pr88/verify_media.py \
+            --source app/.local/graduation-demo/demo-input.mp4 \
+            --export app/.local/graduation-demo/private/export.mp4 \
+            --keep 0.2:7.8 --duration 8 --out qa-grad/graduation-export-verification.json
+          sha256sum app/.local/graduation-demo/private/export.mp4 | sed 's#app/.local/graduation-demo/##' > qa-grad/sha256.txt
+      - name: "Gate 0 (after)"
+        if: always()
+        run: gh api "repos/$GITHUB_REPOSITORY/pulls/88" --jq '.head.sha + " draft=" + (.draft|tostring)' | tee qa-grad/identity-after.txt | grep -qx "$QA_APP_SHA draft=true" || { echo HEAD_DRIFT; exit 1; }
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: qa-pr88-graduation-${{ github.run_id }}
+          path: qa-grad
+          retention-days: 14
+      - name: "QA gate (fail-closed): graduation regression + independent export verification"
+        if: always()
+        run: |
+          test "${{ steps.grad.outcome }}" = "success"
+          python3 -c "import json;d=json.load(open('qa-grad/graduation-export-verification.json'));assert d['pass'] is True;print('export verification PASS')"
+
+  asr-long:
+    name: "Regression: 600 s ASR deadline / long-input production-jail qualification (unchanged product driver)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: "Gate 0 (before)"
+        run: gh api "repos/$GITHUB_REPOSITORY/pulls/88" --jq '.head.sha' | grep -qx "$QA_APP_SHA" || { echo HEAD_DRIFT; exit 1; }
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.QA_APP_SHA }}
+          lfs: true
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify identity
+        run: test "$(git rev-parse 'HEAD^{tree}')" = "$QA_APP_TREE"
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          cache-python: true
+          enable-cache: true
+      - name: Pinned audio runtime and immutable offline models
+        run: |
+          sh tools/test/ensure-ffmpeg.sh
+          cd workers/ai-worker && uv sync --frozen && uv run python -m editagent_ai_worker.infrastructure.vad_model && uv run python -m editagent_ai_worker.infrastructure.asr_model --root ../../.local/asr-models --model tiny && uv run python -m editagent_ai_worker.infrastructure.asr_model --root ../../.local/asr-models --model small
+      - name: Long-input real-inference shard
+        id: shard
+        working-directory: workers/ai-worker
+        run: uv run python ../../tools/asr/test_partition.py --shard long-input
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+      - name: Original ten-minute inference in the production CPU jail (600000 ms deadline)
+        id: jail
+        if: ${{ !cancelled() }}
+        env:
+          PR_HEAD_SHA: ${{ env.QA_APP_SHA }}
+        run: |
+          node tools/asr/container.mjs --build-only --model tiny
+          node tools/asr/qualification.mjs 2>&1 | tail -40 | tee "$RUNNER_TEMP/asr-tail.txt"
+          test "${PIPESTATUS[0]}" = "0"
+      - name: "Gate 0 (after) and QA gate (fail-closed): ASR regression"
+        if: always()
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/pulls/88" --jq '.head.sha' | grep -qx "$QA_APP_SHA" || { echo HEAD_DRIFT; exit 1; }
+          test "${{ steps.shard.outcome }}" = "success"
+          test "${{ steps.jail.outcome }}" = "success"
+          echo "ASR long-input regression PASS (no Tiny-Arabic/CP2/CP1 claim)"
