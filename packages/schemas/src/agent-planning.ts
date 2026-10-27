@@ -67,6 +67,14 @@ export const ProviderReceiptV1Schema = z.strictObject({
 });
 export const ModelAuditV1Schema = z.strictObject({
   callId: id,
+  providerProfile: ProviderReceiptV1Schema.pick({
+    provider: true,
+    modelId: true,
+    modelVersion: true,
+    configurationVersion: true,
+    profileSha256: true,
+    evidence: true,
+  }),
   ordinal: count.max(15),
   requestSha256: hash,
   contextSha256: hash,

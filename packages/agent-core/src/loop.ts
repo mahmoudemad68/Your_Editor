@@ -207,6 +207,14 @@ export async function runControlledAgentLoop(
         throw new PlanningError("COST_BUDGET");
       const audit: ModelAuditV1 = {
         callId: newAgentId(),
+        providerProfile: {
+          provider: deps.model.capabilities.provider,
+          modelId: deps.model.capabilities.modelId,
+          modelVersion: deps.model.capabilities.modelVersion,
+          configurationVersion: deps.model.capabilities.configurationVersion,
+          profileSha256: session.profile_sha256,
+          evidence: deps.model.capabilities.evidence,
+        },
         ordinal: previous.length,
         requestSha256: digest,
         contextSha256: context.sha256,

@@ -874,6 +874,26 @@ test(
                 const result = await runs.get(owner, f.project, run.id);
                 assert.equal(result.state, "Failed");
                 assert.equal(result.planning?.stopReason, reason);
+                const events = (await runs.audit(owner, f.project, run.id, undefined, 100)).events;
+                for (const intent of events.filter((e) => e.kind === "model_intent")) {
+                  assert.equal(
+                    intent.model?.providerProfile.modelId,
+                    deps.model.capabilities.modelId,
+                  );
+                  const settled = events.find(
+                    (e) => e.kind === "model_result" && e.model?.callId === intent.model?.callId,
+                  );
+                  assert(settled);
+                  assert.equal(
+                    settled.model?.providerProfile.configurationVersion,
+                    deps.model.capabilities.configurationVersion,
+                  );
+                  assert(settled.atMs >= intent.atMs);
+                  if (!settled.model?.receipt) {
+                    assert.equal(settled.tokens, null);
+                    assert.equal(settled.tokenMeasurement, "unavailable");
+                  }
+                }
                 assert.equal(
                   (
                     await pool.query("SELECT id FROM tool_executions WHERE project_id=$1", [

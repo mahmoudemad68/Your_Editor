@@ -218,7 +218,7 @@ export class PostgresAgentRuns implements AgentApi {
       tokens: model?.receipt
         ? { input: model.receipt.usage.inputTokens, output: model.receipt.usage.outputTokens }
         : null,
-      tokenMeasurement: model?.receipt?.usage.source ?? "not_applicable",
+      tokenMeasurement: model ? (model.receipt?.usage.source ?? "unavailable") : "not_applicable",
       decision:
         row.runtime_driver !== "controlled-loop-v1"
           ? "no_llm"
@@ -587,17 +587,20 @@ export class PostgresAgentRuns implements AgentApi {
       )
         throw new AgentError("forbidden");
       const stored = (
-        await db.query<{ context_snapshot: LoopSession["context_snapshot"] }>(
-          "SELECT context_snapshot FROM agent_loop_sessions WHERE run_id=$1",
-          [row.id],
-        )
-      ).rows[0]?.context_snapshot;
+        await db.query<{
+          context_snapshot: LoopSession["context_snapshot"];
+          profile_sha256: string;
+        }>("SELECT context_snapshot,profile_sha256 FROM agent_loop_sessions WHERE run_id=$1", [
+          row.id,
+        ])
+      ).rows[0];
       if (
-        !stored ||
-        stored.sha256 !== audit.contextSha256 ||
-        stored.summary.templateHash !== audit.templateHash ||
-        stored.summary.promptId !== audit.promptId ||
-        stored.summary.promptVersion !== audit.promptVersion
+        !stored?.context_snapshot ||
+        stored.profile_sha256 !== audit.providerProfile.profileSha256 ||
+        stored.context_snapshot.sha256 !== audit.contextSha256 ||
+        stored.context_snapshot.summary.templateHash !== audit.templateHash ||
+        stored.context_snapshot.summary.promptId !== audit.promptId ||
+        stored.context_snapshot.summary.promptVersion !== audit.promptVersion
       )
         throw new AgentError("conflict");
       await db.query(

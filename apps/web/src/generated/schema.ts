@@ -2203,6 +2203,19 @@ export interface operations {
                       decision: "runtime" | "model" | "tool_execution";
                       model: {
                         callId: string;
+                        providerProfile: {
+                          /** @enum {string} */
+                          provider: "openai-compatible" | "anthropic" | "replay";
+                          modelId: string;
+                          modelVersion: string;
+                          configurationVersion: string;
+                          profileSha256: string;
+                          /** @enum {string} */
+                          evidence:
+                            | "operator_declared_unqualified"
+                            | "offline_http_fixture"
+                            | "synthetic_replay";
+                        };
                         ordinal: number;
                         requestSha256: string;
                         contextSha256: string;
@@ -2688,6 +2701,19 @@ export interface operations {
                       decision: "runtime" | "model" | "tool_execution";
                       model: {
                         callId: string;
+                        providerProfile: {
+                          /** @enum {string} */
+                          provider: "openai-compatible" | "anthropic" | "replay";
+                          modelId: string;
+                          modelVersion: string;
+                          configurationVersion: string;
+                          profileSha256: string;
+                          /** @enum {string} */
+                          evidence:
+                            | "operator_declared_unqualified"
+                            | "offline_http_fixture"
+                            | "synthetic_replay";
+                        };
                         ordinal: number;
                         requestSha256: string;
                         contextSha256: string;

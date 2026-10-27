@@ -88,6 +88,12 @@ and conservative UTF-8-byte token estimates are labelled estimates. Replay durat
 zero is synthetic. Request/provider IDs are hashed. Raw responses, prompts, session
 cookies and keys are absent from public events and reports.
 
+Every admitted model call carries its configured provider/model/version/profile,
+including failed and unconfirmed calls. A missing provider receipt has unavailable
+usage, not zero or not-applicable usage. Paired intent/result server timestamps
+retain the runtime interval when no provider latency receipt exists. The configured
+identity does not assert that an unknown-outcome request reached that provider.
+
 `EditPlan@1.0.0` binds the original Timeline hash, project, source media intervals,
 reviewed tool manifest hashes, sequential dependencies and pinned prompt/context
 hashes. Validation uses pure domain commands and exact frame coordinates. Existing
