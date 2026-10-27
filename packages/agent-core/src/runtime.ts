@@ -148,11 +148,7 @@ export async function consumeControlledAgentRuns(
   onError: () => void,
   driver: (runs: PostgresAgentRuns, id: string, signal: AbortSignal) => Promise<void>,
 ): Promise<void> {
-  if (
-    process.env.NODE_ENV !== "test" ||
-    process.env.EDITAGENT_REPLAY_QUALIFICATION !== "isolated-v1"
-  )
-    throw new AgentError("forbidden");
+  runs.requireControlledReplay();
   return consumeRuns(runs, queue, signal, onError, driver);
 }
 async function consumeRuns(

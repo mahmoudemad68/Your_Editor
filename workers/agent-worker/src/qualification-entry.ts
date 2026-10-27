@@ -6,14 +6,10 @@ import { AgentError, PostgresAgentRuns, type ProviderCapabilities } from "@edita
 import { consumeControlledWorker } from "./controlled.js";
 import { AuthenticatedTimelineRenderPort } from "./render-port.js";
 import { ControlledReplayScenario } from "./replay-scenario.js";
+import { loadControlledReplayConfig } from "./infrastructure/config.js";
 
 async function main(): Promise<void> {
-  if (
-    process.env.NODE_ENV !== "test" ||
-    process.env.EDITAGENT_REPLAY_QUALIFICATION !== "isolated-v1" ||
-    process.env.EDITAGENT_RUNTIME !== "development"
-  )
-    throw new AgentError("forbidden");
+  const config = loadControlledReplayConfig();
   const chunks: Buffer[] = [];
   let bytes = 0;
   const inputTimer = setTimeout(() => process.stdin.destroy(new AgentError("invalid_input")), 5000);
@@ -50,20 +46,20 @@ async function main(): Promise<void> {
   )
     throw new AgentError("invalid_input");
   const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
+    connectionString: config.databaseUrl,
     max: 6,
     connectionTimeoutMillis: 2000,
     query_timeout: 5000,
   });
-  const queue = new BullMqJobQueue(process.env.REDIS_URL!),
+  const queue = new BullMqJobQueue(config.redisUrl),
     stop = new AbortController();
   const deadline = setTimeout(() => stop.abort(), 125000);
   process.once("SIGTERM", () => stop.abort());
   process.once("SIGINT", () => stop.abort());
   let consumed: Promise<void> | undefined;
   try {
-    const runs = new PostgresAgentRuns(pool),
-      model = new ControlledReplayScenario(input.capabilities, input.plan);
+    const runs = new PostgresAgentRuns(pool, config.permit),
+      model = new ControlledReplayScenario(input.capabilities, input.plan, config.permit);
     const current = await runs.get(input.actorId, input.projectId, input.runId);
     if (current.runtime.driver !== "controlled-loop-v1") throw new AgentError("forbidden");
     const render = new AuthenticatedTimelineRenderPort(
@@ -77,6 +73,7 @@ async function main(): Promise<void> {
           "x-editagent-csrf": input.csrf,
         };
       },
+      config.permit,
     );
     let errors = 0;
     consumed = consumeControlledWorker(
@@ -88,6 +85,7 @@ async function main(): Promise<void> {
           return model;
         },
         render,
+        permit: config.permit,
       },
       stop.signal,
       () => {

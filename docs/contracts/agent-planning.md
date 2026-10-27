@@ -53,10 +53,19 @@ file, original model/gold or graduation package belongs in this change.
 
 - [OpenAI-compatible Chat Completions](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create)
 - [Anthropic native Messages](https://platform.claude.com/docs/en/api/messages/create)
+- [Ollama's OpenAI compatibility subset](https://docs.ollama.com/api/openai-compatibility)
 
 Adapter conformance must validate actual wire serialization and parsing against
 local servers. Unsupported model features fail explicitly. Current provider pricing,
 live accuracy, hosted availability and CP1 are not established by offline tests.
+
+Trusted transport configuration selects `openAiOutputLimitField`: the hosted
+default is `max_completion_tokens`; `max_tokens` supports compatible backends
+that document that spelling, including Ollama. Tests verify either field is sent
+with the exact bounded value, never both. This is protocol compatibility testing,
+not qualification of any downloaded model or live backend. Receipts include the
+configuration version and a hash of endpoint/admission/dialect configuration;
+the secret callback and its value are excluded. Replay has a null transport hash.
 
 ## Implemented contracts and execution
 
@@ -119,6 +128,12 @@ container with `NODE_ENV=test`, `EDITAGENT_RUNTIME=development` and
 not API planning input or a production enablement flag. Production `index.js` and
 its Docker CMD continue to run only infrastructure admission. The 120-second
 AgentRun deadline, 600-second ASR deadline and CI budgets remain unchanged.
+
+The existing worker configuration boundary reads those flags once and creates an
+in-process replay permit. Core services and worker ports receive that permit;
+they never read environment variables. Default API/production repositories have
+no permit and refuse controlled activation. A serialized copy cannot grant
+authority. The architecture rule and its allowlist remain unchanged.
 
 ## Reproducible self-tests and evidence boundaries
 

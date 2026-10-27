@@ -9,6 +9,8 @@ import {
   type LanguageModel,
   type AgentRenderPort,
   type PromptRegistry,
+  assertControlledReplayPermit,
+  type ControlledReplayPermit,
 } from "@editagent/agent-core";
 import {
   PostgresToolAuditRepository,
@@ -27,6 +29,7 @@ export interface ControlledWorkerComposition {
   modelForRun: (runId: string) => Promise<LanguageModel>;
   render: AgentRenderPort;
   prompts?: PromptRegistry;
+  permit: ControlledReplayPermit;
 }
 /** Library entry for explicitly invoked isolated qualification. Normal index.ts
  * never imports/selects this function, even if environment flags are injected.
@@ -36,12 +39,8 @@ export async function consumeControlledWorker(
   signal: AbortSignal,
   onError: () => void,
 ): Promise<void> {
-  if (
-    process.env.NODE_ENV !== "test" ||
-    process.env.EDITAGENT_REPLAY_QUALIFICATION !== "isolated-v1"
-  )
-    throw new AgentError("forbidden");
-  const runs = new PostgresAgentRuns(c.pool);
+  assertControlledReplayPermit(c.permit);
+  const runs = new PostgresAgentRuns(c.pool, c.permit);
   const authority = new PostgresToolAuthority(c.pool, async (project, id) => {
     const row = (
       await c.pool.query<{ snapshot: unknown; state_sha256: string }>(

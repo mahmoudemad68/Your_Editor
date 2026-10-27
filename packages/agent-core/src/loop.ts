@@ -54,11 +54,8 @@ export async function runControlledAgentLoop(
   id: string,
   outer: AbortSignal,
 ): Promise<void> {
-  if (
-    process.env.NODE_ENV !== "test" ||
-    process.env.EDITAGENT_REPLAY_QUALIFICATION !== "isolated-v1" ||
-    !["synthetic_replay", "offline_http_fixture"].includes(deps.model.capabilities.evidence)
-  )
+  deps.runs.requireControlledReplay();
+  if (!["synthetic_replay", "offline_http_fixture"].includes(deps.model.capabilities.evidence))
     throw new AgentError("forbidden");
   const { runs } = deps,
     lease = await runs.claim(id);

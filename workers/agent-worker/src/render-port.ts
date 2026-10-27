@@ -8,6 +8,8 @@ import {
   newAgentId,
   type AgentRenderPort,
   type AgentRenderRequest,
+  assertControlledReplayPermit,
+  type ControlledReplayPermit,
 } from "@editagent/agent-core";
 import { contentHash } from "@editagent/tool-sdk";
 
@@ -20,11 +22,11 @@ export class AuthenticatedTimelineRenderPort implements AgentRenderPort {
     private readonly queue: JobQueue,
     origin: string,
     private readonly headersForActor: (actor: string) => Promise<Readonly<Record<string, string>>>,
+    permit: ControlledReplayPermit,
   ) {
+    assertControlledReplayPermit(permit);
     const u = new URL(origin);
     if (
-      process.env.NODE_ENV !== "test" ||
-      process.env.EDITAGENT_REPLAY_QUALIFICATION !== "isolated-v1" ||
       u.protocol !== "http:" ||
       u.hostname !== "127.0.0.1" ||
       u.pathname !== "/" ||

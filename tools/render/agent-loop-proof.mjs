@@ -9,7 +9,15 @@ import process from "node:process";
 import { Pool } from "pg";
 import { buildProductImages } from "../test/compose-build.mjs";
 
-export async function runAgentLoopProof({ root, hostEnv, webUrl, result, probe, codeIdentity }) {
+export async function runAgentLoopProof({
+  root,
+  hostEnv,
+  webUrl,
+  result,
+  probe,
+  codeIdentity,
+  renderContainer,
+}) {
   const directory = path.join(root, ".local/agent-loop-public"),
     privateDir = path.join(root, ".local/agent-loop-private");
   await mkdir(directory, { recursive: true });
@@ -113,24 +121,19 @@ export async function runAgentLoopProof({ root, hostEnv, webUrl, result, probe, 
         maxOutputTokens: 2048,
       },
     };
-    const runs = new core.PostgresAgentRuns(pool);
-    const saved = { node: process.env.NODE_ENV, gate: process.env.EDITAGENT_REPLAY_QUALIFICATION };
-    try {
-      process.env.NODE_ENV = "test";
-      process.env.EDITAGENT_REPLAY_QUALIFICATION = "isolated-v1";
-      await runs.enableControlledReplay(
-        actor,
-        result.projectId,
-        runId,
-        configuration,
-        sdk.contentHash(capabilities),
-      );
-    } finally {
-      if (saved.node === undefined) delete process.env.NODE_ENV;
-      else process.env.NODE_ENV = saved.node;
-      if (saved.gate === undefined) delete process.env.EDITAGENT_REPLAY_QUALIFICATION;
-      else process.env.EDITAGENT_REPLAY_QUALIFICATION = saved.gate;
-    }
+    const permit = core.createControlledReplayPermit({
+      nodeEnvironment: "test",
+      runtime: "development",
+      qualification: "isolated-v1",
+    });
+    const runs = new core.PostgresAgentRuns(pool, permit);
+    await runs.enableControlledReplay(
+      actor,
+      result.projectId,
+      runId,
+      configuration,
+      sdk.contentHash(capabilities),
+    );
     const authority = new sdk.PostgresToolAuthority(pool, async (project, id) =>
       domain.Timeline.restore(
         (
@@ -387,18 +390,15 @@ export async function runAgentLoopProof({ root, hostEnv, webUrl, result, probe, 
     phase = "unacknowledged-render-cancellation";
     // Separate adversarial lifecycle probe, not a second model/planning claim:
     // simulate a crash after real API admission but before attachRender commits.
+    // Pause only this test's owned renderer, ensuring a queued admission rather
+    // than racing an eight-second fixture that can finish before cancellation.
+    execFileSync("docker", ["pause", renderContainer], { stdio: "ignore" });
     const cancelRun = await json(`/projects/${result.projectId}/agent-runs`, {
       idempotencyKey: core.newAgentId(),
       timelineId: snapshot.id,
       stateSha256: edited.stateSha256,
     });
-    const savedCleanup = {
-      node: process.env.NODE_ENV,
-      gate: process.env.EDITAGENT_REPLAY_QUALIFICATION,
-    };
     try {
-      process.env.NODE_ENV = "test";
-      process.env.EDITAGENT_REPLAY_QUALIFICATION = "isolated-v1";
       await runs.enableControlledReplay(
         actor,
         result.projectId,
@@ -411,10 +411,12 @@ export async function runAgentLoopProof({ root, hostEnv, webUrl, result, probe, 
       for (const state of ["Observing", "Planning", "Executing", "Rendering"])
         await runs.move(lease, state);
       const intent = await runs.beginRender(lease);
+      phase = "unacknowledged-render-admission";
       const accepted = await json(`/projects/${result.projectId}/timelines/${snapshot.id}/render`, {
         stateSha256: edited.stateSha256,
         requestId: "req_" + intent.receiptId.replaceAll("-", ""),
       });
+      phase = "unacknowledged-render-cancellation";
       await json(`/projects/${result.projectId}/agent-runs/${cancelRun.id}/cancel`, {});
       const { AuthenticatedTimelineRenderPort } = require(
         path.join(root, "workers/agent-worker/dist/render-port.js"),
@@ -428,13 +430,16 @@ export async function runAgentLoopProof({ root, hostEnv, webUrl, result, probe, 
           cleanupQueue,
           apiOrigin,
           async () => headers,
+          permit,
         );
         await port.cancel(cancelRun.id, result.projectId, null);
       } finally {
         await cleanupQueue.close(true);
       }
+      phase = "unacknowledged-render-status";
       const cancelled = await json(`/projects/${result.projectId}/exports/${accepted.jobId}`);
       if (cancelled.status !== "Cancelled") throw new Error("unacknowledged_render_not_cancelled");
+      phase = "cancelled-export-download-fence";
       const forbiddenLink = await globalThis.fetch(
         apiOrigin + `/projects/${result.projectId}/exports/${accepted.jobId}/download`,
         { headers, signal: globalThis.AbortSignal.timeout(5000) },
@@ -442,10 +447,7 @@ export async function runAgentLoopProof({ root, hostEnv, webUrl, result, probe, 
       if (forbiddenLink.status !== 409) throw new Error("cancelled_export_not_fenced");
       await forbiddenLink.body?.cancel();
     } finally {
-      if (savedCleanup.node === undefined) delete process.env.NODE_ENV;
-      else process.env.NODE_ENV = savedCleanup.node;
-      if (savedCleanup.gate === undefined) delete process.env.EDITAGENT_REPLAY_QUALIFICATION;
-      else process.env.EDITAGENT_REPLAY_QUALIFICATION = savedCleanup.gate;
+      execFileSync("docker", ["unpause", renderContainer], { stdio: "ignore" });
     }
     await writeFile(
       path.join(directory, "report.json"),
@@ -467,7 +469,7 @@ export async function runAgentLoopProof({ root, hostEnv, webUrl, result, probe, 
           actualBrowser: true,
           actualPlayback: true,
           actualDownload: true,
-          actualUnacknowledgedRenderCancellation: true,
+          actualUnacknowledgedQueuedRenderCancellation: true,
           providerMeasuredUsage: null,
           syntheticUsage: {
             unit: "synthetic_model_tokens",

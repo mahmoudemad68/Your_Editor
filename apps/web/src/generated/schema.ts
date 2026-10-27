@@ -2225,6 +2225,7 @@ export interface operations {
                           profileSha256: string;
                           configurationVersion: string;
                           requestSha256: string;
+                          transportProfileSha256: string | null;
                           requestIdSha256: string | null;
                           /** @enum {string} */
                           mode: "chat" | "tools" | "structured" | "vision";
@@ -2709,6 +2710,7 @@ export interface operations {
                           profileSha256: string;
                           configurationVersion: string;
                           requestSha256: string;
+                          transportProfileSha256: string | null;
                           requestIdSha256: string | null;
                           /** @enum {string} */
                           mode: "chat" | "tools" | "structured" | "vision";

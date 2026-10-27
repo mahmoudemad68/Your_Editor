@@ -96,6 +96,7 @@ export class ReplayProvider implements LanguageModel {
       profileSha256: contentHash(this.capabilities),
       configurationVersion: this.capabilities.configurationVersion,
       requestSha256: entry.requestSha256,
+      transportProfileSha256: null,
       requestIdSha256: null,
       mode,
       evidence: "synthetic_replay",

@@ -210,6 +210,7 @@ for (const provider of ["openai-compatible", "anthropic", "replay"] as const) {
         const reply = await model[mode](r, new AbortController().signal);
         assert.equal(reply.receipt.modelId, "qualification-model");
         assert.equal(reply.receipt.configurationVersion, caps(provider).configurationVersion);
+        assert.equal(reply.receipt.transportProfileSha256 === null, provider === "replay");
         assert.equal(reply.receipt.requestSha256, requestHash(mode, r));
         assert.equal(reply.receipt.usage.actualCostMicros, null);
         assert.equal(reply.receipt.usage.inputTokens, 10);
@@ -430,5 +431,50 @@ test("native cache usage is counted, concurrent calls share rate admission, unkn
     assert.equal(attempts, 1);
   } finally {
     await close(broken.http);
+  }
+});
+
+test("trusted configuration selects the compatible output cap and records its distinct transport profile", async () => {
+  let field: "max_tokens" | "max_completion_tokens" = "max_completion_tokens",
+    observed = 0;
+  const hosted = await server((_req, res, body) => {
+    assert.equal(body[field], 128);
+    assert.equal(
+      Object.hasOwn(body, field === "max_tokens" ? "max_completion_tokens" : "max_tokens"),
+      false,
+    );
+    observed++;
+    res.end(JSON.stringify(fixture("openai-compatible", "chat")));
+  });
+  try {
+    const c = caps("openai-compatible"),
+      p = policy(hosted.endpoint),
+      r = request("chat"),
+      hashes: string[] = [];
+    for (const selectedField of ["max_completion_tokens", "max_tokens"] as const) {
+      field = selectedField;
+      const model = new OpenAICompatibleProvider(
+        c,
+        { ...p, openAiOutputLimitField: field },
+        budget(),
+      );
+      const reply = await model.chat(r, new AbortController().signal);
+      assert.equal(reply.receipt.requestSha256, requestHash("chat", r));
+      assert.match(reply.receipt.transportProfileSha256!, /^[a-f0-9]{64}$/);
+      hashes.push(reply.receipt.transportProfileSha256!);
+    }
+    assert.equal(observed, 2);
+    assert.notEqual(hashes[0], hashes[1]);
+    assert.throws(
+      () =>
+        new OpenAICompatibleProvider(
+          c,
+          { ...p, openAiOutputLimitField: "uncapped" as "max_tokens" },
+          budget(),
+        ),
+      ProviderError,
+    );
+  } finally {
+    await close(hosted.http);
   }
 });

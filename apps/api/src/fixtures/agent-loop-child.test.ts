@@ -6,6 +6,7 @@ import {
   PostgresAgentContextSource,
   runControlledAgentLoop,
   type AgentRenderPort,
+  createControlledReplayPermit,
 } from "@editagent/agent-core";
 import {
   PostgresToolAuthority,
@@ -18,7 +19,14 @@ import { qualificationModel } from "./agent-loop-provider.test.js";
 async function main() {
   const pool = new Pool({ connectionString: process.env.DATABASE_URL });
   try {
-    const runs = new PostgresAgentRuns(pool),
+    const runs = new PostgresAgentRuns(
+        pool,
+        createControlledReplayPermit({
+          nodeEnvironment: "test",
+          runtime: "development",
+          qualification: "isolated-v1",
+        }),
+      ),
       id = process.env.AGENT_TEST_RUN!;
     const snapshot = (
       await pool.query<{ source_snapshot: unknown }>(

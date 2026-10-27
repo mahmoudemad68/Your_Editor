@@ -37,6 +37,7 @@ export const ProviderReceiptV1Schema = z.strictObject({
   profileSha256: hash,
   configurationVersion: tag,
   requestSha256: hash,
+  transportProfileSha256: hash.nullable(),
   requestIdSha256: hash.nullable(),
   mode: z.enum(["chat", "tools", "structured", "vision"]),
   evidence: z.enum(["operator_declared_unqualified", "offline_http_fixture", "synthetic_replay"]),

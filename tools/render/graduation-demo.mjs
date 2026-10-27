@@ -414,7 +414,15 @@ export async function runGraduationDemo({
       "GRADUATION_DEMO PASS: actual browser, durable editing, production workers, playback, download and independent FFprobe.",
     );
     phase = "controlled-agent-replay-render";
-    await runAgentLoopProof({ root, hostEnv, webUrl, result, probe, codeIdentity });
+    await runAgentLoopProof({
+      root,
+      hostEnv,
+      webUrl,
+      result,
+      probe,
+      codeIdentity,
+      renderContainer: names[2],
+    });
     console.info(
       "CONTROLLED_AGENT_LOOP PASS: actual packaged worker, persisted trim/split, real render, browser and MP4; synthetic replay only.",
     );

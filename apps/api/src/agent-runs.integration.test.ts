@@ -27,6 +27,7 @@ import {
   type AgentRenderPort,
   type AgentRenderProof,
   type LanguageModel,
+  createControlledReplayPermit,
 } from "@editagent/agent-core";
 import { AgentRunSchema, AgentExportSchema, type LoopConfigurationV1 } from "@editagent/schemas";
 import {
@@ -242,6 +243,12 @@ test(
       await t.test(
         "US301/305 controlled loop: real PG/BullMQ/SDK and versioned audit (render boundary explicitly stubbed)",
         async (loopTest) => {
+          const permit = createControlledReplayPermit({
+            nodeEnvironment: "test",
+            runtime: "development",
+            qualification: "isolated-v1",
+          });
+          const runs = new PostgresAgentRuns(pool, permit);
           const savedNode = process.env.NODE_ENV,
             savedGate = process.env.EDITAGENT_REPLAY_QUALIFICATION;
           // Bounded diagnostics for failed qualification only: fixed state/phase
@@ -413,7 +420,7 @@ test(
                 delete process.env.EDITAGENT_REPLAY_QUALIFICATION;
                 try {
                   await assert.rejects(
-                    runs.enableControlledReplay(
+                    new PostgresAgentRuns(pool).enableControlledReplay(
                       owner,
                       f.project,
                       run.id,

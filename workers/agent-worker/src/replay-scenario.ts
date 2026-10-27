@@ -11,6 +11,8 @@ import {
   type ModelRequest,
   type ProviderCapabilities,
   type ModelReply,
+  assertControlledReplayPermit,
+  type ControlledReplayPermit,
 } from "@editagent/agent-core";
 
 /** Explicit deterministic fixture, not language understanding. The approved
@@ -18,12 +20,8 @@ import {
 export class ControlledReplayScenario implements LanguageModel {
   readonly capabilities: ProviderCapabilities;
   private readonly plan: EditPlanV1;
-  constructor(capabilities: ProviderCapabilities, plan: unknown) {
-    if (
-      process.env.NODE_ENV !== "test" ||
-      process.env.EDITAGENT_REPLAY_QUALIFICATION !== "isolated-v1"
-    )
-      throw new ProviderError("invalid_request");
+  constructor(capabilities: ProviderCapabilities, plan: unknown, permit: ControlledReplayPermit) {
+    assertControlledReplayPermit(permit);
     this.capabilities = checkedCapabilities(capabilities);
     if (
       this.capabilities.provider !== "replay" ||

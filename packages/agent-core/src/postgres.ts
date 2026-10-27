@@ -12,6 +12,7 @@ import {
 import { contentHash, jsonValue } from "@editagent/tool-sdk";
 import type { Pool, PoolClient } from "pg";
 import type { ContextResult } from "./context.js";
+import { assertControlledReplayPermit, type ControlledReplayPermit } from "./qualification.js";
 import {
   AgentStepEventSchema,
   AgentStepV1Schema,
@@ -126,7 +127,13 @@ function view(row: Row): AgentRunView {
 /** PG is the authority for cancellation, lease fences, checkpoints and replay.
  * Transactions share-lock membership and project rows to serialize revocation. */
 export class PostgresAgentRuns implements AgentApi {
-  constructor(readonly pool: Pool) {}
+  constructor(
+    readonly pool: Pool,
+    private readonly replayPermit?: ControlledReplayPermit,
+  ) {}
+  requireControlledReplay(): void {
+    assertControlledReplayPermit(this.replayPermit);
+  }
   private async tx<T>(work: (db: PoolClient) => Promise<T>): Promise<T> {
     const db = await this.pool.connect();
     try {
@@ -481,12 +488,8 @@ export class PostgresAgentRuns implements AgentApi {
     input: unknown,
     profileSha256: string,
   ): Promise<void> {
-    if (
-      process.env.NODE_ENV !== "test" ||
-      process.env.EDITAGENT_REPLAY_QUALIFICATION !== "isolated-v1" ||
-      !/^[a-f0-9]{64}$/.test(profileSha256)
-    )
-      throw new AgentError("forbidden");
+    this.requireControlledReplay();
+    if (!/^[a-f0-9]{64}$/.test(profileSha256)) throw new AgentError("forbidden");
     const configuration = LoopConfigurationV1Schema.parse(input);
     await this.tx(async (db) => {
       await this.access(db, actor, project, true);

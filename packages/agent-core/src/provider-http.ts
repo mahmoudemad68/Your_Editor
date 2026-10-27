@@ -35,6 +35,7 @@ export interface ProviderTransportPolicy {
   readonly maxAttempts: number;
   readonly minIntervalMs: number;
   readonly maxResponseBytes: number;
+  readonly openAiOutputLimitField?: "max_tokens" | "max_completion_tokens";
 }
 const hash = (s: string) => createHash("sha256").update(s).digest("hex");
 const object = (v: unknown): Record<string, unknown> => {
@@ -65,6 +66,8 @@ export abstract class HttpLanguageModel implements LanguageModel {
   readonly capabilities: ProviderCapabilities;
   private readonly endpoint: URL;
   private readonly policy: ProviderTransportPolicy;
+  private readonly transportProfileSha256: string;
+  protected readonly outputLimitField: "max_tokens" | "max_completion_tokens";
   private nextAt = 0;
   protected constructor(
     c: ProviderCapabilities,
@@ -99,14 +102,28 @@ export abstract class HttpLanguageModel implements LanguageModel {
         !natural(p.maxResponseBytes) ||
         p.maxResponseBytes < 64 ||
         p.maxResponseBytes > 1_048_576 ||
-        typeof p.secret !== "function"
+        typeof p.secret !== "function" ||
+        (p.openAiOutputLimitField !== undefined &&
+          (c.provider !== "openai-compatible" ||
+            !["max_tokens", "max_completion_tokens"].includes(p.openAiOutputLimitField)))
       )
         throw new Error();
       this.endpoint = u;
+      this.outputLimitField = p.openAiOutputLimitField ?? "max_completion_tokens";
       this.policy = Object.freeze({
         ...p,
         allowedOrigins: Object.freeze([...p.allowedOrigins]),
         allowedAddresses: Object.freeze([...p.allowedAddresses]),
+      });
+      this.transportProfileSha256 = contentHash({
+        endpoint: u.href,
+        allowedOrigins: [...p.allowedOrigins].sort(),
+        allowedAddresses: [...p.allowedAddresses].sort(),
+        timeoutMs: p.timeoutMs,
+        maxAttempts: p.maxAttempts,
+        minIntervalMs: p.minIntervalMs,
+        maxResponseBytes: p.maxResponseBytes,
+        outputLimitField: c.provider === "openai-compatible" ? this.outputLimitField : null,
       });
     } catch {
       throw new ProviderError("endpoint_denied");
@@ -222,6 +239,7 @@ export abstract class HttpLanguageModel implements LanguageModel {
           profileSha256: contentHash(this.capabilities),
           configurationVersion: this.capabilities.configurationVersion,
           requestSha256: requestHash(mode, r),
+          transportProfileSha256: this.transportProfileSha256,
           requestIdSha256: decoded.requestId === null ? null : hash(decoded.requestId),
           mode,
           evidence: this.capabilities.evidence,
@@ -379,7 +397,7 @@ export class OpenAICompatibleProvider extends HttpLanguageModel {
     return {
       model: this.capabilities.modelId,
       messages,
-      max_completion_tokens: r.maxOutputTokens,
+      [this.outputLimitField]: r.maxOutputTokens,
       n: 1,
       ...(mode === "tools"
         ? {
