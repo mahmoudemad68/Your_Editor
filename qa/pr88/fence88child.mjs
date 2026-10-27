@@ -7,7 +7,7 @@ import { load, scripted, refusingRender, composition, permitFor } from "./lib88.
 const spec = JSON.parse(readFileSync(process.env.QA88_CHILD, "utf8"));
 const L = load(spec.app);
 const { AC } = L;
-const pool = new L.pg.Pool({ connectionString: spec.pg, max: 4, connectionTimeoutMillis: 3000 });
+const pool = new L.pg.Pool({ connectionString: spec.pg, max: 4, connectionTimeoutMillis: 3000, application_name: `qa88-child-${spec.name}` });
 pool.on("error", () => undefined);
 const permit = permitFor(AC);
 const c = composition(L, pool, permit);

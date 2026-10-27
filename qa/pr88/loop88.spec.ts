@@ -20,6 +20,7 @@ const REDIS = "redis://localhost:6379/0", API_ORIGIN = "http://127.0.0.1:3001";
 const compose = (...a: string[]) => execFileSync("docker", ["compose", "-f", path.join(APP, "compose.yaml"), ...a], { cwd: APP, encoding: "utf8", timeout: 600_000 });
 const base = (p: string) => `/projects/${p}/agent-runs`;
 const ctr = (svc: string) => compose("ps", "-q", svc).trim();
+const canon = (v: unknown) => JSON.stringify(v, (_k, x) => (x && typeof x === "object" && !Array.isArray(x) ? Object.fromEntries(Object.keys(x).sort().map((k) => [k, (x as any)[k]])) : x));
 
 test("PR88 controlled loop over real services", async ({ browser }) => {
   test.setTimeout(170 * 60_000);
@@ -140,7 +141,7 @@ test("PR88 controlled loop over real services", async ({ browser }) => {
     const v = JSON.parse(readFileSync(out, "utf8"));
     writeFileSync(path.join(OUT, "r05-export-verification.json"), JSON.stringify({ ...v, exportSha256: sha(bytes), bytes: bytes.length }, null, 2));
     const e = v.exportProbe;
-    return { pass: job?.status === "Completed" && JSON.stringify(db) === JSON.stringify(rProof) && rProof.timelineSha256 === rFacts.timelineSha && rProof.artifactSha256 === sha(bytes) && rProof.validation === "render_worker_ffprobe_v1" &&
+    return { pass: job?.status === "Completed" && canon(db) === canon(rProof) && rProof.timelineSha256 === rFacts.timelineSha && rProof.artifactSha256 === sha(bytes) && rProof.validation === "render_worker_ffprobe_v1" &&
       v.pass === true && e.videoCodec === "h264" && e.width === 320 && e.height === 180 && e.fps === "25/1" && e.frames === 200 && Math.abs(e.duration - 8) < 0.02 && e.audio?.[0]?.codec === "aac" && e.audio[0].rate === "48000" && e.audio[0].channels === 2,
       actual: { job: job?.status, receipt: rProof && { durationUs: rProof.durationUs, frames: rProof.videoFrames, w: rProof.width, h: rProof.height, fps: rProof.frameRate, audio: rProof.audioCodec }, artifactShaMatches: rProof?.artifactSha256 === sha(bytes), exportSha256: sha(bytes), independent: { pass: v.pass, probe: e, video: v.video, audio: v.audio } } };
   });
@@ -411,11 +412,17 @@ test("PR88 controlled loop over real services", async ({ browser }) => {
 
   // ================================ K: crash / heartbeat / cancellation / outage matrix (child processes) =================
   const childDir = path.join(PRIVATE, "children"); mkdirSync(childDir, { recursive: true });
+  const children: any[] = [];
+  const reap = async () => {
+    for (const c of children.splice(0)) if (c.exitCode === null && c.signalCode === null) { try { c.kill("SIGCONT"); c.kill("SIGKILL"); } catch { /* gone */ } }
+    await q("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name LIKE 'qa88-child-%'").catch(() => null);
+  };
   const startChild = async (pr: any, name: string, o: any = {}) => {
-    const spec = { app: APP, pg: PG, redis: REDIS, apiOrigin: API_ORIGIN, cookie: await cookieFor(pr.u.id), csrf, runId: pr.run, caps: pr.caps, plan: pr.plan, render: o.render ?? "real", result: path.join(childDir, `${name}.result.json`), ...o };
+    const spec = { app: APP, pg: PG, redis: REDIS, apiOrigin: API_ORIGIN, cookie: await cookieFor(pr.u.id), csrf, runId: pr.run, caps: pr.caps, plan: pr.plan, render: o.render ?? "real", result: path.join(childDir, `${name}.result.json`), name, ...o };
     const file = path.join(childDir, `${name}.json`); writeFileSync(file, JSON.stringify(spec));
     rmSync(spec.result, { force: true });
     const p = spawn(process.execPath, [path.join(QA, "fence88child.mjs")], { env: { ...process.env, QA88_CHILD: file }, stdio: "ignore" });
+    children.push(p);
     return { p, spec, done: () => until(async () => (existsSync(spec.result) ? JSON.parse(readFileSync(spec.result, "utf8")) : null), o.wait ?? 180_000, `${name} result`, 200) };
   };
   const waitExit = (p: any) => new Promise((r) => (p.exitCode !== null || p.signalCode ? r(null) : p.once("exit", r)));
@@ -445,12 +452,15 @@ test("PR88 controlled loop over real services", async ({ browser }) => {
   });
 
   const renderJobsFor = async (f: any) => f.session?.render_receipt_id ? (await q("SELECT id,status FROM jobs WHERE idempotency_key=$1", [`render:${P}:${owner.id}:req_${f.session.render_receipt_id.replaceAll("-", "")}`])) : [];
+  await reap();
   await probe("K01", "SIGKILL after committed checkpoints resumes from the checkpoint without repeating effects", "both trim/split effects committed, child killed while blocked before its render intent (QA lock on agent_loop_sessions); recovery child: same 2 receipts, CHECKPOINT_RESTORED, no model reissue, exactly 1 render job, Completed", async () => {
     const pr = await prepare(owner);
     const a = await startChild(pr, "k01a");
     await until(async () => (await facts(pr.run)).session?.has_plan, 120_000, "plan committed", 20);
-    const hold = await lockHolder(); await hold.query("LOCK TABLE agent_loop_sessions IN EXCLUSIVE MODE");
-    const blocked = await until(async () => blockedOn("SELECT * FROM agent_loop_sessions WHERE run_id=$1 FOR UPDATE%"), 120_000, "child blocked before render intent", 50).catch(() => false);
+    // Row lock (FOR NO KEY UPDATE) stays compatible with FK KEY SHARE checks of model-call inserts but blocks the
+    // render-intent SELECT ... FOR UPDATE, i.e. the first statement after the second committed checkpoint.
+    const hold = await lockHolder(); await hold.query("SELECT 1 FROM agent_loop_sessions WHERE run_id=$1 FOR NO KEY UPDATE", [pr.run]);
+    const blocked = await until(async () => blockedOn("SELECT * FROM agent_loop_sessions WHERE run_id=$1 FOR UPDATE%", ["transactionid", "tuple"]), 120_000, "child blocked before render intent", 50).catch(() => false);
     const atKill = await facts(pr.run);
     a.p.kill("SIGKILL"); await waitExit(a.p); await hold.query("ROLLBACK"); hold.release();
     await sleep(5500);
@@ -462,6 +472,7 @@ test("PR88 controlled loop over real services", async ({ browser }) => {
       f.events.filter((e: string) => e === "CHECKPOINT_RESTORED").length >= 2 && jobs.length === 1 && rb.model.structured + rb.model.tools === 0,
       actual: { blockedBeforeRenderIntent: blocked, atKill: { state: atKill.state, checkpoint: atKill.checkpoint, effects: atKill.effects, renderIntent: !!atKill.session?.render_receipt_id }, state: f.state, effects: f.effects, sameReceipts: JSON.stringify(receiptsBefore) === JSON.stringify(receiptsAfter), restored: f.events.filter((e: string) => e === "CHECKPOINT_RESTORED").length, renderJobs: jobs.length, recoveryModel: rb.model } };
   }, "real-pg-driver");
+  await reap();
   await probe("K02", "SIGKILL during an unconfirmed model call is never reissued", "child blocked inside the step-2 tools call after MODEL_STARTED; recovery -> Failed EXECUTION_UNCONFIRMED / PROVIDER_OUTCOME_UNCONFIRMED; recovery invokes the model 0 times; exactly 1 effect", async () => {
     const pr = await prepare(owner), marker = path.join(childDir, "k02.marker");
     const a = await startChild(pr, "k02a", { block: { mode: "tools", index: 1, marker }, render: "refuse" });
@@ -472,6 +483,7 @@ test("PR88 controlled loop over real services", async ({ browser }) => {
     return { pass: f.state === "Failed" && f.planning_stop_reason === "PROVIDER_OUTCOME_UNCONFIRMED" && f.stop_reason === "EXECUTION_UNCONFIRMED" && rb.model.tools + rb.model.structured === 0 && f.effects === 1 && f.calls.some((c: string) => c.includes("unconfirmed")),
       actual: { state: f.state, stop: f.stop_reason, planningStop: f.planning_stop_reason, calls: f.calls, effects: f.effects, recoveryModel: rb.model } };
   }, "real-pg-driver");
+  await reap();
   await probe("K03", "SIGKILL during an in-flight Tool SDK effect: the uncertain intent is not re-executed", "split model call held, QA row lock on the Timeline, child commits the step-2 intent then blocks writing the effect; killed; recovery -> EXECUTION_UNCONFIRMED; Timeline equals the post-trim state; split never applied", async () => {
     const pr = await prepare(owner), release = path.join(childDir, "k03.release"); rmSync(release, { force: true });
     const a = await startChild(pr, "k03a", { render: "refuse", releaseFile: release, releaseStep: "split" });
@@ -486,7 +498,7 @@ test("PR88 controlled loop over real services", async ({ browser }) => {
     return { pass: blocked === true && f.state === "Failed" && f.stop_reason === "EXECUTION_UNCONFIRMED" && f.timelineSha === afterTrim && f.effects === 1 && rb.model.tools === 0,
       actual: { blockedAfterIntent: blocked, sdkReceiptsSucceeded: f.sdkSucceeded, state: f.state, stop: f.stop_reason, planningStop: f.planning_stop_reason, steps: f.steps, timelineIsPostTrim: f.timelineSha === afterTrim, recoveryModel: rb.model } };
   }, "real-pg-driver");
-  for (const [id, mode] of [["K04", "forward"], ["K10", "drop"]] as const) await probe(id, mode === "forward" ? "SIGKILL after the render request reached the API but before acknowledgement: recovery reconciles the exact receipt" : "SIGKILL with the render request never delivered: recovery stops explicitly instead of resubmitting",
+  for (const [id, mode] of [["K04", "forward"], ["K10", "drop"]] as const) await reap(), await probe(id, mode === "forward" ? "SIGKILL after the render request reached the API but before acknowledgement: recovery reconciles the exact receipt" : "SIGKILL with the render request never delivered: recovery stops explicitly instead of resubmitting",
     mode === "forward" ? "QA proxy holds the render POST; child killed; request then delivered (job created, unacknowledged); recovery: exactly 1 render job for the receipt, attached, Completed" : "QA proxy holds then drops the render POST; child killed; recovery: 0 render jobs for the receipt, Failed RENDER_UNCONFIRMED (no resubmission)", async () => {
     const pr = await prepare(owner), marker = path.join(childDir, `${id}.marker`); rmSync(marker, { force: true });
     const proxy = await holdingProxy(marker, mode);
@@ -503,14 +515,20 @@ test("PR88 controlled loop over real services", async ({ browser }) => {
       return { pass: ok && f.effects === 2 && rb.model.structured + rb.model.tools === 0, actual: { deliveredStatus: delivered, state: f.state, stop: f.stop_reason, planningStop: f.planning_stop_reason, renderJobsForReceipt: jobs.map((j: any) => j.status), attached: !!f.session?.render_job_id, effects: f.effects, recoveryModel: rb.model } };
     } finally { proxy.close(); }
   }, "real-pg-driver");
+  await reap();
   await probe("K05", "Heartbeat loss: a paused worker is superseded; on resume it is fenced and must not disturb the successor's render", "SIGSTOP worker in Rendering (render worker paused) > lease; successor claims (generation+1) and waits on the same job; SIGCONT old worker -> fenced, no new effects; render job NOT cancelled; successor Completed", async () => {
     const pr = await prepare(owner), rw = ctr("render-worker");
     execFileSync("docker", ["pause", rw]);
-    let jobStatusAfterResume = "", f: any, rb: any = null, ra: any = null;
+    let jobStatusAfterResume = "", f: any, rb: any = null, ra: any = null, staleTx = -1;
     try {
       const a = await startChild(pr, "k05a");
       await until(async () => (await facts(pr.run)).session?.render_job_id, 120_000, "render attached", 50);
-      a.p.kill("SIGSTOP"); await sleep(6000);
+      a.p.kill("SIGSTOP"); await sleep(1000);
+      // A stalled process may hold an open transaction (row locks). Emulate idle_in_transaction_session_timeout by ending
+      // only that worker's idle-in-transaction sessions; its lease then expires normally.
+      staleTx = (await q("SELECT count(*)::int n FROM pg_stat_activity WHERE application_name='qa88-child-k05a' AND state LIKE 'idle in transaction%'"))[0].n;
+      await q("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name='qa88-child-k05a' AND state LIKE 'idle in transaction%'");
+      await sleep(5500);
       const b = await startChild(pr, "k05b", { wait: 240_000 });
       await until(async () => (await facts(pr.run)).generation >= 2 && (await q("SELECT lease_owner FROM agent_runs WHERE id=$1", [pr.run]))[0], 30_000, "successor claim", 100);
       await sleep(1500);
@@ -519,11 +537,12 @@ test("PR88 controlled loop over real services", async ({ browser }) => {
       jobStatusAfterResume = (await q("SELECT status FROM jobs WHERE id=$1", [job]))[0]?.status;
       execFileSync("docker", ["unpause", rw]);
       rb = await b.done();
-    } finally { try { execFileSync("docker", ["unpause", rw], { stdio: "ignore" }); } catch { /* already running */ } }
+    } finally { try { execFileSync("docker", ["unpause", rw], { stdio: "ignore" }); } catch { /* already running */ } await reap(); }
     f = await facts(pr.run);
     return { pass: jobStatusAfterResume !== "Cancelled" && f.state === "Completed" && f.effects === 2 && ra?.outcome === "threw",
-      actual: { staleWorker: ra && { outcome: ra.outcome, error: ra.error }, renderJobAfterStaleResume: jobStatusAfterResume, successor: rb && { outcome: rb.outcome, error: rb.error }, state: f.state, stop: f.stop_reason, planningStop: f.planning_stop_reason, effects: f.effects, generation: f.generation } };
+      actual: { staleWorkerOpenTransactionsEnded: staleTx, staleWorker: ra && { outcome: ra.outcome, error: ra.error }, renderJobAfterStaleResume: jobStatusAfterResume, successor: rb && { outcome: rb.outcome, error: rb.error }, state: f.state, stop: f.stop_reason, planningStop: f.planning_stop_reason, effects: f.effects, generation: f.generation } };
   }, "real-pg-driver");
+  await reap();
   await probe("K06", "Cancellation during a provider call", "API cancel while the model call is in flight -> Cancelled/CANCELLED; model call unconfirmed; 0 effects; the driver is fenced (no plan, no render)", async () => {
     const pr = await prepare(owner), marker = path.join(childDir, "k06.marker");
     const a = await startChild(pr, "k06a", { block: { mode: "structured", index: 0, marker }, render: "refuse" });
@@ -533,6 +552,7 @@ test("PR88 controlled loop over real services", async ({ browser }) => {
     return { pass: cancel.status < 300 && f.state === "Cancelled" && f.stop_reason === "CANCELLED" && f.calls.join() === "0:unconfirmed:transport_unknown" && noEffect(f, pr) && !f.session?.has_plan && !f.session?.render_receipt_id,
       actual: { cancel: cancel.status, state: f.state, stop: f.stop_reason, calls: f.calls, effects: f.effects, driver: ra.outcome, error: ra.error } };
   }, "real-pg-driver");
+  await reap();
   await probe("K07", "Cancellation during render cleans up only the bound render job; unrelated render jobs unaffected; cancelled export not downloadable", "render worker paused; cancel run in Rendering -> bound job Cancelled, download 409; an unrelated foreign-project render job queued at the same time later Completes", async () => {
     const pr = await prepare(owner), rw = ctr("render-worker");
     execFileSync("docker", ["pause", rw]);
@@ -551,6 +571,7 @@ test("PR88 controlled loop over real services", async ({ browser }) => {
     const unrelatedFinal = await until(async () => { const s = (await q("SELECT status FROM jobs WHERE id=$1", [unrelated]))[0]?.status; return terminal(s) ? s : null; }, 240_000, "unrelated render", 1000).catch(() => "TIMEOUT");
     return { pass: f.state === "Cancelled" && boundStatus === "Cancelled" && dl === 409 && unrelatedFinal === "Completed", actual: { state: f.state, boundRenderJob: boundStatus, cancelledDownload: dl, unrelatedRenderJob: unrelatedFinal } };
   }, "real-pg-driver");
+  await reap();
   await probe("K08", "Deadline exhaustion during a provider call", "run deadline forced to now+4 s (test DB) while the model blocks -> terminal Failed (DEADLINE_EXCEEDED or EXECUTION_UNCONFIRMED); model call not succeeded and never reissued; 0 effects", async () => {
     const pr = await prepare(owner), marker = path.join(childDir, "k08.marker");
     await q("UPDATE agent_runs SET deadline_at_ms=(extract(epoch FROM clock_timestamp())*1000)::bigint+4000 WHERE id=$1", [pr.run]);
@@ -561,6 +582,7 @@ test("PR88 controlled loop over real services", async ({ browser }) => {
     return { pass: f.state === "Failed" && ["DEADLINE_EXCEEDED", "EXECUTION_UNCONFIRMED"].includes(f.stop_reason) && f.calls.every((c: string) => !c.includes("succeeded")) && rb.model.structured === 0 && noEffect(f, pr),
       actual: { state: f.state, stop: f.stop_reason, planningStop: f.planning_stop_reason, calls: f.calls, first: ra.outcome, recoveryModel: rb.model, effects: f.effects } };
   }, "real-pg-driver");
+  await reap();
   await probe("K09", "PostgreSQL outage during a model call, then recovery", "postgres paused 8 s while the model call is in flight; afterwards the stale driver is fenced, the recovery driver refuses to reissue -> typed Failed; 0..1 effects never duplicated; ordinary editing works after recovery", async () => {
     const pr = await prepare(owner), release = path.join(childDir, "k09.release"); rmSync(release, { force: true });
     const a = await startChild(pr, "k09a", { releaseFile: release, render: "refuse" });
@@ -575,6 +597,7 @@ test("PR88 controlled loop over real services", async ({ browser }) => {
       actual: { stale: { outcome: ra.outcome, error: ra.error }, recovery: { outcome: rb.outcome, model: rb.model }, state: f.state, stop: f.stop_reason, planningStop: f.planning_stop_reason, calls: f.calls, effects: f.effects, ordinaryEditAfterOutage: edit.status } };
   }, "real-pg-driver");
 
+  await reap();
   // ================================ X: production isolation =============================================================
   await probe("X01", "Public admission cannot carry a plan/provider/driver/permit: manipulated payloads rejected; normal admission stays infrastructure-v1", "extra fields -> 400 each; query/header hints ignored; admitted run schema 1.0.0 with runtime infrastructure-v1/not_configured", async () => {
     const tl = await newTimeline(owner, P, M), k = () => `qa88-${randomUUID().replaceAll("-", "")}`;
