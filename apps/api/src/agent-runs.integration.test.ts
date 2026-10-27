@@ -1167,6 +1167,60 @@ test(
         },
       );
       await t.test(
+        "reused PostgreSQL connections permit ordinary edits after local agent settings reset but retain active-run fences",
+        async () => {
+          const f = await fixture(),
+            run = await f.start(),
+            client = await pool.connect();
+          try {
+            await client.query("SET plan_cache_mode=force_generic_plan");
+            await client.query("BEGIN");
+            await client.query(
+              "SELECT set_config('editagent.agent_run',$1,true),set_config('editagent.agent_owner',$2,true),set_config('editagent.agent_generation','1',true)",
+              [run.id, newAgentId()],
+            );
+            await client.query("ROLLBACK");
+            assert.equal(
+              (await client.query("SELECT current_setting('editagent.agent_run',true) AS value"))
+                .rows[0].value,
+              "",
+            );
+            await client.query("UPDATE editing_timelines SET state_sha256=$2 WHERE id=$1", [
+              f.id,
+              f.hash,
+            ]);
+            for (const ownerSetting of ["", newAgentId()]) {
+              await client.query("BEGIN");
+              await client.query(
+                "SELECT set_config('editagent.agent_run',$1,true),set_config('editagent.agent_owner',$2,true),set_config('editagent.agent_generation','1',true)",
+                [run.id, ownerSetting],
+              );
+              await client.query("UPDATE editing_timelines SET state_sha256=$2 WHERE id=$1", [
+                f.id,
+                "e".repeat(64),
+              ]);
+              await assert.rejects(
+                client.query("COMMIT"),
+                (error: unknown) => (error as { code?: string }).code === "23514",
+              );
+              await client.query("ROLLBACK");
+              assert.equal(
+                (
+                  await client.query("SELECT state_sha256 FROM editing_timelines WHERE id=$1", [
+                    f.id,
+                  ])
+                ).rows[0].state_sha256,
+                f.hash,
+              );
+            }
+          } finally {
+            await client.query("ROLLBACK");
+            await client.query("RESET plan_cache_mode");
+            client.release();
+          }
+        },
+      );
+      await t.test(
         "US302/304 real PostgreSQL MediaAnalysis and Tool SDK context is scoped, read-only and original-snapshot pinned",
         async () => {
           const f = await fixture(),

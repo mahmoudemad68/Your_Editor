@@ -54,3 +54,23 @@ CREATE TABLE render_output_validations (
   AND proof->>'schemaVersion'='1.0.0' AND proof->>'jobId'=job_id::text)
 );
 CREATE TRIGGER render_validation_immutable BEFORE UPDATE OR DELETE ON render_output_validations FOR EACH ROW EXECUTE FUNCTION agent_append_only();
+
+-- SET LOCAL custom settings become empty strings after a pooled transaction.
+-- SQL AND does not guard casts in a separately planned EXISTS subquery. Keep
+-- the ordinary-edit branch in PL/pgSQL control flow, while retaining every
+-- authorization, generation, lease and deadline check for an agent effect.
+CREATE OR REPLACE FUNCTION agent_timeline_commit_fence() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE run_text text := current_setting('editagent.agent_run',true);
+BEGIN
+ IF run_text IS NULL OR run_text='' THEN RETURN NEW; END IF;
+ IF NOT EXISTS (
+  SELECT 1 FROM agent_runs r JOIN projects p ON p.id=r.project_id
+   JOIN project_memberships m ON m.project_id=p.id AND m.user_id=r.actor_id
+  WHERE r.id=run_text::uuid AND r.source_timeline_id=NEW.id AND r.project_id=NEW.project_id
+   AND r.state='Executing' AND r.stop_reason IS NULL AND p.deleted_at IS NULL AND m.role IN ('owner','editor')
+   AND r.lease_owner=NULLIF(current_setting('editagent.agent_owner',true),'')::uuid
+   AND r.generation=NULLIF(current_setting('editagent.agent_generation',true),'')::integer
+   AND r.lease_until>clock_timestamp() AND r.deadline_at_ms>(extract(epoch FROM clock_timestamp())*1000)::bigint)
+ THEN RAISE EXCEPTION 'Agent effect fenced' USING ERRCODE='23514'; END IF;
+ RETURN NEW;
+END; $$;

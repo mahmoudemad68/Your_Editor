@@ -117,6 +117,13 @@ deadline or terminal delivery; recovery refuses to repeat them. Validated prior
 model responses can be reused only by exact request hash. SIGKILL qualification
 tests interrupt both completed checkpoints and unconfirmed publication.
 
+The migration also preserves ordinary Timeline editing after a pooled connection's
+transaction-local agent settings reset to empty strings. An explicit database
+control-flow branch avoids UUID casts in that case. Active agent effects retain
+all membership, source, generation, lease and deadline fences; absent owner or
+generation settings cannot satisfy them. A forced-generic-plan regression covers
+both ordinary connection reuse and rejected agent writes.
+
 Render orchestration uses the existing authenticated API and a stable idempotency
 receipt under source/membership/lease fencing. An unconfirmed render can only be
 reconciled to its exact existing job and Timeline; absence is an explicit stop, not
