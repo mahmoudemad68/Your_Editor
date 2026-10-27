@@ -373,11 +373,36 @@ await probe("Trusted endpoint policy: origin allowlist, no userinfo/query/fragme
   codes.httpOperatorEvidence = code(await outcome(async () => new AC.OpenAICompatibleProvider(caps("openai-compatible", { evidence: "operator_declared_unqualified" }), policy(base + "/v1"), budget())));
   return { pass: Object.values(codes).every((c) => c === "endpoint_denied"), actual: codes };
 });
-await probe("Address allowlist excludes link-local / metadata addresses in IPv6 and IPv4-mapped forms too", "fe80::1, ::ffff:169.254.169.254 (IPv4-mapped link-local) and fe80::/10 variants -> endpoint_denied, like 169.254.0.0/16", async () => {
-  const codes = {};
-  for (const a of ["fe80::1", "FE80::abcd", "febf::1", "::ffff:169.254.169.254", "::ffff:a9fe:a9fe", "169.254.1.1"])
-    codes[a] = code(await outcome(async () => new AC.OpenAICompatibleProvider(caps("openai-compatible"), policy("http://127.0.0.1:9/v1", { allowedAddresses: ["127.0.0.1", a] }), budget())));
-  return { pass: Object.values(codes).every((c) => c === "endpoint_denied"), actual: codes };
+await probe("Address allowlist excludes link-local / metadata addresses in IPv6 and IPv4-mapped forms too", "both adapters reject 169.254/16, fe80::/10, zone, expanded and IPv4-mapped forms, a numeric literal and a name that resolves to 169.254.169.254, all before the secret callback; loopback and non-link-local addresses still construct", async () => {
+  let secretReads = 0;
+  const counted = (endpoint, over = {}) => policy(endpoint, { ...over, secret: () => { secretReads += 1; return SECRET; } });
+  const adapters = [["openai-compatible", AC.OpenAICompatibleProvider], ["anthropic", AC.AnthropicProvider]];
+  const blocked = ["169.254.1.1", "fe80::1", "FE80::abcd", "febf::1", "::ffff:169.254.169.254", "::ffff:a9fe:a9fe", "0:0:0:0:0:FFFF:A9FE:A9FE", "fe80::1%eth0", "febf:ffff:ffff:ffff:ffff:ffff:ffff:ffff"];
+  const allowed = ["127.0.0.1", "::1", "::ffff:127.0.0.1", "192.0.2.1", "2001:db8::1", "fe7f::1", "fec0::1", "169.253.255.255", "169.255.0.0", "0:0:0:0:0:ffff:7f00:1"];
+  const deny = {}, allow = {}, literal = {}, dns = {};
+  for (const [name, Ctor] of adapters) {
+    for (const a of blocked) deny[`${name}:${a}`] = code(await outcome(async () => new Ctor(caps(name), counted("http://127.0.0.1:9/v1", { allowedAddresses: ["127.0.0.1", a] }), budget())));
+    for (const a of allowed) allow[`${name}:${a}`] = code(await outcome(async () => new Ctor(caps(name), counted("http://127.0.0.1:9/v1", { allowedAddresses: [a] }), budget())));
+    for (const a of blocked.filter((x) => !x.includes("%"))) {
+      const ep = `https://${a.includes(":") ? `[${a}]` : a}/v1`;
+      literal[`${name}:${a}`] = code(await outcome(async () => new Ctor(caps(name), counted(ep, { allowedOrigins: [new URL(ep).origin], allowedAddresses: ["192.0.2.1"] }), budget())));
+    }
+    const numeric = "https://0xa9fea9fe/v1";
+    literal[`${name}:numeric`] = code(await outcome(async () => new Ctor(caps(name), counted(numeric, { allowedOrigins: [new URL(numeric).origin], allowedAddresses: ["192.0.2.1"] }), budget())));
+    const host = process.env.QA88_LINKLOCAL_HOST || "qa88-ll.invalid";
+    dns[name] = code(await outcome(async () => {
+      const model = new Ctor(caps(name), counted(`https://${host}/v1`, { allowedAddresses: ["192.0.2.1"] }), budget());
+      return model.chat(request("chat"), ac());
+    }));
+  }
+  const checks = {
+    denied: Object.values(deny).every((c) => c === "endpoint_denied"),
+    literals: Object.values(literal).every((c) => c === "endpoint_denied"),
+    dns: Object.values(dns).every((c) => c === "endpoint_denied"),
+    allowed: Object.values(allow).every((c) => c === "OK"),
+    secretNotRead: secretReads === 0,
+  };
+  return { pass: Object.values(checks).every(Boolean), actual: { checks, secretReads, deny, literal, dns, allow } };
 });
 await probe("Dispatch is pinned to allowlisted addresses: a literal or resolved address outside the set is refused before connecting", "IP literal not in allowedAddresses -> endpoint_denied, 0 connections; https://localhost resolving outside {127.0.0.2} -> endpoint_denied, 0 connections", async () => {
   const s = await fake((r, res) => json(res, 200, oaBody()));

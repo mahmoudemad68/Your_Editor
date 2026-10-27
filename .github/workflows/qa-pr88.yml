@@ -16,9 +16,13 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  QA_APP_SHA: 03630dfff07d16fe27a24a0e3aee35611cb6b519
-  QA_APP_TREE: 25df10c29d3d33f1dd83de428afe32126f0d05a6
+  # Frozen product identity for this independent re-QA. HEAD_DRIFT compares the live PR to these pins.
+  QA_APP_SHA: 9f2333a175a17719121deade101b9adf09a2c270
+  QA_APP_TREE: 1dcc7c50bd4e50bf76e09638bf2b18e5cabbfc9a
   QA_BASE_SHA: a789540f9b49d05d214374472bcc4fedd8751227
+  QA_CHANGED_FILES: "51"
+  QA_COMMIT_COUNT: "9"
+  QA88_LINKLOCAL_HOST: qa88-ll.invalid
   GH_TOKEN: ${{ github.token }}
 
 jobs:
@@ -94,10 +98,12 @@ jobs:
       - name: Install and build the agent-worker closure from the frozen product
         working-directory: app
         run: pnpm install --frozen-lockfile && pnpm --filter "@editagent/agent-worker..." build
-      - name: Ephemeral TLS fixtures; syntax
+      - name: Ephemeral TLS fixtures; syntax; link-local DNS name
         run: |
           bash qa-src/qa/pr88/tls88.sh "$QA_TLS"
           node --check qa-src/qa/pr88/prov88.mjs
+          grep -q "[[:space:]]${QA88_LINKLOCAL_HOST}$" /etc/hosts || echo "169.254.169.254 ${QA88_LINKLOCAL_HOST}" | sudo tee -a /etc/hosts >/dev/null
+          getent hosts "$QA88_LINKLOCAL_HOST" | grep -q '^169.254.169.254'
       - name: Part P (host build)
         run: |
           QA88_RESOLVE_FROM="$PWD/app/workers/agent-worker/package.json" QA88_PREFIX=PH QA88_TLS="$QA_TLS" NODE_EXTRA_CA_CERTS="$QA_TLS/ca.crt" \
@@ -111,8 +117,10 @@ jobs:
         run: |
           docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges:true --user 10001:10001 \
             --memory 512m --pids-limit 128 --tmpfs /tmp:rw,nosuid,nodev,noexec,size=32m \
+            --add-host "${QA88_LINKLOCAL_HOST}:169.254.169.254" \
             -v "$PWD/qa-src/qa/pr88:/qa:ro" -v "$QA_TLS:/qa-tls:ro" \
             -e QA88_RESOLVE_FROM=/app/package.json -e QA88_PREFIX=PI -e QA88_TLS=/qa-tls -e NODE_EXTRA_CA_CERTS=/qa-tls/ca.crt \
+            -e QA88_LINKLOCAL_HOST="$QA88_LINKLOCAL_HOST" \
             --entrypoint node editagent-agent-worker:local /qa/prov88.mjs > qa-tmp/pi.out || echo "image battery exit $?"
       - name: Collect
         if: always()
@@ -148,7 +156,7 @@ jobs:
     steps:
       - name: "Gate 0 (before)"
         run: |
-          gh api "repos/$GITHUB_REPOSITORY/pulls/88" | python3 -c "import json,sys,os;p=json.load(sys.stdin);print(p['state'],p['draft'],p['head']['sha'],p['changed_files']);assert p['state']=='open' and p['draft'] is True and p['head']['sha']==os.environ['QA_APP_SHA'] and p['base']['sha']==os.environ['QA_BASE_SHA'] and p['changed_files']==49, 'HEAD_DRIFT'"
+          gh api "repos/$GITHUB_REPOSITORY/pulls/88" | python3 -c "import json,sys,os;p=json.load(sys.stdin);print(p['state'],p['draft'],p['head']['sha'],p['changed_files']);assert p['state']=='open' and p['draft'] is True and p['head']['sha']==os.environ['QA_APP_SHA'] and p['base']['sha']==os.environ['QA_BASE_SHA'] and p['changed_files']==int(os.environ['QA_CHANGED_FILES']), 'HEAD_DRIFT'"
           test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)" = "$QA_BASE_SHA" || { echo HEAD_DRIFT main; exit 1; }
       - uses: actions/checkout@v7
         with:
@@ -482,10 +490,14 @@ jobs:
           test "${{ steps.grad.outcome }}" = "success"
           python3 -c "import json;d=json.load(open('qa-grad/graduation-export-verification.json'));assert d['pass'] is True;print('export verification PASS')"
 
-  asr-long:
-    name: "Regression: 600 s ASR deadline / long-input production-jail qualification (unchanged product driver)"
+  asr:
+    name: "Regression: real ASR shard ${{ matrix.shard }} (unchanged product driver; 600 s jail on long-input)"
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 70
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [native, languages, state-single, state-multi, long-input, alignment]
     steps:
       - name: "Gate 0 (before)"
         run: gh api "repos/$GITHUB_REPOSITORY/pulls/88" --jq '.head.sha' | grep -qx "$QA_APP_SHA" || { echo HEAD_DRIFT; exit 1; }
@@ -508,16 +520,19 @@ jobs:
         run: |
           sh tools/test/ensure-ffmpeg.sh
           cd workers/ai-worker && uv sync --frozen && uv run python -m editagent_ai_worker.infrastructure.vad_model && uv run python -m editagent_ai_worker.infrastructure.asr_model --root ../../.local/asr-models --model tiny && uv run python -m editagent_ai_worker.infrastructure.asr_model --root ../../.local/asr-models --model small
-      - name: Long-input real-inference shard
+      - name: Check the real-inference partition, then run this shard
         id: shard
         working-directory: workers/ai-worker
-        run: uv run python ../../tools/asr/test_partition.py --shard long-input
+        run: |
+          uv run python ../../tools/asr/test_partition.py --check
+          uv run python ../../tools/asr/test_partition.py --shard "${{ matrix.shard }}"
       - uses: actions/setup-node@v7
+        if: ${{ !cancelled() && matrix.shard == 'long-input' }}
         with:
           node-version-file: .nvmrc
       - name: Original ten-minute inference in the production CPU jail (600000 ms deadline)
         id: jail
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && matrix.shard == 'long-input' }}
         env:
           PR_HEAD_SHA: ${{ env.QA_APP_SHA }}
         run: |
@@ -529,5 +544,5 @@ jobs:
         run: |
           gh api "repos/$GITHUB_REPOSITORY/pulls/88" --jq '.head.sha' | grep -qx "$QA_APP_SHA" || { echo HEAD_DRIFT; exit 1; }
           test "${{ steps.shard.outcome }}" = "success"
-          test "${{ steps.jail.outcome }}" = "success"
-          echo "ASR long-input regression PASS (no Tiny-Arabic/CP2/CP1 claim)"
+          if [ "${{ matrix.shard }}" = "long-input" ]; then test "${{ steps.jail.outcome }}" = "success"; fi
+          echo "ASR ${{ matrix.shard }} regression PASS (no Tiny-Arabic/CP2/CP1 claim)"

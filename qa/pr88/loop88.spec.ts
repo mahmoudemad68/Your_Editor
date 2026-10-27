@@ -516,31 +516,108 @@ test("PR88 controlled loop over real services", async ({ browser }) => {
     } finally { proxy.close(); }
   }, "real-pg-driver");
   await reap();
-  await probe("K05", "Heartbeat loss: a paused worker is superseded; on resume it is fenced and must not disturb the successor's render", "SIGSTOP worker in Rendering (render worker paused) > lease; successor claims (generation+1) and waits on the same job; SIGCONT old worker -> fenced, no new effects; render job NOT cancelled; successor Completed", async () => {
+  await probe("K05", "Heartbeat loss: a paused worker holding no SQL transaction is superseded; resume must not cancel the successor", "SIGSTOP in Rendering >5s lease with 0 open transactions; B claims generation+1; SIGCONT A; job never Cancelled; B Completed with 2 effects and 1 validated download; wrong gen/project/actor/job and a second cancel fail closed; cancel vs claim under a held run-row lock does not deadlock or exhaust the pool", async () => {
     const pr = await prepare(owner), rw = ctr("render-worker");
     execFileSync("docker", ["pause", rw]);
-    let jobStatusAfterResume = "", f: any, rb: any = null, ra: any = null, staleTx = -1;
+    let jobStatusAfterResume = "", jobStatusFinal = "", f: any = null, rb: any = null, ra: any = null, staleTx = -1, genAtStop = -1, genClaimed = -1, ownerAtStop = "", ownerClaimed = "";
+    let download: any = null, jobs: any[] = [];
     try {
       const a = await startChild(pr, "k05a");
       await until(async () => (await facts(pr.run)).session?.render_job_id, 120_000, "render attached", 50);
       a.p.kill("SIGSTOP"); await sleep(1000);
-      // A stalled process may hold an open transaction (row locks). Emulate idle_in_transaction_session_timeout by ending
-      // only that worker's idle-in-transaction sessions; its lease then expires normally.
-      staleTx = (await q("SELECT count(*)::int n FROM pg_stat_activity WHERE application_name='qa88-child-k05a' AND state LIKE 'idle in transaction%'"))[0].n;
-      await q("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name='qa88-child-k05a' AND state LIKE 'idle in transaction%'");
+      // The required case is a worker with no open transaction. Ending idle transactions is only a safety
+      // release so a later probe is not stuck; a non-zero count fails this probe.
+      staleTx = (await q("SELECT count(*)::int n FROM pg_stat_activity WHERE application_name='qa88-child-k05a' AND xact_start IS NOT NULL"))[0].n;
+      if (staleTx !== 0) await q("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name='qa88-child-k05a' AND xact_start IS NOT NULL");
+      const atStop = await facts(pr.run);
+      genAtStop = Number(atStop.generation); ownerAtStop = (await q("SELECT lease_owner FROM agent_runs WHERE id=$1", [pr.run]))[0]?.lease_owner ?? "";
       await sleep(5500);
       const b = await startChild(pr, "k05b", { wait: 240_000 });
-      await until(async () => (await facts(pr.run)).generation >= 2 && (await q("SELECT lease_owner FROM agent_runs WHERE id=$1", [pr.run]))[0], 30_000, "successor claim", 100);
+      await until(async () => { const g = await facts(pr.run); const ownerNow = (await q("SELECT lease_owner FROM agent_runs WHERE id=$1", [pr.run]))[0]?.lease_owner; return Number(g.generation) === genAtStop + 1 && ownerNow && ownerNow !== ownerAtStop ? ownerNow : null; }, 30_000, "successor claim", 100);
+      genClaimed = Number((await facts(pr.run)).generation); ownerClaimed = (await q("SELECT lease_owner FROM agent_runs WHERE id=$1", [pr.run]))[0]?.lease_owner ?? "";
       await sleep(1500);
       a.p.kill("SIGCONT"); ra = await a.done();
       const job = (await facts(pr.run)).session.render_job_id;
-      jobStatusAfterResume = (await q("SELECT status FROM jobs WHERE id=$1", [job]))[0]?.status;
+      jobStatusAfterResume = (await q("SELECT status,failure_reason FROM jobs WHERE id=$1", [job]))[0]?.status;
       execFileSync("docker", ["unpause", rw]);
       rb = await b.done();
+      f = await facts(pr.run);
+      jobs = await renderJobsFor(f);
+      jobStatusFinal = jobs[0]?.status ?? "";
+      const proof = (await call(owner, "GET", `/projects/${P}/exports/${job}/validation`)).json;
+      const links = await call(owner, "GET", `/projects/${P}/exports/${job}/download`);
+      let bodySha = "", bytes = 0, http = links.status;
+      if (links.status < 300 && links.json?.downloadUrl) {
+        const res = await fetch(links.json.downloadUrl);
+        http = res.status;
+        const buf = Buffer.from(await res.arrayBuffer());
+        bytes = buf.length; bodySha = sha(buf);
+      }
+      const cancelledEvents = (await q("SELECT count(*)::int n FROM agent_events WHERE run_id=$1 AND event->>'state'='Cancelled'", [pr.run]))[0].n;
+      download = { http, bytes, shaMatches: !!proof?.artifactSha256 && bodySha === proof.artifactSha256, timelineBound: proof?.timelineSha256 === f.timelineSha, validation: proof?.validation ?? null, frames: proof?.videoFrames ?? null, durationUs: proof?.durationUs ?? null, cancelledEvents };
     } finally { try { execFileSync("docker", ["unpause", rw], { stdio: "ignore" }); } catch { /* already running */ } await reap(); }
-    f = await facts(pr.run);
-    return { pass: jobStatusAfterResume !== "Cancelled" && f.state === "Completed" && f.effects === 2 && ra?.outcome === "threw",
-      actual: { staleWorkerOpenTransactionsEnded: staleTx, staleWorker: ra && { outcome: ra.outcome, error: ra.error }, renderJobAfterStaleResume: jobStatusAfterResume, successor: rb && { outcome: rb.outcome, error: rb.error }, state: f.state, stop: f.stop_reason, planningStop: f.planning_stop_reason, effects: f.effects, generation: f.generation } };
+    const err = async (fn: () => Promise<unknown>) => { try { await fn(); return "ALLOWED"; } catch (e: any) { return e?.code ?? e?.name ?? "throw"; } };
+    const repeat = f?.state === "Completed" ? await call(owner, "POST", `${base(P)}/${pr.run}/cancel`, {}) : { status: 0 };
+    const afterRepeat = f?.state === "Completed" ? await facts(pr.run) : null;
+    const job = f?.session?.render_job_id;
+    const port = realRender(owner.id);
+    const closed = f?.state === "Completed" && job ? {
+      viewer: (await call(viewer, "POST", `${base(P)}/${pr.run}/cancel`, {})).status,
+      outsider: (await call(outsider, "POST", `${base(P)}/${pr.run}/cancel`, {})).status,
+      repeat: repeat.status,
+      stateUnchanged: afterRepeat?.state === "Completed" && Number(afterRepeat?.generation) === Number(f.generation),
+      jobUnchanged: (await q("SELECT status FROM jobs WHERE id=$1", [job]))[0]?.status === "Completed",
+      wrongGen: await err(() => port.cancel(pr.run, P, job, 0)),
+      badGen: await err(() => port.cancel(pr.run, P, job, -1)),
+      wrongProject: await err(() => port.cancel(pr.run, P2, job, f.generation)),
+      wrongJob: await err(() => port.cancel(pr.run, P, randomUUID(), f.generation)),
+      completedRun: await err(() => port.cancel(pr.run, P, job, f.generation)),
+    } : null;
+    // Cancel versus claim while a QA session holds the run row. The run is already Cancelled by the
+    // user, with a non-terminal render job, so the port's lock spans cancelJob. Claim must wait, not deadlock.
+    const race = await (async () => {
+      const pr2 = await prepare(owner);
+      execFileSync("docker", ["pause", rw]);
+      const hold = await lockHolder();
+      const out: any = { blocked: 0, timeout: false, deadlocks: null, waitingAfter: null, pingMs: null, jobBefore: "", jobAfter: "", claim: null, cancelCode: null, openTx: -1 };
+      try {
+        const a2 = await startChild(pr2, "k05lock");
+        await until(async () => (await facts(pr2.run)).session?.render_job_id, 120_000, "lock-race render attached", 50);
+        a2.p.kill("SIGSTOP"); await sleep(500);
+        out.openTx = (await q("SELECT count(*)::int n FROM pg_stat_activity WHERE application_name='qa88-child-k05lock' AND xact_start IS NOT NULL"))[0].n;
+        if (out.openTx !== 0) return out;
+        const cancelHttp = await call(owner, "POST", `${base(P)}/${pr2.run}/cancel`, {});
+        const mid = await facts(pr2.run);
+        out.jobBefore = (await q("SELECT status FROM jobs WHERE id=$1", [mid.session.render_job_id]))[0]?.status ?? "";
+        const beforeDead = Number((await q("SELECT deadlocks FROM pg_stat_database WHERE datname=current_database()"))[0].deadlocks);
+        await hold.query("SELECT 1 FROM agent_runs WHERE id=$1 FOR UPDATE", [pr2.run]);
+        const started = Date.now();
+        const claimP = C.runs.claim(pr2.run).then((lease: any) => ({ ok: true, claimed: !!lease })).catch((e: any) => ({ ok: false, error: String(e?.code ?? e?.message ?? e).slice(0, 80) }));
+        const portP = realRender(owner.id).cancel(pr2.run, P, mid.session.render_job_id, mid.generation).then(() => ({ ok: true })).catch((e: any) => ({ ok: false, error: String(e?.code ?? e?.message ?? e).slice(0, 80) }));
+        const blocked = await until(async () => { const n = (await q("SELECT count(*)::int n FROM pg_stat_activity WHERE wait_event_type='Lock' AND query ILIKE '%agent_runs%'"))[0].n; return n >= 1 ? n : null; }, 8_000, "lock waiters", 100).catch(() => 0);
+        out.blocked = blocked;
+        await hold.query("ROLLBACK");
+        const settled = await Promise.race([
+          Promise.all([claimP, portP]).then(([claim, cancel]) => ({ claim, cancel, ms: Date.now() - started })),
+          sleep(20_000).then(() => ({ timeout: true as const })),
+        ]);
+        if ("timeout" in settled) { out.timeout = true; await q("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE wait_event_type='Lock' AND query ILIKE '%agent_runs%' AND pid<>pg_backend_pid()"); }
+        else { out.claim = settled.claim; out.cancelCode = settled.cancel; out.ms = settled.ms; }
+        const pingAt = Date.now();
+        await q("SELECT 1");
+        out.pingMs = Date.now() - pingAt;
+        out.waitingAfter = pool.waitingCount;
+        out.jobAfter = (await q("SELECT status FROM jobs WHERE id=$1", [mid.session.render_job_id]))[0]?.status ?? "";
+        out.deadlocks = Number((await q("SELECT deadlocks FROM pg_stat_database WHERE datname=current_database()"))[0].deadlocks) - beforeDead;
+        out.httpCancel = cancelHttp.status;
+        out.finalState = (await facts(pr2.run)).state;
+        return out;
+      } finally { try { await hold.query("ROLLBACK"); } catch { /* released */ } hold.release(); try { execFileSync("docker", ["unpause", rw], { stdio: "ignore" }); } catch { /* */ } await reap(); }
+    })();
+    const handover = staleTx === 0 && genClaimed === genAtStop + 1 && ownerClaimed !== ownerAtStop && jobStatusAfterResume !== "Cancelled" && jobStatusFinal === "Completed" && jobs.length === 1 && f?.state === "Completed" && f?.effects === 2 && f?.sdkSucceeded === 2 && ra?.outcome === "threw" && rb?.outcome === "returned" && download?.shaMatches === true && download?.timelineBound === true && download?.validation === "render_worker_ffprobe_v1" && download?.http === 200 && download?.cancelledEvents === 0;
+    const fences = !!closed && closed.viewer === 403 && closed.outsider === 404 && closed.repeat < 300 && closed.stateUnchanged && closed.jobUnchanged && closed.wrongGen === "not_found" && closed.badGen === "fenced" && closed.wrongProject === "not_found" && closed.wrongJob === "not_found" && closed.completedRun === "not_found";
+    const lockOk = race.openTx === 0 && !["Completed", "Failed", "Cancelled", ""].includes(race.jobBefore) && race.blocked >= 1 && race.timeout === false && race.deadlocks === 0 && race.waitingAfter === 0 && race.pingMs < 5000 && race.jobAfter === "Cancelled" && race.finalState === "Cancelled" && race.claim?.ok === true && race.claim?.claimed === false && race.cancelCode?.ok === true && race.httpCancel < 300;
+    return { pass: handover && fences && lockOk, actual: { staleWorkerOpenTransactions: staleTx, generations: [genAtStop, genClaimed, f?.generation], leaseChanged: ownerClaimed !== ownerAtStop, renderJobAfterStaleResume: jobStatusAfterResume, renderJobs: jobs.map((j: any) => j.status), staleWorker: ra && { outcome: ra.outcome, error: ra.error }, successor: rb && { outcome: rb.outcome, error: rb.error }, state: f?.state, stop: f?.stop_reason, effects: f?.effects, sdkSucceeded: f?.sdkSucceeded, download, closed, lockRace: race } };
   }, "real-pg-driver");
   await reap();
   await probe("K06", "Cancellation during a provider call", "API cancel while the model call is in flight -> Cancelled/CANCELLED; model call unconfirmed; 0 effects; the driver is fenced (no plan, no render)", async () => {
