@@ -73,7 +73,7 @@ test("PR88 controlled loop over real services", async ({ browser }) => {
     const ev = await q("SELECT event->>'kind' k,event->>'summary' s,event->>'state' st FROM agent_events WHERE run_id=$1 ORDER BY sequence", [run]);
     const tl = (await q("SELECT state_sha256,snapshot FROM editing_timelines WHERE id=$1", [r.source_timeline_id]))[0];
     const sess = (await q("SELECT render_receipt_id,render_job_id,render_outcome,plan IS NOT NULL has_plan,context_snapshot IS NOT NULL has_ctx FROM agent_loop_sessions WHERE run_id=$1", [run]))[0] ?? null;
-    return { ...r, effects: steps.filter((s: any) => s.eo === "succeeded").length, steps: steps.map((s: any) => `${s.ordinal}:${s.tool_name}:${s.outcome}/${s.eo}`), calls: calls.map((c: any) => `${c.ordinal}:${c.outcome}${c.failure ? ":" + c.failure : ""}`),
+    return { ...r, effects: steps.filter((s: any) => s.outcome === "succeeded").length, sdkSucceeded: steps.filter((s: any) => s.eo === "succeeded").length, steps: steps.map((s: any) => `${s.ordinal}:${s.tool_name}:${s.outcome}/${s.eo}`), calls: calls.map((c: any) => `${c.ordinal}:${c.outcome}${c.failure ? ":" + c.failure : ""}`),
       events: ev.map((e: any) => e.s), timelineSha: tl.state_sha256, clips: tl.snapshot.tracks.flatMap((t: any) => t.clips).length, session: sess };
   };
   const exportPages = async (u: User, project: string, run: string) => {
@@ -420,7 +420,8 @@ test("PR88 controlled loop over real services", async ({ browser }) => {
   };
   const waitExit = (p: any) => new Promise((r) => (p.exitCode !== null || p.signalCode ? r(null) : p.once("exit", r)));
   const lockHolder = async () => { const c = await pool.connect(); await c.query("BEGIN"); return c; };
-  const blockedOn = async (like: string) => (await q("SELECT count(*)::int n FROM pg_stat_activity WHERE wait_event_type='Lock' AND query ILIKE $1", [like]))[0].n > 0;
+  /** A backend waiting on a lock of the given kind (relation | transactionid | tuple) while running a matching statement. */
+  const blockedOn = async (like: string, kinds = ["relation"]) => (await q("SELECT count(*)::int n FROM pg_stat_activity WHERE wait_event_type='Lock' AND wait_event=ANY($2::text[]) AND query ILIKE $1", [like, kinds]))[0].n > 0;
   /** QA TCP proxy in front of the API: holds the render POST so the driver can be killed after the request left it. */
   const holdingProxy = (marker: string, mode: "forward" | "drop") => new Promise<{ origin: string; release: () => Promise<number>; close: () => void }>((resolve) => {
     let held: (() => Promise<number>) | null = null;
@@ -449,7 +450,7 @@ test("PR88 controlled loop over real services", async ({ browser }) => {
     const a = await startChild(pr, "k01a");
     await until(async () => (await facts(pr.run)).session?.has_plan, 120_000, "plan committed", 20);
     const hold = await lockHolder(); await hold.query("LOCK TABLE agent_loop_sessions IN EXCLUSIVE MODE");
-    const blocked = await until(async () => blockedOn("%agent_loop_sessions%FOR UPDATE%"), 120_000, "child blocked before render intent", 50).catch(() => false);
+    const blocked = await until(async () => blockedOn("SELECT * FROM agent_loop_sessions WHERE run_id=$1 FOR UPDATE%"), 120_000, "child blocked before render intent", 50).catch(() => false);
     const atKill = await facts(pr.run);
     a.p.kill("SIGKILL"); await waitExit(a.p); await hold.query("ROLLBACK"); hold.release();
     await sleep(5500);
@@ -478,12 +479,12 @@ test("PR88 controlled loop over real services", async ({ browser }) => {
     const afterTrim = (await facts(pr.run)).timelineSha;
     const hold = await lockHolder(); await hold.query("SELECT 1 FROM editing_timelines WHERE id=$1 FOR UPDATE", [pr.tl.id]);
     writeFileSync(release, "1");
-    const blocked = await until(async () => (await q("SELECT count(*)::int n FROM agent_steps WHERE run_id=$1 AND ordinal=1 AND outcome='running'", [pr.run]))[0].n === 1 && (await blockedOn("%editing_timelines%")), 60_000, "effect blocked after intent", 50).catch(() => false);
+    const blocked = await until(async () => (await q("SELECT count(*)::int n FROM agent_steps WHERE run_id=$1 AND ordinal=1 AND outcome='running'", [pr.run]))[0].n === 1 && (await blockedOn("%editing_timelines%", ["transactionid", "tuple"])), 60_000, "effect blocked after intent", 50).catch(() => false);
     a.p.kill("SIGKILL"); await waitExit(a.p); await hold.query("ROLLBACK"); hold.release(); await sleep(5500);
     const b = await startChild(pr, "k03b", { render: "refuse" }); const rb: any = await b.done();
     const f = await facts(pr.run);
     return { pass: blocked === true && f.state === "Failed" && f.stop_reason === "EXECUTION_UNCONFIRMED" && f.timelineSha === afterTrim && f.effects === 1 && rb.model.tools === 0,
-      actual: { blockedAfterIntent: blocked, state: f.state, stop: f.stop_reason, planningStop: f.planning_stop_reason, steps: f.steps, timelineIsPostTrim: f.timelineSha === afterTrim, recoveryModel: rb.model } };
+      actual: { blockedAfterIntent: blocked, sdkReceiptsSucceeded: f.sdkSucceeded, state: f.state, stop: f.stop_reason, planningStop: f.planning_stop_reason, steps: f.steps, timelineIsPostTrim: f.timelineSha === afterTrim, recoveryModel: rb.model } };
   }, "real-pg-driver");
   for (const [id, mode] of [["K04", "forward"], ["K10", "drop"]] as const) await probe(id, mode === "forward" ? "SIGKILL after the render request reached the API but before acknowledgement: recovery reconciles the exact receipt" : "SIGKILL with the render request never delivered: recovery stops explicitly instead of resubmitting",
     mode === "forward" ? "QA proxy holds the render POST; child killed; request then delivered (job created, unacknowledged); recovery: exactly 1 render job for the receipt, attached, Completed" : "QA proxy holds then drops the render POST; child killed; recovery: 0 render jobs for the receipt, Failed RENDER_UNCONFIRMED (no resubmission)", async () => {

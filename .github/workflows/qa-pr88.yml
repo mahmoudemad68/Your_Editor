@@ -191,6 +191,7 @@ jobs:
           mkdir -p "$QA_DIR" && cp qa-src/qa/pr88/* "$QA_DIR"/
           for f in "$QA_DIR"/*.mjs; do node --check "$f"; done
           bash qa-src/qa/pr88/make_inputs88.sh "$QA_INPUTS" app
+          bash qa-src/qa/pr88/make_inputs.sh "$QA_INPUTS" app
       - name: Build production images from the frozen product (repository Dockerfiles)
         working-directory: app
         run: |
@@ -201,6 +202,10 @@ jobs:
         working-directory: app
         run: |
           set -eu
+          # The API admits renders only for the deployed render catalog (as the product journey configures it).
+          rv="$(docker run --rm --network none --entrypoint node editagent-render-worker:local -p "require('./dist/bundle/catalog.json').renderVersion")"
+          echo "$rv" | grep -Eq '^[a-f0-9]{64}$'
+          export EDITAGENT_RENDER_VERSION="$rv"; echo "EDITAGENT_RENDER_VERSION=$rv" >> "$GITHUB_ENV"
           docker compose up -d --wait --wait-timeout 180 postgres redis
           sh infra/seaweedfs/start-storage.sh --from-boot
           node apps/web/.qa-pr88/bucket.mjs
@@ -228,7 +233,7 @@ jobs:
         working-directory: app
         run: |
           docker compose ps --all --format '{{.Service}} {{.State}} {{.Status}}' > ../qa-out/final-compose-ps.txt || true
-          docker compose exec -T postgres psql -U editagent -d editagent -AtX -c "SELECT runtime_driver||' '||state||' '||coalesce(stop_reason,'-')||' '||coalesce(planning_stop_reason,'-')||' '||count(*) FROM agent_runs GROUP BY 1 ORDER BY 1" > ../qa-out/final-agent-runs.txt 2>&1 || true
+          docker compose exec -T postgres psql -U editagent -d editagent -AtX -c "SELECT runtime_driver,state,coalesce(stop_reason,'-'),coalesce(planning_stop_reason,'-'),count(*) FROM agent_runs GROUP BY 1,2,3,4 ORDER BY 1,2,3,4" > ../qa-out/final-agent-runs.txt 2>&1 || true
           docker compose exec -T postgres psql -U editagent -d editagent -AtX -c "SELECT outcome||' '||count(*) FROM agent_model_calls GROUP BY outcome ORDER BY 1" > ../qa-out/final-model-calls.txt 2>&1 || true
           docker compose logs --no-color api agent-worker render-worker 2>&1 | grep -cE "exfil\.invalid|qa88-not-a-key|IGNORE ALL PREVIOUS|you are root|qa88-fixture-" > ../qa-out/log-sensitive-hits.txt || true
           docker compose logs --no-color api agent-worker 2>&1 | grep -cE "22P02|invalid input syntax for type uuid" > ../qa-out/log-22p02-hits.txt || true

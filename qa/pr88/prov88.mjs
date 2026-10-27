@@ -14,6 +14,8 @@ const req0 = createRequire(process.env.QA88_RESOLVE_FROM);
 const AC = req0("@editagent/agent-core");
 const { contentHash } = req0("@editagent/tool-sdk");
 const PREFIX = process.env.QA88_PREFIX ?? "PH", TLS = process.env.QA88_TLS ?? "";
+// The adapters canonicalize JSON (sorted keys) before sending; compare structure, not key insertion order.
+const canon = (v) => JSON.stringify(v, (_k, x) => (x && typeof x === "object" && !Array.isArray(x) ? Object.fromEntries(Object.keys(x).sort().map((k) => [k, x[k]])) : x));
 const NATIVE_SUM = ["native", "input", "and", "cache", "sum"].join("_");
 const sha = (s) => createHash("sha256").update(s).digest("hex");
 // Runtime-generated fixture credential: never a committed literal, never a real key.
@@ -40,7 +42,7 @@ async function outcome(fn) {
 const code = (o) => (o.ok ? "OK" : o.code);
 
 /** QA fake provider server. handler(rec, res) decides the reply; rec captures method/path/headers/body. */
-function fake(handler, { tls = null } = {}) {
+function fake(handler, { tls = null, dual = false } = {}) {
   const requests = [], sockets = { connections: 0, tlsErrors: 0 };
   const onReq = (req, res) => {
     const chunks = [];
@@ -55,7 +57,9 @@ function fake(handler, { tls = null } = {}) {
   const server = tls ? https.createServer({ key: tls.key, cert: tls.cert }, onReq) : http.createServer(onReq);
   server.on("connection", () => sockets.connections++);
   server.on("tlsClientError", () => sockets.tlsErrors++);
-  return new Promise((resolve) => server.listen(0, "127.0.0.1", () => {
+  // dual: listen on all loopback families, because a resolved "localhost" may be ::1 first (the adapter pins addresses[0]).
+  const listen = (host, retry) => new Promise((ok) => { server.once("error", () => (retry ? listen(retry, null).then(ok) : ok())); server.listen(0, host, ok); });
+  return listen(dual ? "::" : "127.0.0.1", dual ? "127.0.0.1" : null).then(() => new Promise((resolve) => {
     const port = server.address().port;
     resolve({ port, origin: `${tls ? "https" : "http"}://127.0.0.1:${port}`, requests, sockets, close: () => new Promise((r) => { server.closeAllConnections?.(); server.close(() => r()); }) });
   }));
@@ -101,11 +105,11 @@ await probe("OpenAI-compatible chat: exact POST path/headers/body dialect, decod
     one: s.requests.length === 1, method: s.requests[0]?.method === "POST", path: s.requests[0]?.path === "/v1/chat/completions",
     bearer: h.authorization === `Bearer ${SECRET}`, noXApiKey: !("x-api-key" in h), contentType: h["content-type"] === "application/json", host: h.host === `127.0.0.1:${s.port}`,
     bodyKeys: sortedKeys(b) === "max_completion_tokens,messages,model,n", noMaxTokens: !("max_tokens" in b), limit: b.max_completion_tokens === 256, model: b.model === MODEL["openai-compatible"],
-    n1: b.n === 1, messages: JSON.stringify(b.messages) === JSON.stringify(rq.messages), secretNotInBody: !s.requests[0]?.raw.toString().includes(SECRET),
+    n1: b.n === 1, messages: canon(b.messages) === canon(rq.messages), secretNotInBody: !s.requests[0]?.raw.toString().includes(SECRET),
     text: o.r?.text === "qa reply" && o.r?.calls.length === 0 && o.r?.structured === null,
     receipt: rc?.schemaVersion === "1.0.0" && rc.provider === "openai-compatible" && rc.mode === "chat" && rc.evidence === "offline_http_fixture" && rc.modelId === c.modelId && rc.modelVersion === c.modelVersion && rc.configurationVersion === "qa88-cfg-1",
     profileHash: rc?.profileSha256 === contentHash(c), requestHash: rc?.requestSha256 === AC.requestHash("chat", rq), requestIdHash: rc?.requestIdSha256 === sha("chatcmpl-qa88"),
-    transportHash: /^[a-f0-9]{64}$/.test(rc?.transportProfileSha256 ?? ""), usage: JSON.stringify(rc?.usage) === JSON.stringify({ source: "offline_http_fixture", inputTokens: 11, outputTokens: 7, actualCostMicros: null, tokenAccounting: "provider_reported_total" }),
+    transportHash: /^[a-f0-9]{64}$/.test(rc?.transportProfileSha256 ?? ""), usage: canon(rc?.usage) === canon({ source: "offline_http_fixture", inputTokens: 11, outputTokens: 7, actualCostMicros: null, tokenAccounting: "provider_reported_total" }),
     estimates: rc?.estimatedInputTokens === est && rc?.estimatedCostMicros === price && rc?.pricingVersion === "qa88-price-1", attempts: rc?.attempts === 1, deadline: rc?.deadlineAtMs === rq.deadlineAtMs,
   };
   return { pass: o.ok && Object.values(checks).every(Boolean), actual: { outcome: code(o), checks } };
@@ -128,8 +132,8 @@ await probe("OpenAI-compatible tools: strict function schema, required single ca
   const o = await outcome(() => OA(s).tools(request("tools"), ac()));
   await s.close();
   const b = s.requests[0]?.body ?? {};
-  const checks = { tools: JSON.stringify(b.tools) === JSON.stringify([{ type: "function", function: { name: "qa_tool", parameters: TOOL.inputSchema, strict: true } }]), choice: b.tool_choice === "required", parallel: b.parallel_tool_calls === false,
-    noFormat: !("response_format" in b), call: JSON.stringify(o.r?.calls) === JSON.stringify([{ idSha256: sha("call_qa88"), name: "qa_tool", arguments: { x: 3 } }]), mode: o.r?.receipt.mode === "tools" };
+  const checks = { tools: canon(b.tools) === canon([{ type: "function", function: { name: "qa_tool", parameters: TOOL.inputSchema, strict: true } }]), choice: b.tool_choice === "required", parallel: b.parallel_tool_calls === false,
+    noFormat: !("response_format" in b), call: canon(o.r?.calls) === canon([{ idSha256: sha("call_qa88"), name: "qa_tool", arguments: { x: 3 } }]), mode: o.r?.receipt.mode === "tools" };
   return { pass: o.ok && Object.values(checks).every(Boolean), actual: { outcome: code(o), checks } };
 });
 await probe("OpenAI-compatible structured: strict json_schema response_format; parsed object returned as structured, text null", "response_format {type:json_schema,json_schema:{name,schema,strict:true}}; structured={ok:true}", async () => {
@@ -137,7 +141,7 @@ await probe("OpenAI-compatible structured: strict json_schema response_format; p
   const o = await outcome(() => OA(s).structured(request("structured"), ac()));
   await s.close();
   const b = s.requests[0]?.body ?? {};
-  const checks = { format: JSON.stringify(b.response_format) === JSON.stringify({ type: "json_schema", json_schema: { name: "qa_format", schema: FORMAT.schema, strict: true } }), noTools: !("tools" in b), structured: JSON.stringify(o.r?.structured) === '{"ok":true}', text: o.r?.text === null };
+  const checks = { format: canon(b.response_format) === canon({ type: "json_schema", json_schema: { name: "qa_format", schema: FORMAT.schema, strict: true } }), noTools: !("tools" in b), structured: canon(o.r?.structured) === '{"ok":true}', text: o.r?.text === null };
   return { pass: o.ok && Object.values(checks).every(Boolean), actual: { outcome: code(o), checks } };
 });
 await probe("OpenAI-compatible vision: inline PNG only on the last message as data URL content part", "last message content=[text, image_url(data:image/png;base64,…)]; earlier messages plain", async () => {
@@ -145,7 +149,7 @@ await probe("OpenAI-compatible vision: inline PNG only on the last message as da
   const o = await outcome(() => OA(s).vision(request("vision"), ac()));
   await s.close();
   const m = s.requests[0]?.body?.messages ?? [];
-  const checks = { first: m[0]?.content === "QA system instruction", last: JSON.stringify(m[1]?.content) === JSON.stringify([{ type: "text", text: "QA user data عربي English" }, { type: "image_url", image_url: { url: `data:image/png;base64,${PNG}` } }]) };
+  const checks = { first: m[0]?.content === "QA system instruction", last: canon(m[1]?.content) === canon([{ type: "text", text: "QA user data عربي English" }, { type: "image_url", image_url: { url: `data:image/png;base64,${PNG}` } }]) };
   return { pass: o.ok && Object.values(checks).every(Boolean), actual: { outcome: code(o), checks } };
 });
 await probe("Native Anthropic chat: distinct /messages wire, x-api-key + anthropic-version only, top-level system, max_tokens; cache-token input accounting", "POST /v1/messages; no Authorization; body {model,max_tokens,system,messages[blocks]}; inputTokens = 10+5+3 = 18; native_input_and_cache_sum", async () => {
@@ -156,8 +160,8 @@ await probe("Native Anthropic chat: distinct /messages wire, x-api-key + anthrop
   const checks = {
     path: s.requests[0]?.path === "/v1/messages", method: s.requests[0]?.method === "POST", apiKey: h["x-api-key"] === SECRET, version: h["anthropic-version"] === "2023-06-01", noBearer: !("authorization" in h),
     bodyKeys: sortedKeys(b) === "max_tokens,messages,model,system", limitField: b.max_tokens === 256, system: b.system === "QA system instruction",
-    messages: JSON.stringify(b.messages) === JSON.stringify([{ role: "user", content: [{ type: "text", text: "QA user data عربي English" }] }]), secretNotInBody: !s.requests[0]?.raw.toString().includes(SECRET),
-    usage: JSON.stringify(rc?.usage) === JSON.stringify({ source: "offline_http_fixture", inputTokens: 18, outputTokens: 4, actualCostMicros: null, tokenAccounting: NATIVE_SUM }),
+    messages: canon(b.messages) === canon([{ role: "user", content: [{ type: "text", text: "QA user data عربي English" }] }]), secretNotInBody: !s.requests[0]?.raw.toString().includes(SECRET),
+    usage: canon(rc?.usage) === canon({ source: "offline_http_fixture", inputTokens: 18, outputTokens: 4, actualCostMicros: null, tokenAccounting: NATIVE_SUM }),
     provenance: rc?.provider === "anthropic" && rc.profileSha256 === contentHash(c) && rc.requestIdSha256 === sha("msg_qa88") && rc.requestSha256 === AC.requestHash("chat", rq),
   };
   return { pass: o.ok && Object.values(checks).every(Boolean), actual: { outcome: code(o), checks } };
@@ -167,8 +171,8 @@ await probe("Native Anthropic tools: input_schema tools, tool_choice any with pa
   const o = await outcome(() => AN(s).tools(request("tools"), ac()));
   await s.close();
   const b = s.requests[0]?.body ?? {};
-  const checks = { tools: JSON.stringify(b.tools) === JSON.stringify([{ name: "qa_tool", input_schema: TOOL.inputSchema }]), choice: JSON.stringify(b.tool_choice) === JSON.stringify({ type: "any", disable_parallel_tool_use: true }),
-    call: JSON.stringify(o.r?.calls) === JSON.stringify([{ idSha256: sha("toolu_qa88"), name: "qa_tool", arguments: { x: 3 } }]) };
+  const checks = { tools: canon(b.tools) === canon([{ name: "qa_tool", input_schema: TOOL.inputSchema }]), choice: canon(b.tool_choice) === canon({ type: "any", disable_parallel_tool_use: true }),
+    call: canon(o.r?.calls) === canon([{ idSha256: sha("toolu_qa88"), name: "qa_tool", arguments: { x: 3 } }]) };
   return { pass: o.ok && Object.values(checks).every(Boolean), actual: { outcome: code(o), checks } };
 });
 await probe("Native Anthropic structured: forced named tool; structured from tool_use input; no calls leaked", "tools=[{name:qa_format,input_schema}], tool_choice {type:tool,name:qa_format}; structured={ok:true}, calls=[]", async () => {
@@ -176,8 +180,8 @@ await probe("Native Anthropic structured: forced named tool; structured from too
   const o = await outcome(() => AN(s).structured(request("structured"), ac()));
   await s.close();
   const b = s.requests[0]?.body ?? {};
-  const checks = { tools: JSON.stringify(b.tools) === JSON.stringify([{ name: "qa_format", input_schema: FORMAT.schema }]), choice: JSON.stringify(b.tool_choice) === JSON.stringify({ type: "tool", name: "qa_format", disable_parallel_tool_use: true }),
-    structured: JSON.stringify(o.r?.structured) === '{"ok":true}', noCalls: o.r?.calls.length === 0, text: o.r?.text === null };
+  const checks = { tools: canon(b.tools) === canon([{ name: "qa_format", input_schema: FORMAT.schema }]), choice: canon(b.tool_choice) === canon({ type: "tool", name: "qa_format", disable_parallel_tool_use: true }),
+    structured: canon(o.r?.structured) === '{"ok":true}', noCalls: o.r?.calls.length === 0, text: o.r?.text === null };
   return { pass: o.ok && Object.values(checks).every(Boolean), actual: { outcome: code(o), checks } };
 });
 await probe("Native Anthropic vision: base64 image block on the last non-system message", "content=[text,{type:image,source:{type:base64,media_type:image/png,data}}]", async () => {
@@ -185,7 +189,7 @@ await probe("Native Anthropic vision: base64 image block on the last non-system 
   const o = await outcome(() => AN(s).vision(request("vision"), ac()));
   await s.close();
   const m = s.requests[0]?.body?.messages ?? [];
-  const ok = JSON.stringify(m) === JSON.stringify([{ role: "user", content: [{ type: "text", text: "QA user data عربي English" }, { type: "image", source: { type: "base64", media_type: "image/png", data: PNG } }] }]);
+  const ok = canon(m) === canon([{ role: "user", content: [{ type: "text", text: "QA user data عربي English" }, { type: "image", source: { type: "base64", media_type: "image/png", data: PNG } }] }]);
   return { pass: o.ok && ok, actual: { outcome: code(o), lastMessageExact: ok } };
 });
 await probe("Usage honesty: absent usage is unavailable (null), never zero; Anthropic without cache fields counts input only", "OA no usage -> source unavailable, nulls; AN no usage -> unavailable; AN input only -> 10; actualCostMicros always null", async () => {
@@ -195,8 +199,8 @@ await probe("Usage honesty: absent usage is unavailable (null), never zero; Anth
   const b = await outcome(() => AN(s2).chat(request("chat"), ac())); await s2.close();
   const s3 = await fake((r, res) => json(res, 200, anBody({ usage: { input_tokens: 10, output_tokens: 4 } })));
   const c = await outcome(() => AN(s3).chat(request("chat"), ac())); await s3.close();
-  const un = JSON.stringify({ source: "unavailable", inputTokens: null, outputTokens: null, actualCostMicros: null, tokenAccounting: "unavailable" });
-  const checks = { oa: JSON.stringify(a.r?.receipt.usage) === un, an: JSON.stringify(b.r?.receipt.usage) === un, anInputOnly: c.r?.receipt.usage.inputTokens === 10 && c.r?.receipt.usage.actualCostMicros === null };
+  const un = canon({ source: "unavailable", inputTokens: null, outputTokens: null, actualCostMicros: null, tokenAccounting: "unavailable" });
+  const checks = { oa: canon(a.r?.receipt.usage) === un, an: canon(b.r?.receipt.usage) === un, anInputOnly: c.r?.receipt.usage.inputTokens === 10 && c.r?.receipt.usage.actualCostMicros === null };
   return { pass: a.ok && b.ok && c.ok && Object.values(checks).every(Boolean), actual: checks };
 });
 // ---------------- Capability / request denial before any network effect ----------------
@@ -393,10 +397,10 @@ await probe("TLS: trusted certificate succeeds; wrong-name and untrusted certifi
   const g = await fake((r, res) => json(res, 200, oaBody()), { tls: tlsFiles.good }); const ok = await outcome(() => OA(g).chat(request("chat"), ac())); await g.close();
   const w = await fake((r, res) => json(res, 200, oaBody()), { tls: tlsFiles.wrong }); const wrong = await outcome(() => OA(w).chat(request("chat"), ac())); await w.close();
   const sf = await fake((r, res) => json(res, 200, oaBody()), { tls: tlsFiles.self }); const self = await outcome(() => OA(sf).chat(request("chat"), ac())); await sf.close();
-  const h = await fake((r, res) => json(res, 200, oaBody()), { tls: tlsFiles.host });
+  const h = await fake((r, res) => json(res, 200, oaBody()), { tls: tlsFiles.host, dual: true });
   const named = await outcome(() => new AC.OpenAICompatibleProvider(caps("openai-compatible"), policy(`https://localhost:${h.port}/v1`, { allowedAddresses: ["127.0.0.1", "::1"] }), budget()).chat(request("chat"), ac())); await h.close();
   const checks = { trusted: ok.ok && g.requests.length === 1, wrongName: code(wrong) === "transport_unknown" && w.requests.length === 0 && w.sockets.connections === 1, selfSigned: code(self) === "transport_unknown" && sf.requests.length === 0 && sf.sockets.connections === 1,
-    pinnedName: named.ok && h.requests.length === 1 && ["127.0.0.1", "::ffff:127.0.0.1"].includes(h.requests[0]?.remote), pinnedHostHeader: h.requests[0]?.headers.host === `localhost:${h.port}` };
+    pinnedName: named.ok && h.requests.length === 1 && ["127.0.0.1", "::ffff:127.0.0.1", "::1"].includes(h.requests[0]?.remote), pinnedHostHeader: h.requests[0]?.headers.host === `localhost:${h.port}` };
   return { pass: Object.values(checks).every(Boolean), actual: { checks, codes: { trusted: code(ok), wrongName: code(wrong), selfSigned: code(self), named: code(named) } } };
 });
 await probe("Credential handling: header-unsafe/empty secrets refused before sending; secret callback failure sends nothing", "CR/LF secret -> authentication, 0 hits; empty -> authentication, 0 hits; throwing callback -> typed failure, 0 hits", async () => {
@@ -433,7 +437,7 @@ await probe("Replay: all four modes, deterministic across fresh providers, synth
   const cassette = Object.entries(reqs).map(([m, rq]) => entry(m, rq));
   const run = async () => { const p = new AC.ReplayProvider(replayCaps, cassette); const out = []; for (const [m, rq] of Object.entries(reqs)) out.push(await p[m](rq, ac())); return out; };
   const a = await run(), b = await run();
-  const checks = { deterministic: JSON.stringify(a) === JSON.stringify(b), modes: a.map((x) => x.receipt.mode).join() === "chat,tools,structured,vision",
+  const checks = { deterministic: canon(a) === canon(b), modes: a.map((x) => x.receipt.mode).join() === "chat,tools,structured,vision",
     synthetic: a.every((x) => x.receipt.usage.source === "synthetic_replay" && x.receipt.usage.actualCostMicros === null && x.receipt.transportProfileSha256 === null && x.receipt.durationMs === 0 && x.receipt.evidence === "synthetic_replay" && x.receipt.requestIdSha256 === null) };
   return { pass: Object.values(checks).every(Boolean), actual: checks };
 });
@@ -457,7 +461,7 @@ await probe("Record -> replay roundtrip from an offline HTTP fixture reply; live
   const rq = request("tools", { deadlineAtMs: Date.now() + 60_000 }), live = await OA(s).tools(rq, ac()); await s.close();
   const e = AC.recordReplayEntry("tools", rq, live), back = await new AC.ReplayProvider(replayCaps, [e]).tools(rq, ac());
   const op = await outcome(async () => AC.recordReplayEntry("tools", rq, { ...live, receipt: { ...live.receipt, evidence: "operator_declared_unqualified" } }));
-  const checks = { same: JSON.stringify({ t: back.text, c: back.calls, s: back.structured }) === JSON.stringify({ t: live.text, c: live.calls, s: live.structured }), syntheticUsage: back.receipt.usage.inputTokens === 11 && back.receipt.usage.source === "synthetic_replay", operatorRefused: code(op) === "invalid_request" };
+  const checks = { same: canon({ t: back.text, c: back.calls, s: back.structured }) === canon({ t: live.text, c: live.calls, s: live.structured }), syntheticUsage: back.receipt.usage.inputTokens === 11 && back.receipt.usage.source === "synthetic_replay", operatorRefused: code(op) === "invalid_request" };
   return { pass: Object.values(checks).every(Boolean), actual: checks };
 });
 await probe("No credential leakage: fixture secret absent from every typed error (message/stack/JSON/inspect) and every receipt across this battery", "0 occurrences in all captured serializations", async () => {

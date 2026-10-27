@@ -80,7 +80,11 @@ test("PR88 upgrade part 2: migrated head", async ({ browser }) => {
     await client.query("BEGIN");
     try {
       if (settings) for (const [key, v] of Object.entries(settings)) await client.query("SELECT set_config($1,$2,true)", [key, v]);
-      await client.query({ ...upd, values: [s.timeline, s.P] });
+      const r = await client.query({ ...upd, values: [s.timeline, s.P] });
+      if (r.rowCount !== 1) return "NO_ROW";
+      // The fence is a DEFERRABLE INITIALLY DEFERRED constraint trigger: fire it now (same session, same settings)
+      // instead of at COMMIT, so the probe never commits a Timeline write.
+      await client.query("SET CONSTRAINTS agent_timeline_commit_fence IMMEDIATE");
       return "OK";
     } catch (e: any) { return e?.code ?? "ERR"; } finally { await client.query("ROLLBACK"); }
   };
@@ -97,7 +101,10 @@ test("PR88 upgrade part 2: migrated head", async ({ browser }) => {
     const clip = tl.snapshot.tracks.find((t: any) => t.kind === "video").clips.at(-1);
     const at = String((BigInt(clip.timelineStartUs) + (BigInt(clip.outPoint) - BigInt(clip.inPoint)) / 2n) / 40000n * 40000n);
     const apiEdit = await call(owner, "POST", `/projects/${s.P}/timelines/${s.timeline}/split`, { stateSha256: tl.state_sha256, clipId: clip.id, atUs: at });
-    return { pass: out.every((x) => x.endsWith(":OK") && !x.startsWith("NOT_RESET")) && apiEdit.status < 300, actual: { results: out, apiEdit: apiEdit.status } };
+    // Control: the same statement with a non-empty, mismatched agent setting must be rejected, proving the fence evaluated.
+    const firesControl = await attempt({ "editagent.agent_run": s.runs[0], "editagent.agent_owner": randomUUID(), "editagent.agent_generation": "1" });
+    const afterControl = await attempt(null);
+    return { pass: out.every((x) => x.endsWith(":OK") && !x.startsWith("NOT_RESET")) && firesControl === "23514" && afterControl === "OK" && apiEdit.status < 300, actual: { results: out, fenceEvaluatedControl: firesControl, ordinaryAfterControl: afterControl, apiEdit: apiEdit.status } };
   });
   await probe("M06", "Agent Timeline writes stay fenced at the database for wrong/missing owner, generation, run, lease, deadline, state or membership (23514, rolled back); the exact live lease is the only accepted write", "positive control OK; every mismatch -> 23514 (a non-UUID owner may raise 22P02, still rejected); Timeline unchanged; forced generic plans", async () => {
     await setMembership(s.P, viewer.id, "editor");
