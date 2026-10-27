@@ -32,7 +32,9 @@ export async function runCaptionProof({
   const pool = new Pool({ connectionString: hostEnv.DATABASE_URL });
   let browserProcess,
     phase = "immutable-bilingual-source",
-    agentName = null;
+    agentName = null,
+    measuredMedia = null,
+    licensedSources = [];
   try {
     const manifest = JSON.parse(
       await readFile(path.join(root, "tests/fixtures/asr/manifest.json"), "utf8"),
@@ -43,6 +45,16 @@ export async function runCaptionProof({
       entry: manifest.fixtures.find((x) => x.file === file),
     }));
     for (const f of files) assert.equal(sha(await readFile(f.path)), f.entry.sha256);
+    licensedSources = files.map((f) => ({
+      file: f.file,
+      sha256: f.entry.sha256,
+      sourceSha256: f.entry.sourceSha256,
+      sourceScopeUs: f.entry.sourceScopeUs,
+      license: f.entry.license,
+      adaptation:
+        "Licensed 8-second EN and AR excerpts concatenated, AAC encoded and combined with the repository-generated visual; caption text is actual Small recognition, not human gold.",
+      provenance: "tests/fixtures/asr/manifest.json",
+    }));
     const visual = path.join(root, "tests/fixtures/media/talking-head.mp4"),
       mediaManifest = JSON.parse(
         await readFile(path.join(root, "tests/fixtures/media/manifest.json"), "utf8"),
@@ -133,6 +145,13 @@ export async function runCaptionProof({
     assert.equal(result.status, "PASS");
     assert.equal(result.mockData, false);
     assert.equal(result.sourceSha256, sha(await readFile(source)));
+    // This is only the newly generated, licensed qualification export, never
+    // user media or a private diagnostic. Retain it even if later qualification
+    // rejects it; the report must remain FAIL until every assertion passes.
+    await copyFile(
+      path.join(privateDir, "caption-export.mp4"),
+      path.join(directory, "caption-export.mp4"),
+    );
     phase = "persisted-state-and-agent-restart";
     const before = (
       await pool.query(
@@ -217,6 +236,21 @@ export async function runCaptionProof({
       media = probe(exported),
       video = media.streams.find((s) => s.codec_type === "video"),
       audio = media.streams.find((s) => s.codec_type === "audio");
+    measuredMedia = {
+      videoCodec: video?.codec_name ?? null,
+      audioCodec: audio?.codec_name ?? null,
+      width: video?.width ?? null,
+      height: video?.height ?? null,
+      frameRate: video?.avg_frame_rate ?? null,
+      frameCount: Number(video?.nb_read_frames ?? 0),
+      durationSeconds: Number(media.format.duration),
+      audioSampleRate: Number(audio?.sample_rate ?? 0),
+      audioChannels: audio?.channels ?? null,
+      decodedFrameCount: media.videoFrameTimes.length,
+      maximumFrameClockErrorSeconds: Math.max(
+        ...media.videoFrameTimes.map((t, i) => Math.abs(t - i / 25)),
+      ),
+    };
     assert.equal(video.codec_name, "h264");
     assert.equal(audio.codec_name, "aac");
     assert.equal(video.width, 360);
@@ -228,6 +262,7 @@ export async function runCaptionProof({
     assert.equal(audio.channels, 2);
     assert.equal(media.videoFrameTimes.length, 400);
     for (let i = 0; i < 400; i++) assert.ok(Math.abs(media.videoFrameTimes[i] - i / 25) < 0.00001);
+    phase = "map-persisted-caption-timeline";
     // Visible real English and Arabic source portions, selected by immutable
     // concatenation coordinates, not by guessing language from recognized text.
     const mapping = renderRequire("./dist/application/timeline-mapping.js");
@@ -247,6 +282,7 @@ export async function runCaptionProof({
       },
     };
     const plan = mapping.mapTimeline(input);
+    phase = "decoded-native-word-boundary-proof";
     const actualFrames = await captionBoundaryProof(root, directory, privateDir, exported, plan);
     phase = "actual-remotion-visual-profile-matrix";
     const visualProfiles = await captionVisualProof(
@@ -282,16 +318,7 @@ export async function runCaptionProof({
       model: result.model,
       persistedCommandCount: Number(captionRecord),
       normalAgentWorkerRestartPreservedState: true,
-      sourceFixtures: files.map((f) => ({
-        file: f.file,
-        sha256: f.entry.sha256,
-        sourceSha256: f.entry.sourceSha256,
-        sourceScopeUs: f.entry.sourceScopeUs,
-        license: f.entry.license,
-        adaptation:
-          "Licensed 8-second EN and AR excerpts concatenated, AAC encoded and combined with the repository-generated visual; caption text is actual Small recognition, not human gold.",
-        provenance: "tests/fixtures/asr/manifest.json",
-      })),
+      sourceFixtures: licensedSources,
       renderVersion: catalog.renderVersion,
       captionComponent: catalog.components,
       export: {
@@ -305,6 +332,7 @@ export async function runCaptionProof({
         frameRate: video.avg_frame_rate,
         framesVerified: 400,
       },
+      measuredMedia,
       actualBoundaryFrames: actualFrames,
       visualProfileCount: visualProfiles.length,
       limitations: {
@@ -324,7 +352,13 @@ export async function runCaptionProof({
     });
     await writeFile(
       path.join(directory, "report.json"),
-      JSON.stringify({ status: "FAIL", phase, ...codeIdentity }) + "\n",
+      JSON.stringify({
+        status: "FAIL",
+        phase,
+        ...codeIdentity,
+        measuredMedia,
+        sourceFixtures: licensedSources,
+      }) + "\n",
     );
   } finally {
     if (browserProcess) await browserProcess.close();

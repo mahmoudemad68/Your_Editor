@@ -7,6 +7,12 @@ import path from "node:path";
 import process from "node:process";
 import assert from "node:assert/strict";
 export async function captionBoundaryProof(root, directory, privateDir, exported, plan) {
+  const progress = (phase, measurements = {}) =>
+    writeFile(
+      path.join(directory, "boundary-proof.json"),
+      JSON.stringify({ status: "RUNNING", phase, ...measurements }) + "\n",
+    );
+  await progress("load-native-reference-renderer");
   const require = createRequire(path.join(root, "workers/render-worker/package.json"));
   const { openBrowser, selectComposition, renderStill } = require("@remotion/renderer");
   const { startBundleServer } = require("./dist/infrastructure/local-bundle-server.js");
@@ -38,6 +44,10 @@ export async function captionBoundaryProof(root, directory, privateDir, exported
         BigInt(x.word.endUs) - BigInt(x.word.startUs) >= 120000n,
     ),
   ];
+  await progress("select-native-boundary-words", {
+    englishCandidate: Boolean(selected[0]),
+    arabicCandidate: Boolean(selected[1]),
+  });
   assert.ok(selected.every(Boolean), "Missing a measurable interior word in either source portion");
   const pixels = (file) =>
     execFileSync(
@@ -82,6 +92,7 @@ export async function captionBoundaryProof(root, directory, privateDir, exported
         inputProps: props,
         puppeteerInstance: browser,
       });
+      await progress("render-native-word-reference", { sourcePart: part, frame: first });
       const reference = path.join(privateDir, `range-reference-${part}.png`);
       await renderStill({
         serveUrl: server.serveUrl,
@@ -96,6 +107,11 @@ export async function captionBoundaryProof(root, directory, privateDir, exported
       const expected = pixels(reference),
         mask = [];
       for (let i = 0; i < 360 * 640; i++) if (yellow(expected, i)) mask.push(i);
+      await progress("validate-native-reference-mask", {
+        sourcePart: part,
+        frame: first,
+        referenceMaskPixels: mask.length,
+      });
       assert.ok(mask.length > 4, "Native active-word reference has no visible pixels");
       const measurements = [];
       for (const frame of [first - 1, first, first + 1, end - 1, end]) {
