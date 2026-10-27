@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from "node:http";
 import { randomBytes } from "node:crypto";
+import dns from "node:dns/promises";
 import { contentHash } from "@editagent/tool-sdk";
 import {
   OpenAICompatibleProvider,
@@ -356,6 +357,107 @@ test("provider configuration, request scopes and token/cost budgets fail closed 
     (e: unknown) => e instanceof ProviderError && e.code === "budget_exceeded",
   );
 });
+test("QA88-F2: canonical IPv4/IPv6 link-local denial covers config, literals and DNS before transport", async (t) => {
+  const denied = (e: unknown) => e instanceof ProviderError && e.code === "endpoint_denied";
+  const blocked = [
+    "169.254.1.1",
+    "169.254.0.0",
+    "169.254.255.255",
+    "fe80::1",
+    "FE80::abcd",
+    "febf::1",
+    "febf:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
+    "::ffff:169.254.169.254",
+    "::ffff:a9fe:a9fe",
+    "0:0:0:0:0:FFFF:A9FE:A9FE",
+    "fe80::1%eth0",
+  ];
+  let secretReads = 0;
+  for (const provider of ["openai-compatible", "anthropic"] as const) {
+    const Adapter = provider === "anthropic" ? AnthropicProvider : OpenAICompatibleProvider;
+    const endpoint = "https://provider.invalid/v1";
+    const p = {
+      ...policy(endpoint),
+      secret: () => {
+        secretReads++;
+        return randomBytes(16).toString("hex");
+      },
+    };
+    for (const address of blocked) {
+      assert.throws(
+        () => new Adapter(caps(provider), { ...p, allowedAddresses: [address] }, budget()),
+        denied,
+      );
+      if (!address.includes("%")) {
+        const literal = `https://${address.includes(":") ? `[${address}]` : address}/v1`;
+        assert.throws(
+          () =>
+            new Adapter(
+              caps(provider),
+              { ...p, endpoint: literal, allowedOrigins: [new URL(literal).origin] },
+              budget(),
+            ),
+          denied,
+        );
+      }
+      const resolver = t.mock.method(dns, "lookup", async () => [
+        { address, family: address.includes(":") ? 6 : 4 },
+      ]);
+      try {
+        const model = new Adapter(caps(provider), p, budget());
+        await assert.rejects(model.chat(request("chat"), new AbortController().signal), denied);
+        assert.equal(resolver.mock.callCount(), 1);
+      } finally {
+        resolver.mock.restore();
+      }
+    }
+    for (const address of [
+      "127.0.0.1",
+      "::1",
+      "::ffff:127.0.0.1",
+      "192.0.2.1",
+      "2001:DB8::1",
+      "fe7f::1",
+      "fec0::1",
+      "169.253.255.255",
+      "169.255.0.0",
+    ])
+      assert.doesNotThrow(
+        () => new Adapter(caps(provider), { ...p, allowedAddresses: [address] }, budget()),
+      );
+    const numeric = "https://0xa9fea9fe/v1";
+    assert.throws(
+      () =>
+        new Adapter(
+          caps(provider),
+          { ...p, endpoint: numeric, allowedOrigins: [new URL(numeric).origin] },
+          budget(),
+        ),
+      denied,
+    );
+  }
+  assert.equal(secretReads, 0);
+  let hits = 0;
+  const hosted = await server((_req, res) => {
+    hits++;
+    res.end(JSON.stringify(fixture("openai-compatible", "chat")));
+  });
+  try {
+    const model = new OpenAICompatibleProvider(
+      caps("openai-compatible"),
+      { ...policy(hosted.endpoint), allowedAddresses: ["0:0:0:0:0:FFFF:7F00:1"] },
+      budget(),
+    );
+    assert.equal(
+      (await model.chat(request("chat"), new AbortController().signal)).text,
+      "English والعربية",
+    );
+    assert.equal(hits, 1);
+  } finally {
+    await close(hosted.http);
+  }
+});
+
 test("replay output is exact across fresh providers and rejects unmatched requests without exposing content", async () => {
   const c = caps("replay"),
     r = request("structured"),

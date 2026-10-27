@@ -1,7 +1,7 @@
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { lookup } from "node:dns/promises";
-import { isIP } from "node:net";
+import { BlockList, isIP } from "node:net";
 import { randomInt, createHash } from "node:crypto";
 import { contentHash, jsonValue } from "@editagent/tool-sdk";
 import { deepFreeze } from "./prompts.js";
@@ -38,6 +38,26 @@ export interface ProviderTransportPolicy {
   readonly openAiOutputLimitField?: "max_tokens" | "max_completion_tokens";
 }
 const hash = (s: string) => createHash("sha256").update(s).digest("hex");
+const linkLocal = new BlockList();
+linkLocal.addSubnet("169.254.0.0", 16, "ipv4");
+linkLocal.addSubnet("fe80::", 10, "ipv6");
+/** Canonical policy identity, including IPv4-mapped IPv6. Zone identifiers are
+ * not a supported endpoint identity. BlockList applies subnet semantics rather
+ * than relying on how an operator or resolver spelled an address. */
+function approvedAddress(value: string): string {
+  const family = isIP(value);
+  if (!family || value.includes("%")) throw new ProviderError("endpoint_denied");
+  let address = family === 4 ? value : new URL(`http://[${value}]/`).hostname.slice(1, -1);
+  const mapped = /^::ffff:([a-f0-9]{1,4}):([a-f0-9]{1,4})$/.exec(address);
+  if (mapped) {
+    const high = parseInt(mapped[1]!, 16),
+      low = parseInt(mapped[2]!, 16);
+    address = [high >>> 8, high & 255, low >>> 8, low & 255].join(".");
+  }
+  if (linkLocal.check(address, isIP(address) === 4 ? "ipv4" : "ipv6"))
+    throw new ProviderError("endpoint_denied");
+  return address;
+}
 const object = (v: unknown): Record<string, unknown> => {
   if (!v || typeof v !== "object" || Array.isArray(v)) throw new ProviderError("invalid_response");
   return v as Record<string, unknown>;
@@ -77,6 +97,9 @@ export abstract class HttpLanguageModel implements LanguageModel {
     this.capabilities = checkedCapabilities(c);
     try {
       const u = new URL(p.endpoint);
+      const hostname = u.hostname.replace(/^\[|\]$/g, "");
+      if (isIP(hostname)) approvedAddress(hostname);
+      const addresses = [...new Set(p.allowedAddresses.map(approvedAddress))].sort();
       if (
         !p.allowedOrigins.includes(u.origin) ||
         u.username ||
@@ -89,8 +112,7 @@ export abstract class HttpLanguageModel implements LanguageModel {
             c.evidence === "offline_http_fixture" &&
             ["127.0.0.1", "[::1]"].includes(u.hostname)
           )) ||
-        !p.allowedAddresses.length ||
-        p.allowedAddresses.some((a) => !isIP(a) || /^169\.254\./.test(a)) ||
+        !addresses.length ||
         !natural(p.timeoutMs) ||
         p.timeoutMs < 1 ||
         p.timeoutMs > 60_000 ||
@@ -113,12 +135,12 @@ export abstract class HttpLanguageModel implements LanguageModel {
       this.policy = Object.freeze({
         ...p,
         allowedOrigins: Object.freeze([...p.allowedOrigins]),
-        allowedAddresses: Object.freeze([...p.allowedAddresses]),
+        allowedAddresses: Object.freeze(addresses),
       });
       this.transportProfileSha256 = contentHash({
         endpoint: u.href,
         allowedOrigins: [...p.allowedOrigins].sort(),
-        allowedAddresses: [...p.allowedAddresses].sort(),
+        allowedAddresses: addresses,
         timeoutMs: p.timeoutMs,
         maxAttempts: p.maxAttempts,
         minIntervalMs: p.minIntervalMs,
@@ -270,9 +292,13 @@ export abstract class HttpLanguageModel implements LanguageModel {
     signal: AbortSignal,
   ): Promise<{ status: number; body: Buffer; retryAfter: string | undefined }> {
     const hostname = this.endpoint.hostname.replace(/^\[|\]$/g, "");
-    const addresses = isIP(hostname)
+    const resolved = isIP(hostname)
       ? [{ address: hostname, family: isIP(hostname) }]
       : await abortable(lookup(hostname, { all: true }), signal);
+    const addresses = resolved.map(({ address }) => {
+      const canonical = approvedAddress(address);
+      return { address: canonical, family: isIP(canonical) };
+    });
     if (
       !addresses.length ||
       addresses.some((a) => !this.policy.allowedAddresses.includes(a.address))

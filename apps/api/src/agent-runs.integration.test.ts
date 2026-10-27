@@ -959,6 +959,116 @@ test(
               );
             });
             await loopTest.test(
+              "QA88-F1: expired render waiter cannot clean up its successor's single render",
+              async () => {
+                const f = await fixture(),
+                  a = await compose(f),
+                  b = await compose(f),
+                  run = await enable(f, a.model),
+                  own = new PostgresAgentRuns(pool, permit);
+                const renew = own.renew.bind(own),
+                  inFlight = new Set<Promise<void>>();
+                let blocked = false,
+                  aWaiting = false,
+                  bWaiting = false,
+                  cancelled = 0;
+                let resumeA!: () => void, resumeB!: () => void;
+                const gateA = new Promise<void>((resolve) => {
+                  resumeA = resolve;
+                });
+                const gateB = new Promise<void>((resolve) => {
+                  resumeB = resolve;
+                });
+                own.renew = async (lease) => {
+                  if (blocked) await gateA;
+                  const pending = renew(lease);
+                  inFlight.add(pending);
+                  try {
+                    await pending;
+                  } finally {
+                    inFlight.delete(pending);
+                  }
+                };
+                const shared = a.render;
+                const renderA: AgentRenderPort = {
+                  ...shared,
+                  async inspect(project, id, signal) {
+                    blocked = true;
+                    await Promise.all([...inFlight]);
+                    aWaiting = true;
+                    await gateA;
+                    return shared.inspect(project, id, signal);
+                  },
+                  async cancel() {
+                    cancelled++;
+                  },
+                };
+                const renderB: AgentRenderPort = {
+                  ...shared,
+                  async inspect(project, id, signal) {
+                    bWaiting = true;
+                    await gateB;
+                    return shared.inspect(project, id, signal);
+                  },
+                  async cancel() {
+                    cancelled++;
+                  },
+                };
+                const stopped = runControlledAgentLoop(
+                  { ...a, runs: own, render: renderA },
+                  run.id,
+                  new AbortController().signal,
+                ).then(
+                  () => "completed",
+                  (e: unknown) => (e instanceof AgentError ? e.code : "unexpected"),
+                );
+                let successor: Promise<void> | undefined;
+                try {
+                  await until(async () => aWaiting);
+                  const first = await runs.get(owner, f.project, run.id);
+                  assert.equal(first.state, "Rendering");
+                  assert.equal(first.generation, 1);
+                  await sleep(5300);
+                  successor = runControlledAgentLoop(
+                    { ...b, render: renderB },
+                    run.id,
+                    new AbortController().signal,
+                  );
+                  await until(async () => bWaiting);
+                  const taken = await runs.get(owner, f.project, run.id);
+                  assert.equal(taken.generation, 2);
+                  assert.equal(taken.state, "Rendering");
+                  assert.equal(taken.planning?.renderJobId, first.planning?.renderJobId);
+                  resumeA();
+                  assert.equal(await stopped, "fenced");
+                  assert.equal(cancelled, 0);
+                  assert.equal((await runs.get(owner, f.project, run.id)).state, "Rendering");
+                  resumeB();
+                  await successor;
+                  const result = await runs.get(owner, f.project, run.id);
+                  assert.equal(result.state, "Completed");
+                  assert.equal(result.checkpoint, 2);
+                  assert.equal(a.starts(), 1);
+                  assert.equal(b.starts(), 0);
+                  assert.equal(cancelled, 0);
+                  assert.equal(
+                    (
+                      await pool.query(
+                        "SELECT id FROM agent_steps WHERE run_id=$1 AND outcome='succeeded'",
+                        [run.id],
+                      )
+                    ).rowCount,
+                    2,
+                  );
+                } finally {
+                  resumeA();
+                  resumeB();
+                  await stopped;
+                  await successor?.catch(() => undefined);
+                }
+              },
+            );
+            await loopTest.test(
               "cancellation during inference settles unknown usage and prevents tool admission",
               async () => {
                 const f = await fixture();

@@ -442,6 +442,22 @@ export class PostgresAgentRuns implements AgentApi {
       );
     });
   }
+  /** Cleanup is authorized by durable terminal state, never by local failure or
+   * heartbeat loss. User cancellation advances the current holder's generation
+   * once; an older superseded holder cannot obtain cleanup authority. The port
+   * must recheck this generation and terminal state at its side-effect boundary. */
+  async renderCancellationGeneration(lease: RunLease): Promise<number | null> {
+    return this.tx(async (db) => {
+      const row = await this.locked(db, lease.runId);
+      if (row.runtime_driver !== "controlled-loop-v1") return null;
+      const ownFailure = row.state === "Failed" && row.generation === lease.generation;
+      const cancelled =
+        row.state === "Cancelled" &&
+        row.stop_reason === "CANCELLED" &&
+        (row.generation === lease.generation || row.generation === lease.generation + 1);
+      return ownFailure || cancelled ? row.generation : null;
+    });
+  }
   async move(
     lease: RunLease,
     state: AgentState,

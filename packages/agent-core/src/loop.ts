@@ -75,8 +75,7 @@ export async function runControlledAgentLoop(
       });
   }, 250);
   let renderJob: string | null = null,
-    project: string | null = null,
-    completed = false;
+    project: string | null = null;
   const deadline = AbortSignal.timeout(Math.max(1, remaining)),
     signal = AbortSignal.any([outer, lost.signal, deadline]);
   try {
@@ -414,7 +413,6 @@ export async function runControlledAgentLoop(
       const current = await runs.loopSession(lease);
       if (current.render_outcome !== "succeeded") throw new PlanningError("OUTPUT_INVALID");
       await runs.move(lease, "Completed");
-      completed = true;
     }
   } catch (e) {
     if (e instanceof PlanningError) await runs.planningStop(lease, e.code);
@@ -424,11 +422,14 @@ export async function runControlledAgentLoop(
     if (e instanceof AgentError || signal.aborted) throw new AgentError("fenced");
   } finally {
     clearInterval(heartbeat);
-    if (!completed && project)
-      await boundedOperation(
-        () => deps.render.cancel(id, project!, renderJob),
-        AbortSignal.timeout(5000),
-      );
+    if (project) {
+      const cleanup = AbortSignal.timeout(5000);
+      await boundedOperation(async () => {
+        const generation = await runs.renderCancellationGeneration(lease);
+        cleanup.throwIfAborted();
+        if (generation !== null) await deps.render.cancel(id, project!, renderJob, generation);
+      }, cleanup);
+    }
   }
 }
 /** A misbehaving adapter cannot keep a lease alive past cancellation/deadline.

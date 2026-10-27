@@ -135,6 +135,48 @@ codecs and frame rate before completion. Cancellation cleans up the bound render
 including admission whose acknowledgement was not saved: cleanup matches only the
 exact durable receipt, actor, project and render job type, without resubmitting.
 
+### QA88 repair: render cleanup authority and linearization
+
+Heartbeat loss or a local non-completed result does not authorize cancellation.
+The loop first reads durable terminal state and its cancellation generation:
+an owning generation may clean up its Failed run; explicit user cancellation
+advances the holder's generation once and authorizes cleanup of that Cancelled
+run. Active, completed and superseded generations do not acquire this authority.
+This lookup and cleanup share the existing five-second cleanup budget.
+
+The internal render cancellation port requires that generation. In a PostgreSQL
+transaction it independently matches the exact run/project, original actor's
+render idempotency receipt, job type/subject and persisted attachment (if already
+acknowledged), and requires Failed/Cancelled state at the same generation.
+Its `SELECT ... FOR UPDATE OF r` is the authorization linearization point. The
+run-row lock is retained through `cancelJob`'s Redis request and queued-job
+transition, so a claim cannot interleave between the check and side effect.
+Terminal runs cannot be reclaimed. Already terminal jobs are no-ops. A missing
+acknowledgement can only reconcile to the exact existing durable receipt; missing
+intent/association never permits enumeration, resubmission or unrelated cleanup.
+No public API/event schema or migration is changed by this repair.
+
+The real-PG lifecycle test holds A beyond its lease, observes B generation+1 on
+the same render, and asserts A is fenced without calling cleanup. The Linux media
+proof additionally SIGSTOPs A for over five seconds outside all DB transactions,
+starts B on the same single queued render, resumes A and checks no cancel flag.
+It repeats twice and requires B to complete exactly two effects, valid FFprobe
+output and a matching downloadable export. Separate user-cancel and lock-barrier
+tests retain K07 behavior, unrelated-render isolation and serialization against
+a concurrent terminal claim. These are Coding Agent regressions, not Re-QA.
+
+### QA88 repair: canonical IP admission
+
+Trusted address lists, literal endpoints and every resolved DNS address use the
+same canonicalizer. It canonicalizes IPv6 and unwraps IPv4-mapped addresses before
+subnet checks, denying IPv4 `169.254.0.0/16` and IPv6 `fe80::/10`; zone identifiers
+are unsupported. Canonical approved addresses are pinned for dispatch and hashed
+in the transport profile. Origin restrictions, TLS hostname checks, offline
+loopback admission, budgets, retry limits and deadline behavior are unchanged.
+The shared host/image conformance suite covers upper-case/expanded/mapped forms,
+subnet boundaries, literal and DNS paths, and approved loopback/non-link-local
+controls. No live provider qualification or production enablement is implied.
+
 The separate `qualification-entry.js` is invoked explicitly in an isolated test
 container with `NODE_ENV=test`, `EDITAGENT_RUNTIME=development` and
 `EDITAGENT_REPLAY_QUALIFICATION=isolated-v1`. It accepts bounded ephemeral stdin,

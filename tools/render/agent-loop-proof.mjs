@@ -8,6 +8,8 @@ import path from "node:path";
 import process from "node:process";
 import { Pool } from "pg";
 import { buildProductImages } from "../test/compose-build.mjs";
+import { runAgentLeaseProof } from "./agent-lease-proof.mjs";
+import assert from "node:assert/strict";
 
 export async function runAgentLoopProof({
   root,
@@ -387,6 +389,98 @@ export async function runAgentLoopProof({
     )
       throw new Error("actual_export_integrity_failed");
     await copyFile(outputFile, path.join(directory, "agent-export.mp4"));
+    phase = "lease-loss-recovery";
+    const jobs = require("@editagent/job-queue"),
+      leaseQueue = new jobs.BullMqJobQueue(hostEnv.REDIS_URL);
+    let leaseRecovery;
+    try {
+      const { AuthenticatedTimelineRenderPort } = require(
+        path.join(root, "workers/agent-worker/dist/render-port.js"),
+      );
+      const port = new AuthenticatedTimelineRenderPort(
+        pool,
+        leaseQueue,
+        apiOrigin,
+        async () => headers,
+        permit,
+      );
+      leaseRecovery = await runAgentLeaseProof({
+        root,
+        hostEnv,
+        pool,
+        queue: leaseQueue,
+        renderContainer,
+        json,
+        core,
+        port,
+        probe,
+        privateDir,
+        restore: (value) => domain.Timeline.restore(value),
+        onPhase: (label) => {
+          phase = "lease-" + label;
+        },
+        async createScenario() {
+          const created = await json(`/projects/${result.projectId}/timelines`, {
+            mediaAssetId: asset,
+          });
+          const started = await json(`/projects/${result.projectId}/agent-runs`, {
+            idempotencyKey: core.newAgentId(),
+            timelineId: created.timeline.id,
+            stateSha256: created.stateSha256,
+          });
+          await runs.enableControlledReplay(
+            actor,
+            result.projectId,
+            started.id,
+            configuration,
+            sdk.contentHash(capabilities),
+          );
+          const context = await core.buildAgentContext(source, core.packagedPrompts(), {
+            actorId: actor,
+            projectId: result.projectId,
+            runId: started.id,
+            expectedSourceSha256: created.stateSha256,
+            prompt: { id: "agent-plan", version: "1.0.0" },
+            creator: configuration.creator,
+            budget: { contextWindow: 65536, responseMargin: 3072, toolMargin: 4096 },
+          });
+          if (!context.ok) throw new Error("lease_context_unavailable");
+          const fresh = globalThis.structuredClone(plan);
+          fresh.timelineId = created.timeline.id;
+          fresh.sourceSha256 = created.stateSha256;
+          fresh.steps = fresh.steps.map((step) => ({
+            ...step,
+            clipId: created.timeline.tracks[0].clips[0].id,
+          }));
+          fresh.provenance = {
+            ...fresh.provenance,
+            contextSha256: context.sha256,
+            templateHash: context.summary.templateHash,
+            promptId: context.summary.promptId,
+            promptVersion: context.summary.promptVersion,
+          };
+          core.validateEditPlan(
+            fresh,
+            domain.Timeline.restore(created.timeline),
+            context,
+            registry,
+            configuration,
+          );
+          return {
+            runId: started.id,
+            projectId: result.projectId,
+            actorId: actor,
+            apiOrigin,
+            accessToken: access,
+            csrf,
+            capabilities,
+            plan: fresh,
+          };
+        },
+      });
+    } finally {
+      await leaseQueue.close(true);
+    }
     phase = "unacknowledged-render-cancellation";
     // Separate adversarial lifecycle probe, not a second model/planning claim:
     // simulate a crash after real API admission but before attachRender commits.
@@ -417,7 +511,10 @@ export async function runAgentLoopProof({
         requestId: "req_" + intent.receiptId.replaceAll("-", ""),
       });
       phase = "unacknowledged-render-cancellation";
-      await json(`/projects/${result.projectId}/agent-runs/${cancelRun.id}/cancel`, {});
+      const cancelledRun = await json(
+        `/projects/${result.projectId}/agent-runs/${cancelRun.id}/cancel`,
+        {},
+      );
       const { AuthenticatedTimelineRenderPort } = require(
         path.join(root, "workers/agent-worker/dist/render-port.js"),
       );
@@ -432,7 +529,79 @@ export async function runAgentLoopProof({
           async () => headers,
           permit,
         );
-        await port.cancel(cancelRun.id, result.projectId, null);
+        await assert.rejects(
+          port.cancel(cancelRun.id, result.projectId, accepted.jobId, cancelledRun.generation - 1),
+          core.AgentError,
+        );
+        await assert.rejects(
+          port.cancel(cancelRun.id, core.newAgentId(), accepted.jobId, cancelledRun.generation),
+          core.AgentError,
+        );
+        await assert.rejects(
+          port.cancel(cancelRun.id, result.projectId, jobId, cancelledRun.generation),
+          core.AgentError,
+        );
+        assert.equal(await cleanupQueue.isCancelRequested(accepted.jobId), false);
+        let release,
+          entered = false,
+          cancelRequests = 0;
+        const barrier = new Promise((resolve) => {
+          release = resolve;
+        });
+        const originalRequest = cleanupQueue.requestCancel.bind(cleanupQueue);
+        cleanupQueue.requestCancel = async (id) => {
+          cancelRequests++;
+          entered = true;
+          await barrier;
+          await originalRequest(id);
+        };
+        const claimName = "qa88-terminal-claim-" + randomBytes(6).toString("hex"),
+          claimPool = new Pool({
+            connectionString: hostEnv.DATABASE_URL,
+            application_name: claimName,
+            max: 1,
+          });
+        const cancelling = port
+          .cancel(cancelRun.id, result.projectId, null, cancelledRun.generation)
+          .then(
+            () => true,
+            () => false,
+          );
+        let takingOver;
+        const until = async (check) => {
+          const end = Date.now() + 5000;
+          while (Date.now() < end) {
+            if (await check()) return;
+            await new Promise((resolve) => globalThis.setTimeout(resolve, 20));
+          }
+          throw new Error("terminal_cancel_lock_not_observed");
+        };
+        try {
+          phase = "terminal-cancel-claim-linearization";
+          await until(async () => entered);
+          takingOver = new core.PostgresAgentRuns(claimPool, permit).claim(cancelRun.id);
+          await until(
+            async () =>
+              Number(
+                (
+                  await pool.query(
+                    "SELECT count(*) FROM pg_stat_activity WHERE application_name=$1 AND wait_event_type='Lock' AND cardinality(pg_blocking_pids(pid))>0",
+                    [claimName],
+                  )
+                ).rows[0].count,
+              ) === 1,
+          );
+          release();
+          assert.equal(await cancelling, true);
+          assert.equal(await takingOver, null);
+          await port.cancel(cancelRun.id, result.projectId, null, cancelledRun.generation);
+          assert.equal(cancelRequests, 1);
+        } finally {
+          release();
+          await cancelling;
+          await takingOver?.catch(() => undefined);
+          await claimPool.end();
+        }
       } finally {
         await cleanupQueue.close(true);
       }
@@ -470,6 +639,8 @@ export async function runAgentLoopProof({
           actualPlayback: true,
           actualDownload: true,
           actualUnacknowledgedQueuedRenderCancellation: true,
+          leaseRecovery,
+          terminalCancellationSerializedWithClaim: true,
           providerMeasuredUsage: null,
           syntheticUsage: {
             unit: "synthetic_model_tokens",

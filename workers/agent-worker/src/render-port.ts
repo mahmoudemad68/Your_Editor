@@ -146,32 +146,57 @@ export class AuthenticatedTimelineRenderPort implements AgentRenderPort {
     if (!proof.success) throw new PlanningError("OUTPUT_INVALID");
     return { status: "completed" as const, proof: proof.data };
   }
-  async cancel(runId: string, project: string, id: string | null): Promise<void> {
+  async cancel(
+    runId: string,
+    project: string,
+    id: string | null,
+    generation: number,
+  ): Promise<void> {
+    if (!Number.isSafeInteger(generation) || generation < 0) throw new AgentError("fenced");
     // A render may be accepted before its acknowledgement is persisted. Match
     // the exact durable receipt, actor and project; never enumerate or resubmit.
-    const bound = await this.pool.query<{ id: string }>(
-      `SELECT j.id FROM agent_runs r JOIN agent_loop_sessions s ON s.run_id=r.id
+    // The locked, terminal generation is the cancellation linearization point.
+    // Hold the same run-row lock through the queue side effect: claim/recovery
+    // cannot pass between authorization and cancelJob. Terminal runs cannot be
+    // claimed again. Completed/failed/cancelled jobs are already settled.
+    const db = await this.pool.connect();
+    try {
+      await db.query("BEGIN");
+      const bound = await db.query<{ id: string; status: string }>(
+        `SELECT j.id,j.status FROM agent_runs r JOIN agent_loop_sessions s ON s.run_id=r.id
       JOIN jobs j ON j.idempotency_key='render:'||r.project_id::text||':'||r.actor_id::text||':req_'||replace(s.render_receipt_id::text,'-','')
       WHERE r.id=$1 AND r.project_id=$2 AND r.runtime_driver='controlled-loop-v1'
+      AND r.state IN ('Cancelled','Failed') AND r.generation=$4
       AND ($3::uuid IS NULL OR j.id=$3) AND (s.render_job_id IS NULL OR s.render_job_id=j.id)
-      AND j.subject_kind='project' AND j.subject_id=$2 AND j.job_type='render.remotion'`,
-      [runId, project, id],
-    );
-    if (bound.rowCount === 0 && id === null) return;
-    if (bound.rowCount !== 1) throw new AgentError("not_found");
-    await cancelJob(
-      {
-        jobs: new PostgresJobRepository(this.pool),
-        queue: this.queue,
-        now: () => instant(BigInt(Date.now())),
-        newAttemptId: newAgentId,
-        supervisor: {
-          async run() {
-            throw new AgentError("forbidden");
+      AND j.subject_kind='project' AND j.subject_id=$2 AND j.job_type='render.remotion'
+      FOR UPDATE OF r`,
+        [runId, project, id, generation],
+      );
+      if (bound.rowCount === 0 && id !== null) throw new AgentError("not_found");
+      if (
+        bound.rowCount === 1 &&
+        !["Completed", "Failed", "Cancelled"].includes(bound.rows[0]!.status)
+      )
+        await cancelJob(
+          {
+            jobs: new PostgresJobRepository(this.pool),
+            queue: this.queue,
+            now: () => instant(BigInt(Date.now())),
+            newAttemptId: newAgentId,
+            supervisor: {
+              async run() {
+                throw new AgentError("forbidden");
+              },
+            },
           },
-        },
-      },
-      jobId(bound.rows[0]!.id),
-    );
+          jobId(bound.rows[0]!.id),
+        );
+      await db.query("COMMIT");
+    } catch (error) {
+      await db.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      db.release();
+    }
   }
 }
