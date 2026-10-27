@@ -8,6 +8,7 @@ import {
 } from "@editagent/domain";
 import { TimelineConflict, TimelineEditor } from "./timeline-editor.js";
 import { ProjectForbiddenError, ProjectNotFoundError } from "./project-access.js";
+import { RenderValidationV1Schema } from "@editagent/schemas";
 
 export interface TimelineRenderSnapshot {
   readonly jobId: string;
@@ -20,7 +21,11 @@ export interface TimelineRenderJobs {
   read(
     project: ProjectId,
     id: string,
-  ): Promise<{ job: TimelineRenderSnapshot; outputKey: string | null } | null>;
+  ): Promise<{
+    job: TimelineRenderSnapshot;
+    outputKey: string | null;
+    validation?: unknown;
+  } | null>;
   cancel(actor: UserId, project: ProjectId, id: string): Promise<void>;
 }
 export class RenderUnavailable extends Error {
@@ -73,6 +78,16 @@ export class TimelineExports {
     if (!(await this.jobs.read(project, id))) throw new ProjectNotFoundError();
     await this.jobs.cancel(actor, project, id);
     return this.read(actor, project, id);
+  }
+  async validation(actor: UserId, project: ProjectId, id: string) {
+    await this.access(actor, project, false);
+    const result = await this.jobs.read(project, id);
+    await this.access(actor, project, false);
+    if (!result) throw new ProjectNotFoundError();
+    const parsed = RenderValidationV1Schema.safeParse(result.validation);
+    if (result.job.status !== "Completed" || !parsed.success || parsed.data.jobId !== id)
+      throw new TimelineConflict();
+    return parsed.data;
   }
 
   async download(actor: UserId, project: ProjectId, id: string) {

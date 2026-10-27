@@ -20,6 +20,7 @@ import { RenderJobSupervisor } from "./infrastructure/render-supervisor.js";
 import { PostgresRenderAssetResolver } from "./infrastructure/asset-resolver.js";
 import { createEditingRuntime } from "./infrastructure/editing-runtime.js";
 import { toolQueueName } from "@editagent/tool-sdk";
+import { PostgresRenderValidation } from "./infrastructure/render-validation.js";
 export async function main() {
   const config = loadRenderWorkerConfig();
   startNoopTracing("render-worker");
@@ -62,6 +63,8 @@ export async function main() {
     strategy,
     (id, percentage, attempt) => queue.publishProgress(id, { stage: "mix", percentage, attempt }),
     shutdown.signal,
+    (envelope, input, artifact) =>
+      new PostgresRenderValidation(pool).record(envelope, input, artifact),
   );
   const deps = {
     jobs: new PostgresJobRepository(pool),

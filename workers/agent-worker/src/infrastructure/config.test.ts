@@ -2,10 +2,34 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { test } from "node:test";
-import { ConfigurationError, loadAgentWorkerConfig } from "./config.js";
+import { ConfigurationError, loadAgentWorkerConfig, loadControlledReplayConfig } from "./config.js";
+import { AgentError, assertControlledReplayPermit } from "@editagent/agent-core";
 
 const databaseUrl = "postgresql://editagent:editagent-dev-password@postgres:5432/editagent";
 const redisUrl = "redis://redis:6379/0";
+
+test("controlled replay configuration is explicit, non-production and cannot be serialized into API authority", () => {
+  const env = {
+    DATABASE_URL: databaseUrl,
+    REDIS_URL: redisUrl,
+    NODE_ENV: "test",
+    EDITAGENT_RUNTIME: "development",
+    EDITAGENT_REPLAY_QUALIFICATION: "isolated-v1",
+  };
+  const config = loadControlledReplayConfig(env);
+  assert.doesNotThrow(() => assertControlledReplayPermit(config.permit));
+  assert.throws(
+    () => assertControlledReplayPermit(JSON.parse(JSON.stringify(config.permit))),
+    AgentError,
+  );
+  for (const change of [
+    { NODE_ENV: "production" },
+    { EDITAGENT_RUNTIME: "production" },
+    { EDITAGENT_REPLAY_QUALIFICATION: undefined },
+  ])
+    assert.throws(() => loadControlledReplayConfig({ ...env, ...change }), AgentError);
+  assert.throws(() => loadControlledReplayConfig({ ...env, DATABASE_URL: "" }), ConfigurationError);
+});
 
 test("agent-worker configuration fails when DATABASE_URL is missing", () => {
   assert.throws(

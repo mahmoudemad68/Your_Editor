@@ -20,6 +20,7 @@ export async function buildProductImages(root, services, imageTags = {}) {
     api: "apps/api/Dockerfile",
     web: "apps/web/Dockerfile",
     "media-worker": "workers/media-worker/Dockerfile",
+    "agent-worker": "workers/agent-worker/Dockerfile",
     postgres: "infra/postgres/Dockerfile",
     redis: "infra/redis/Dockerfile",
   };

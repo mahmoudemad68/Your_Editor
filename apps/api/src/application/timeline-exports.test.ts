@@ -88,6 +88,7 @@ async function fixture(status: JobStatus = "Completed") {
     exports,
     projects,
     editor,
+    jobs,
     signs: () => signs,
     cancelled: () => cancelled,
     afterSign: (callback: () => Promise<void>) => {
@@ -134,4 +135,52 @@ test("viewers cannot cancel and unrelated render identities are not discoverable
   assert.equal(f.cancelled(), 0);
   await f.exports.cancel(OWNER, PROJECT, id(6));
   assert.equal(f.cancelled(), 1);
+});
+
+test("validation receipts require current membership, matching job, completion and a closed public schema", async () => {
+  const f = await fixture(),
+    read = f.jobs.read.bind(f.jobs);
+  const proof = {
+    schemaVersion: "1.0.0",
+    jobId: id(6),
+    artifactSha256: "a".repeat(64),
+    inputSha256: "b".repeat(64),
+    timelineSha256: "c".repeat(64),
+    renderVersion: "d".repeat(64),
+    durationUs: "2000000",
+    videoFrames: 50,
+    audioPresent: true,
+    videoCodec: "h264",
+    audioCodec: "aac",
+    width: 320,
+    height: 180,
+    frameRate: { numerator: "25", denominator: "1" },
+    validation: "render_worker_ffprobe_v1",
+  };
+  let validation: unknown = proof;
+  f.jobs.read = async (project, job) => {
+    const row = await read(project, job);
+    return row ? { ...row, validation } : null;
+  };
+  assert.deepEqual(await f.exports.validation(VIEWER, PROJECT, id(6)), proof);
+  await assert.rejects(f.exports.validation(STRANGER, PROJECT, id(6)), ProjectNotFoundError);
+  for (const bad of [
+    null,
+    { ...proof, jobId: id(7) },
+    { ...proof, privateStorageKey: "private" },
+  ]) {
+    validation = bad;
+    await assert.rejects(f.exports.validation(OWNER, PROJECT, id(6)), TimelineConflict);
+  }
+  f.jobs.read = async (project, job) => {
+    const row = await read(project, job),
+      loaded = (await f.projects.findById(PROJECT))!;
+    await f.projects.save(
+      loaded.project.revokeMembership(OWNER, VIEWER, instant(4n)),
+      loaded.revision,
+    );
+    return row ? { ...row, validation: proof } : null;
+  };
+  await assert.rejects(f.exports.validation(VIEWER, PROJECT, id(6)), ProjectNotFoundError);
+  assert.equal(f.signs(), 0);
 });

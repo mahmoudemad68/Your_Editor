@@ -187,6 +187,22 @@ jobs:
             --ignore=tests/test_real_model_reuse.py
         run: pnpm test
 
+      - name: Audit bounded agent lifecycle diagnostic
+        id: agent-lifecycle-audit
+        if: ${{ !cancelled() }}
+        run: |
+          if [ -d .local/agent-loop-lifecycle-public ]; then
+            python3 tools/test/audit-artifacts.py .local/agent-loop-lifecycle-public
+          fi
+
+      - name: Upload bounded agent lifecycle diagnostic
+        if: ${{ !cancelled() && steps.agent-lifecycle-audit.outcome == 'success' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: agent-loop-lifecycle-${{ github.sha }}
+          if-no-files-found: ignore
+          path: .local/agent-loop-lifecycle-public/diagnostic.json
+
       - name: Real non-root CPU ASR, S3 readiness and crash recovery
         if: ${{ !cancelled() }}
         run: pnpm asr:container
@@ -203,6 +219,9 @@ jobs:
         run: |
           if [ -d .local/graduation-demo-public ]; then
             python3 tools/test/audit-artifacts.py .local/graduation-demo-public
+          fi
+          if [ -d .local/agent-loop-public ]; then
+            python3 tools/test/audit-artifacts.py .local/agent-loop-public
           fi
 
       - name: Upload allowlisted test summary
@@ -222,6 +241,10 @@ jobs:
             .local/graduation-demo-public/timeline.png
             .local/graduation-demo-public/export.png
             .local/graduation-demo-public/demo-export.mp4
+            .local/agent-loop-public/report.json
+            .local/agent-loop-public/timeline.png
+            .local/agent-loop-public/playback.png
+            .local/agent-loop-public/agent-export.mp4
 
       - name: Upload coverage reports
         if: ${{ !cancelled() }}

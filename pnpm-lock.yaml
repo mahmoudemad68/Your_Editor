@@ -97,6 +97,9 @@ importers:
       '@editagent/job-queue':
         specifier: workspace:*
         version: link:../../packages/job-queue
+      '@editagent/schemas':
+        specifier: workspace:*
+        version: link:../../packages/schemas
       '@editagent/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -409,9 +412,15 @@ importers:
       '@editagent/agent-core':
         specifier: workspace:*
         version: link:../../packages/agent-core
+      '@editagent/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
       '@editagent/job-queue':
         specifier: workspace:*
         version: link:../../packages/job-queue
+      '@editagent/schemas':
+        specifier: workspace:*
+        version: link:../../packages/schemas
       '@editagent/shared':
         specifier: workspace:*
         version: link:../../packages/shared

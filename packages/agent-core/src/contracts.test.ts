@@ -5,10 +5,45 @@ import {
   AgentStepEventV1Schema,
   AgentStepV1Schema,
   AgentExportV1Schema,
+  ModelAuditV1Schema,
 } from "@editagent/schemas";
 import { AgentError, assertRun, checkedUuid, type AgentRunView } from "./contracts.js";
 
 const id = "018fe277-6ec0-7000-8000-218222000000";
+test("failed and unconfirmed model calls retain configured identity without fabricated usage or private provider data", () => {
+  const profile = {
+    provider: "replay",
+    modelId: "qualification-replay",
+    modelVersion: "1.0.0",
+    configurationVersion: "fixture-v1",
+    profileSha256: "a".repeat(64),
+    evidence: "synthetic_replay",
+  };
+  for (const outcome of ["running", "failed", "unconfirmed"]) {
+    const audit = {
+      callId: id,
+      providerProfile: profile,
+      ordinal: 0,
+      requestSha256: "b".repeat(64),
+      contextSha256: "c".repeat(64),
+      promptId: "agent-plan",
+      promptVersion: "1.0.0",
+      templateHash: "d".repeat(64),
+      outcome,
+      reservation: { tokens: 10000, costMicros: 0 },
+      receipt: null,
+      failure: outcome === "running" ? null : "transport_unknown",
+    };
+    assert(ModelAuditV1Schema.safeParse(audit).success);
+    assert(
+      !ModelAuditV1Schema.safeParse({
+        ...audit,
+        providerProfile: { ...profile, endpoint: "private" },
+      }).success,
+    );
+    assert(!ModelAuditV1Schema.safeParse({ ...audit, prompt: "private" }).success);
+  }
+});
 const run: AgentRunView = {
   schemaVersion: "1.0.0",
   id,

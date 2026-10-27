@@ -23,7 +23,7 @@ export function replayAgentCommands(original: unknown, pages: readonly AgentExpo
     const page = pages[index]!;
     if (
       page.run.id !== first.run.id ||
-      page.schemaVersion !== "1.0.0" ||
+      !["1.0.0", "1.1.0"].includes(page.schemaVersion) ||
       page.throughSequence !== first.throughSequence ||
       page.events.length > 100 ||
       page.replay.effects !== "never_reexecute_tools" ||

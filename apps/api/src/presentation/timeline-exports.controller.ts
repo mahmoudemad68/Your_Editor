@@ -1,5 +1,12 @@
 import { Body, Controller, Get, Param, Post, Req } from "@nestjs/common";
-import { ApiBody, ApiProperty, ApiTags } from "@nestjs/swagger";
+import {
+  ApiBody,
+  ApiProperty,
+  ApiTags,
+  ApiResponse,
+  type ApiResponseSchemaHost,
+} from "@nestjs/swagger";
+import { renderValidationOpenApiSchema } from "@editagent/schemas";
 import { projectId, uuidV7 } from "@editagent/domain";
 import { TimelineExports } from "../application/timeline-exports.js";
 import { requireActor } from "./actor.js";
@@ -46,5 +53,17 @@ export class TimelineExportsController {
     @Req() request: object,
   ) {
     return this.exports.download(requireActor(request), projectId(project), uuidV7(id));
+  }
+  @Get("exports/:jobId/validation")
+  @ApiResponse({
+    status: 200,
+    schema: renderValidationOpenApiSchema as ApiResponseSchemaHost["schema"],
+  })
+  validation(
+    @Param("projectId") project: string,
+    @Param("jobId") id: string,
+    @Req() request: object,
+  ) {
+    return this.exports.validation(requireActor(request), projectId(project), uuidV7(id));
   }
 }
