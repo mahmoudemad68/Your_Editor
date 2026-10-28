@@ -34,7 +34,11 @@ never selecting coordinates from the actual video under test. To avoid treating
 achromatic codec brightness changes as missing color, each witness compares both
 R-B and G-B chroma with the midpoint of its independent active/inactive codec
 controls (neutral chroma is clamped at zero). This rejects black, white and lone
-red/green paint; the threshold is not fitted to the actual video. Original raw RGB,
+red/green paint; the threshold is not fitted to the actual video.
+The encoded witness uses separable chroma and the existing visible-signal floor
+(a channel above 32), not the obsolete absolute RGB cutoff. Near-black encoded
+noise is unmeasurable and rejected. This matters for thin Arabic strokes whose
+chroma survives while their encoded luma changes. Original raw RGB,
 codec-mask RGB and calibrated fractions are all reported. A native end-frame codec control must have
 at most 20% target paint; actual active/inactive thresholds remain 70%/20%, with
 more than four measurable pixels and zero measured onset/end frame error. Missing,

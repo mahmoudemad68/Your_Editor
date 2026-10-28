@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 
 const yellow = (rgb, i) => rgb[i * 3] > 180 && rgb[i * 3 + 1] > 180 && rgb[i * 3 + 2] < 100;
 const chroma = (rgb, i, channel) => rgb[i * 3 + channel] - rgb[i * 3 + 2];
+// Same visible-signal floor as the independent glyph/safe-zone frame proof.
+const visible = (rgb, i) => Math.max(rgb[i * 3], rgb[i * 3 + 1], rgb[i * 3 + 2]) > 32;
 function pixels(rgb) {
   assert.ok(rgb instanceof Uint8Array && rgb.length > 0 && rgb.length % 3 === 0);
   return rgb.length / 3;
@@ -28,7 +30,9 @@ export function captionEncodedPaintFraction(rgb, calibration) {
   assert.ok(
     mask.every((i) =>
       [0, 1].every(
-        (channel) => chroma(positive, i, channel) > Math.max(0, chroma(negative, i, channel)),
+        (channel) =>
+          visible(positive, i) &&
+          chroma(positive, i, channel) > Math.max(0, chroma(negative, i, channel)),
       ),
     ),
     "Codec controls do not separate active and inactive paint",
@@ -37,8 +41,9 @@ export function captionEncodedPaintFraction(rgb, calibration) {
     mask.filter((i) =>
       [0, 1].every(
         (channel) =>
+          visible(rgb, i) &&
           chroma(rgb, i, channel) >
-          (chroma(positive, i, channel) + Math.max(0, chroma(negative, i, channel))) / 2,
+            (chroma(positive, i, channel) + Math.max(0, chroma(negative, i, channel))) / 2,
       ),
     ).length / mask.length
   );
@@ -60,7 +65,7 @@ export function calibrateCaptionPaint(nativeRgb, codecRgb, inactiveCodecRgb) {
     if (!yellow(nativeRgb, i)) continue;
     rawMask.push(i);
     if (
-      yellow(codecRgb, i) &&
+      visible(codecRgb, i) &&
       [0, 1].every(
         (channel) =>
           chroma(codecRgb, i, channel) > Math.max(0, chroma(inactiveCodecRgb, i, channel)),

@@ -37,6 +37,12 @@ test("codec paint decisions preserve chroma under luma changes, without acceptin
     calibration = calibrateCaptionPaint(native, positive, negative);
   assert.equal(captionPaintFraction(faded, calibration.mask), 0);
   assert.equal(captionEncodedPaintFraction(faded, calibration), 1);
+  // Low-luma CODEC controls must not retain the obsolete absolute RGB cutoff.
+  const lowLumaControl = calibrateCaptionPaint(native, faded, negative);
+  assert.equal(lowLumaControl.mask.length, 10);
+  assert.equal(captionEncodedPaintFraction(faded, lowLumaControl), 1);
+  assert.throws(() => calibrateCaptionPaint(native, solid([1, 1, 0]), negative));
+  assert.equal(captionEncodedPaintFraction(solid([1, 1, 0]), calibration), 0);
   for (const color of [
     [0, 0, 0],
     [255, 255, 255],

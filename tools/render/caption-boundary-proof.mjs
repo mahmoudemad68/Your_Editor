@@ -153,7 +153,13 @@ export async function captionBoundaryProof(root, directory, privateDir, exported
         });
         controls.push(pixels(decoded));
       }
-      await progress("calibrate-native-codec-mask", { sourcePart: part });
+      await progress("calibrate-native-codec-mask", {
+        sourcePart: part,
+        firstFrame: first,
+        endFrame: end,
+        nativeStartUs: word.startUs,
+        nativeEndUs: word.endUs,
+      });
       const calibration = calibrateCaptionPaint(expected, controls[0], controls[1]);
       const { rawMask, mask, negativeFraction } = calibration;
       await progress("validate-native-reference-mask", {
