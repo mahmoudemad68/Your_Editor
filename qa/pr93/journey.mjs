@@ -17,6 +17,7 @@ const { parseMediaAnalysis } = createRequire(path.join(app, "apps/api/package.js
 const rows = results();
 const chrome = process.env.CHROME_PATH ?? "/usr/local/bin/google-chrome";
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
+let f2Context = null;
 
 function ffmpeg(args) {
   execFileSync("ffmpeg", args, { stdio: "inherit" });
@@ -375,6 +376,7 @@ try {
             "x-request-id": `req_${randomUUID().replace(/-/g, "")}`,
           },
         });
+      f2Context = { postEdit, readEditor, timelineId, projectId };
       const stale = await Promise.all([
         postEdit("trim", {
           stateSha256: "a".repeat(64),
@@ -494,34 +496,6 @@ try {
         freshUndo.ok() &&
         afterFreshUndo.stateSha256 === afterUndo.stateSha256 &&
         JSON.stringify(reloaded) === JSON.stringify(cut);
-      const overlapClip = savedBody.data.timeline.tracks.flatMap((track) => track.clips)[0];
-      const overlapStart = BigInt(overlapClip.timelineStartUs);
-      const overlapEnds = [overlapStart + 1_000_000n, overlapStart + 2_000_000n];
-      const overlapResponses = await Promise.all(
-        overlapEnds.map((endUs) =>
-          postEdit("trim", {
-            stateSha256: savedBody.data.stateSha256,
-            clipId: overlapClip.id,
-            startUs: overlapClip.timelineStartUs,
-            endUs: String(endUs),
-          }),
-        ),
-      );
-      const overlapNext = await readEditor();
-      const overlapClipNext = overlapNext.timeline.tracks
-        .flatMap((track) => track.clips)
-        .find((clip) => clip.id === overlapClip.id);
-      const overlapEnd = overlapClipNext
-        ? BigInt(overlapClipNext.timelineStartUs) +
-          BigInt(overlapClipNext.outPoint) -
-          BigInt(overlapClipNext.inPoint)
-        : -1n;
-      const overlapStatuses = overlapResponses.map((response) => response.status()).sort();
-      const overlapOk =
-        overlapStatuses[0] >= 200 &&
-        overlapStatuses[0] < 300 &&
-        overlapStatuses[1] === 409 &&
-        overlapEnds.some((endUs) => overlapEnd === endUs);
       if (!exportStatus.startsWith("Completed")) {
         const worker = (() => {
           try {
@@ -615,8 +589,6 @@ try {
             failureReason,
             undoOk,
             controlsOk,
-            overlapOk,
-            overlapStatuses,
             raced,
             cut,
           },
@@ -677,7 +649,6 @@ try {
         boundSource === sourceSha &&
         undoOk &&
         controlsOk &&
-        overlapOk &&
         playback.width === 640 &&
         playback.height === 360 &&
         playback.current > 0 &&
@@ -698,8 +669,6 @@ try {
           sourceBound: boundSource === sourceSha,
           undoOk,
           controlsOk,
-          overlapOk,
-          overlapStatuses,
           playback,
           duration,
           frames,
@@ -709,6 +678,185 @@ try {
           frameSha: sha256(readFileSync(frameFile)),
           raced,
           cut,
+        },
+      };
+    },
+  );
+
+  await check(
+    rows,
+    "G3-F2-CONCURRENCY",
+    "Overlapping same-hash trims through the browser commit exactly one requested end and reject the loser with 409",
+    async () => {
+      if (!f2Context) {
+        return {
+          status: "FAIL",
+          expected: "an authenticated editor session",
+          actual: "caption edits were not reached",
+        };
+      }
+      const { postEdit, readEditor, timelineId } = f2Context;
+      if (!/^[0-9a-f-]{36}$/.test(timelineId)) {
+        return { status: "FAIL", expected: "timeline id", actual: "unusable id" };
+      }
+      const sql = (query) =>
+        execFileSync(
+          "docker",
+          [
+            "compose",
+            "exec",
+            "-T",
+            "postgres",
+            "psql",
+            "-U",
+            "editagent",
+            "-d",
+            "editagent",
+            "-Atc",
+            query,
+          ],
+          {
+            cwd: app,
+            encoding: "utf8",
+            env: {
+              ...process.env,
+              COMPOSE_PROJECT_NAME: process.env.COMPOSE_PROJECT_NAME ?? "qa93",
+            },
+          },
+        ).trim();
+      const audits = () => {
+        const text = sql(
+          "SELECT outcome || '|' || coalesce(code,'') || '|' || count(*) FROM tool_executions GROUP BY 1,2 ORDER BY 1,2",
+        );
+        const map = {};
+        for (const line of text.split("\n").filter(Boolean)) {
+          const [outcome, code, count] = line.split("|");
+          map[`${outcome}:${code}`] = Number(count);
+        }
+        return map;
+      };
+      const sum = (audit, prefix) =>
+        Object.entries(audit)
+          .filter(([key]) => key.startsWith(prefix))
+          .reduce((total, [, count]) => total + count, 0);
+      const classify = async (response) => {
+        const text = await response.text();
+        return {
+          status: response.status(),
+          leaked: /caption_projection|min_duration|canonical_timeline|at \//.test(text),
+        };
+      };
+      const persistedEnd = (data, clipId) => {
+        const clip = data.timeline.tracks
+          .flatMap((track) => track.clips)
+          .find((item) => item.id === clipId);
+        if (!clip) return null;
+        return String(BigInt(clip.timelineStartUs) + BigInt(clip.outPoint) - BigInt(clip.inPoint));
+      };
+      const races = [];
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const before = await readEditor();
+        const clip = before.timeline.tracks.flatMap((track) => track.clips)[0];
+        const span = BigInt(clip.outPoint) - BigInt(clip.inPoint);
+        if (span < 1_000_000n) break;
+        const ends = [
+          String(BigInt(clip.timelineStartUs) + span / 3n),
+          String(BigInt(clip.timelineStartUs) + (span * 2n) / 3n),
+        ];
+        const beforeAudit = audits();
+        const beforeHash = sql(
+          `SELECT state_sha256 FROM editing_timelines WHERE id='${timelineId}'`,
+        );
+        const responses = await Promise.all(
+          ends.map((endUs) =>
+            postEdit("trim", {
+              stateSha256: before.stateSha256,
+              clipId: clip.id,
+              startUs: clip.timelineStartUs,
+              endUs,
+            }),
+          ),
+        );
+        const classified = [];
+        for (const response of responses) classified.push(await classify(response));
+        const after = await readEditor();
+        const afterAudit = audits();
+        const dbHash = sql(`SELECT state_sha256 FROM editing_timelines WHERE id='${timelineId}'`);
+        races.push({
+          statuses: classified.map((item) => item.status).sort((a, b) => a - b),
+          leaked: classified.some((item) => item.leaked),
+          persisted: persistedEnd(after, clip.id),
+          requested: ends,
+          hashMoved: dbHash === after.stateSha256 && dbHash !== beforeHash,
+          succeededDelta: sum(afterAudit, "succeeded:") - sum(beforeAudit, "succeeded:"),
+          failedDelta: sum(afterAudit, "failed:") - sum(beforeAudit, "failed:"),
+          rows: Number(sql(`SELECT count(*) FROM editing_timelines WHERE id='${timelineId}'`)),
+        });
+      }
+      const beforeReplay = await readEditor();
+      const replayAudit = JSON.stringify(audits());
+      const replayClip = beforeReplay.timeline.tracks.flatMap((track) => track.clips)[0];
+      const replay = await classify(
+        await postEdit("trim", {
+          stateSha256: "ab".repeat(32),
+          clipId: replayClip.id,
+          startUs: replayClip.timelineStartUs,
+          endUs: String(BigInt(replayClip.timelineStartUs) + 1000n),
+        }),
+      );
+      const afterReplay = await readEditor();
+      const currentClip = afterReplay.timeline.tracks.flatMap((track) => track.clips)[0];
+      const freshEnd = String(
+        BigInt(currentClip.timelineStartUs) +
+          (BigInt(currentClip.outPoint) - BigInt(currentClip.inPoint)) / 2n,
+      );
+      const pair = await Promise.all([
+        postEdit("trim", {
+          stateSha256: afterReplay.stateSha256,
+          clipId: currentClip.id,
+          startUs: currentClip.timelineStartUs,
+          endUs: freshEnd,
+        }),
+        postEdit("trim", {
+          stateSha256: "cd".repeat(32),
+          clipId: currentClip.id,
+          startUs: currentClip.timelineStartUs,
+          endUs: freshEnd,
+        }),
+      ]);
+      const pairClass = [];
+      for (const response of pair) pairClass.push(await classify(response));
+      const afterPair = await readEditor();
+      const raceOk = races.every(
+        (race) =>
+          race.statuses[0] === 200 &&
+          race.statuses[1] === 409 &&
+          !race.leaked &&
+          race.requested.includes(race.persisted) &&
+          race.hashMoved &&
+          race.succeededDelta === 1 &&
+          race.failedDelta <= 1 &&
+          race.rows === 1,
+      );
+      const ok =
+        races.length >= 1 &&
+        raceOk &&
+        replay.status === 409 &&
+        !replay.leaked &&
+        afterReplay.stateSha256 === beforeReplay.stateSha256 &&
+        JSON.stringify(audits()) === replayAudit &&
+        pairClass[0].status === 200 &&
+        pairClass[1].status === 409 &&
+        !pairClass.some((item) => item.leaked) &&
+        persistedEnd(afterPair, currentClip.id) === freshEnd;
+      return {
+        status: ok ? "PASS" : "FAIL",
+        expected: "200 and 409, one committed end, stale and foreign hashes rejected",
+        actual: {
+          races,
+          replay: replay.status,
+          pair: pairClass.map((item) => item.status),
+          pairEnd: persistedEnd(afterPair, currentClip.id),
         },
       };
     },

@@ -19,9 +19,9 @@ COMMITS = int(os.environ["QA_COMMIT_COUNT"])
 PRIOR = os.environ["QA_PRIOR_SHA"]
 REPAIR = os.environ["QA_REPAIR_PATCH_SHA"]
 CI = {
-    "CI": "40699027204",
-    "Walking skeleton E2E": "40699027146",
-    "Supply chain": "40699027203",
+    "CI": "40731938064",
+    "Walking skeleton E2E": "40731938198",
+    "Supply chain": "40731937900",
 }
 HELD = (
     ["docs/evaluation/METRICS.md"]

@@ -834,6 +834,189 @@ try {
       }
     },
   );
+
+  await check(
+    rows,
+    "G2-F2-CAS",
+    "Same-hash trims commit once and conflict; a stale replay stays 409; an unexpected database fault stays 500; a cancelled write does not stick",
+    async () => {
+      const read = async () => {
+        const response = await fetch(base + `/${project}/timelines/${timeline}`, {
+          headers: await headers(),
+        });
+        return { status: response.status, body: await response.json() };
+      };
+      const counts = async () => {
+        const result = await pool.query(
+          "SELECT outcome, coalesce(code,'') AS code, count(*)::int AS n FROM tool_executions GROUP BY 1,2",
+        );
+        return Object.fromEntries(result.rows.map((row) => [`${row.outcome}:${row.code}`, row.n]));
+      };
+      const auth = await headers();
+      const view = await read();
+      const clip = view.body.timeline.tracks[0].clips[0];
+      const ends = ["700000", "1400000"];
+      const beforeAudit = await counts();
+      const raced = await Promise.all(
+        ends.map((endUs) =>
+          post(
+            `/${project}/timelines/${timeline}/trim`,
+            {
+              stateSha256: view.body.stateSha256,
+              clipId: clip.id,
+              startUs: "0",
+              endUs,
+            },
+            { headers: auth },
+          ),
+        ),
+      );
+      const after = await read();
+      const persistedEnd = String(
+        BigInt(after.body.timeline.tracks[0].clips[0].timelineStartUs) +
+          BigInt(after.body.timeline.tracks[0].clips[0].outPoint) -
+          BigInt(after.body.timeline.tracks[0].clips[0].inPoint),
+      );
+      const afterAudit = await counts();
+      const sum = (audit, prefix) =>
+        Object.entries(audit)
+          .filter(([key]) => key.startsWith(prefix))
+          .reduce((total, [, count]) => total + count, 0);
+      const replayAudit = await counts();
+      const replay = await post(
+        `/${project}/timelines/${timeline}/trim`,
+        {
+          stateSha256: view.body.stateSha256,
+          clipId: clip.id,
+          startUs: "0",
+          endUs: ends[0],
+        },
+        { headers: await headers() },
+      );
+      const replayed = await read();
+      const replayAuditAfter = await counts();
+      const freshEnd = "500000";
+      const mixed = await Promise.all([
+        post(
+          `/${project}/timelines/${timeline}/trim`,
+          {
+            stateSha256: after.body.stateSha256,
+            clipId: clip.id,
+            startUs: "0",
+            endUs: freshEnd,
+          },
+          { headers: await headers() },
+        ),
+        post(
+          `/${project}/timelines/${timeline}/trim`,
+          {
+            stateSha256: view.body.stateSha256,
+            clipId: clip.id,
+            startUs: "0",
+            endUs: freshEnd,
+          },
+          { headers: await headers() },
+        ),
+      ]);
+      const mixedView = await read();
+      const mixedEnd = String(
+        BigInt(mixedView.body.timeline.tracks[0].clips[0].outPoint) -
+          BigInt(mixedView.body.timeline.tracks[0].clips[0].inPoint),
+      );
+      const fault = { status: 0, leak: true };
+      const hashBeforeFault = mixedView.body.stateSha256;
+      await pool.query("ALTER TABLE editing_timelines RENAME COLUMN snapshot TO snapshot_qa93");
+      try {
+        const broken = await post(
+          `/${project}/timelines/${timeline}/trim`,
+          {
+            stateSha256: hashBeforeFault,
+            clipId: clip.id,
+            startUs: "0",
+            endUs: "400000",
+          },
+          { headers: await headers() },
+        );
+        fault.status = broken.status;
+        const encoded = JSON.stringify(broken.body ?? {});
+        fault.leak = /snapshot|column|qa93/.test(encoded);
+      } finally {
+        await pool.query("ALTER TABLE editing_timelines RENAME COLUMN snapshot_qa93 TO snapshot");
+      }
+      const afterFault = await read();
+      const holder = await pool.connect();
+      const cancellation = { status: 0 };
+      try {
+        await holder.query("BEGIN");
+        await holder.query("SELECT id FROM editing_timelines WHERE id=$1 FOR UPDATE", [timeline]);
+        const pending = post(
+          `/${project}/timelines/${timeline}/trim`,
+          {
+            stateSha256: afterFault.body.stateSha256,
+            clipId: clip.id,
+            startUs: "0",
+            endUs: "300000",
+          },
+          { headers: await headers() },
+        );
+        const deadline = Date.now() + 4000;
+        let pid = null;
+        while (Date.now() < deadline && pid === null) {
+          const waiting = await pool.query(
+            "SELECT pid FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND datname = current_database()",
+          );
+          pid = waiting.rows[0]?.pid ?? null;
+          if (pid === null) await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        if (pid !== null) await pool.query("SELECT pg_cancel_backend($1)", [pid]);
+        cancellation.status = await Promise.race([
+          pending.then((result) => result.status),
+          new Promise((resolve) => setTimeout(() => resolve(0), 8000)),
+        ]);
+        await holder.query("ROLLBACK");
+      } finally {
+        await holder.query("ROLLBACK").catch(() => undefined);
+        holder.release();
+      }
+      const afterCancel = await read();
+      const statuses = raced.map((item) => item.status).sort((a, b) => a - b);
+      const raceOk =
+        statuses[0] === 201 &&
+        statuses[1] === 409 &&
+        ends.includes(persistedEnd) &&
+        after.body.stateSha256 !== view.body.stateSha256 &&
+        sum(afterAudit, "succeeded:") - sum(beforeAudit, "succeeded:") === 1 &&
+        sum(afterAudit, "failed:") - sum(beforeAudit, "failed:") <= 1;
+      const replayOk =
+        replay.status === 409 &&
+        replayed.body.stateSha256 === after.body.stateSha256 &&
+        JSON.stringify(replayAudit) === JSON.stringify(replayAuditAfter);
+      const mixedOk =
+        mixed.map((item) => item.status)[0] === 201 &&
+        mixed.map((item) => item.status)[1] === 409 &&
+        mixedEnd === freshEnd;
+      const faultOk =
+        fault.status === 500 && !fault.leak && afterFault.body.stateSha256 === hashBeforeFault;
+      const cancelOk =
+        afterCancel.body.stateSha256 === afterFault.body.stateSha256 && cancellation.status >= 400;
+      const ok = raceOk && replayOk && mixedOk && faultOk && cancelOk;
+      return {
+        status: ok ? "PASS" : "FAIL",
+        expected: "201+409 once, stale 409, unexpected fault 500, cancelled write absent",
+        actual: {
+          statuses,
+          persistedEnd,
+          replay: replay.status,
+          mixed: mixed.map((item) => item.status),
+          mixedEnd,
+          internalStatus: fault.status,
+          internalLeak: fault.leak,
+          cancelStatus: cancellation.status,
+          hashStableAfterCancel: afterCancel.body.stateSha256 === afterFault.body.stateSha256,
+        },
+      };
+    },
+  );
 } catch (error) {
   rows.push({
     id: "G2-SETUP",

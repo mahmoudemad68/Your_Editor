@@ -16,13 +16,13 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  QA_APP_SHA: d7e23c4cfa6b9d6339a77b40407ffd75699caa62
-  QA_APP_TREE: 2572f477d1d01c3b50374c42c58e563602e125b6
+  QA_APP_SHA: 1b7ffa6f947a490ab958f077a8af6facdc5b67b8
+  QA_APP_TREE: 86e94e6a4b2d5eb705a9d5c9804c3196c69310f4
   QA_BASE_SHA: 8ccaac7ab4f86b0382ee53f729bc70c90afeb704
-  QA_CHANGED_FILES: "61"
-  QA_COMMIT_COUNT: "12"
-  QA_PRIOR_SHA: 09745c0b456aa17195ac815c13d1ad18f0921db4
-  QA_REPAIR_PATCH_SHA: 6fbf2ef9d56fbec9ddf38a292e27a6341e6788baee5d3e712d2cd877ecb76aa9
+  QA_CHANGED_FILES: "64"
+  QA_COMMIT_COUNT: "13"
+  QA_PRIOR_SHA: d7e23c4cfa6b9d6339a77b40407ffd75699caa62
+  QA_REPAIR_PATCH_SHA: 3742143fd31fd6d0afcc961099b5c32751dfb10bd019be73f61cd027bd60adea
   GH_TOKEN: ${{ github.token }}
 
 jobs:
@@ -32,10 +32,10 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Freeze check
-        run: gh api repos/${{ github.repository }}/pulls/93 --jq '[.state,.draft,.head.sha,.base.sha,.changed_files] | @tsv' | grep -qx $'open\ttrue\td7e23c4cfa6b9d6339a77b40407ffd75699caa62\t8ccaac7ab4f86b0382ee53f729bc70c90afeb704\t61'
+        run: gh api repos/${{ github.repository }}/pulls/93 --jq '[.state,.draft,.head.sha,.base.sha,.changed_files] | @tsv' | grep -qx $'open\ttrue\t1b7ffa6f947a490ab958f077a8af6facdc5b67b8\t8ccaac7ab4f86b0382ee53f729bc70c90afeb704\t64'
       - uses: actions/checkout@v7
         with:
-          ref: d7e23c4cfa6b9d6339a77b40407ffd75699caa62
+          ref: 1b7ffa6f947a490ab958f077a8af6facdc5b67b8
           path: app
           fetch-depth: 0
           persist-credentials: false
@@ -52,6 +52,12 @@ jobs:
           test -z "$(git -C app status --porcelain)"
       - name: Gate 0
         run: python3 qa-src/qa/pr93/gate0.py app qa-out/provenance.json
+      - name: Prove the product checkout did not drift
+        if: always()
+        run: |
+          test "$(git -C app rev-parse HEAD)" = "$QA_APP_SHA"
+          test "$(git -C app rev-parse HEAD^{tree})" = "$QA_APP_TREE"
+          test -z "$(git -C app status --porcelain)"
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -68,7 +74,7 @@ jobs:
         run: gh api repos/${{ github.repository }}/pulls/93 --jq .head.sha | grep -qx "$QA_APP_SHA"
       - uses: actions/checkout@v7
         with:
-          ref: d7e23c4cfa6b9d6339a77b40407ffd75699caa62
+          ref: 1b7ffa6f947a490ab958f077a8af6facdc5b67b8
           path: app
           fetch-depth: 0
           persist-credentials: false
@@ -116,7 +122,7 @@ jobs:
         run: gh api repos/${{ github.repository }}/pulls/93 --jq .head.sha | grep -qx "$QA_APP_SHA"
       - uses: actions/checkout@v7
         with:
-          ref: d7e23c4cfa6b9d6339a77b40407ffd75699caa62
+          ref: 1b7ffa6f947a490ab958f077a8af6facdc5b67b8
           path: app
           persist-credentials: false
       - uses: actions/checkout@v7
@@ -194,7 +200,7 @@ jobs:
         run: gh api repos/${{ github.repository }}/pulls/93 --jq .head.sha | grep -qx "$QA_APP_SHA"
       - uses: actions/checkout@v7
         with:
-          ref: d7e23c4cfa6b9d6339a77b40407ffd75699caa62
+          ref: 1b7ffa6f947a490ab958f077a8af6facdc5b67b8
           path: app
           persist-credentials: false
       - uses: actions/checkout@v7
@@ -237,7 +243,7 @@ jobs:
         run: gh api repos/${{ github.repository }}/pulls/93 --jq .head.sha | grep -qx "$QA_APP_SHA"
       - uses: actions/checkout@v7
         with:
-          ref: d7e23c4cfa6b9d6339a77b40407ffd75699caa62
+          ref: 1b7ffa6f947a490ab958f077a8af6facdc5b67b8
           path: app
           lfs: true
           persist-credentials: false
@@ -337,4 +343,4 @@ jobs:
           test "$PERSIST" = success
           test "$JOURNEY" = success
           test "$GATE" = success
-          gh api repos/${{ github.repository }}/pulls/93 --jq '[.state,.draft,.head.sha,.base.sha] | @tsv' | grep -qx $'open\ttrue\td7e23c4cfa6b9d6339a77b40407ffd75699caa62\t8ccaac7ab4f86b0382ee53f729bc70c90afeb704'
+          gh api repos/${{ github.repository }}/pulls/93 --jq '[.state,.draft,.head.sha,.base.sha] | @tsv' | grep -qx $'open\ttrue\t1b7ffa6f947a490ab958f077a8af6facdc5b67b8\t8ccaac7ab4f86b0382ee53f729bc70c90afeb704'
