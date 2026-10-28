@@ -229,6 +229,70 @@ test("trim submits the saved basis and canonical times; a stale response cannot 
   );
   cleanup();
 });
+test("a metadata-only reload must not overwrite draft trim and split coordinates", async () => {
+  cleanup();
+  render(<ManualEditor projectId={PROJECT} initialTimelineId={ID} api={api()} stream={stream} />);
+  await screen.findByRole("region", { name: "Timeline" });
+  fireEvent.change(screen.getByLabelText("Trim end (timeline seconds)"), {
+    target: { value: "1.6" },
+  });
+  fireEvent.change(screen.getByLabelText("Split at (timeline seconds)"), {
+    target: { value: "0.7" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Reload saved timeline" }));
+  await waitFor(() =>
+    assert.equal(
+      (screen.getByRole("button", { name: "Reload saved timeline" }) as HTMLButtonElement).disabled,
+      false,
+    ),
+  );
+  assert.equal(
+    (screen.getByLabelText("Trim end (timeline seconds)") as HTMLInputElement).value,
+    "1.6",
+  );
+  assert.equal(
+    (screen.getByLabelText("Split at (timeline seconds)") as HTMLInputElement).value,
+    "0.7",
+  );
+  cleanup();
+});
+test("time entry is disabled during a pending response and draft coordinates survive an unchanged clip", async () => {
+  cleanup();
+  const client = api();
+  let reads = 0,
+    resume: ((value: Awaited<ReturnType<EditorApi["read"]>>) => void) | undefined;
+  client.read = async () =>
+    ++reads === 1
+      ? { ok: true, data: fixture() }
+      : new Promise((resolve) => {
+          resume = resolve;
+        });
+  render(<ManualEditor projectId={PROJECT} initialTimelineId={ID} api={client} stream={stream} />);
+  await screen.findByRole("region", { name: "Timeline" });
+  fireEvent.change(screen.getByLabelText("Trim end (timeline seconds)"), {
+    target: { value: "1.6" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Reload saved timeline" }));
+  for (const name of [
+    "Trim start (timeline seconds)",
+    "Trim end (timeline seconds)",
+    "Split at (timeline seconds)",
+  ])
+    assert.equal((screen.getByLabelText(name) as HTMLInputElement).disabled, true);
+  assert.ok(resume);
+  resume({ ok: true, data: fixture() });
+  await waitFor(() =>
+    assert.equal(
+      (screen.getByLabelText("Trim end (timeline seconds)") as HTMLInputElement).disabled,
+      false,
+    ),
+  );
+  assert.equal(
+    (screen.getByLabelText("Trim end (timeline seconds)") as HTMLInputElement).value,
+    "1.6",
+  );
+  cleanup();
+});
 
 test("a completed export is fetched explicitly and cleared by a subsequent edit", async () => {
   cleanup();

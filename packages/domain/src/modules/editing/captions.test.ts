@@ -23,6 +23,8 @@ import {
   restoreCaptionTrack,
   safeCaptionZone,
   projectTimedCaptions,
+  validateCaptionReadability,
+  CaptionReadabilityError,
   type CaptionTrackV1,
 } from "./captions.js";
 const id = (n: number) => `018fe277-6ec0-7000-8000-${String(n).padStart(12, "0")}`;
@@ -242,4 +244,200 @@ test("bounded segmentation regroups an unreadable short tail without changing wo
     segmentCaptionWords(input, "1200000", { ...rules, maxCharacters: 8, maxLines: 1 }),
     output,
   );
+});
+
+function editedCaptionFixture() {
+  const native = captionWords(
+    [
+      { text: "عربي", startUs: "5800000", endUs: "6200000", confidence: 0.8 },
+      { text: "English", startUs: "11800000", endUs: "11950000", confidence: 0.3 },
+      { text: "removed", startUs: "13000000", endUs: "13500000", confidence: null },
+    ],
+    "16000000",
+  );
+  const t = new Timeline(id(1), id(2), "0", {
+    composition: { width: 640, height: 360, frameRate: frameRate(25n, 1n), durationUs: 16000000n },
+    sources: [{ id: id(3), kind: "video", durationUs: "16000000" }],
+    tracks: [
+      new Track(id(4), id(1), "video", [
+        new Clip(id(5), id(4), "0", "16000000", { sourceId: id(3) }),
+      ]),
+    ],
+  });
+  const source = restoreCaptionTrack({
+    ...caption(),
+    sourceDurationUs: "16000000",
+    style: { ...DEFAULT_CAPTION_STYLE, fontSize: 14 },
+    blocks: segmentCaptionWords(native, "16000000", rules),
+  });
+  const bus = new CommandBus(t);
+  bus.apply(AddTimedCaption(id(8), t.id, { caption: source }));
+  bus.apply(TrimClip(id(9), t.id, { clipId: id(5), startUs: "0", endUs: "12000000" }));
+  bus.apply(
+    SplitClip(id(10), t.id, {
+      clipId: id(5),
+      atUs: "6000000",
+      rightClipId: id(11),
+      rightEffectIds: [],
+    }),
+  );
+  return { bus, native, source };
+}
+test("QA93-F1 persisted trim/split/restart projection preserves crossing words and unchanged source evidence", () => {
+  const { bus, native, source } = editedCaptionFixture(),
+    before = bus.timeline.toSnapshot(),
+    bytes = JSON.stringify(before),
+    restored = Timeline.restore(JSON.parse(bytes)),
+    plan = projectTimedCaptions(restored.toSnapshot());
+  assert.deepEqual(
+    plan.flatMap((block) => block.lines.flat()),
+    native.slice(0, 2),
+  );
+  assert.deepEqual(restored.captionsV1[0], source);
+  assert.deepEqual(CommandBus.restoreHistory(bus.serializeHistory()).timeline.toSnapshot(), before);
+  assert.deepEqual(projectTimedCaptions(bus.timeline.toSnapshot()), plan);
+  assert.equal(JSON.stringify(before), bytes);
+  assert.deepEqual(plan[0]!.sourceClipIds, [id(5), id(11)]);
+  assert.equal(plan[1]!.startUs, "11500000");
+  assert.equal(plan[1]!.endUs, "12000000");
+  assert.equal(plan[1]!.lines[0]![0]!.startUs, "11800000");
+  assert.equal(plan[1]!.lines[0]![0]!.endUs, "11950000");
+  validateCaptionReadability({ ...source, blocks: plan }, 640, 360);
+});
+test("non-destructive split is invisible to native caption words and activation frames", () => {
+  const { bus } = editedCaptionFixture(),
+    split = projectTimedCaptions(bus.timeline.toSnapshot());
+  bus.undo();
+  const uncut = projectTimedCaptions(bus.timeline.toSnapshot());
+  assert.deepEqual(
+    split.flatMap((b) => b.lines.flat()),
+    uncut.flatMap((b) => b.lines.flat()),
+  );
+  for (let frame = 140n; frame < 160n; frame++)
+    assert.equal(
+      captionWordAtFrame(split[0]!.lines.flat(), frame, frameRate(25n, 1n)),
+      captionWordAtFrame(uncut[0]!.lines.flat(), frame, frameRate(25n, 1n)),
+    );
+});
+test("source gaps, composition gaps, reverse order and different tracks never bridge native words", () => {
+  const { bus } = editedCaptionFixture(),
+    snapshot = bus.timeline.toSnapshot();
+  for (const mutation of ["source_gap", "timeline_gap", "reverse", "other_track"] as const) {
+    const copy = structuredClone(snapshot),
+      track = copy.tracks[0]!;
+    if (mutation === "source_gap") track.clips[1]!.inPoint = "6240000";
+    if (mutation === "timeline_gap") track.clips[1]!.timelineStartUs = "6240000";
+    if (mutation === "reverse") {
+      track.clips[0]!.timelineStartUs = "6000000";
+      track.clips[1]!.timelineStartUs = "0";
+    }
+    if (mutation === "other_track") {
+      const clip = track.clips.pop()!;
+      clip.trackId = id(30);
+      copy.tracks.push({ ...track, id: id(30), clips: [clip], transitions: [] });
+    }
+    track.transitions = [];
+    const plan = projectTimedCaptions(Timeline.restore(copy).toSnapshot());
+    assert.equal(
+      plan.flatMap((b) => b.lines.flat()).some((w) => w.text === "عربي"),
+      false,
+    );
+    assert.ok(plan.every((b) => b.sourceClipIds!.length === 1));
+  }
+});
+test("left container padding stays within the retained window and never alters lexical intervals", () => {
+  const native = [{ text: "tail", startUs: "11800000", endUs: "11950000", confidence: 0.9 }];
+  const blocks = segmentCaptionWords(native, "12000000", rules, "11000000");
+  assert.equal(blocks[0]!.startUs, "11500000");
+  assert.deepEqual(
+    blocks.flatMap((b) => b.lines.flat()),
+    native,
+  );
+  assert.throws(() => segmentCaptionWords(native, "12000000", rules, "11800000"));
+  assert.throws(() => segmentCaptionWords(native, "12000000", rules, "11900000"));
+  // Ordinary source segmentation stays byte-for-byte stable: left padding is
+  // explicitly render-only, never a rewrite of stored analysis/caption evidence.
+  assert.throws(() => segmentCaptionWords(native, "12000000", rules));
+});
+test("repeated source clips keep intentional repetitions while competing tracks still fail closed", () => {
+  const { bus } = editedCaptionFixture(),
+    repeated = bus.timeline.toSnapshot(),
+    track = repeated.tracks[0]!;
+  track.transitions = [];
+  track.clips[0]!.outPoint = "8000000";
+  track.clips[1]!.inPoint = "0";
+  track.clips[1]!.outPoint = "8000000";
+  track.clips[1]!.timelineStartUs = "8000000";
+  const projected = projectTimedCaptions(Timeline.restore(repeated).toSnapshot());
+  assert.equal(projected.length, 2);
+  assert.equal(projected[0]!.lines[0]![0]!.startUs, "5800000");
+  assert.equal(projected[1]!.lines[0]![0]!.startUs, "13800000");
+  assert.equal(projected[1]!.lines[0]![0]!.confidence, 0.8);
+  const competing = structuredClone(repeated),
+    duplicate = structuredClone(competing.tracks[0]!);
+  duplicate.id = id(40);
+  duplicate.clips = [{ ...duplicate.clips[0]!, id: id(41), trackId: id(40) }];
+  competing.tracks.push(duplicate);
+  assert.throws(() => projectTimedCaptions(Timeline.restore(competing).toSnapshot()));
+});
+test("all bounded readability failure reasons remain typed with sanitized messages", () => {
+  const base = caption();
+  const cases: [CaptionReadabilityError["reason"], (c: CaptionTrackV1) => void][] = [
+    [
+      "orientation",
+      (c) => {
+        c.style = { ...c.style, preset: "vertical" };
+      },
+    ],
+    [
+      "line_limit",
+      (c) => {
+        c.rules = { ...c.rules, maxLines: 0 };
+      },
+    ],
+    [
+      "character_limit",
+      (c) => {
+        c.rules = { ...c.rules, maxCharacters: 1 };
+      },
+    ],
+    [
+      "width",
+      (c) => {
+        c.style = { ...c.style, fontSize: 1000 };
+      },
+    ],
+    [
+      "height",
+      (c) => {
+        c.style = { ...c.style, fontSize: 96 };
+        c.blocks = [{ ...c.blocks[0]!, lines: [[{ ...words[0]!, text: "a" }]] }];
+      },
+    ],
+    [
+      "min_duration",
+      (c) => {
+        c.blocks[0]!.endUs = String(BigInt(c.blocks[0]!.startUs) + 1n);
+      },
+    ],
+    [
+      "reading_speed",
+      (c) => {
+        c.rules = { ...c.rules, maxCharactersPerSecond: 1 };
+      },
+    ],
+  ];
+  for (const [reason, mutate] of cases) {
+    const c = structuredClone(base);
+    mutate(c);
+    assert.throws(
+      () => validateCaptionReadability(c, 1920, reason === "height" ? 100 : 1080),
+      (error: unknown) => {
+        assert.ok(error instanceof CaptionReadabilityError);
+        assert.equal(error.reason, reason);
+        assert.equal(error.message, "Invalid or unreadable timed captions.");
+        return true;
+      },
+    );
+  }
 });

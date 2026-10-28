@@ -443,6 +443,7 @@ export async function runGraduationDemo({
     console.info(
       "WORD_CAPTIONS PASS: real bilingual analysis/tools/Timeline/render/browser; source-bound words and actual frame matrix.",
     );
+    phase = "caption-edit-restart-repair";
     await runCaptionRepairProof({
       root,
       hostEnv,

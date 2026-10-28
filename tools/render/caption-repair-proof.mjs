@@ -150,7 +150,9 @@ export async function runCaptionRepairProof({
     const { parseRenderInput, TimelineRenderContractError } = renderRequire(
         "./dist/infrastructure/contract.js",
       ),
-      { TimelineMappingError } = renderRequire("./dist/application/timeline-mapping.js"),
+      { TimelineMappingError, mapTimeline } = renderRequire(
+        "./dist/application/timeline-mapping.js",
+      ),
       { CaptionReadabilityError } = renderRequire("@editagent/domain"),
       catalog = JSON.parse(
         await readFile(path.join(root, "workers/render-worker/dist/bundle/catalog.json"), "utf8"),
@@ -169,6 +171,26 @@ export async function runCaptionRepairProof({
     };
     try {
       parseRenderInput(input);
+      const plan = mapTimeline(input),
+        caption = before.snapshot.captionsV1[0],
+        retained = caption.blocks
+          .flatMap((block) => block.lines.flat())
+          .filter((word) => BigInt(word.startUs) >= 0n && BigInt(word.endUs) <= 12000000n),
+        projected = plan.captionsV1.flatMap((block) => block.lines.flat());
+      // Full tuples, not counts. These requested edits retain source [0,12s).
+      assert.deepEqual(projected, retained);
+      assert.ok(
+        plan.captionsV1.every(
+          (block) => BigInt(block.startUs) >= 0n && BigInt(block.endUs) <= 12000000n,
+        ),
+      );
+      evidence = {
+        ...evidence,
+        retainedWordCount: retained.length,
+        projectedWordTupleSha256: sha(JSON.stringify(projected)),
+        retainedWordTupleSha256: sha(JSON.stringify(retained)),
+        completeRetainedNativeWords: true,
+      };
       mapping = { status: "PASS" };
     } catch (error) {
       await writeFile(
@@ -248,6 +270,74 @@ export async function runCaptionRepairProof({
     assert.equal(audio.channels, 2);
     assert.deepEqual(await readState(), before);
     await copyFile(exported, path.join(publicDir, "repair-export.mp4"));
+    phase = "explicit-source-boundary-render-regression";
+    const boundary = result.boundaryRegression;
+    assert.equal(boundary.actualTool, true);
+    assert.equal(boundary.actualRender, true);
+    assert.equal(boundary.actualPlayback, true);
+    assert.equal(boundary.actualDownload, true);
+    const boundaryDb = (
+      await pool.query(
+        "SELECT snapshot,state_sha256 FROM editing_timelines WHERE id=$1 AND project_id=$2",
+        [boundary.timelineId, checkpoint.projectId],
+      )
+    ).rows[0];
+    assert.equal(boundaryDb.state_sha256, boundary.stateSha256);
+    assert.deepEqual(boundaryDb.snapshot, boundary.timeline);
+    const boundaryInput = { ...input, props: { ...input.props, timeline: boundaryDb.snapshot } };
+    parseRenderInput(boundaryInput);
+    const boundaryPlan = mapTimeline(boundaryInput),
+      native = before.snapshot.captionsV1[0].blocks.flatMap((block) => block.lines.flat()),
+      actual = boundaryPlan.captionsV1.flatMap((block) => block.lines.flat());
+    assert.deepEqual(actual, native);
+    const boundaryExport = path.join(privateDir, "repair-boundary-export.mp4"),
+      boundaryMedia = probe(boundaryExport),
+      boundaryVideo = boundaryMedia.streams.find((s) => s.codec_type === "video"),
+      boundaryAudio = boundaryMedia.streams.find((s) => s.codec_type === "audio");
+    assert.equal(boundaryVideo.codec_name, "h264");
+    assert.equal(boundaryAudio.codec_name, "aac");
+    assert.equal(boundaryVideo.width, 640);
+    assert.equal(boundaryVideo.height, 360);
+    assert.equal(boundaryVideo.avg_frame_rate, "25/1");
+    assert.equal(Number(boundaryVideo.nb_read_frames), 400);
+    assert.ok(Math.abs(Number(boundaryMedia.format.duration) - 16) < 0.02);
+    assert.equal(boundaryAudio.sample_rate, "48000");
+    assert.equal(boundaryAudio.channels, 2);
+    assert.equal(boundaryMedia.videoFrameTimes.length, 400);
+    for (let i = 0; i < 400; i++)
+      assert.ok(Math.abs(boundaryMedia.videoFrameTimes[i] - i / 25) < 0.00001);
+    await copyFile(boundaryExport, path.join(publicDir, "repair-boundary-export.mp4"));
+    const boundaryEvidence = {
+      status: "PASS",
+      sourceSha256: checkpoint.sourceSha256,
+      stateSha256: boundary.stateSha256,
+      sourceWordCount: native.length,
+      projectedWordCount: actual.length,
+      originalNativeTupleSha256: sha(JSON.stringify(native)),
+      projectedNativeTupleSha256: sha(JSON.stringify(actual)),
+      clipRanges: [
+        { inPoint: "0", outPoint: "8000000", timelineStartUs: "0" },
+        { inPoint: "8000000", outPoint: "16000000", timelineStartUs: "8000000" },
+      ],
+      actualRender: true,
+      actualPlayback: true,
+      actualDownload: true,
+      exportSha256: sha(await readFile(boundaryExport)),
+      measuredMedia: {
+        videoCodec: boundaryVideo.codec_name,
+        audioCodec: boundaryAudio.codec_name,
+        width: boundaryVideo.width,
+        height: boundaryVideo.height,
+        frameRate: boundaryVideo.avg_frame_rate,
+        frameCount: 400,
+        durationSeconds: Number(boundaryMedia.format.duration),
+        audioSampleRate: Number(boundaryAudio.sample_rate),
+        audioChannels: boundaryAudio.channels,
+        maxFrameClockErrorSeconds: Math.max(
+          ...boundaryMedia.videoFrameTimes.map((t, i) => Math.abs(t - i / 25)),
+        ),
+      },
+    };
     evidence = {
       ...evidence,
       staleUndoFenced: result.staleUndoFenced,
@@ -258,6 +348,7 @@ export async function runCaptionRepairProof({
       actualPlayback: true,
       actualDownload: true,
       exportSha256: sha(await readFile(exported)),
+      boundaryRegression: boundaryEvidence,
       measuredMedia: {
         videoCodec: video.codec_name,
         audioCodec: audio.codec_name,

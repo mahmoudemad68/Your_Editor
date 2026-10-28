@@ -257,6 +257,7 @@ jobs:
             .local/caption-public/repair-saved.png
             .local/caption-public/repair-playback.png
             .local/caption-public/repair-export.mp4
+            .local/caption-public/repair-boundary-export.mp4
             .local/caption-public/boundary-*.png
             .local/caption-public/visual/visual-report.json
             .local/caption-public/visual/*.png

@@ -63,6 +63,7 @@ const fail = (): never => {
 };
 /** Bounded internal cause; never carries caption text, identities or source keys. */
 export class CaptionReadabilityError extends DomainError {
+  declare readonly cause?: unknown;
   constructor(
     readonly reason:
       | "orientation"
@@ -72,9 +73,12 @@ export class CaptionReadabilityError extends DomainError {
       | "height"
       | "min_duration"
       | "reading_speed",
+    cause?: unknown,
   ) {
     super("Invalid or unreadable timed captions.");
     this.name = "CaptionReadabilityError";
+    if (cause !== undefined)
+      Object.defineProperty(this, "cause", { value: cause, enumerable: false });
   }
 }
 const graphemes = new Intl.Segmenter("und", { granularity: "grapheme" });
@@ -208,6 +212,9 @@ export function segmentCaptionWords(
   words: CaptionWordV1[],
   duration: string,
   rules: CaptionTrackV1["rules"],
+  /** Render-only retained source window. Container padding may extend left into
+   * retained silence; native word intervals and persisted blocks never move. */
+  projectionStartUs?: string,
 ): CaptionBlockV1[] {
   const maxCharacters = numeric(rules.maxCharacters, 8, 42, true),
     maxLines = numeric(rules.maxLines, 1, 2, true),
@@ -215,12 +222,16 @@ export function segmentCaptionWords(
     minimum = captionTime(rules.minDurationUs);
   if (minimum < 500000n || minimum > 2000000n) fail();
   words = captionWords(words, duration);
+  const floor = projectionStartUs === undefined ? undefined : captionTime(projectionStartUs);
+  if (floor !== undefined && floor > BigInt(words[0]!.startUs)) fail();
   const lengths = words.map((w) => captionCharacters(w.text.trim())),
     starts = words.map((w) => BigInt(w.startUs)),
     ends = words.map((w) => BigInt(w.endUs));
   if (lengths.some((n) => n > maxCharacters)) fail();
   const count = new Array<number>(words.length + 1).fill(Infinity);
-  const choice = new Array<{ last: number; split: number; end: bigint } | undefined>(words.length);
+  const choice = new Array<{ last: number; split: number; start: bigint; end: bigint } | undefined>(
+    words.length,
+  );
   count[words.length] = 0;
   // Bounded suffix dynamic programming avoids a greedy unreadable final word.
   // Each start examines at most maxCharacters*maxLines whole words; no text or
@@ -245,17 +256,33 @@ export function segmentCaptionWords(
       }
       const readable = BigInt(Math.ceil((totalChars * 1000000) / cps));
       const span = readable > minimum ? readable : minimum;
-      const end = ends[j]! > starts[i]! + span ? ends[j]! : starts[i]! + span;
-      const limit = starts[j + 1] ?? BigInt(duration);
+      let start = starts[i]!,
+        end = ends[j]! > start + span ? ends[j]! : start + span;
+      const limit =
+        floor === undefined
+          ? (starts[j + 1] ?? BigInt(duration))
+          : (choice[j + 1]?.start ?? starts[j + 1] ?? BigInt(duration));
+      if (floor !== undefined && end > limit) {
+        end = limit;
+        start = end - span;
+      }
       const blocks = 1 + count[j + 1]!;
       if (
+        start <= starts[i]! &&
+        start >=
+          (floor === undefined
+            ? starts[i]!
+            : ends[i - 1] === undefined || ends[i - 1]! < floor
+              ? floor
+              : ends[i - 1]!) &&
+        ends[j]! <= end &&
         end <= limit &&
-        end - starts[i]! <= 6000000n &&
+        end - start <= 6000000n &&
         Number.isFinite(blocks) &&
         blocks <= count[i]!
       ) {
         count[i] = blocks;
-        choice[i] = { last: j, split, end };
+        choice[i] = { last: j, split, start, end };
       }
     }
   }
@@ -269,7 +296,7 @@ export function segmentCaptionWords(
       c!.split < 0
         ? [words.slice(i, stop)]
         : [words.slice(i, c!.split), words.slice(c!.split, stop)];
-    blocks.push({ startUs: String(starts[i]!), endUs: String(c!.end), lines });
+    blocks.push({ startUs: String(c!.start), endUs: String(c!.end), lines });
     i = stop;
   }
   return blocks;
@@ -366,12 +393,16 @@ export function captionWordAtFrame(
 export interface ProjectedCaptionV1 {
   captionId: string;
   sourceClipId: string;
+  /** Complete clip ownership when a native word crosses a non-destructive split. */
+  sourceClipIds?: string[];
   startUs: string;
   endUs: string;
   style: CaptionStyleV1;
   lines: CaptionWordV1[][];
 }
-/** Re-project persisted SOURCE coordinates through every surviving 1:1 video clip.
+/** Re-project persisted SOURCE coordinates through continuous retained 1:1 runs.
+ * A non-destructive split is not a new acoustic boundary. Source AND composition
+ * adjacency are required, within the same track; gaps/reorders never bridge.
  * A clipped lexical item is omitted from the display rather than assigned invented
  * partial word timings. The persisted original words are never changed/deleted.
  */
@@ -391,41 +422,90 @@ export function projectTimedCaptions(snapshot: {
 }): ProjectedCaptionV1[] {
   const result: ProjectedCaptionV1[] = [];
   for (const caption of snapshot.captionsV1 ?? []) {
-    for (const clip of snapshot.tracks
-      .flatMap((t) => t.clips)
-      .filter((c) => c.kind === "video" && c.sourceId === caption.assetId)) {
-      const a = BigInt(clip.inPoint),
-        b = BigInt(clip.outPoint),
-        offset = BigInt(clip.timelineStartUs) - a;
-      for (const block of caption.blocks) {
-        const lines = block.lines
-          .map((l) => l.filter((w) => BigInt(w.startUs) >= a && BigInt(w.endUs) <= b))
-          .filter((l) => l.length);
-        if (!lines.length) continue;
-        const first = BigInt(lines[0]![0]!.startUs),
-          last = BigInt(lines.at(-1)!.at(-1)!.endUs);
-        const start = BigInt(block.startUs) > a ? BigInt(block.startUs) : a;
-        const end = BigInt(block.endUs) < b ? BigInt(block.endUs) : b;
-        if (first < start || last > end) fail();
-        validateCaptionReadability(
-          { ...caption, blocks: [{ startUs: String(start), endUs: String(end), lines }] },
-          snapshot.composition.width,
-          snapshot.composition.height,
-        );
-        result.push({
-          captionId: caption.id,
-          sourceClipId: clip.id,
-          startUs: String(start + offset),
-          endUs: String(end + offset),
-          style: caption.style,
-          lines: lines.map((l) =>
-            l.map((w) => ({
-              ...w,
-              startUs: String(BigInt(w.startUs) + offset),
-              endUs: String(BigInt(w.endUs) + offset),
-            })),
-          ),
-        });
+    for (const track of snapshot.tracks) {
+      const runs: {
+        a: bigint;
+        b: bigint;
+        offset: bigint;
+        clips: { a: bigint; b: bigint; id: string }[];
+      }[] = [];
+      for (const clip of track.clips.filter(
+        (c) => c.kind === "video" && c.sourceId === caption.assetId,
+      )) {
+        const a = BigInt(clip.inPoint),
+          b = BigInt(clip.outPoint),
+          offset = BigInt(clip.timelineStartUs) - a,
+          previous = runs.at(-1);
+        if (previous && previous.b === a && previous.offset === offset) {
+          previous.b = b;
+          previous.clips.push({ a, b, id: clip.id });
+        } else runs.push({ a, b, offset, clips: [{ a, b, id: clip.id }] });
+      }
+      for (const { a, b, offset, clips } of runs) {
+        let blocks: CaptionBlockV1[] = [];
+        for (const block of caption.blocks) {
+          const lines = block.lines
+            .map((l) => l.filter((w) => BigInt(w.startUs) >= a && BigInt(w.endUs) <= b))
+            .filter((l) => l.length);
+          if (!lines.length) continue;
+          const first = BigInt(lines[0]![0]!.startUs),
+            last = BigInt(lines.at(-1)!.at(-1)!.endUs);
+          const start = BigInt(block.startUs) > a ? BigInt(block.startUs) : a;
+          const end = BigInt(block.endUs) < b ? BigInt(block.endUs) : b;
+          if (first < start || last > end) fail();
+          blocks.push({ startUs: String(start), endUs: String(end), lines });
+        }
+        try {
+          validateCaptionReadability(
+            { ...caption, blocks },
+            snapshot.composition.width,
+            snapshot.composition.height,
+          );
+        } catch (error) {
+          if (
+            !(error instanceof CaptionReadabilityError) ||
+            !["min_duration", "reading_speed"].includes(error.reason)
+          )
+            throw error;
+          // Reflow whole retained words under the SAME readability and source
+          // bounds. Only display containers may borrow retained silence. Failure
+          // remains explicit if no defensible, non-overlapping layout exists.
+          try {
+            blocks = segmentCaptionWords(
+              blocks.flatMap((block) => block.lines.flat()),
+              String(b),
+              caption.rules,
+              String(a),
+            );
+          } catch (cause) {
+            throw new CaptionReadabilityError(error.reason, cause);
+          }
+          validateCaptionReadability(
+            { ...caption, blocks },
+            snapshot.composition.width,
+            snapshot.composition.height,
+          );
+        }
+        for (const block of blocks) {
+          const owners = clips
+            .filter((clip) => clip.a < BigInt(block.endUs) && clip.b > BigInt(block.startUs))
+            .map((clip) => clip.id);
+          result.push({
+            captionId: caption.id,
+            sourceClipId: owners[0]!,
+            sourceClipIds: owners,
+            startUs: String(BigInt(block.startUs) + offset),
+            endUs: String(BigInt(block.endUs) + offset),
+            style: caption.style,
+            lines: block.lines.map((l) =>
+              l.map((w) => ({
+                ...w,
+                startUs: String(BigInt(w.startUs) + offset),
+                endUs: String(BigInt(w.endUs) + offset),
+              })),
+            ),
+          });
+        }
       }
     }
   }

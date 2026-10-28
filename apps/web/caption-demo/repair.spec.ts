@@ -6,7 +6,7 @@ import { parseMediaAnalysis } from "@editagent/schemas";
 import type { EditorTimeline } from "../src/editor-contract";
 
 /** Real browser/services/native Small only. No route mocks, preinserted words or fake jobs. */
-test("bilingual upload → real analysis → caption tools → undo/edit/reload → render/play/download", async ({
+test("QA93-F1 real Small captions, rapid edits, restart, boundary cuts and exports", async ({
   page,
 }) => {
   const root = path.resolve(__dirname, "../../.."),
@@ -134,6 +134,14 @@ test("bilingual upload → real analysis → caption tools → undo/edit/reload 
     });
     await network.detach();
     saved = await read();
+    expect(
+      saved.timeline.tracks.flatMap((track) =>
+        track.clips.map((clip) => [clip.inPoint, clip.outPoint, clip.timelineStartUs]),
+      ),
+    ).toEqual([
+      ["0", "6000000", "0"],
+      ["6000000", "12000000", "6000000"],
+    ]);
     const editedHash = saved.stateSha256;
     // An intervening clip edit makes the old caption receipt stale. It must not
     // overwrite newer edits; independently verify the rejected undo is unchanged.
@@ -222,6 +230,66 @@ test("bilingual upload → real analysis → caption tools → undo/edit/reload 
     const file = await download;
     await file.saveAs(path.join(privateDir, "repair-export.mp4"));
     expect(await file.failure()).toBeNull();
+    // Isolate the render contract from input races: intentionally cut the same
+    // REAL analysis at the 8-second source-component boundary in a fresh saved
+    // timeline. No replacement words, injected snapshots or fabricated Jobs.
+    phase = "explicit-source-boundary-render-regression";
+    await page.goto(new URL(href!, page.url()).toString());
+    await page.getByRole("button", { name: "Create timeline from video", exact: true }).click();
+    await expect(timeline).toBeVisible();
+    const boundaryTimelineId = (await timeline.getAttribute("data-timeline-id"))!;
+    expect(boundaryTimelineId).not.toBe(timelineId);
+    await page.getByRole("button", { name: "Add word-synchronized captions", exact: true }).click();
+    await expect(panel.getByRole("status")).toContainText("saved caption blocks", {
+      timeout: 15000,
+    });
+    const readBoundary = async () => {
+      const response = await page.request.get(
+        `/api/projects/${projectId}/editor/${boundaryTimelineId}`,
+      );
+      expect(response.ok()).toBe(true);
+      return (await response.json()).data as EditorTimeline;
+    };
+    await page.getByLabel("Caption highlight color").fill("#00ffff");
+    await page.getByRole("button", { name: "Update caption style", exact: true }).click();
+    await expect
+      .poll(async () => (await readBoundary()).timeline.captionsV1?.[0]?.style.highlight)
+      .toBe("#00ffff");
+    await page.getByLabel("Split at (timeline seconds)").fill("8");
+    await page.getByRole("button", { name: "Split clip", exact: true }).click();
+    await expect(timeline.locator("[data-clip-id]")).toHaveCount(2);
+    const boundarySaved = await readBoundary();
+    expect(
+      boundarySaved.timeline.tracks.flatMap((track) =>
+        track.clips.map((clip) => [clip.inPoint, clip.outPoint, clip.timelineStartUs]),
+      ),
+    ).toEqual([
+      ["0", "8000000", "0"],
+      ["8000000", "16000000", "8000000"],
+    ]);
+    expect(
+      boundarySaved.timeline.captionsV1?.[0]?.blocks.flatMap((block) => block.lines.flat()),
+    ).toEqual(expected);
+    expect(boundarySaved.timeline.captionsV1?.[0]?.evidence).toEqual(caption.evidence);
+    await page.reload();
+    await expect(timeline).toHaveAttribute("data-timeline-sha256", boundarySaved.stateSha256);
+    await page.getByRole("button", { name: "Render saved timeline", exact: true }).click();
+    await expect(job.getByRole("status")).toHaveText("Completed", { timeout: 180000 });
+    await page.getByRole("button", { name: "Open export", exact: true }).click();
+    await expect(video).toBeVisible();
+    await video.evaluate(async (n) => {
+      const v = n as HTMLVideoElement;
+      v.muted = true;
+      await v.play();
+    });
+    await expect
+      .poll(() => video.evaluate((n) => (n as HTMLVideoElement).currentTime))
+      .toBeGreaterThan(0.5);
+    const boundaryDownload = page.waitForEvent("download");
+    await page.getByRole("link", { name: "Download MP4", exact: true }).click();
+    const boundaryFile = await boundaryDownload;
+    await boundaryFile.saveAs(path.join(privateDir, "repair-boundary-export.mp4"));
+    expect(await boundaryFile.failure()).toBeNull();
     await writeFile(
       path.join(privateDir, "browser-result.json"),
       JSON.stringify(
@@ -250,6 +318,15 @@ test("bilingual upload → real analysis → caption tools → undo/edit/reload 
           mockData: false,
           caption,
           timeline: saved.timeline,
+          boundaryRegression: {
+            timelineId: boundaryTimelineId,
+            stateSha256: boundarySaved.stateSha256,
+            timeline: boundarySaved.timeline,
+            actualTool: true,
+            actualRender: true,
+            actualPlayback: true,
+            actualDownload: true,
+          },
           model,
         },
         null,

@@ -76,15 +76,25 @@ this initial path. The data type reserves a labelled human-timed evidence kind;
 it is not permission to manufacture or impersonate that evidence.
 
 Persisted blocks use original source microseconds. Each render projects them
-through every surviving video clip of that source:
+through retained 1:1 source spans. Within a single track, clips form one span
+only when both source endpoints and composition endpoints touch with the same
+offset. A non-destructive split, including a split inside a word, does not remove
+audio and must not hide that word. Source gaps, composition gaps, reordering and
+different tracks never bridge. The derived render plan records the contributing
+clip IDs; persisted source/evidence records remain unchanged:
 
 `compositionTime = sourceTime - clip.inPoint + clip.timelineStartUs`.
 
-Only complete native word intervals inside the retained clip are displayed.
+Only complete native word intervals inside the retained source span are displayed.
 An interval cut in half by a trim is not assigned a guessed boundary; its original
 record stays intact in the stored caption track. Removed source content never
-reappears. Caption projection must still meet readability constraints after a
-trim, otherwise rendering is refused. Concurrent competing caption projections
+reappears. Caption projection must still meet the same readability constraints
+after a trim. If clipping a block makes its display duration or reading speed
+invalid, bounded whole-word reflow may use retained silence before or after the
+native words. Display containers stay inside the retained span and cannot overlap
+adjacent containers or lexical items. Native word starts/ends never move. This
+render-only operation does not change saved blocks, hashes, undo or command replay.
+Impossible layouts still fail explicitly. Concurrent competing caption projections
 are refused until an explicit multi-speaker layout policy exists.
 
 Half-open word activation compares the exact rounded rational frame clock with
@@ -194,3 +204,62 @@ regressions, all required exact-head CI/Walking Skeleton/Supply Chain checks.
 The original evaluation gold, model identities, graduation deliverables and held
 files must stay unchanged. Security-sensitive human reviews and Owner release
 authorization remain separate from Coding Agent self-tests and Independent QA.
+
+### QA93-F1 repair qualification
+
+The Coding Agent reproduced the complete failure on diagnostic-only commit
+`935e0d4831f17801e9ba30c7f3dabb16d7ec85d3`,
+[CI run 40693482884](https://github.com/mahmoudemad68/Your_Editor/actions/runs/40693482884).
+Source SHA-256 was `0e1f190e110bacf9f0cc55cab8b33ed7e46adec167011093153c5f668d41830f`;
+the 34 native words in QA's array ordering hashed to
+`524008ff7943485cb0a5bde7442aad45542974bde09993bbec82bc64e4a02904`,
+matching the independent QA evidence exactly. A pending style response reset the
+typed trim value; a subsequent trim response reset the split field. Requests for
+trim 12 seconds and split 6 seconds actually persisted clips `[0,8)` and `[8,16)`.
+The database state survived the API restart. The real render failed with typed
+stage `caption_projection`, reason `min_duration`: per-clip projection clipped
+caption display padding at a non-destructive source boundary. A first replay
+that explicitly awaited every response passed; it did not reproduce the rapid
+sequence and is not presented as proof that QA's failure was absent.
+
+The original self-test split only between caption blocks; it did not qualify a
+12-second trim, a 6-second split and an API process restart. The repair regression
+is `apps/web/caption-demo/repair.spec.ts`, driven by
+`tools/render/caption-repair-proof.mjs` on the existing real-service Linux render
+test. It independently generates licensed AR-then-EN, 640×360, 25-fps input, obtains
+actual pinned Small analysis, saves captions, styles, trims/splits, verifies a stale
+undo is fenced and a current-state command really undoes, restarts the actual API
+process, verifies the PostgreSQL snapshot and browser reload, renders, plays and
+downloads the MP4. It compares complete retained native tuples, not just counts.
+Rapid style/trim/split entry is tested with 250-ms real browser network latency,
+without route interception or replacement service responses. Inputs are disabled
+while a request or render is pending. A metadata-only clip replacement must not
+reset draft time fields; only a selection or actual clip-coordinate change resets
+them. The regression verifies the persisted coordinates equal the requested
+12-second trim and 6-second split, rather than assuming a successful click applied
+the intended value. The report includes requested/actual coordinates and a second
+tuple hash using the original QA array ordering, avoiding hash-format confusion.
+A second saved timeline deliberately splits the very same completed Small analysis
+at the 8-second source-component boundary. This isolates render projection from
+the rapid-entry race. All source words, native intervals, confidence and evidence
+must remain identical; the complete retained projection must equal those original
+tuples. A separate real render, playback, download and 400-frame FFprobe check are
+required for `repair-boundary-export.mp4`. Neither test inserts fake analysis,
+snapshots, tool receipts or completed Jobs.
+Existing trim semantics retain the explicit 16-second composition; source content
+ends at 12 seconds and the remaining range is black. FFprobe must verify 400 exact
+25-fps video frames, 640×360 H.264, 48-kHz stereo AAC and the composition duration.
+
+Mapping failures retain `TimelineMappingError.stage` and their original cause.
+Readability predicates have closed `CaptionReadabilityError.reason` codes.
+`TimelineRenderContractError` remains a permanent job failure with the unchanged
+public message `Invalid timeline render contract.` Its cause is non-enumerable;
+no source identities, text, storage keys, stack or raw exception messages become
+public failure details. Only bounded typed cause codes, hashes, counts, sanitized
+screenshots and the newly generated licensed export enter the fixed CI artifact
+allowlist. Private state and diagnostic files are excluded.
+
+These are Coding Agent self-tests. The independent QA FAIL on frozen product
+`09745c0b456aa17195ac815c13d1ad18f0921db4` is historical evidence and remains intact.
+Re-QA readiness requires a new immutable repair SHA with all mandatory workflows
+passing; the Coding Agent does not issue an Independent QA verdict.

@@ -48,6 +48,10 @@ export function ManualEditor({
   const renderRequest = useRef<string | null>(null);
   const clips = stored?.timeline.tracks.flatMap((t) => t.clips) ?? [];
   const clip = clips.find((c) => c.id === selected) ?? clips[0];
+  const clipId = clip?.id,
+    clipIn = clip?.inPoint,
+    clipOut = clip?.outPoint,
+    clipStart = clip?.timelineStartUs;
   const running = Boolean(job && !terminal(job));
 
   const accept = useCallback(<T,>(result: ApiResult<T>): T | null => {
@@ -83,13 +87,13 @@ export function ManualEditor({
     return () => active.current?.abort();
   }, [initialTimelineId, load]);
   useEffect(() => {
-    if (!clip) return;
-    const a = BigInt(clip.timelineStartUs),
-      b = a + BigInt(clip.outPoint) - BigInt(clip.inPoint);
+    if (!clipId || clipIn === undefined || clipOut === undefined || clipStart === undefined) return;
+    const a = BigInt(clipStart),
+      b = a + BigInt(clipOut) - BigInt(clipIn);
     setStart(seconds(String(a)));
     setEnd(seconds(String(b)));
     setSplit(seconds(String((a + b) / 2n)));
-  }, [clip]);
+  }, [clipId, clipIn, clipOut, clipStart]);
 
   useEffect(() => {
     if (!job || terminal(job)) return;
@@ -239,6 +243,7 @@ export function ManualEditor({
                     className="mt-1 block rounded border border-line bg-ink p-2"
                     inputMode="decimal"
                     value={start}
+                    disabled={busy || running}
                     onChange={(e) => setStart(e.target.value)}
                   />
                 </label>
@@ -248,6 +253,7 @@ export function ManualEditor({
                     className="mt-1 block rounded border border-line bg-ink p-2"
                     inputMode="decimal"
                     value={end}
+                    disabled={busy || running}
                     onChange={(e) => setEnd(e.target.value)}
                   />
                 </label>
@@ -260,6 +266,7 @@ export function ManualEditor({
                     className="mt-1 block rounded border border-line bg-ink p-2"
                     inputMode="decimal"
                     value={split}
+                    disabled={busy || running}
                     onChange={(e) => setSplit(e.target.value)}
                   />
                 </label>
