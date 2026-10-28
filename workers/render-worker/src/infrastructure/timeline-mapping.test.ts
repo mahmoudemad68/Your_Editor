@@ -1,10 +1,84 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { frameTime, frameRate } from "@editagent/domain";
-import { firstFrameAt, mapTimeline } from "../application/timeline-mapping.js";
+import {
+  frameTime,
+  frameRate,
+  DEFAULT_CAPTION_STYLE,
+  CaptionReadabilityError,
+} from "@editagent/domain";
+import {
+  firstFrameAt,
+  mapTimeline,
+  TimelineMappingError,
+} from "../application/timeline-mapping.js";
 import type { TimelineInput } from "../application/ports.js";
-import { parseRenderInput } from "./contract.js";
+import { parseRenderInput, TimelineRenderContractError } from "./contract.js";
 const id = (n: number) => `018fe277-6ec0-7000-8000-${String(n).padStart(12, "0")}`;
+/** Synthetic native intervals reproduce the trim/readability conflict, not ASR accuracy. */
+function trimmedCaptionFixture(): TimelineInput {
+  const input = timelineFixture(),
+    t = input.props.timeline,
+    track = t.tracks[0]!;
+  t.composition = {
+    width: 640,
+    height: 360,
+    frameRate: { numerator: "25", denominator: "1" },
+    durationUs: "16000000",
+  };
+  t.sources[0]!.durationUs = "16000000";
+  track.clips[0]!.outPoint = "6000000";
+  track.clips[1]!.inPoint = "6000000";
+  track.clips[1]!.outPoint = "12000000";
+  track.clips[1]!.timelineStartUs = "6000000";
+  t.captionsV1 = [
+    {
+      schemaVersion: "1.0.0",
+      id: id(20),
+      createdBy: id(21),
+      assetId: id(4),
+      sourceSha256: "b".repeat(64),
+      sourceDurationUs: "16000000",
+      evidence: { kind: "human-timed", documentSha256: "c".repeat(64), version: "1.0.0" },
+      style: { ...DEFAULT_CAPTION_STYLE, fontSize: 14 },
+      rules: {
+        maxCharacters: 32,
+        maxLines: 2,
+        maxCharactersPerSecond: 24,
+        minDurationUs: "500000",
+      },
+      blocks: [
+        {
+          startUs: "5800000",
+          endUs: "6300000",
+          lines: [[{ text: "crossing", startUs: "5800000", endUs: "6200000", confidence: 0.8 }]],
+        },
+        {
+          startUs: "11800000",
+          endUs: "12300000",
+          lines: [[{ text: "tail", startUs: "11800000", endUs: "11950000", confidence: null }]],
+        },
+      ],
+    },
+  ];
+  return input;
+}
+test("trim/split contract retains typed caption projection cause behind sanitized permanent error", () => {
+  assert.throws(
+    () => parseRenderInput(trimmedCaptionFixture()),
+    (error: unknown) => {
+      assert.ok(error instanceof TimelineRenderContractError);
+      assert.equal(error.message, "Invalid timeline render contract.");
+      assert.equal(error.permanent, true);
+      assert.ok(error.cause instanceof TimelineMappingError);
+      assert.equal(error.cause.stage, "caption_projection");
+      assert.ok(error.cause.cause instanceof CaptionReadabilityError);
+      assert.equal(error.cause.cause.reason, "min_duration");
+      assert.equal(Object.keys(error).includes("cause"), false);
+      assert.equal(JSON.stringify(error).includes("crossing"), false);
+      return true;
+    },
+  );
+});
 export function timelineFixture(): TimelineInput {
   const clip = (
     n: number,

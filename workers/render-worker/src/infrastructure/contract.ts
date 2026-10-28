@@ -5,6 +5,14 @@ import { PermanentJobError } from "@editagent/job-queue";
 import type { RenderInput, RenderProgress } from "../application/ports.js";
 import { mapTimeline, compositionTiming } from "../application/timeline-mapping.js";
 let validator: ReturnType<Ajv["compile"]> | undefined;
+/** Public classification stays permanent and sanitized; the typed cause is internal only. */
+export class TimelineRenderContractError extends PermanentJobError {
+  declare readonly cause: unknown;
+  constructor(cause: unknown) {
+    super("Invalid timeline render contract.");
+    Object.defineProperty(this, "cause", { value: cause, enumerable: false });
+  }
+}
 function renderValidator() {
   return (validator ??= new Ajv({ strict: true, strictRequired: false, allErrors: false })
     .addSchema(projectSchema)
@@ -28,8 +36,8 @@ export function parseRenderInput(value: unknown): RenderInput {
       mapTimeline(p);
       if (p.props.components.some((b) => b.type === "title-v1" && !wellFormed(b.props.text)))
         throw new Error();
-    } catch {
-      throw new PermanentJobError("Invalid timeline render contract.");
+    } catch (cause) {
+      throw new TimelineRenderContractError(cause);
     }
   }
   return structuredClone(p);

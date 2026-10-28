@@ -118,6 +118,7 @@ export async function runCaptionProof({
         "test",
         "--config",
         "tests/caption-demo.config.ts",
+        "journey.spec.ts",
       ],
       {
         cwd: path.join(root, "apps/web"),

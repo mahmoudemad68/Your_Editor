@@ -54,87 +54,112 @@ export interface TimelinePlan {
   clips: MappedClip[];
   timing: ReturnType<typeof compositionTiming>;
 }
+export type TimelineMappingStage =
+  | "canonical_timeline"
+  | "timeline_admission"
+  | "clip_mapping"
+  | "caption_projection"
+  | "caption_budget";
+/** Structured internal validation cause, deliberately separate from public job errors. */
+export class TimelineMappingError extends Error {
+  constructor(
+    readonly stage: TimelineMappingStage,
+    cause: unknown,
+  ) {
+    super("Timeline mapping failed.", { cause });
+    this.name = "TimelineMappingError";
+  }
+}
 export function mapTimeline(input: TimelineInput): TimelinePlan {
-  const snapshot: TimelineSnapshot = Timeline.restore(input.props.timeline).toSnapshot();
-  const c = snapshot.composition,
-    rate = {
-      numerator: BigInt(c.frameRate.numerator),
-      denominator: BigInt(c.frameRate.denominator),
-    };
-  const timing = compositionTiming(input);
-  const fps = timing.frameRate.numerator / timing.frameRate.denominator;
-  if (
-    fps < 1 ||
-    fps > 60 ||
-    rate.numerator > 60000n ||
-    rate.denominator > 1001n ||
-    timing.durationInFrames < 1 ||
-    BigInt(c.durationUs) > 1800000000n ||
-    c.width % 2 ||
-    c.height % 2 ||
-    c.width > 4096 ||
-    c.height > 4096 ||
-    c.width * c.height > 8294400 ||
-    snapshot.sources.length > 128 ||
-    snapshot.tracks.length > 64 ||
-    snapshot.sources.some((s) => BigInt(s.durationUs) > 1800000000n)
-  )
-    throw new Error("Timeline render admission exceeded.");
-  const bindings = new Map(input.props.components.map((b) => [b.componentId, b]));
-  if (bindings.size !== input.props.components.length)
-    throw new Error("Duplicate component binding.");
-  const clips: MappedClip[] = [];
-  snapshot.tracks.forEach((track, layer) => {
-    for (const clip of track.clips) {
-      if (clip.text !== null && clip.text.length > 1000)
-        throw new Error("Caption render budget exceeded.");
-      if (clip.kind === "graphics" && (!clip.componentId || !bindings.has(clip.componentId)))
-        throw new Error("Unknown graphics component.");
-      const start = BigInt(clip.timelineStartUs),
-        end = start + BigInt(clip.outPoint) - BigInt(clip.inPoint);
-      const from = firstFrameAt(start, rate),
-        until = firstFrameAt(end, rate);
-      if (until <= from) throw new Error("Clip has no visible composition frame.");
-      const sourceOffsetUs = BigInt(clip.inPoint) + frameTime(BigInt(from), rate) - start;
-      const opacity = clip.effects
-        .filter((e) => e.kind === "opacity")
-        .reduce((v, e) => v * e.value, clip.opacity);
-      const gain = clip.effects
-        .filter((e) => e.kind === "gain")
-        .reduce((v, e) => v + e.value, clip.volumeDb);
-      const incoming = track.transitions.find(
-        (t) => t.toClipId === clip.id && t.kind === "dissolve",
-      );
-      const outgoing = track.transitions.find(
-        (t) => t.fromClipId === clip.id && t.kind === "dissolve",
-      );
-      const transitionFrames = (us: string) =>
-        Math.max(1, firstFrameAt(end + BigInt(us), rate) - until);
-      const fadeInFrames = incoming
-        ? Math.max(1, firstFrameAt(start + BigInt(incoming.durationUs), rate) - from)
-        : 0;
-      const holdFrames = outgoing ? transitionFrames(outgoing.durationUs) : 0;
-      clips.push({
-        clip,
-        from,
-        durationInFrames: until - from,
-        sourceOffsetFrames: (Number(sourceOffsetUs) * fps) / 1000000,
-        opacity,
-        volume: Math.pow(10, Math.min(12, Math.max(-60, gain)) / 20),
-        fadeInFrames,
-        holdFrames,
-        layer,
-      });
-    }
-  });
-  if (clips.length > 2048) throw new Error("Timeline clip budget exceeded.");
-  const captionsV1 = projectTimedCaptions(snapshot);
-  if (
-    clips.length + captionsV1.length > 2048 ||
-    captionFrameBoundaries({ clips, timing, captionsV1 }).length > 4096
-  )
-    throw new Error("Caption frame budget exceeded.");
-  return { clips, timing, ...(captionsV1.length ? { captionsV1 } : {}) };
+  let stage: TimelineMappingStage = "canonical_timeline";
+  try {
+    const snapshot: TimelineSnapshot = Timeline.restore(input.props.timeline).toSnapshot();
+    stage = "timeline_admission";
+    const c = snapshot.composition,
+      rate = {
+        numerator: BigInt(c.frameRate.numerator),
+        denominator: BigInt(c.frameRate.denominator),
+      };
+    const timing = compositionTiming(input);
+    const fps = timing.frameRate.numerator / timing.frameRate.denominator;
+    if (
+      fps < 1 ||
+      fps > 60 ||
+      rate.numerator > 60000n ||
+      rate.denominator > 1001n ||
+      timing.durationInFrames < 1 ||
+      BigInt(c.durationUs) > 1800000000n ||
+      c.width % 2 ||
+      c.height % 2 ||
+      c.width > 4096 ||
+      c.height > 4096 ||
+      c.width * c.height > 8294400 ||
+      snapshot.sources.length > 128 ||
+      snapshot.tracks.length > 64 ||
+      snapshot.sources.some((s) => BigInt(s.durationUs) > 1800000000n)
+    )
+      throw new Error("Timeline render admission exceeded.");
+    const bindings = new Map(input.props.components.map((b) => [b.componentId, b]));
+    if (bindings.size !== input.props.components.length)
+      throw new Error("Duplicate component binding.");
+    const clips: MappedClip[] = [];
+    stage = "clip_mapping";
+    snapshot.tracks.forEach((track, layer) => {
+      for (const clip of track.clips) {
+        if (clip.text !== null && clip.text.length > 1000)
+          throw new Error("Caption render budget exceeded.");
+        if (clip.kind === "graphics" && (!clip.componentId || !bindings.has(clip.componentId)))
+          throw new Error("Unknown graphics component.");
+        const start = BigInt(clip.timelineStartUs),
+          end = start + BigInt(clip.outPoint) - BigInt(clip.inPoint);
+        const from = firstFrameAt(start, rate),
+          until = firstFrameAt(end, rate);
+        if (until <= from) throw new Error("Clip has no visible composition frame.");
+        const sourceOffsetUs = BigInt(clip.inPoint) + frameTime(BigInt(from), rate) - start;
+        const opacity = clip.effects
+          .filter((e) => e.kind === "opacity")
+          .reduce((v, e) => v * e.value, clip.opacity);
+        const gain = clip.effects
+          .filter((e) => e.kind === "gain")
+          .reduce((v, e) => v + e.value, clip.volumeDb);
+        const incoming = track.transitions.find(
+          (t) => t.toClipId === clip.id && t.kind === "dissolve",
+        );
+        const outgoing = track.transitions.find(
+          (t) => t.fromClipId === clip.id && t.kind === "dissolve",
+        );
+        const transitionFrames = (us: string) =>
+          Math.max(1, firstFrameAt(end + BigInt(us), rate) - until);
+        const fadeInFrames = incoming
+          ? Math.max(1, firstFrameAt(start + BigInt(incoming.durationUs), rate) - from)
+          : 0;
+        const holdFrames = outgoing ? transitionFrames(outgoing.durationUs) : 0;
+        clips.push({
+          clip,
+          from,
+          durationInFrames: until - from,
+          sourceOffsetFrames: (Number(sourceOffsetUs) * fps) / 1000000,
+          opacity,
+          volume: Math.pow(10, Math.min(12, Math.max(-60, gain)) / 20),
+          fadeInFrames,
+          holdFrames,
+          layer,
+        });
+      }
+    });
+    if (clips.length > 2048) throw new Error("Timeline clip budget exceeded.");
+    stage = "caption_projection";
+    const captionsV1 = projectTimedCaptions(snapshot);
+    stage = "caption_budget";
+    if (
+      clips.length + captionsV1.length > 2048 ||
+      captionFrameBoundaries({ clips, timing, captionsV1 }).length > 4096
+    )
+      throw new Error("Caption frame budget exceeded.");
+    return { clips, timing, ...(captionsV1.length ? { captionsV1 } : {}) };
+  } catch (cause) {
+    throw new TimelineMappingError(stage, cause);
+  }
 }
 export function captionFrameBoundaries(plan: TimelinePlan): number[] {
   const rate = {

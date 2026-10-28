@@ -61,6 +61,22 @@ export interface CaptionTrackV1 {
 const fail = (): never => {
   throw new DomainError("Invalid or unreadable timed captions.");
 };
+/** Bounded internal cause; never carries caption text, identities or source keys. */
+export class CaptionReadabilityError extends DomainError {
+  constructor(
+    readonly reason:
+      | "orientation"
+      | "line_limit"
+      | "character_limit"
+      | "width"
+      | "height"
+      | "min_duration"
+      | "reading_speed",
+  ) {
+    super("Invalid or unreadable timed captions.");
+    this.name = "CaptionReadabilityError";
+  }
+}
 const graphemes = new Intl.Segmenter("und", { granularity: "grapheme" });
 export const captionCharacters = (v: string): number => [...graphemes.segment(v)].length;
 const color = (v: unknown): string =>
@@ -164,7 +180,7 @@ export function validateCaptionReadability(
     (track.style.preset === "square" && width !== height) ||
     (track.style.preset === "landscape" && width <= height)
   )
-    fail();
+    throw new CaptionReadabilityError("orientation");
   const zone = safeCaptionZone(width, height, track.style),
     pad = 8 + track.style.outlinePx + track.style.shadowPx;
   for (const b of track.blocks) {
@@ -172,16 +188,20 @@ export function validateCaptionReadability(
       captionCharacters(line.map((w) => w.text.trim()).join(" ")),
     );
     const count = lengths.reduce((a, b) => a + b, 0);
+    if (b.lines.length > track.rules.maxLines) throw new CaptionReadabilityError("line_limit");
+    if (lengths.some((n) => n > track.rules.maxCharacters))
+      throw new CaptionReadabilityError("character_limit");
+    if (Math.max(...lengths) * track.style.fontSize * 1.2 + 2 * pad > zone.width)
+      throw new CaptionReadabilityError("width");
+    if (b.lines.length * track.style.fontSize * 1.5 + 2 * pad > zone.height)
+      throw new CaptionReadabilityError("height");
+    if (BigInt(b.endUs) - BigInt(b.startUs) < BigInt(track.rules.minDurationUs))
+      throw new CaptionReadabilityError("min_duration");
     if (
-      b.lines.length > track.rules.maxLines ||
-      lengths.some((n) => n > track.rules.maxCharacters) ||
-      Math.max(...lengths) * track.style.fontSize * 1.2 + 2 * pad > zone.width ||
-      b.lines.length * track.style.fontSize * 1.5 + 2 * pad > zone.height ||
-      BigInt(b.endUs) - BigInt(b.startUs) < BigInt(track.rules.minDurationUs) ||
       count * 1000000 >
-        Number(BigInt(b.endUs) - BigInt(b.startUs)) * track.rules.maxCharactersPerSecond
+      Number(BigInt(b.endUs) - BigInt(b.startUs)) * track.rules.maxCharactersPerSecond
     )
-      fail();
+      throw new CaptionReadabilityError("reading_speed");
   }
 }
 export function segmentCaptionWords(

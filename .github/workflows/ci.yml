@@ -253,6 +253,10 @@ jobs:
             .local/caption-public/saved-captions.png
             .local/caption-public/caption-playback.png
             .local/caption-public/caption-export.mp4
+            .local/caption-public/repair-report.json
+            .local/caption-public/repair-saved.png
+            .local/caption-public/repair-playback.png
+            .local/caption-public/repair-export.mp4
             .local/caption-public/boundary-*.png
             .local/caption-public/visual/visual-report.json
             .local/caption-public/visual/*.png
