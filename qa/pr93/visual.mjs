@@ -663,7 +663,7 @@ await check(
     impossible.props.timeline.captionsV1[0].blocks = [
       {
         startUs: "11800000",
-        endUs: "12000000",
+        endUs: "12300000",
         lines: [[{ text: "tail", startUs: "11800000", endUs: "11950000", confidence: null }]],
       },
     ];

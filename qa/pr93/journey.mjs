@@ -622,10 +622,11 @@ try {
           },
         };
       }
-      const downloadUrl = await page
-        .getByRole("link", { name: "Download MP4" })
-        .getAttribute("href");
-      const video = page.getByRole("region", { name: "Export job" }).locator("video");
+      await page.getByRole("button", { name: "Open export", exact: true }).click();
+      const downloadLink = page.getByRole("link", { name: "Download MP4" });
+      await downloadLink.waitFor({ timeout: 30000 });
+      const downloadUrl = await downloadLink.getAttribute("href");
+      const video = page.getByLabel("Rendered export");
       await video.waitFor();
       const playback = await video.evaluate(async (element) => {
         element.muted = true;
