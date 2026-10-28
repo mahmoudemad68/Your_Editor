@@ -199,6 +199,17 @@ export async function runCaptionRepairProof({
       stateSha256: checkpoint.stateSha256,
       wordTupleSha256: checkpoint.wordTupleSha256,
       wordCount: checkpoint.wordCount,
+      qaOrderedTupleSha256: checkpoint.qaOrderedTupleSha256,
+      controlledResponseLatencyMs: checkpoint.controlledResponseLatencyMs,
+      requestedTrimEndUs: checkpoint.requestedTrimEndUs,
+      requestedSplitAtUs: checkpoint.requestedSplitAtUs,
+      actualClipRanges: before.snapshot.tracks.flatMap((track) =>
+        track.clips.map((clip) => ({
+          inPoint: clip.inPoint,
+          outPoint: clip.outPoint,
+          timelineStartUs: clip.timelineStartUs,
+        })),
+      ),
       model: checkpoint.model,
       apiRestarted: true,
       databaseSnapshotUnchanged: true,
@@ -213,6 +224,11 @@ export async function runCaptionRepairProof({
     assert.equal(result.stateSha256, checkpoint.stateSha256);
     assert.equal(result.wordTupleSha256, checkpoint.wordTupleSha256);
     assert.equal(mapping.status, "PASS");
+    phase = "requested-versus-persisted-edit-coordinates";
+    assert.deepEqual(evidence.actualClipRanges, [
+      { inPoint: "0", outPoint: "6000000", timelineStartUs: "0" },
+      { inPoint: "6000000", outPoint: "12000000", timelineStartUs: "6000000" },
+    ]);
     phase = "ffprobe-and-persisted-native-word-integrity";
     const exported = path.join(privateDir, "repair-export.mp4"),
       measured = probe(exported),

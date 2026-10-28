@@ -102,19 +102,37 @@ test("bilingual upload → real analysis → caption tools → undo/edit/reload 
     }));
     expect(projected).toEqual(expected);
     const tupleHash = createHash("sha256").update(JSON.stringify(expected)).digest("hex");
+    const qaTupleHash = createHash("sha256")
+      .update(
+        JSON.stringify(
+          expected.map((word) => [word.startUs, word.endUs, word.confidence, word.text]),
+        ),
+      )
+      .digest("hex");
+    // Real response latency, no route interception or fake service response.
+    // Exercise rapid user edits while a real style response is still in flight.
+    const network = await page.context().newCDPSession(page);
+    await network.send("Network.enable");
+    await network.send("Network.emulateNetworkConditions", {
+      offline: false,
+      latency: 250,
+      downloadThroughput: -1,
+      uploadThroughput: -1,
+    });
     await page.getByLabel("Caption highlight color").fill("#00ffff");
     await page.getByRole("button", { name: "Update caption style", exact: true }).click();
-    await expect
-      .poll(async () => (await read()).timeline.captionsV1?.[0]?.style.highlight)
-      .toBe("#00ffff");
     await page.getByLabel("Trim end (timeline seconds)").fill("12");
     await page.getByRole("button", { name: "Apply trim", exact: true }).click();
-    await expect
-      .poll(async () => (await read()).timeline.tracks[0]!.clips[0]!.outPoint)
-      .toBe("12000000");
     await page.getByLabel("Split at (timeline seconds)").fill("6");
     await page.getByRole("button", { name: "Split clip", exact: true }).click();
     await expect(timeline.locator("[data-clip-id]")).toHaveCount(2);
+    await network.send("Network.emulateNetworkConditions", {
+      offline: false,
+      latency: 0,
+      downloadThroughput: -1,
+      uploadThroughput: -1,
+    });
+    await network.detach();
     saved = await read();
     const editedHash = saved.stateSha256;
     // An intervening clip edit makes the old caption receipt stale. It must not
@@ -149,6 +167,10 @@ test("bilingual upload → real analysis → caption tools → undo/edit/reload 
         timeline: saved.timeline,
         sourceSha256: document.source.sha256,
         wordTupleSha256: tupleHash,
+        qaOrderedTupleSha256: qaTupleHash,
+        requestedTrimEndUs: "12000000",
+        requestedSplitAtUs: "6000000",
+        controlledResponseLatencyMs: 250,
         wordCount: words.length,
         model,
       }),
