@@ -644,7 +644,7 @@ try {
         ready &&
         blocks > 0 &&
         savedHash === sourceHash &&
-        persisted.includes(String(blocks)) &&
+        savedBody.data?.timeline?.captionsV1?.[0]?.blocks?.length === blocks &&
         evidence === "media-analysis" &&
         boundSource === sourceSha &&
         undoOk &&
@@ -663,6 +663,7 @@ try {
         expected: "16s 640x360 H.264/AAC 25fps 400-frame export with stable source words",
         actual: {
           blocks,
+          statusNamesCount: persisted.includes(String(blocks)),
           ready,
           hashMatch: savedHash === sourceHash,
           evidence,
@@ -726,7 +727,7 @@ try {
         ).trim();
       const audits = () => {
         const text = sql(
-          "SELECT outcome || '|' || coalesce(code,'') || '|' || count(*) FROM tool_executions GROUP BY 1,2 ORDER BY 1,2",
+          "SELECT outcome, coalesce(code, ''), count(*) FROM tool_executions GROUP BY outcome, coalesce(code, '') ORDER BY 1, 2",
         );
         const map = {};
         for (const line of text.split("\n").filter(Boolean)) {

@@ -840,12 +840,22 @@ try {
     "G2-F2-CAS",
     "Same-hash trims commit once and conflict; a stale replay stays 409; an unexpected database fault stays 500; a cancelled write does not stick",
     async () => {
+      const liveBase = `http://127.0.0.1:${appServer.getHttpServer().address().port}/projects`;
       const read = async () => {
-        const response = await fetch(base + `/${project}/timelines/${timeline}`, {
+        const response = await fetch(liveBase + `/${project}/timelines/${timeline}`, {
           headers: await headers(),
         });
         return { status: response.status, body: await response.json() };
       };
+      const send = (route, body, extra = {}) =>
+        fetch(liveBase + route, {
+          method: "POST",
+          headers: extra.headers,
+          body: JSON.stringify(body),
+        }).then(async (response) => ({
+          status: response.status,
+          body: await response.json().catch(() => null),
+        }));
       const counts = async () => {
         const result = await pool.query(
           "SELECT outcome, coalesce(code,'') AS code, count(*)::int AS n FROM tool_executions GROUP BY 1,2",
@@ -859,7 +869,7 @@ try {
       const beforeAudit = await counts();
       const raced = await Promise.all(
         ends.map((endUs) =>
-          post(
+          send(
             `/${project}/timelines/${timeline}/trim`,
             {
               stateSha256: view.body.stateSha256,
@@ -883,7 +893,7 @@ try {
           .filter(([key]) => key.startsWith(prefix))
           .reduce((total, [, count]) => total + count, 0);
       const replayAudit = await counts();
-      const replay = await post(
+      const replay = await send(
         `/${project}/timelines/${timeline}/trim`,
         {
           stateSha256: view.body.stateSha256,
@@ -897,7 +907,7 @@ try {
       const replayAuditAfter = await counts();
       const freshEnd = "500000";
       const mixed = await Promise.all([
-        post(
+        send(
           `/${project}/timelines/${timeline}/trim`,
           {
             stateSha256: after.body.stateSha256,
@@ -907,7 +917,7 @@ try {
           },
           { headers: await headers() },
         ),
-        post(
+        send(
           `/${project}/timelines/${timeline}/trim`,
           {
             stateSha256: view.body.stateSha256,
@@ -927,7 +937,7 @@ try {
       const hashBeforeFault = mixedView.body.stateSha256;
       await pool.query("ALTER TABLE editing_timelines RENAME COLUMN snapshot TO snapshot_qa93");
       try {
-        const broken = await post(
+        const broken = await send(
           `/${project}/timelines/${timeline}/trim`,
           {
             stateSha256: hashBeforeFault,
@@ -949,7 +959,7 @@ try {
       try {
         await holder.query("BEGIN");
         await holder.query("SELECT id FROM editing_timelines WHERE id=$1 FOR UPDATE", [timeline]);
-        const pending = post(
+        const pending = send(
           `/${project}/timelines/${timeline}/trim`,
           {
             stateSha256: afterFault.body.stateSha256,
