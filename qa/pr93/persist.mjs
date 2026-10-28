@@ -227,7 +227,7 @@ try {
   );
   for (const actor of [owner, editor, viewer, stranger])
     await pool.query(
-      "INSERT INTO users(id,email,password_hash,created_at,updated_at) VALUES($1,$2,'hash',1,1)",
+      "INSERT INTO users(id,email,password_hash,created_at,updated_at) VALUES($1,$2,'$argon2id$qa93-fixture',1,1)",
       [actor, `${actor}@example.test`],
     );
   for (const id of [project, other])
@@ -829,6 +829,15 @@ try {
       }
     },
   );
+} catch (error) {
+  rows.push({
+    id: "G2-SETUP",
+    title: "PostgreSQL caption harness reached the probes",
+    status: "ERROR",
+    expected: "setup completes",
+    actual: String(error?.stack ?? error).slice(0, 900),
+    ms: 0,
+  });
 } finally {
   if (appServer) await appServer.close().catch(() => undefined);
   if (queue) await queue.close(true).catch(() => undefined);

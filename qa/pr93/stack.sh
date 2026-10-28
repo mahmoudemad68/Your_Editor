@@ -18,7 +18,9 @@ build || build
 rv="$(docker run --rm --network none --entrypoint node editagent-render-worker:local -p "require('./dist/bundle/catalog.json').renderVersion")"
 printf '%s\n' "$rv" | grep -Eq '^[a-f0-9]{64}$'
 export EDITAGENT_RENDER_VERSION="$rv"
-printf '%s\n' "$rv" > "${QA_OUT:-/tmp}/render-version.txt"
+out="${QA_OUT:-/tmp}"
+mkdir -p "$out"
+printf '%s\n' "$rv" > "$out/render-version.txt"
 
 docker compose up -d --wait --wait-timeout 180 postgres redis
 sh infra/seaweedfs/start-storage.sh --from-boot
