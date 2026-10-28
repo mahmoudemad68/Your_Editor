@@ -6,7 +6,11 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 import process from "node:process";
 import assert from "node:assert/strict";
-import { calibrateCaptionPaint, captionPaintFraction } from "./caption-paint-metric.mjs";
+import {
+  calibrateCaptionPaint,
+  captionPaintFraction,
+  captionEncodedPaintFraction,
+} from "./caption-paint-metric.mjs";
 export async function captionBoundaryProof(root, directory, privateDir, exported, plan) {
   const progress = (phase, measurements = {}) =>
     writeFile(
@@ -150,11 +154,8 @@ export async function captionBoundaryProof(root, directory, privateDir, exported
         controls.push(pixels(decoded));
       }
       await progress("calibrate-native-codec-mask", { sourcePart: part });
-      const { rawMask, mask, negativeFraction } = calibrateCaptionPaint(
-        expected,
-        controls[0],
-        controls[1],
-      );
+      const calibration = calibrateCaptionPaint(expected, controls[0], controls[1]);
+      const { rawMask, mask, negativeFraction } = calibration;
       await progress("validate-native-reference-mask", {
         sourcePart: part,
         frame: first,
@@ -189,7 +190,8 @@ export async function captionBoundaryProof(root, directory, privateDir, exported
           { timeout: 10000, maxBuffer: 1048576 },
         );
         const actual = pixels(file),
-          fraction = captionPaintFraction(actual, mask),
+          fraction = captionEncodedPaintFraction(actual, calibration),
+          codecRgbFraction = captionPaintFraction(actual, mask),
           rawFraction = captionPaintFraction(actual, rawMask);
         const active =
           BigInt(frame) * 40000n >= BigInt(word.startUs) &&
@@ -205,6 +207,7 @@ export async function captionBoundaryProof(root, directory, privateDir, exported
             referenceMaskPixels: mask.length,
             nativeReferenceMaskPixels: rawMask.length,
             rawYellowFraction: rawFraction,
+            codecRgbYellowFraction: codecRgbFraction,
           }) + "\n",
         );
         if (active)
@@ -223,6 +226,7 @@ export async function captionBoundaryProof(root, directory, privateDir, exported
           measuredActive: fraction >= 0.7,
           targetYellowFraction: fraction,
           rawYellowFraction: rawFraction,
+          codecRgbYellowFraction: codecRgbFraction,
           file: path.basename(file),
           sha256: createHash("sha256")
             .update(await readFile(file))
@@ -242,6 +246,7 @@ export async function captionBoundaryProof(root, directory, privateDir, exported
         referenceMaskPixels: mask.length,
         nativeReferenceMaskPixels: rawMask.length,
         codecCalibration: {
+          metric: "paired-codec-yellow-chroma-midpoint-v1",
           profile: { codec: "h264", pixelFormat: "yuv420p", crf: 23, preset: "veryfast" },
           positiveFraction: 1,
           negativeFraction,

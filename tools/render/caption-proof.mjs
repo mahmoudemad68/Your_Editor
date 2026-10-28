@@ -283,13 +283,34 @@ export async function runCaptionProof({
     };
     const plan = mapping.mapTimeline(input);
     phase = "decoded-native-word-boundary-proof";
-    const actualFrames = await captionBoundaryProof(root, directory, privateDir, exported, plan);
+    let actualFrames, boundaryError;
+    try {
+      actualFrames = await captionBoundaryProof(root, directory, privateDir, exported, plan);
+    } catch (error) {
+      boundaryError = error;
+    }
     phase = "actual-remotion-visual-profile-matrix";
-    const visualProfiles = await captionVisualProof(
-      root,
-      path.join(directory, "visual"),
-      path.join(privateDir, "native-reference"),
-    );
+    let visualProfiles, visualError;
+    try {
+      visualProfiles = await captionVisualProof(
+        root,
+        path.join(directory, "visual"),
+        path.join(privateDir, "native-reference"),
+      );
+    } catch (error) {
+      visualError = error;
+    }
+    // Independent bounded suites run sequentially even when one fails. Both must
+    // pass; preserve causes privately instead of losing unrelated visual proof.
+    if (boundaryError || visualError) {
+      phase = boundaryError
+        ? "decoded-native-word-boundary-proof"
+        : "actual-remotion-visual-profile-matrix";
+      throw new AggregateError(
+        [boundaryError, visualError].filter(Boolean),
+        "Caption frame qualification failed.",
+      );
+    }
     await copyFile(exported, path.join(directory, "caption-export.mp4"));
     const captionRecord = (
       await pool.query(
