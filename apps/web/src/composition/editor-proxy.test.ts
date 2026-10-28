@@ -39,6 +39,30 @@ afterEach(() => {
   if (prior === undefined) delete process.env.API_BASE_URL;
   else process.env.API_BASE_URL = prior;
 });
+test("trim conflicts remain 409 while unrelated server errors remain 500 without upstream detail", async () => {
+  for (const status of [409, 500]) {
+    const response = await proxyEditor(
+      new Request("http://web.test/", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          stateSha256: "a".repeat(64),
+          clipId: ID,
+          startUs: "0",
+          endUs: "1200000",
+        }),
+      }),
+      PROJECT,
+      [ID, "trim"],
+      async () => Response.json({ message: "private internal failure control" }, { status }),
+    );
+    assert.equal(response.status, status);
+    const body = await response.json();
+    assert.equal(body.ok, false);
+    assert.equal(body.status, status);
+    assert.equal(JSON.stringify(body).includes("private internal failure control"), false);
+  }
+});
 test("editor proxy fixes routing and forwards only session/CSRF/correlation headers", async () => {
   const response = await proxyEditor(
     new Request("http://web.test/?url=http://untrusted.test", {

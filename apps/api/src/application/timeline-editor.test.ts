@@ -240,3 +240,25 @@ for (const changed of [false, true]) {
     assert.equal(writes(), changed ? 2 : 1);
   });
 }
+test("a concurrent hash change never conceals an unrelated proposal failure", async () => {
+  const { editor, tools, store } = await fixture(),
+    initial = await editor.create(OWNER, PROJECT, MEDIA),
+    clipId = initial.timeline.tracks[0]!.clips[0]!.id;
+  const failure = new Error("unexpected internal failure control");
+  tools.propose = async () => {
+    const next = applyCommand(
+      Timeline.restore(initial.timeline),
+      TrimClip(id(201), initial.timeline.id, { clipId, startUs: "300000", endUs: "1600000" }),
+    ).timeline;
+    await store.save(OWNER, next, initial.stateSha256);
+    throw failure;
+  };
+  await assert.rejects(
+    editor.edit(OWNER, PROJECT, initial.timeline.id, initial.stateSha256, "trim-video", {
+      clipId,
+      startUs: "0",
+      endUs: "1800000",
+    }),
+    (error: unknown) => error === failure,
+  );
+});

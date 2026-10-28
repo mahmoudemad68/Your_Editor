@@ -290,6 +290,61 @@ test("QA93-F1 real Small captions, rapid edits, restart, boundary cuts and expor
     const boundaryFile = await boundaryDownload;
     await boundaryFile.saveAs(path.join(privateDir, "repair-boundary-export.mp4"));
     expect(await boundaryFile.failure()).toBeNull();
+    // QA93-F2 through the real authenticated BFF after the proven exports.
+    // A separate timeline keeps both rendered inputs immutable for verification.
+    phase = "real-browser-concurrent-trim-regression";
+    await page.goto(new URL(href!, page.url()).toString());
+    await page.getByRole("button", { name: "Create timeline from video", exact: true }).click();
+    await expect(timeline).toBeVisible();
+    const concurrentId = (await timeline.getAttribute("data-timeline-id"))!;
+    await page.getByRole("button", { name: "Add word-synchronized captions", exact: true }).click();
+    await expect(panel.getByRole("status")).toContainText("saved caption blocks", {
+      timeout: 15000,
+    });
+    const concurrentPath = `/api/projects/${projectId}/editor/${concurrentId}`;
+    const concurrentRead = await page.request.get(concurrentPath);
+    expect(concurrentRead.ok()).toBe(true);
+    const concurrentBasis = (await concurrentRead.json()).data as EditorTimeline,
+      concurrentClip = concurrentBasis.timeline.tracks[0]!.clips[0]!.id;
+    // The browser explicitly supplies its existing CSRF cookie as required by
+    // the public contract. No session/CSRF value is logged, reported or exported.
+    const csrf = (await page.context().cookies()).find(
+      (cookie) => cookie.name === "editagent_csrf",
+    );
+    if (!csrf) throw new Error("Authenticated CSRF state is unavailable.");
+    const concurrentInputs = ["12000000", "14000000"].map((endUs) => ({
+      stateSha256: concurrentBasis.stateSha256,
+      clipId: concurrentClip,
+      startUs: "0",
+      endUs,
+    }));
+    const raced = await Promise.all(
+      concurrentInputs.map((data) =>
+        page.request.post(`${concurrentPath}/trim`, {
+          data,
+          headers: { "x-editagent-csrf": csrf.value },
+        }),
+      ),
+    );
+    expect(raced.map((response) => response.status()).sort()).toEqual([200, 409]);
+    const winnerIndex = raced.findIndex((response) => response.status() === 200),
+      committedRace = (await raced[winnerIndex]!.json()).data as EditorTimeline;
+    expect(committedRace.timeline.tracks[0]!.clips[0]!.outPoint).toBe(
+      concurrentInputs[winnerIndex]!.endUs,
+    );
+    expect(committedRace.stateSha256).not.toBe(concurrentBasis.stateSha256);
+    const replay = await page.request.post(`${concurrentPath}/trim`, {
+      data: concurrentInputs[winnerIndex]!,
+      headers: { "x-editagent-csrf": csrf.value },
+    });
+    expect(replay.status()).toBe(409);
+    await page.reload();
+    await expect(timeline).toHaveAttribute("data-timeline-sha256", committedRace.stateSha256);
+    const afterRace = await page.request.get(concurrentPath);
+    expect((await afterRace.json()).data).toEqual(committedRace);
+    expect(
+      committedRace.timeline.captionsV1?.[0]?.blocks.flatMap((block) => block.lines.flat()),
+    ).toEqual(expected);
     await writeFile(
       path.join(privateDir, "browser-result.json"),
       JSON.stringify(
@@ -326,6 +381,17 @@ test("QA93-F1 real Small captions, rapid edits, restart, boundary cuts and expor
             actualRender: true,
             actualPlayback: true,
             actualDownload: true,
+          },
+          concurrencyRegression: {
+            timelineId: concurrentId,
+            basisSha256: concurrentBasis.stateSha256,
+            stateSha256: committedRace.stateSha256,
+            timeline: committedRace.timeline,
+            statuses: raced.map((response) => response.status()).sort(),
+            staleReplayStatus: replay.status(),
+            winnerEndUs: concurrentInputs[winnerIndex]!.endUs,
+            reloadPreservedWinner: true,
+            originalWordsPreserved: true,
           },
           model,
         },

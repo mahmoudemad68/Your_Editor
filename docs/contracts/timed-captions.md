@@ -263,3 +263,45 @@ These are Coding Agent self-tests. The independent QA FAIL on frozen product
 `09745c0b456aa17195ac815c13d1ad18f0921db4` is historical evidence and remains intact.
 Re-QA readiness requires a new immutable repair SHA with all mandatory workflows
 passing; the Coding Agent does not issue an Independent QA verdict.
+
+### QA93-F2 optimistic concurrency
+
+Independent Re-QA cleared F1 on `d7e23c4cfa6b9d6339a77b40407ffd75699caa62`
+but found overlapping manual trims returning one success and one 500. The Coding
+Agent reproduced that exact status pair with real PostgreSQL and authenticated
+HTTP by pausing the losing SDK execution immediately before final command
+validation, then committing the winner. No SQL/constraint exception or lost
+database update was required: the stale command raised `DomainError`, which the
+executor had classified as an unexpected `execution_failed` error.
+
+Final SDK command application now classifies only a typed `DomainError` as
+`invalid_commands`. The existing API adapter maps that known validation failure
+to a bounded domain error; `TimelineEditor` rechecks current access and its
+expected hash. An advanced hash yields the existing `TimelineConflict` / HTTP 409. An unchanged basis retains genuine invalid-input semantics. Unexpected
+exceptions retain `execution_failed` / HTTP 500, even if a concurrent edit also
+advanced the hash. No classification searches private exception-message text.
+
+The existing PostgreSQL snapshot write remains one atomic conditional statement
+under READ COMMITTED: current membership/project share locks and the expected
+snapshot SHA fence the UPDATE. A loser writes zero Timeline rows. No transaction
+isolation, database constraint, public schema, generation fence or retry policy
+is weakened or replaced with a blanket SQL-error-to-conflict mapping.
+
+Tool SDK receipts for trim/split describe **proposals**, not committed Timeline
+effects. Two proposals may legitimately finish before only one wins the snapshot
+CAS. The regression separately observes committed Timeline writes inside their
+database transactions; it does not pretend proposal receipts are mutation
+receipts. A stale hash replay is rejected before another tool execution. These
+in-process tools create no external media effects. Caption command/inverse
+receipts, render idempotency and AgentRun generation fences remain unchanged.
+
+The barrier-based real PostgreSQL/HTTP regression covers late validation, two
+valid proposals at CAS, identical requests, current versus stale bases, winner
+snapshot/hash consistency, an unrelated 500 control, cancellation of an actually
+blocked PostgreSQL UPDATE (57014, no partial writes), and real process loss after
+commit followed by replay from a new process. Test-only transactional observers
+prove one committed update and no duplicate media/jobs; no production endpoint
+or migration adds test controls. The real Small browser qualification retains
+both F1 video paths and adds a separate caption-bearing Timeline with concurrent
+authenticated BFF trims, one HTTP 200 + one 409, stale replay 409, persisted winner
+reload and unchanged original native words. Private credentials are not reported.

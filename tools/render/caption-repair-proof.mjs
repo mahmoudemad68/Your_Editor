@@ -366,6 +366,38 @@ export async function runCaptionRepairProof({
       compositionDurationNote:
         "Clip trimmed to 12 seconds; existing explicit 16-second composition is retained.",
     };
+    phase = "real-browser-concurrent-trim-regression";
+    const concurrency = result.concurrencyRegression;
+    assert.deepEqual(concurrency.statuses, [200, 409]);
+    assert.equal(concurrency.staleReplayStatus, 409);
+    assert.equal(concurrency.reloadPreservedWinner, true);
+    const concurrentDb = (
+      await pool.query(
+        "SELECT snapshot,state_sha256 FROM editing_timelines WHERE id=$1 AND project_id=$2",
+        [concurrency.timelineId, checkpoint.projectId],
+      )
+    ).rows[0];
+    assert.equal(concurrentDb.state_sha256, concurrency.stateSha256);
+    assert.deepEqual(concurrentDb.snapshot, concurrency.timeline);
+    assert.equal(concurrentDb.snapshot.tracks[0].clips[0].outPoint, concurrency.winnerEndUs);
+    assert.deepEqual(
+      concurrentDb.snapshot.captionsV1[0].blocks.flatMap((block) => block.lines.flat()),
+      native,
+    );
+    evidence = {
+      ...evidence,
+      concurrencyRegression: {
+        status: "PASS",
+        statuses: concurrency.statuses,
+        staleReplayStatus: concurrency.staleReplayStatus,
+        basisSha256: concurrency.basisSha256,
+        stateSha256: concurrency.stateSha256,
+        winnerEndUs: concurrency.winnerEndUs,
+        databaseMatchesWinner: true,
+        reloadPreservedWinner: true,
+        originalWordsPreserved: true,
+      },
+    };
     phase = "complete";
     await report("PASS");
   } catch (error) {
