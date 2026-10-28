@@ -810,6 +810,7 @@ try {
         }),
       );
       const afterReplay = await readEditor();
+      const auditAfterReplay = JSON.stringify(audits());
       const currentClip = afterReplay.timeline.tracks.flatMap((track) => track.clips)[0];
       const pairSpan = BigInt(currentClip.outPoint) - BigInt(currentClip.inPoint);
       const pairStart = BigInt(currentClip.timelineStartUs);
@@ -852,7 +853,7 @@ try {
         replay.status === 409 &&
         !replay.leaked &&
         afterReplay.stateSha256 === beforeReplay.stateSha256 &&
-        JSON.stringify(audits()) === replayAudit &&
+        auditAfterReplay === replayAudit &&
         pairClass[0].status === 200 &&
         pairClass[1].status === 409 &&
         !pairClass.some((item) => item.leaked) &&
