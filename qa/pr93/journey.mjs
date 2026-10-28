@@ -379,6 +379,39 @@ try {
             return undefined;
           }
         })();
+        const failureReason = (() => {
+          try {
+            return execFileSync(
+              "docker",
+              [
+                "compose",
+                "exec",
+                "-T",
+                "postgres",
+                "psql",
+                "-U",
+                "editagent",
+                "-d",
+                "editagent",
+                "-Atc",
+                "SELECT status || ' ' || coalesce(failure_reason,'') FROM jobs WHERE job_type='render.remotion' ORDER BY created_at DESC LIMIT 1",
+              ],
+              {
+                cwd: app,
+                encoding: "utf8",
+                env: {
+                  ...process.env,
+                  COMPOSE_PROJECT_NAME: process.env.COMPOSE_PROJECT_NAME ?? "qa93",
+                },
+              },
+            )
+              .replace(/[^\x20-\x7E]/g, "?")
+              .trim()
+              .slice(0, 180);
+          } catch {
+            return undefined;
+          }
+        })();
         return {
           status: "FAIL",
           expected: "render reaches Completed",
@@ -389,6 +422,7 @@ try {
             exportStatus,
             worker,
             renderNote,
+            failureReason,
           },
         };
       }
