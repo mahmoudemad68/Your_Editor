@@ -2,6 +2,8 @@ import { MediaInspectionJobs, type InspectionJobs } from "./application/inspecti
 import { AGENT_RUNS, type AgentRuns } from "./application/agent-runs.js";
 import { AgentRunsController } from "./presentation/agent-runs.controller.js";
 import { TimelineEditor } from "./application/timeline-editor.js";
+import { TimelineCaptions } from "./application/timeline-captions.js";
+import { TimelineCaptionsController } from "./presentation/timeline-captions.controller.js";
 import { TimelineEditorController } from "./presentation/timeline-editor.controller.js";
 import { TimelineExports } from "./application/timeline-exports.js";
 import { TimelineExportsController } from "./presentation/timeline-exports.controller.js";
@@ -67,6 +69,7 @@ import {
 import { type SessionTokens } from "./application/session-tokens.js";
 
 export interface ApiComposition {
+  readonly timelineCaptions?: TimelineCaptions;
   readonly agentRuns?: AgentRuns;
   readonly editor?: Pick<TimelineEditor, "create" | "read" | "edit">;
   readonly timelineExports?: Pick<TimelineExports, "start" | "read" | "cancel" | "download">;
@@ -117,6 +120,7 @@ export class AppModule {
         MediaController,
         ...(composition.agentRuns === undefined ? [] : [AgentRunsController]),
         ...(composition.editor === undefined ? [] : [TimelineEditorController]),
+        ...(composition.timelineCaptions === undefined ? [] : [TimelineCaptionsController]),
         ...(composition.timelineExports === undefined ? [] : [TimelineExportsController]),
         ...(composition.analysis === undefined ? [] : [MediaAnalysisController]),
         ...(composition.inspectionJobs === undefined ? [] : [InspectionJobController]),
@@ -125,6 +129,9 @@ export class AppModule {
         ...(composition.auth === undefined ? [] : [AuthController]),
       ],
       providers: [
+        ...(composition.timelineCaptions === undefined
+          ? []
+          : [{ provide: TimelineCaptions, useValue: composition.timelineCaptions }]),
         ...(composition.agentRuns === undefined
           ? []
           : [{ provide: AGENT_RUNS, useValue: composition.agentRuns }]),

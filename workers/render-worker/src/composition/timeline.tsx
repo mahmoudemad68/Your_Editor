@@ -1,5 +1,6 @@
 import React from "react";
 import { UnicodeText } from "./unicode-text.js";
+import { WordCaption } from "./word-captions.js";
 import {
   AbsoluteFill,
   Sequence,
@@ -117,6 +118,19 @@ export const TimelineComposition: React.FC<TimelineCompositionProps> = (p) => (
           </Sequence>
         )}
       </React.Fragment>
+    ))}
+    {p.plan.captionsV1?.map((caption, i) => (
+      <WordCaption
+        key={`${caption.captionId}-${caption.sourceClipId}-${i}`}
+        schemaVersion="1.0.0"
+        caption={caption}
+        width={p.width}
+        height={p.height}
+        frameRate={{
+          numerator: String(p.plan.timing.frameRate.numerator),
+          denominator: String(p.plan.timing.frameRate.denominator),
+        }}
+      />
     ))}
   </AbsoluteFill>
 );

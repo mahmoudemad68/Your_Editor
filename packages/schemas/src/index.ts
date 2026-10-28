@@ -12,6 +12,10 @@ export { default as validateJobEvent } from "./job-event-validator.generated.js"
 
 export { default as projectSchema } from "./project.schema.json";
 export { default as editCommandSchema } from "./edit-command.schema.json";
+export { default as captionTrackV1Schema } from "./caption-track-v1.schema.json";
+export { default as projectV1_1Schema } from "./project-v1_1.schema.json";
+export { default as editCommandV2Schema } from "./edit-command-v2.schema.json";
+export { default as editHistoryV1_1Schema } from "./edit-history-v1_1.schema.json";
 
 export { default as speechAnalysisSchema } from "./speech-analysis.schema.json";
 

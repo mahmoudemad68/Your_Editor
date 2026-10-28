@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { Timeline, parseCommand, replay } from "@editagent/domain";
 import { ToolRegistry } from "./registry.js";
 import { ToolExecutor } from "./executor.js";
+import { ToolError } from "./validation.js";
 import {
   registerEditingTools,
   editingToolManifests,
@@ -45,6 +46,49 @@ const snapshot = {
     },
   ],
 };
+for (const unexpected of [false, true]) {
+  test(`final command validation preserves ${unexpected ? "unexpected internal failure" : "typed invalid proposal"} classification`, async () => {
+    const original = Timeline.restore(snapshot),
+      advanced = structuredClone(snapshot);
+    advanced.tracks[0]!.clips[0]!.outPoint = "1001000";
+    const broken = Object.create(original) as Timeline;
+    Object.defineProperty(broken, "toSnapshot", {
+      value: () => {
+        throw new Error("private internal failure control");
+      },
+    });
+    let reads = 0;
+    const auth = {
+        ...authority,
+        timeline: async () =>
+          ++reads === 1 ? original : unexpected ? broken : Timeline.restore(advanced),
+      },
+      audit = new MemoryAudit();
+    const executor = new ToolExecutor(registerEditingTools(new ToolRegistry(), auth), auth, audit);
+    await assert.rejects(
+      executor.execute({
+        name: "editing.trim-video",
+        version: "1.0.0",
+        callerId: ids.owner,
+        projectId: ids.project,
+        resource: { kind: "timeline", id: ids.timeline },
+        input: { clipId: ids.caption, startUs: "0", endUs: "1800000" },
+      }),
+      (error: unknown) => {
+        assert.ok(error instanceof ToolError);
+        assert.equal(error.code, unexpected ? "execution_failed" : "invalid_commands");
+        assert.equal(error.message.includes("private internal failure control"), false);
+        return true;
+      },
+    );
+    assert.equal(reads, 2);
+    const row = [...audit.rows.values()][0]!;
+    assert.equal(row.outcome, "failed");
+    assert.equal(row.code, unexpected ? "execution_failed" : "invalid_commands");
+    assert.equal(row.costMicros, 0);
+    assert.deepEqual(original.toSnapshot(), snapshot);
+  });
+}
 test("seven manifests preserve strict SDK registration and function-schema export", () => {
   const registry = registerEditingTools(new ToolRegistry(), authority);
   assert.equal(registry.discover().length, 7);

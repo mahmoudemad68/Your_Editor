@@ -223,6 +223,9 @@ jobs:
           if [ -d .local/agent-loop-public ]; then
             python3 tools/test/audit-artifacts.py .local/agent-loop-public
           fi
+          if [ -d .local/caption-public ]; then
+            python3 tools/test/audit-artifacts.py .local/caption-public
+          fi
 
       - name: Upload allowlisted test summary
         if: ${{ !cancelled() && steps.graduation-audit.outcome == 'success' }}
@@ -245,6 +248,19 @@ jobs:
             .local/agent-loop-public/timeline.png
             .local/agent-loop-public/playback.png
             .local/agent-loop-public/agent-export.mp4
+            .local/caption-public/report.json
+            .local/caption-public/boundary-proof.json
+            .local/caption-public/saved-captions.png
+            .local/caption-public/caption-playback.png
+            .local/caption-public/caption-export.mp4
+            .local/caption-public/repair-report.json
+            .local/caption-public/repair-saved.png
+            .local/caption-public/repair-playback.png
+            .local/caption-public/repair-export.mp4
+            .local/caption-public/repair-boundary-export.mp4
+            .local/caption-public/boundary-*.png
+            .local/caption-public/visual/visual-report.json
+            .local/caption-public/visual/*.png
 
       - name: Upload coverage reports
         if: ${{ !cancelled() }}

@@ -1,4 +1,5 @@
 import test from "node:test";
+const { structuredClone } = globalThis;
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -13,6 +14,12 @@ import {
   frameRate,
   serializeProject,
   deserializeProject,
+  AddTimedCaption,
+  CommandBus,
+  DEFAULT_CAPTION_STYLE,
+  segmentCaptionWords,
+  applyCommand,
+  parseCommand,
 } from "../../packages/domain/dist/index.js";
 const require = createRequire(new URL("../../packages/job-queue/package.json", import.meta.url));
 const Ajv = require("ajv/dist/2020.js");
@@ -21,6 +28,81 @@ const schema = JSON.parse(
 );
 const validate = new Ajv({ strict: true, allErrors: true, strictRequired: false }).compile(schema);
 const id = (n) => createUuidV7(1700000000000 + n, new Uint8Array(10).fill(n));
+test("caption project/command/history versions validate separately and retain legacy rejection", () => {
+  const load = (name) =>
+    JSON.parse(
+      readFileSync(new URL(`../../packages/schemas/src/${name}`, import.meta.url), "utf8"),
+    );
+  const project11 = load("project-v1_1.schema.json"),
+    command2 = load("edit-command-v2.schema.json"),
+    oldCommands = load("edit-command.schema.json"),
+    history11 = load("edit-history-v1_1.schema.json");
+  const ajv = new Ajv({ strict: true, allErrors: true, strictRequired: false })
+    .addSchema(schema)
+    .addSchema(project11)
+    .addSchema(oldCommands)
+    .addSchema(command2);
+  const validProject = ajv.getSchema(project11.$id),
+    validCommand = ajv.getSchema(command2.$id),
+    validHistory = ajv.compile(history11);
+  const project = Project.create(projectId(id(1)), "Caption project", userId(id(2)), 0n);
+  const t = new Timeline(id(3), project.id, 0n, {
+    composition: { width: 1920, height: 1080, frameRate: frameRate(25n, 1n), durationUs: 8000000n },
+    sources: [{ id: id(4), kind: "video", durationUs: "8000000" }],
+    tracks: [
+      new Track(id(5), id(3), "video", [new Clip(id(6), id(5), 0n, 8000000n, { sourceId: id(4) })]),
+    ],
+  });
+  const words = [
+      { text: "Hello", startUs: "1000000", endUs: "1500000", confidence: null },
+      { text: "مَرْحَبًا", startUs: "1600000", endUs: "2500000", confidence: 0.8 },
+    ],
+    rules = { maxCharacters: 32, maxLines: 2, maxCharactersPerSecond: 24, minDurationUs: "500000" };
+  const command = AddTimedCaption(id(7), t.id, {
+    caption: {
+      schemaVersion: "1.0.0",
+      id: id(8),
+      createdBy: id(2),
+      assetId: id(4),
+      sourceSha256: "a".repeat(64),
+      sourceDurationUs: "8000000",
+      evidence: { kind: "human-timed", version: "1.0.0", documentSha256: "b".repeat(64) },
+      style: DEFAULT_CAPTION_STYLE,
+      rules,
+      blocks: segmentCaptionWords(words, "8000000", rules),
+    },
+  });
+  assert.equal(validCommand(command), true, JSON.stringify(validCommand.errors));
+  assert.equal(ajv.getSchema(oldCommands.$id)(command), false);
+  const bus = new CommandBus(t);
+  bus.apply(command);
+  const json = JSON.parse(serializeProject(project, bus.timeline));
+  assert.equal(json.schemaVersion, "1.1.0");
+  assert.equal(validProject(json), true, JSON.stringify(validProject.errors));
+  assert.equal(validate(json), false);
+  assert.deepEqual(deserializeProject(json).timeline.toSnapshot(), bus.timeline.toSnapshot());
+  assert.equal(
+    validHistory(JSON.parse(bus.serializeHistory())),
+    true,
+    JSON.stringify(validHistory.errors),
+  );
+  assert.equal(validHistory(bus.commandLog()), true, JSON.stringify(validHistory.errors));
+  assert.equal(
+    validHistory(applyCommand(t, command).inverse),
+    true,
+    JSON.stringify(validHistory.errors),
+  );
+  for (const mutate of [
+    (c) => (c.payload.caption.style.css = "url(https://example.com)"),
+    (c) => (c.schemaVersion = 1),
+    (c) => (c.payload.caption.blocks[0].lines[0][0].startUs = "-1"),
+  ]) {
+    const c = structuredClone(command);
+    mutate(c);
+    assert.equal(validCommand(c), false);
+    assert.throws(() => parseCommand(c));
+  }
+});
 function document(kind = "video") {
   const p = Project.create(projectId(id(1)), "Project", userId(id(2)), 0n);
   const options = {

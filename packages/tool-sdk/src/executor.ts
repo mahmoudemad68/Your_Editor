@@ -1,6 +1,6 @@
 import { applyCommand, parseCommand, type Timeline, type EditCommand } from "@editagent/domain";
 import { randomBytes } from "node:crypto";
-import { createUuidV7 } from "@editagent/domain";
+import { createUuidV7, DomainError } from "@editagent/domain";
 import {
   ToolRegistry,
   type OwnedToolRun,
@@ -465,8 +465,32 @@ export async function validateCommands(
         ["project.read", "asset.read"],
       );
     }
+    if (command.type === "AddTimedCaption") {
+      if (command.payload.caption.createdBy !== call.callerId) throw new ToolError("denied");
+      await authority.authorize(
+        { ...call, resource: { kind: "asset", id: command.payload.caption.assetId } },
+        ["project.read", "asset.read", "analysis.read"],
+      );
+    }
+    if (
+      command.type === "UpdateCaptionStyle" &&
+      !timeline.captionsV1.some(
+        (c) => c.id === command.payload.captionId && c.createdBy === call.callerId,
+      )
+    )
+      throw new ToolError("denied");
     ids.add(command.id);
-    timeline = applyCommand(timeline, command).timeline;
+    try {
+      timeline = applyCommand(timeline, command).timeline;
+    } catch (error) {
+      // A typed domain rejection is a known invalid proposal, including when
+      // the current Timeline advanced after the tool read its basis. Preserve
+      // that classification so the caller can fence its expected snapshot.
+      // Unexpected failures retain execution_failed; never infer conflicts
+      // from private exception messages or merely from a concurrent write.
+      if (error instanceof DomainError) throw new ToolError("invalid_commands");
+      throw error;
+    }
     commands.push(command);
   }
   return Object.freeze(commands);

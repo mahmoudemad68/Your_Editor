@@ -43,6 +43,8 @@ import {
 import { S3ObjectStorage } from "./infrastructure/s3-object-storage.js";
 import { SystemClock } from "./infrastructure/system-clock.js";
 import { TimelineEditor } from "./application/timeline-editor.js";
+import { TimelineCaptions } from "./application/timeline-captions.js";
+import { PostgresCaptionEdits } from "./infrastructure/postgres-caption-edits.js";
 import { TimelineExports } from "./application/timeline-exports.js";
 import { GetMediaDetails } from "./application/media-details.js";
 
@@ -122,6 +124,7 @@ export async function bootstrap(): Promise<void> {
     config.renderVersion,
   );
   const app = await createApiApplication({
+    timelineCaptions: new TimelineCaptions(new PostgresCaptionEdits(pool)),
     agentRuns: new PostgresAgentRuns(pool),
     editor,
     timelineExports: new TimelineExports(projects, editor, renders, objects, (key, ttl) =>

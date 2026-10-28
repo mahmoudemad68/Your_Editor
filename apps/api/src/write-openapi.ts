@@ -54,6 +54,20 @@ async function main(): Promise<void> {
         throw new Error("Document generation only.");
       },
     },
+    timelineCaptions: new (await import("./application/timeline-captions.js")).TimelineCaptions({
+      async execute() {
+        throw new Error("Document generation only.");
+      },
+      async undo() {
+        throw new Error("Document generation only.");
+      },
+      async history() {
+        throw new Error("Document generation only.");
+      },
+      async source() {
+        throw new Error("Document generation only.");
+      },
+    }),
     editor: {
       async create() {
         throw new Error("Document generation only.");

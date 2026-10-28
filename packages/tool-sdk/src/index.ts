@@ -8,3 +8,5 @@ export { PostgresToolAuditRepository, PostgresToolAuthority } from "./infrastruc
 export { PostgresRemoteCallStore } from "./infrastructure/remote-store.js";
 export { IsolatedTool } from "./infrastructure/isolated-tool.js";
 export * from "./editing-tools.js";
+export * from "./caption-tools.js";
+export { PostgresCaptionEvidence } from "./infrastructure/caption-evidence.js";

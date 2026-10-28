@@ -317,6 +317,86 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/projects/{projectId}/timelines/{timelineId}/captions/sources/{assetId}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["TimelineCaptionsController_source"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/projects/{projectId}/timelines/{timelineId}/captions/history": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["TimelineCaptionsController_history"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/projects/{projectId}/timelines/{timelineId}/captions": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations["TimelineCaptionsController_add"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/projects/{projectId}/timelines/{timelineId}/captions/{captionId}/style": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations["TimelineCaptionsController_style"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/projects/{projectId}/timelines/{timelineId}/captions/{commandId}/undo": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations["TimelineCaptionsController_undo"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/projects/{projectId}/timelines/{timelineId}/render": {
     parameters: {
       query?: never;
@@ -874,6 +954,25 @@ export interface components {
       /** Format: uuid */
       clipId: string;
       atUs: string;
+    };
+    AddTimedCaptionDto: {
+      stateSha256: string;
+      /** Format: uuid */
+      requestId: string;
+      style: Record<string, never>;
+      /** Format: uuid */
+      assetId: string;
+      sourceSha256: string;
+      analysisSha256: string;
+    };
+    UpdateCaptionStyleDto: {
+      stateSha256: string;
+      /** Format: uuid */
+      requestId: string;
+      style: Record<string, never>;
+    };
+    UndoCaptionDto: {
+      stateSha256: string;
     };
     RenderTimelineDto: {
       stateSha256: string;
@@ -2943,6 +3042,121 @@ export interface operations {
     requestBody: {
       content: {
         "application/json": components["schemas"]["SplitTimelineDto"];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  TimelineCaptionsController_source: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        projectId: string;
+        timelineId: string;
+        assetId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  TimelineCaptionsController_history: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        projectId: string;
+        timelineId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  TimelineCaptionsController_add: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        projectId: string;
+        timelineId: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["AddTimedCaptionDto"];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  TimelineCaptionsController_style: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        projectId: string;
+        timelineId: string;
+        captionId: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["UpdateCaptionStyleDto"];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  TimelineCaptionsController_undo: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        projectId: string;
+        timelineId: string;
+        commandId: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["UndoCaptionDto"];
       };
     };
     responses: {

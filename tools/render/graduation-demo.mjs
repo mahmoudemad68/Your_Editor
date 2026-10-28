@@ -12,6 +12,8 @@ import process from "node:process";
 import console from "node:console";
 import path from "node:path";
 import { runAgentLoopProof } from "./agent-loop-proof.mjs";
+import { runCaptionProof } from "./caption-proof.mjs";
+import { runCaptionRepairProof } from "./caption-repair-proof.mjs";
 
 async function port() {
   const server = createServer();
@@ -147,7 +149,7 @@ export async function runGraduationDemo({
       AUTH_TRUSTED_ORIGINS: webUrl,
       EDITAGENT_RUNTIME: "development",
     };
-    const api = launch(process.execPath, ["dist/main.js"], {
+    let api = launch(process.execPath, ["dist/main.js"], {
       cwd: path.join(root, "apps/api"),
       env: hostEnv,
       log: path.join(privateDir, "api.log"),
@@ -425,6 +427,49 @@ export async function runGraduationDemo({
     });
     console.info(
       "CONTROLLED_AGENT_LOOP PASS: actual packaged worker, persisted trim/split, real render, browser and MP4; synthetic replay only.",
+    );
+    phase = "word-caption-qualification";
+    await runCaptionProof({
+      root,
+      hostEnv,
+      webUrl,
+      launch,
+      probe,
+      codeIdentity,
+      docker,
+      network,
+      internalEnv,
+    });
+    console.info(
+      "WORD_CAPTIONS PASS: real bilingual analysis/tools/Timeline/render/browser; source-bound words and actual frame matrix.",
+    );
+    phase = "caption-edit-restart-repair";
+    await runCaptionRepairProof({
+      root,
+      hostEnv,
+      webUrl,
+      launch,
+      probe,
+      codeIdentity,
+      restartApi: async () => {
+        await api.close();
+        api = launch(process.execPath, ["dist/main.js"], {
+          cwd: path.join(root, "apps/api"),
+          env: hostEnv,
+          log: path.join(privateDir, "api-restarted.log"),
+        });
+        children.push(api);
+        await ready(
+          () =>
+            globalThis.fetch(`http://127.0.0.1:${apiPort}/ready`, {
+              signal: globalThis.AbortSignal.timeout(2000),
+            }),
+          api.exited,
+        );
+      },
+    });
+    console.info(
+      "CAPTION_REPAIR PASS: real Small, trim/split, fenced and current undo, API restart, persisted reload, render, playback, download and FFprobe.",
     );
     return;
   } catch (error) {

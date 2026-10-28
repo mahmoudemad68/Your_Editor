@@ -59,6 +59,19 @@ export async function proxyEditor(
       path = `exports/${parts[1]}/download`;
     if (parts.length === 3 && parts[2] === "cancel" && request.method === "POST")
       path = `exports/${parts[1]}/cancel`;
+  } else if (uuid(parts[0] ?? "") && parts[1] === "captions") {
+    if (parts.length === 2 && request.method === "POST") path = `timelines/${parts[0]}/captions`;
+    if (parts.length === 3 && parts[2] === "history" && request.method === "GET")
+      path = `timelines/${parts[0]}/captions/history`;
+    if (parts.length === 4 && parts[2] === "sources" && uuid(parts[3]!) && request.method === "GET")
+      path = `timelines/${parts[0]}/captions/sources/${parts[3]}`;
+    if (
+      parts.length === 4 &&
+      uuid(parts[2]!) &&
+      ["style", "undo"].includes(parts[3]!) &&
+      request.method === "POST"
+    )
+      path = `timelines/${parts[0]}/captions/${parts[2]}/${parts[3]}`;
   }
   if (!path) return fail(400, "Invalid editing operation.");
   try {
@@ -99,7 +112,31 @@ export async function proxyEditor(
     const data = await json(response.body, 524288);
     if (!data || typeof data !== "object") throw new Error("Invalid editing response");
     const record = data as Record<string, unknown>;
-    const expectsTimeline = path.startsWith("timelines") && !path.endsWith("/render");
+    const expectsHistory = path.endsWith("/captions/history");
+    const expectsCaptionSource = path.includes("/captions/sources/");
+    const expectsTimeline =
+      path.startsWith("timelines") &&
+      !path.endsWith("/render") &&
+      !expectsHistory &&
+      !expectsCaptionSource;
+    if (
+      expectsHistory &&
+      (!Array.isArray(data) ||
+        data.length > 100 ||
+        data.some(
+          (v) => !v || !uuid(v.id) || !["admitted", "committed", "undone"].includes(v.status),
+        ))
+    )
+      throw new Error("Invalid caption history");
+    if (
+      expectsCaptionSource &&
+      (record.assetId !== parts[3] ||
+        typeof record.sourceSha256 !== "string" ||
+        !/^[a-f0-9]{64}$/.test(record.sourceSha256) ||
+        typeof record.analysisSha256 !== "string" ||
+        !/^[a-f0-9]{64}$/.test(record.analysisSha256))
+    )
+      throw new Error("Invalid caption evidence identity");
     const expectsDownload = path.endsWith("/download");
     if (expectsTimeline) {
       const timeline = record.timeline as Record<string, unknown>;
@@ -115,6 +152,8 @@ export async function proxyEditor(
     }
     if (
       !expectsTimeline &&
+      !expectsHistory &&
+      !expectsCaptionSource &&
       !expectsDownload &&
       (!uuid(String(record.jobId)) || (parts[0] === "exports" && record.jobId !== parts[1]))
     )
