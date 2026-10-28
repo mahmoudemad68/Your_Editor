@@ -550,5 +550,177 @@ await check(
 
 if (browser) await browser.close({ silent: true }).catch(() => undefined);
 const report = process.argv[2] ?? path.join(outDir, "visual.json");
+await check(
+  rows,
+  "G1-MAPPING-CAUSE",
+  "Public render errors stay sanitized while the internal mapping stage remains readable on the cause",
+  () => {
+    const mapping = require("./dist/application/timeline-mapping.js");
+    const contract = require("./dist/infrastructure/contract.js");
+    const domain = createRequire(path.join(app, "apps/api/package.json"))("@editagent/domain");
+    const nid = (n) => `018fe277-6ec0-7000-8000-${String(n).padStart(12, "0")}`;
+    const clip = (n, start, end) => ({
+      id: nid(n),
+      trackId: nid(3),
+      kind: "video",
+      inPoint: "0",
+      outPoint: end,
+      timelineStartUs: start,
+      sourceId: nid(4),
+      text: null,
+      componentId: null,
+      opacity: 1,
+      volumeDb: 0,
+      effects: [],
+    });
+    const input = {
+      schemaVersion: 1,
+      renderVersion: "a".repeat(64),
+      compositionId: "TimelineV1",
+      correlationId: "qa93-mapping",
+      props: {
+        background: "#000000",
+        captionStyle: { color: "#ffffff", background: "#000000", fontSize: 24, direction: "auto" },
+        components: [],
+        timeline: {
+          id: nid(1),
+          projectId: nid(2),
+          createdAt: "0",
+          composition: {
+            width: 640,
+            height: 360,
+            frameRate: { numerator: "25", denominator: "1" },
+            durationUs: "16000000",
+          },
+          sources: [{ id: nid(4), kind: "video", durationUs: "16000000" }],
+          tracks: [
+            {
+              id: nid(3),
+              timelineId: nid(1),
+              kind: "video",
+              clips: [
+                { ...clip(5, "0", "6000000"), outPoint: "6000000" },
+                {
+                  ...clip(6, "6000000", "12000000"),
+                  inPoint: "6000000",
+                  outPoint: "12000000",
+                  timelineStartUs: "6000000",
+                },
+              ],
+              transitions: [
+                {
+                  id: nid(7),
+                  fromClipId: nid(5),
+                  toClipId: nid(6),
+                  kind: "cut",
+                  durationUs: "0",
+                },
+              ],
+            },
+          ],
+          captionsV1: [
+            {
+              schemaVersion: "1.0.0",
+              id: nid(20),
+              createdBy: nid(21),
+              assetId: nid(4),
+              sourceSha256: "b".repeat(64),
+              sourceDurationUs: "16000000",
+              evidence: { kind: "human-timed", documentSha256: "c".repeat(64), version: "1.0.0" },
+              style: { ...domain.DEFAULT_CAPTION_STYLE, fontSize: 14 },
+              rules: {
+                maxCharacters: 32,
+                maxLines: 2,
+                maxCharactersPerSecond: 24,
+                minDurationUs: "500000",
+              },
+              blocks: [
+                {
+                  startUs: "5800000",
+                  endUs: "6300000",
+                  lines: [
+                    [{ text: "crossing", startUs: "5800000", endUs: "6200000", confidence: 0.8 }],
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      },
+    };
+    const kept = contract.parseRenderInput(JSON.parse(JSON.stringify(input)));
+    const words = mapping.mapTimeline(kept).captionsV1.flatMap((block) => block.lines.flat());
+    const impossible = JSON.parse(JSON.stringify(input));
+    impossible.props.timeline.tracks[0].transitions = [];
+    impossible.props.timeline.tracks[0].clips = [
+      {
+        ...clip(5, "0", "200000"),
+        inPoint: "11800000",
+        outPoint: "12000000",
+        timelineStartUs: "0",
+      },
+    ];
+    impossible.props.timeline.captionsV1[0].blocks = [
+      {
+        startUs: "11800000",
+        endUs: "12000000",
+        lines: [[{ text: "tail", startUs: "11800000", endUs: "11950000", confidence: null }]],
+      },
+    ];
+    let publicMessage = "";
+    let stage = "";
+    let reason = "";
+    let causeEnumerable = true;
+    let leaked = true;
+    try {
+      contract.parseRenderInput(impossible);
+    } catch (error) {
+      publicMessage = error?.message ?? "";
+      stage = error?.cause?.stage ?? "";
+      reason = error?.cause?.cause?.reason ?? "";
+      causeEnumerable = Object.keys(error).includes("cause");
+      leaked = JSON.stringify(error).includes("tail") || JSON.stringify(error).includes(stage);
+    }
+    const foreign = JSON.parse(JSON.stringify(input));
+    foreign.props.timeline.captionsV1[0].assetId = nid(99);
+    let foreignStage = "";
+    let foreignPublic = "";
+    let foreignLeak = true;
+    try {
+      contract.parseRenderInput(foreign);
+    } catch (error) {
+      foreignStage = error?.cause?.stage ?? "";
+      foreignPublic = error?.message ?? "";
+      foreignLeak = JSON.stringify(error).includes(nid(99));
+    }
+    const ok =
+      words.some((item) => item.text === "crossing" && item.startUs === "5800000") &&
+      publicMessage === "Invalid timeline render contract." &&
+      stage === "caption_projection" &&
+      reason === "min_duration" &&
+      causeEnumerable === false &&
+      leaked === false &&
+      foreignStage === "canonical_timeline" &&
+      foreignPublic === "Invalid timeline render contract." &&
+      foreignLeak === false;
+    return {
+      status: ok ? "PASS" : "FAIL",
+      expected:
+        "sanitized public error, internal caption_projection/min_duration and canonical_timeline",
+      actual: {
+        kept: words.map((item) => item.text),
+        publicMessage,
+        stage,
+        reason,
+        causeEnumerable,
+        leaked,
+        foreignStage,
+        foreignPublic,
+        foreignLeak,
+      },
+    };
+  },
+);
+
 writeReport(report, rows, { suite: "visual", productSha: process.env.QA_APP_SHA, width, height });
 if (rows.some((row) => row.status !== "PASS")) process.exit(1);

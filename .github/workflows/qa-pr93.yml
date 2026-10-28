@@ -16,13 +16,13 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  QA_APP_SHA: 09745c0b456aa17195ac815c13d1ad18f0921db4
-  QA_APP_TREE: 02f1369228892b14a140e23a3f98cb867bf9859e
+  QA_APP_SHA: d7e23c4cfa6b9d6339a77b40407ffd75699caa62
+  QA_APP_TREE: 2572f477d1d01c3b50374c42c58e563602e125b6
   QA_BASE_SHA: 8ccaac7ab4f86b0382ee53f729bc70c90afeb704
-  QA_CHANGED_FILES: "56"
-  QA_COMMIT_COUNT: "9"
-  QA_PATCH_SHA: 8806f79416f509d535a5b6f7d3ef2065dfa96cef3c5c5942efc9d3e516ada69b
-  QA_MERGE_SHA: 93d0627451732b1136e8f9b51f3c5ebe7f0d64a8
+  QA_CHANGED_FILES: "61"
+  QA_COMMIT_COUNT: "12"
+  QA_PRIOR_SHA: 09745c0b456aa17195ac815c13d1ad18f0921db4
+  QA_REPAIR_PATCH_SHA: 6fbf2ef9d56fbec9ddf38a292e27a6341e6788baee5d3e712d2cd877ecb76aa9
   GH_TOKEN: ${{ github.token }}
 
 jobs:
@@ -32,10 +32,10 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Freeze check
-        run: gh api repos/${{ github.repository }}/pulls/93 --jq '[.state,.draft,.head.sha,.base.sha,.changed_files] | @tsv' | grep -qx $'open\ttrue\t09745c0b456aa17195ac815c13d1ad18f0921db4\t8ccaac7ab4f86b0382ee53f729bc70c90afeb704\t56'
+        run: gh api repos/${{ github.repository }}/pulls/93 --jq '[.state,.draft,.head.sha,.base.sha,.changed_files] | @tsv' | grep -qx $'open\ttrue\td7e23c4cfa6b9d6339a77b40407ffd75699caa62\t8ccaac7ab4f86b0382ee53f729bc70c90afeb704\t61'
       - uses: actions/checkout@v7
         with:
-          ref: 09745c0b456aa17195ac815c13d1ad18f0921db4
+          ref: d7e23c4cfa6b9d6339a77b40407ffd75699caa62
           path: app
           fetch-depth: 0
           persist-credentials: false
@@ -68,7 +68,7 @@ jobs:
         run: gh api repos/${{ github.repository }}/pulls/93 --jq .head.sha | grep -qx "$QA_APP_SHA"
       - uses: actions/checkout@v7
         with:
-          ref: 09745c0b456aa17195ac815c13d1ad18f0921db4
+          ref: d7e23c4cfa6b9d6339a77b40407ffd75699caa62
           path: app
           fetch-depth: 0
           persist-credentials: false
@@ -116,7 +116,7 @@ jobs:
         run: gh api repos/${{ github.repository }}/pulls/93 --jq .head.sha | grep -qx "$QA_APP_SHA"
       - uses: actions/checkout@v7
         with:
-          ref: 09745c0b456aa17195ac815c13d1ad18f0921db4
+          ref: d7e23c4cfa6b9d6339a77b40407ffd75699caa62
           path: app
           persist-credentials: false
       - uses: actions/checkout@v7
@@ -194,7 +194,7 @@ jobs:
         run: gh api repos/${{ github.repository }}/pulls/93 --jq .head.sha | grep -qx "$QA_APP_SHA"
       - uses: actions/checkout@v7
         with:
-          ref: 09745c0b456aa17195ac815c13d1ad18f0921db4
+          ref: d7e23c4cfa6b9d6339a77b40407ffd75699caa62
           path: app
           persist-credentials: false
       - uses: actions/checkout@v7
@@ -237,7 +237,7 @@ jobs:
         run: gh api repos/${{ github.repository }}/pulls/93 --jq .head.sha | grep -qx "$QA_APP_SHA"
       - uses: actions/checkout@v7
         with:
-          ref: 09745c0b456aa17195ac815c13d1ad18f0921db4
+          ref: d7e23c4cfa6b9d6339a77b40407ffd75699caa62
           path: app
           lfs: true
           persist-credentials: false
@@ -286,6 +286,7 @@ jobs:
           path: |
             qa-out/journey.json
             qa-out/journey/export.mp4
+            qa-out/journey/boundary-8s.png
             qa-out/render-version.txt
           if-no-files-found: warn
           retention-days: 14
@@ -336,4 +337,4 @@ jobs:
           test "$PERSIST" = success
           test "$JOURNEY" = success
           test "$GATE" = success
-          gh api repos/${{ github.repository }}/pulls/93 --jq '[.state,.draft,.head.sha,.base.sha] | @tsv' | grep -qx $'open\ttrue\t09745c0b456aa17195ac815c13d1ad18f0921db4\t8ccaac7ab4f86b0382ee53f729bc70c90afeb704'
+          gh api repos/${{ github.repository }}/pulls/93 --jq '[.state,.draft,.head.sha,.base.sha] | @tsv' | grep -qx $'open\ttrue\td7e23c4cfa6b9d6339a77b40407ffd75699caa62\t8ccaac7ab4f86b0382ee53f729bc70c90afeb704'

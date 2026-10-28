@@ -425,6 +425,175 @@ await check(
   },
 );
 
+await check(
+  rows,
+  "G1-CONTINUOUS-CUT",
+  "An 8s continuous split keeps a crossing word's source times; a gapped word is omitted; an impossible window throws min_duration",
+  () => {
+    const rules = {
+      maxCharacters: 32,
+      maxLines: 2,
+      maxCharactersPerSecond: 24,
+      minDurationUs: "500000",
+    };
+    const trackFor = (blocks) =>
+      domain.restoreCaptionTrack({
+        schemaVersion: "1.0.0",
+        id: id(6),
+        createdBy: id(7),
+        assetId: id(3),
+        sourceSha256: "a".repeat(64),
+        sourceDurationUs: "16000000",
+        evidence: { kind: "human-timed", documentSha256: "b".repeat(64), version: "1.0.0" },
+        style: { ...domain.DEFAULT_CAPTION_STYLE, preset: "landscape" },
+        rules,
+        blocks,
+      });
+    const clip = (n, inPoint, outPoint, timelineStartUs) => ({
+      id: id(n),
+      kind: "video",
+      sourceId: id(3),
+      inPoint,
+      outPoint,
+      timelineStartUs,
+    });
+    const crossing = word("cross", 7_800_000, 8_200_000, 0.9);
+    const kept = word("kept", 9_000_000, 9_600_000, 0.5);
+    const projected = domain.projectTimedCaptions({
+      captionsV1: [
+        trackFor([
+          { startUs: "7600000", endUs: "8400000", lines: [[crossing]] },
+          { startUs: "8800000", endUs: "9800000", lines: [[kept]] },
+        ]),
+      ],
+      composition: { width: 640, height: 360 },
+      tracks: [
+        {
+          clips: [clip(11, "0", "8000000", "0"), clip(12, "8000000", "16000000", "8000000")],
+        },
+      ],
+    });
+    const shown = projected.flatMap((block) => block.lines.flat());
+    const cross = shown.find((item) => item.text === "cross");
+    const gapped = domain.projectTimedCaptions({
+      captionsV1: [
+        trackFor([
+          {
+            startUs: "1100000",
+            endUs: "1600000",
+            lines: [[word("gap", 1_200_000, 1_400_000, 0.4)]],
+          },
+        ]),
+      ],
+      composition: { width: 640, height: 360 },
+      tracks: [
+        {
+          clips: [clip(13, "0", "1000000", "0"), clip(14, "2000000", "3000000", "5000000")],
+        },
+      ],
+    });
+    let reason = "no-throw";
+    try {
+      domain.projectTimedCaptions({
+        captionsV1: [
+          trackFor([
+            {
+              startUs: "11800000",
+              endUs: "12000000",
+              lines: [[word("tail", 11_800_000, 11_950_000, null)]],
+            },
+          ]),
+        ],
+        composition: { width: 640, height: 360 },
+        tracks: [{ clips: [clip(15, "11800000", "12000000", "0")] }],
+      });
+    } catch (error) {
+      reason = error?.reason ?? "";
+    }
+    const owners = projected.find((block) =>
+      block.lines.flat().some((item) => item.text === "cross"),
+    );
+    const ok =
+      shown.map((item) => item.text).join("|") === "cross|kept" &&
+      cross?.startUs === "7800000" &&
+      cross?.endUs === "8200000" &&
+      cross?.confidence === 0.9 &&
+      owners?.sourceClipIds?.length === 2 &&
+      gapped.length === 0 &&
+      reason === "min_duration";
+    return {
+      status: ok ? "PASS" : "FAIL",
+      expected: "crossing word kept, gap omitted, min_duration thrown",
+      actual: {
+        texts: shown.map((item) => item.text),
+        cross,
+        owners: owners?.sourceClipIds?.length ?? 0,
+        gapped: gapped.length,
+        reason,
+      },
+    };
+  },
+);
+
+await check(
+  rows,
+  "G1-UNDO-REDO",
+  "Caption command undo restores the prior snapshot and redo reapplies it",
+  () => {
+    const rules = {
+      maxCharacters: 32,
+      maxLines: 2,
+      maxCharactersPerSecond: 24,
+      minDurationUs: "500000",
+    };
+    const spoken = domain.captionWords(
+      [word("Hello", 1_000_000, 1_600_000, null), word("world", 1_700_000, 2_400_000, 0.4)],
+      "16000000",
+    );
+    const timeline = new domain.Timeline(id(1), id(2), "0", {
+      composition: {
+        width: 640,
+        height: 360,
+        frameRate: domain.frameRate(25n, 1n),
+        durationUs: 16_000_000n,
+      },
+      sources: [{ id: id(3), kind: "video", durationUs: "16000000" }],
+      tracks: [
+        new domain.Track(id(4), id(1), "video", [
+          new domain.Clip(id(5), id(4), "0", "16000000", { sourceId: id(3) }),
+        ]),
+      ],
+    });
+    const before = JSON.stringify(timeline.toSnapshot());
+    const bus = new domain.CommandBus(timeline);
+    bus.apply(
+      domain.AddTimedCaption(id(8), timeline.id, {
+        caption: domain.restoreCaptionTrack({
+          schemaVersion: "1.0.0",
+          id: id(6),
+          createdBy: id(7),
+          assetId: id(3),
+          sourceSha256: "c".repeat(64),
+          sourceDurationUs: "16000000",
+          evidence: { kind: "human-timed", documentSha256: "d".repeat(64), version: "1.0.0" },
+          style: domain.DEFAULT_CAPTION_STYLE,
+          rules,
+          blocks: domain.segmentCaptionWords(spoken, "16000000", rules),
+        }),
+      }),
+    );
+    const saved = JSON.stringify(bus.timeline.toSnapshot());
+    const undone = JSON.stringify(bus.undo().toSnapshot());
+    const redone = JSON.stringify(bus.redo().toSnapshot());
+    const ok = before !== saved && undone === before && redone === saved;
+    return {
+      status: ok ? "PASS" : "FAIL",
+      expected: "undo then redo round-trips the caption snapshot",
+      actual: { restored: undone === before, reapplied: redone === saved },
+    };
+  },
+);
+
 const out = process.argv[2] ?? "/tmp/qa93-clock.json";
 writeReport(out, rows, {
   suite: "clock",

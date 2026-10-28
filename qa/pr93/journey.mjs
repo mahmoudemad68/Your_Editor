@@ -279,14 +279,169 @@ try {
         .click();
       await page.getByRole("status").waitFor({ timeout: 60000 });
       const blocks = Number((await page.getByRole("status").innerText()).split(" ")[0]);
+      const timelineId = await page
+        .getByRole("region", { name: "Timeline" })
+        .getAttribute("data-timeline-id");
+      const readEditor = async () => {
+        const response = await page.request.get(`/api/projects/${projectId}/editor/${timelineId}`);
+        if (!response.ok()) throw new Error(`editor read ${response.status()}`);
+        return (await response.json()).data;
+      };
+      const rangesOf = (data) =>
+        data.timeline.tracks
+          .flatMap((track) => track.clips)
+          .map((clip) => [clip.inPoint, clip.outPoint, clip.timelineStartUs])
+          .sort((a, b) => (BigInt(a[2]) < BigInt(b[2]) ? -1 : BigInt(a[2]) > BigInt(b[2]) ? 1 : 0));
+      const posts = [];
+      page.on("request", (request) => {
+        if (request.method() !== "POST" || !/\/(trim|split)$/.test(request.url())) return;
+        posts.push({ op: request.url().split("/").pop(), body: request.postDataJSON() });
+      });
       await page.getByLabel("Caption highlight color").fill("#00ffff");
+      const session = await page.context().newCDPSession(page);
+      await session.send("Network.enable");
+      await session.send("Network.emulateNetworkConditions", {
+        offline: false,
+        latency: 800,
+        downloadThroughput: -1,
+        uploadThroughput: -1,
+      });
       await page.getByRole("button", { name: "Update caption style", exact: true }).click();
       await page.getByLabel("Trim end (timeline seconds)").fill("12");
       await page.getByRole("button", { name: "Apply trim", exact: true }).click();
       await page.getByLabel("Split at (timeline seconds)").fill("6");
       await page.getByRole("button", { name: "Split clip", exact: true }).click();
       await page.getByRole("button", { name: "Clip 2" }).waitFor({ timeout: 30000 });
+      await session.send("Network.emulateNetworkConditions", {
+        offline: false,
+        latency: 0,
+        downloadThroughput: -1,
+        uploadThroughput: -1,
+      });
+      await session.detach();
+      const raced = rangesOf(await readEditor());
+      const raceOk =
+        JSON.stringify(raced) ===
+        JSON.stringify([
+          ["0", "6000000", "0"],
+          ["6000000", "12000000", "6000000"],
+        ]);
+      const requested = posts.filter(
+        (post) =>
+          (post.op === "trim" && post.body?.endUs === "12000000") ||
+          (post.op === "split" && post.body?.atUs === "6000000"),
+      );
+      if (!raceOk || requested.length < 2) {
+        return {
+          status: "FAIL",
+          expected: "rapid trim 12s and split 6s persist as [0,6s) and [6s,12s)",
+          actual: { raced, posts: posts.map((post) => ({ op: post.op, body: post.body })) },
+        };
+      }
+      await page.getByRole("button", { name: "Clip 2" }).click();
+      await page.getByLabel("Split at (timeline seconds)").fill("8");
+      await page.getByRole("button", { name: "Split clip", exact: true }).click();
+      await page.getByRole("button", { name: "Clip 3" }).waitFor({ timeout: 30000 });
+      const cut = rangesOf(await readEditor());
+      const boundaryOk =
+        JSON.stringify(cut) ===
+        JSON.stringify([
+          ["0", "6000000", "0"],
+          ["6000000", "8000000", "6000000"],
+          ["8000000", "12000000", "8000000"],
+        ]);
+      const splitAtEight = posts.some(
+        (post) => post.op === "split" && post.body?.atUs === "8000000",
+      );
+      if (!boundaryOk || !splitAtEight) {
+        return {
+          status: "FAIL",
+          expected: "explicit 8s split keeps the requested 6s and 12s boundaries",
+          actual: { cut, splitAtEight },
+        };
+      }
+      const edited = await readEditor();
+      const csrf = await page.evaluate(() => {
+        const part = document.cookie
+          .split(";")
+          .find((cookie) => cookie.trim().startsWith("editagent_csrf="));
+        return part ? decodeURIComponent(part.trim().slice("editagent_csrf=".length)) : "";
+      });
+      const postEdit = (operation, data) =>
+        page.request.post(`/api/projects/${projectId}/editor/${timelineId}/${operation}`, {
+          data,
+          headers: {
+            "x-editagent-csrf": csrf,
+            "x-request-id": `req_${randomUUID().replace(/-/g, "")}`,
+          },
+        });
+      const stale = await Promise.all([
+        postEdit("trim", {
+          stateSha256: "a".repeat(64),
+          clipId: edited.timeline.tracks[0].clips[0].id,
+          startUs: "0",
+          endUs: "1000000",
+        }),
+        postEdit("split", {
+          stateSha256: "b".repeat(64),
+          clipId: edited.timeline.tracks[0].clips[0].id,
+          atUs: "1000000",
+        }),
+      ]);
+      const staleLeak = [];
+      for (const response of stale) {
+        const text = await response.text();
+        staleLeak.push(/caption_projection|min_duration|canonical_timeline|at \//.test(text));
+      }
+      const afterStale = await readEditor();
+      const foreign = await page.request.post(
+        `/api/projects/${projectId}/editor/${timelineId}/trim`,
+        {
+          data: {
+            stateSha256: afterStale.stateSha256,
+            clipId: "018fe277-6ec0-7000-8000-000000000099",
+            startUs: "0",
+            endUs: "1000000",
+          },
+        },
+      );
+      const foreignText = await foreign.text();
+      const afterForeign = await readEditor();
+      const controlsOk =
+        stale.map((response) => response.status()).every((status) => status === 409) &&
+        !staleLeak.some(Boolean) &&
+        afterStale.stateSha256 === edited.stateSha256 &&
+        foreign.status() >= 400 &&
+        foreign.status() < 500 &&
+        !/caption_projection|min_duration/.test(foreignText) &&
+        afterForeign.stateSha256 === edited.stateSha256;
+      const staleUndoResponse = page.waitForResponse(
+        (response) => response.url().includes("/undo") && response.request().method() === "POST",
+      );
       await page.getByRole("button", { name: "Undo last caption edit", exact: true }).click();
+      const staleUndo = await staleUndoResponse;
+      const afterUndo = await readEditor();
+      await page.getByLabel("Caption highlight color").fill("#00ff00");
+      await page.getByRole("button", { name: "Update caption style", exact: true }).click();
+      const greenDeadline = Date.now() + 20000;
+      let green = afterUndo;
+      while (Date.now() < greenDeadline) {
+        green = await readEditor();
+        if (green.timeline.captionsV1?.[0]?.style.highlight === "#00ff00") break;
+        await page.waitForTimeout(300);
+      }
+      const freshUndoResponse = page.waitForResponse(
+        (response) => response.url().includes("/undo") && response.request().method() === "POST",
+      );
+      await page.getByRole("button", { name: "Undo last caption edit", exact: true }).click();
+      const freshUndo = await freshUndoResponse;
+      const freshDeadline = Date.now() + 20000;
+      let afterFreshUndo = green;
+      while (Date.now() < freshDeadline) {
+        afterFreshUndo = await readEditor();
+        if (afterFreshUndo.stateSha256 === afterUndo.stateSha256) break;
+        await page.waitForTimeout(300);
+      }
       await page.reload();
       await page.getByRole("status").waitFor();
       execFileSync("docker", ["compose", "restart", "api"], {
@@ -310,12 +465,7 @@ try {
       }
       await page.reload();
       const persisted = await page.getByRole("status").innerText();
-      const timelineId = await page
-        .getByRole("region", { name: "Timeline" })
-        .getAttribute("data-timeline-id");
-      const savedBody = await (
-        await page.request.get(`/api/projects/${projectId}/editor/${timelineId}`)
-      ).json();
+      const savedBody = { data: await readEditor() };
       const savedWords =
         savedBody.data?.timeline?.captionsV1?.[0]?.blocks?.flatMap((block) => block.lines.flat()) ??
         [];
@@ -334,6 +484,44 @@ try {
         if (/^(Completed|Failed|Cancelled)\b/.test(exportStatus)) break;
         await page.waitForTimeout(2000);
       }
+      const reloaded = rangesOf(savedBody.data);
+      const evidence = savedBody.data?.timeline?.captionsV1?.[0]?.evidence?.kind;
+      const boundSource = savedBody.data?.timeline?.captionsV1?.[0]?.sourceSha256;
+      const undoOk =
+        staleUndo.status() === 409 &&
+        JSON.stringify(rangesOf(afterUndo)) === JSON.stringify(cut) &&
+        green.timeline.captionsV1?.[0]?.style.highlight === "#00ff00" &&
+        freshUndo.ok() &&
+        afterFreshUndo.stateSha256 === afterUndo.stateSha256 &&
+        JSON.stringify(reloaded) === JSON.stringify(cut);
+      const overlapClip = savedBody.data.timeline.tracks.flatMap((track) => track.clips)[0];
+      const overlapStart = BigInt(overlapClip.timelineStartUs);
+      const overlapEnds = [overlapStart + 1_000_000n, overlapStart + 2_000_000n];
+      const overlapResponses = await Promise.all(
+        overlapEnds.map((endUs) =>
+          postEdit("trim", {
+            stateSha256: savedBody.data.stateSha256,
+            clipId: overlapClip.id,
+            startUs: overlapClip.timelineStartUs,
+            endUs: String(endUs),
+          }),
+        ),
+      );
+      const overlapNext = await readEditor();
+      const overlapClipNext = overlapNext.timeline.tracks
+        .flatMap((track) => track.clips)
+        .find((clip) => clip.id === overlapClip.id);
+      const overlapEnd = overlapClipNext
+        ? BigInt(overlapClipNext.timelineStartUs) +
+          BigInt(overlapClipNext.outPoint) -
+          BigInt(overlapClipNext.inPoint)
+        : -1n;
+      const overlapStatuses = overlapResponses.map((response) => response.status()).sort();
+      const overlapOk =
+        overlapStatuses[0] >= 200 &&
+        overlapStatuses[0] < 300 &&
+        overlapStatuses[1] === 409 &&
+        overlapEnds.some((endUs) => overlapEnd === endUs);
       if (!exportStatus.startsWith("Completed")) {
         const worker = (() => {
           try {
@@ -419,10 +607,18 @@ try {
             ready,
             blocks,
             hashMatch: savedHash === sourceHash,
+            evidence,
+            sourceBound: boundSource === sourceSha,
             exportStatus,
             worker,
             renderNote,
             failureReason,
+            undoOk,
+            controlsOk,
+            overlapOk,
+            overlapStatuses,
+            raced,
+            cut,
           },
         };
       }
@@ -451,8 +647,9 @@ try {
           [
             "-v",
             "error",
+            "-count_frames",
             "-show_entries",
-            "format=duration:stream=codec_name,codec_type,pix_fmt,width,height,avg_frame_rate,nb_frames",
+            "format=duration:stream=codec_name,codec_type,pix_fmt,width,height,avg_frame_rate,nb_read_frames",
             "-of",
             "json",
             file,
@@ -462,28 +659,55 @@ try {
       );
       const videoStream = probe.streams.find((stream) => stream.codec_type === "video");
       const audioStream = probe.streams.find((stream) => stream.codec_type === "audio");
+      const frameFile = path.join(outDir, "boundary-8s.png");
+      execFileSync("ffmpeg", ["-y", "-ss", "8", "-i", file, "-frames:v", "1", frameFile], {
+        stdio: "ignore",
+      });
+      const frames = Number(videoStream?.nb_read_frames ?? 0);
+      const duration = Number(probe.format?.duration ?? 0);
+      const timingOk =
+        Math.abs(duration - 16) < 0.15 && frames === 400 && videoStream?.avg_frame_rate === "25/1";
       const ok =
         ready &&
         blocks > 0 &&
         savedHash === sourceHash &&
         persisted.includes(String(blocks)) &&
+        evidence === "media-analysis" &&
+        boundSource === sourceSha &&
+        undoOk &&
+        controlsOk &&
+        overlapOk &&
         playback.width === 640 &&
         playback.height === 360 &&
+        playback.current > 0 &&
         videoStream?.codec_name === "h264" &&
         (videoStream.pix_fmt === "yuv420p" || videoStream.pix_fmt === "yuvj420p") &&
         audioStream?.codec_name === "aac" &&
-        media.ok();
+        timingOk &&
+        media.ok() &&
+        !exportStatus.includes("Invalid timeline render contract");
       return {
         status: ok ? "PASS" : "FAIL",
-        expected: "persisted words, H.264/AAC playback",
+        expected: "16s 640x360 H.264/AAC 25fps 400-frame export with stable source words",
         actual: {
           blocks,
           ready,
           hashMatch: savedHash === sourceHash,
+          evidence,
+          sourceBound: boundSource === sourceSha,
+          undoOk,
+          controlsOk,
+          overlapOk,
+          overlapStatuses,
           playback,
+          duration,
+          frames,
           video: videoStream,
           audio: audioStream?.codec_name,
           exportSha: sha256(readFileSync(file)),
+          frameSha: sha256(readFileSync(frameFile)),
+          raced,
+          cut,
         },
       };
     },

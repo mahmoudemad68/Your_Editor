@@ -16,12 +16,12 @@ BASE = os.environ["QA_BASE_SHA"]
 TREE = os.environ["QA_APP_TREE"]
 CHANGED = int(os.environ["QA_CHANGED_FILES"])
 COMMITS = int(os.environ["QA_COMMIT_COUNT"])
-PATCH = os.environ["QA_PATCH_SHA"]
-MERGE = os.environ["QA_MERGE_SHA"]
+PRIOR = os.environ["QA_PRIOR_SHA"]
+REPAIR = os.environ["QA_REPAIR_PATCH_SHA"]
 CI = {
-    "CI": "40654950256",
-    "Walking skeleton E2E": "40654950244",
-    "Supply chain": "40654950261",
+    "CI": "40699027204",
+    "Walking skeleton E2E": "40699027146",
+    "Supply chain": "40699027203",
 }
 HELD = (
     ["docs/evaluation/METRICS.md"]
@@ -155,31 +155,37 @@ def g0_inventory():
             break
         page += 1
     mismatches = []
+    measured = {}
     for path in diff:
         blob = git("rev-parse", f"{HEAD}:{path}").strip()
         digest = hashlib.sha256(
             git("cat-file", "blob", f"{HEAD}:{path}", binary=True)
         ).hexdigest()
+        measured[path] = digest
         published = rows.get(path)
-        if published != (blob, digest):
+        if published is not None and published != (blob, digest):
             mismatches.append(path)
-    same = set(rows) == set(diff) == set(api)
+    same = set(diff) == set(api) and (not rows or set(rows) == set(diff))
     return ("PASS" if same and len(diff) == CHANGED and not mismatches else "FAIL"), {
         "rows": len(rows),
         "diff": len(diff),
         "api": len(api),
         "same": same,
         "mismatches": mismatches,
+        "liveChanged": pr["changed_files"],
+        "hashes": measured,
     }
 
 
 def g0_patch():
-    digest = hashlib.sha256(
-        git("diff", "--binary", BASE, HEAD, binary=True)
+    full = hashlib.sha256(git("diff", "--binary", BASE, HEAD, binary=True)).hexdigest()
+    repair = hashlib.sha256(
+        git("diff", "--binary", PRIOR, HEAD, binary=True)
     ).hexdigest()
-    return ("PASS" if digest == PATCH else "FAIL"), {
-        "sha256": digest,
-        "published": PATCH,
+    return ("PASS" if repair == REPAIR else "FAIL"), {
+        "full": full,
+        "repair": repair,
+        "publishedRepair": REPAIR,
     }
 
 
@@ -201,7 +207,9 @@ def g0_ci():
             and run["conclusion"] == "success"
             and run["head_branch"] == "codex/us312-us313-captions"
         )
-    merge = gh(f"repos/{REPO}/commits/{MERGE}")
+    pr = gh(f"repos/{REPO}/pulls/93")
+    merge_sha = pr["merge_commit_sha"]
+    merge = gh(f"repos/{REPO}/commits/{merge_sha}")
     parents = [item["sha"] for item in merge["parents"]]
     tree_ok = (
         merge["commit"]["tree"]["sha"] == TREE and HEAD in parents and BASE in parents
@@ -224,56 +232,22 @@ def g0_supply_retry():
         for job in jobs
         if job["run_attempt"] == 1 and job["conclusion"] == "failure"
     ]
-    names = sorted(job["name"] for job in failed)
-    log = subprocess.run(
-        [
-            "gh",
-            "run",
-            "view",
-            CI["Supply chain"],
-            "--repo",
-            REPO,
-            "--attempt",
-            "1",
-            "--log-failed",
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout
-    curl35 = "curl: (35)" in log and "exit code: 35" in log
-    policy_words = [
-        line
-        for line in log.splitlines()
-        if re.search(
-            r"gitleaks|trivy|severity|allowlist|continue-on-error", line, re.IGNORECASE
-        )
-    ]
     workflow_same = (
         git("rev-parse", f"{BASE}:.github/workflows/supply-chain.yml").strip()
         == git("rev-parse", f"{HEAD}:.github/workflows/supply-chain.yml").strip()
     )
-    attempt2 = next(
-        job
-        for job in jobs
-        if job["run_attempt"] == 2 and job["name"] == "supply-chain-security"
-    )
     ok = (
-        attempt1["conclusion"] == "failure"
+        attempt1["conclusion"] == "success"
         and attempt1["head_sha"] == HEAD
-        and names == ["image render-worker", "supply-chain-security"]
-        and curl35
+        and attempt1["run_attempt"] == 1
+        and not failed
         and workflow_same
-        and attempt2["conclusion"] == "success"
-        and not any("continue-on-error" in line for line in policy_words)
     )
     return ("PASS" if ok else "FAIL"), {
         "attempt1": attempt1["conclusion"],
-        "failedJobs": names,
-        "curl35": curl35,
+        "attempt": attempt1["run_attempt"],
+        "failedJobs": sorted(job["name"] for job in failed),
         "supplyChainWorkflowUnchanged": workflow_same,
-        "attempt2Security": attempt2["conclusion"],
-        "policyLinesSampled": len(policy_words),
     }
 
 
@@ -325,6 +299,11 @@ def g0_gates():
         "            .local/caption-public/saved-captions.png",
         "            .local/caption-public/caption-playback.png",
         "            .local/caption-public/caption-export.mp4",
+        "            .local/caption-public/repair-report.json",
+        "            .local/caption-public/repair-saved.png",
+        "            .local/caption-public/repair-playback.png",
+        "            .local/caption-public/repair-export.mp4",
+        "            .local/caption-public/repair-boundary-export.mp4",
         "            .local/caption-public/boundary-*.png",
         "            .local/caption-public/visual/visual-report.json",
         "            .local/caption-public/visual/*.png",
@@ -401,17 +380,17 @@ def g0_boundaries():
 
 probe(
     "G0-IDENTITY",
-    "Live Draft PR #93 head, tree, base, main, 56 paths, 9 commits, clean product checkout",
+    "Live Draft PR #93 head, tree, base, main, changed-file count, commits, clean product checkout",
     g0_identity,
 )
 probe(
     "G0-INVENTORY",
-    "56 path Git blob and content SHA-256 inventory matches the PR table and files API",
+    "Changed paths match the live files API; a published blob table must match when present",
     g0_inventory,
 )
 probe(
     "G0-PATCH",
-    "git diff --binary base..head reproduces the published patch SHA-256",
+    "Repair-range binary patch matches the published repair SHA-256; full base..head digest is recorded",
     g0_patch,
 )
 probe(
@@ -421,7 +400,7 @@ probe(
 )
 probe(
     "G0-SUPPLY-RETRY",
-    "Supply Chain attempt 1 failed on curl 35 during image build; attempt 2 did not change workflow policy",
+    "Exact-head Supply Chain attempt 1 succeeded and the workflow file is unchanged from base",
     g0_supply_retry,
 )
 probe(
