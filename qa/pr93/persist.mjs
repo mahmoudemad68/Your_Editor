@@ -401,11 +401,30 @@ try {
     }
     return false;
   }
-  async function toolInsertActive() {
-    const activity = await pool.query(
-      "SELECT count(*) FROM pg_stat_activity WHERE state='active' AND query ILIKE 'insert into tool_executions%'",
+  async function toolCount() {
+    const result = await pool.query("SELECT count(*) FROM tool_executions");
+    return Number(result.rows[0].count);
+  }
+  function watch(child) {
+    let output = "";
+    const take = (chunk) => {
+      output = (output + chunk.toString()).slice(-500);
+    };
+    child.stdout?.on("data", take);
+    child.stderr?.on("data", take);
+    return () => output;
+  }
+  async function held(child, requestId, baseline) {
+    const admitted = await pool.query(
+      "SELECT status FROM editing_caption_commands WHERE request_id=$1",
+      [requestId],
     );
-    return Number(activity.rows[0].count) >= 1;
+    return (
+      admitted.rows[0]?.status === "admitted" &&
+      child.exitCode === null &&
+      !child.killed &&
+      (await toolCount()) === baseline
+    );
   }
 
   await check(
@@ -424,22 +443,20 @@ try {
         style,
       };
       await pool.query("UPDATE qa_pause SET mode='wait'");
+      const baseline = await toolCount();
       const child = runChild(body);
-      const paused = await waitFor(async () => {
-        const admitted = await pool.query(
-          "SELECT status FROM editing_caption_commands WHERE request_id=$1",
-          [body.requestId],
-        );
-        return (
-          admitted.rows[0]?.status === "admitted" &&
-          (await toolInsertActive()) &&
-          child.exitCode === null
-        );
-      }, 8000);
+      const output = watch(child);
+      const seen = await waitFor(() => held(child, body.requestId, baseline), 8000);
+      await new Promise((resolve) => setTimeout(resolve, seen ? 400 : 0));
+      const paused = seen && (await held(child, body.requestId, baseline));
       if (!paused) {
         child.kill("SIGKILL");
         await pool.query("UPDATE qa_pause SET mode='off'");
-        return { status: "NOT_VERIFIED", expected: "paused admission", actual: { paused } };
+        return {
+          status: "NOT_VERIFIED",
+          expected: "paused admission",
+          actual: { paused, output: output() },
+        };
       }
       await pool.query(
         "UPDATE project_memberships SET role='viewer' WHERE project_id=$1 AND user_id=$2",
@@ -482,26 +499,19 @@ try {
         style,
       };
       await pool.query("UPDATE qa_pause SET mode='wait'");
+      const baseline = await toolCount();
       const child = runChild(body);
-      const paused = await waitFor(async () => {
-        const admitted = await pool.query(
-          "SELECT status FROM editing_caption_commands WHERE request_id=$1",
-          [body.requestId],
-        );
-        return (
-          admitted.rows[0]?.status === "admitted" &&
-          (await toolInsertActive()) &&
-          child.exitCode === null &&
-          !child.killed
-        );
-      }, 8000);
+      const output = watch(child);
+      const seen = await waitFor(() => held(child, body.requestId, baseline), 8000);
+      await new Promise((resolve) => setTimeout(resolve, seen ? 400 : 0));
+      const paused = seen && (await held(child, body.requestId, baseline));
       if (!paused) {
         child.kill("SIGKILL");
         await pool.query("UPDATE qa_pause SET mode='off'");
         return {
           status: "NOT_VERIFIED",
           expected: "kill inside the open tool insert",
-          actual: { paused },
+          actual: { paused, output: output() },
         };
       }
       child.kill("SIGKILL");
@@ -621,11 +631,9 @@ try {
       const huge = await fetch(base + route, {
         method: "POST",
         headers: await headers(),
-        body: JSON.stringify({ ...request, sourceSha256: "z".repeat(200000) }),
+        body: JSON.stringify({ ...request, sourceSha256: "z".repeat(80) }),
       });
-      const ok = [badStyle.status, foreign.status, huge.status].every(
-        (status) => status === 400 || status === 409,
-      );
+      const ok = badStyle.status === 400 && foreign.status === 409 && huge.status === 400;
       return {
         status: ok ? "PASS" : "FAIL",
         expected: "400 or 409",

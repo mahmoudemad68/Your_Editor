@@ -102,7 +102,8 @@ await check(
 
 const browser = await chromium.launch({ executablePath: chrome, args: ["--no-sandbox"] });
 try {
-  const page = await browser.newPage();
+  const context = await browser.newContext({ baseURL: "http://127.0.0.1:3000" });
+  const page = await context.newPage();
   const email = `qa93-${randomUUID()}@example.test`;
   const password = `Qa93-${randomUUID()}!`;
   let projectId = "";
