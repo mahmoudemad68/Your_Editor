@@ -1,0 +1,339 @@
+# Independent QA for Draft PR #93. This workflow lives only on qa/pr93-09745c0.
+# The product tree is checked out at the pinned SHA. QA code is never copied into it.
+name: QA PR93 independent
+
+on:
+  push:
+    branches: [qa/pr93-09745c0]
+
+permissions:
+  actions: read
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: qa-pr93
+  cancel-in-progress: false
+
+env:
+  QA_APP_SHA: 09745c0b456aa17195ac815c13d1ad18f0921db4
+  QA_APP_TREE: 02f1369228892b14a140e23a3f98cb867bf9859e
+  QA_BASE_SHA: 8ccaac7ab4f86b0382ee53f729bc70c90afeb704
+  QA_CHANGED_FILES: "56"
+  QA_COMMIT_COUNT: "9"
+  QA_PATCH_SHA: 8806f79416f509d535a5b6f7d3ef2065dfa96cef3c5c5942efc9d3e516ada69b
+  QA_MERGE_SHA: 93d0627451732b1136e8f9b51f3c5ebe7f0d64a8
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  provenance:
+    name: G0 provenance
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Freeze check
+        run: gh api repos/${{ github.repository }}/pulls/93 --jq '[.state,.draft,.head.sha,.base.sha,.changed_files] | @tsv' | grep -qx $'open\ttrue\t09745c0b456aa17195ac815c13d1ad18f0921db4\t8ccaac7ab4f86b0382ee53f729bc70c90afeb704\t56'
+      - uses: actions/checkout@v7
+        with:
+          ref: 09745c0b456aa17195ac815c13d1ad18f0921db4
+          path: app
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          path: qa-src
+          sparse-checkout: qa/pr93
+          persist-credentials: false
+      - name: Prove product identity
+        run: |
+          test "$(git -C app rev-parse HEAD)" = "$QA_APP_SHA"
+          test "$(git -C app rev-parse HEAD^{tree})" = "$QA_APP_TREE"
+          test -z "$(git -C app status --porcelain)"
+      - name: Gate 0
+        run: python3 qa-src/qa/pr93/gate0.py app qa-out/provenance.json
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: qa93-provenance-${{ github.run_id }}
+          path: qa-out
+          retention-days: 14
+
+  domain:
+    name: G1 clock and G2 tool manifests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Freeze check
+        run: gh api repos/${{ github.repository }}/pulls/93 --jq .head.sha | grep -qx "$QA_APP_SHA"
+      - uses: actions/checkout@v7
+        with:
+          ref: 09745c0b456aa17195ac815c13d1ad18f0921db4
+          path: app
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          path: qa-src
+          sparse-checkout: qa/pr93
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: app/package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: app/.nvmrc
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+      - name: Build domain, schemas, and tool SDK from the pinned product
+        working-directory: app
+        run: pnpm install --frozen-lockfile && pnpm --filter @editagent/tool-sdk... build
+      - name: Clock and tool probes
+        env:
+          QA_APP_ROOT: ${{ github.workspace }}/app
+        run: |
+          node qa-src/qa/pr93/clock.mjs qa-out/clock.json
+          node qa-src/qa/pr93/tools.mjs qa-out/tools.json
+      - name: Fail closed
+        if: always()
+        run: |
+          node qa-src/qa/pr93/gate.mjs qa-out/clock.json
+          node qa-src/qa/pr93/gate.mjs qa-out/tools.json
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: qa93-domain-${{ github.run_id }}
+          path: qa-out
+          retention-days: 14
+
+  visual:
+    name: G1 Remotion and H.264
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Freeze check
+        run: gh api repos/${{ github.repository }}/pulls/93 --jq .head.sha | grep -qx "$QA_APP_SHA"
+      - uses: actions/checkout@v7
+        with:
+          ref: 09745c0b456aa17195ac815c13d1ad18f0921db4
+          path: app
+          persist-credentials: false
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          path: qa-src
+          sparse-checkout: qa/pr93
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: app/package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: app/.nvmrc
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+      - name: Fonts, FFmpeg, Chrome, and the pinned renderer
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fonts-dejavu-core
+          (cd app && sh tools/test/ensure-ffmpeg.sh && sh tools/test/ensure-chrome.sh)
+          (cd app && pnpm install --frozen-lockfile && pnpm --filter @editagent/render-worker... build && pnpm --filter @editagent/web... exec playwright --version)
+      - name: Visual probes
+        env:
+          QA_APP_ROOT: ${{ github.workspace }}/app
+          QA_VISUAL_DIR: ${{ github.workspace }}/qa-out/visual
+          CHROME_PATH: /opt/google/chrome/chrome
+        run: node qa-src/qa/pr93/visual.mjs qa-out/visual.json
+      - name: Fail closed
+        if: always()
+        run: node qa-src/qa/pr93/gate.mjs qa-out/visual.json
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: qa93-visual-${{ github.run_id }}
+          path: |
+            qa-out/visual.json
+            qa-out/visual/native-2.png
+            qa-out/visual/native-5.png
+            qa-out/visual/static-caption.png
+            qa-out/visual/caption-sync.mp4
+          if-no-files-found: warn
+          retention-days: 14
+
+  persist:
+    name: G2 PostgreSQL durability
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
+        env:
+          POSTGRES_USER: editagent
+          POSTGRES_PASSWORD: editagent-dev-password
+          POSTGRES_DB: editagent
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U editagent -d editagent"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      redis:
+        image: redis:7.4-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgresql://editagent:editagent-dev-password@127.0.0.1:5432/editagent
+      REDIS_URL: redis://127.0.0.1:6379/15
+    steps:
+      - name: Freeze check
+        run: gh api repos/${{ github.repository }}/pulls/93 --jq .head.sha | grep -qx "$QA_APP_SHA"
+      - uses: actions/checkout@v7
+        with:
+          ref: 09745c0b456aa17195ac815c13d1ad18f0921db4
+          path: app
+          persist-credentials: false
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          path: qa-src
+          sparse-checkout: qa/pr93
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: app/package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: app/.nvmrc
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+      - name: Build the pinned API
+        working-directory: app
+        run: pnpm install --frozen-lockfile && pnpm --filter @editagent/api... build
+      - name: Persistence probes
+        env:
+          QA_APP_ROOT: ${{ github.workspace }}/app
+        run: node qa-src/qa/pr93/persist.mjs qa-out/persist.json
+      - name: Fail closed
+        if: always()
+        run: node qa-src/qa/pr93/gate.mjs qa-out/persist.json G2-MIGRATION-DOWN
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: qa93-persist-${{ github.run_id }}
+          path: qa-out
+          retention-days: 14
+
+  journey:
+    name: G3 real services and browser
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: Freeze check
+        run: gh api repos/${{ github.repository }}/pulls/93 --jq .head.sha | grep -qx "$QA_APP_SHA"
+      - uses: actions/checkout@v7
+        with:
+          ref: 09745c0b456aa17195ac815c13d1ad18f0921db4
+          path: app
+          lfs: true
+          persist-credentials: false
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          path: qa-src
+          sparse-checkout: qa/pr93
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: app/package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: app/.nvmrc
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+      - name: Host tools and pinned schemas
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc || true
+          (cd app && sh tools/test/ensure-ffmpeg.sh && sh tools/test/ensure-chrome.sh)
+          (cd app && pnpm install --frozen-lockfile && pnpm --filter @editagent/schemas... build)
+      - name: Start real PostgreSQL, Redis, SeaweedFS, API, workers, and render
+        env:
+          QA_HARNESS: ${{ github.workspace }}/qa-src/qa/pr93
+          QA_OUT: ${{ github.workspace }}/qa-out
+        run: sh qa-src/qa/pr93/stack.sh "$GITHUB_WORKSPACE/app"
+      - name: Browser journey
+        env:
+          QA_APP_ROOT: ${{ github.workspace }}/app
+          QA_JOURNEY_DIR: ${{ github.workspace }}/qa-out/journey
+          CHROME_PATH: /opt/google/chrome/chrome
+          COMPOSE_PROJECT_NAME: qa93
+        run: node qa-src/qa/pr93/journey.mjs qa-out/journey.json
+      - name: Fail closed
+        if: always()
+        run: node qa-src/qa/pr93/gate.mjs qa-out/journey.json
+      - name: Stop the stack
+        if: always()
+        working-directory: app
+        run: COMPOSE_PROJECT_NAME=qa93 docker compose down -v --remove-orphans || true
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: qa93-journey-${{ github.run_id }}
+          path: |
+            qa-out/journey.json
+            qa-out/journey/export.mp4
+            qa-out/render-version.txt
+          if-no-files-found: warn
+          retention-days: 14
+
+  gate:
+    name: G4 fail-closed self-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          sparse-checkout: qa/pr93
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22.23.2"
+      - name: Inject failing statuses
+        run: node qa/pr93/selftest.mjs qa-out/selftest.json
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: qa93-gate-${{ github.run_id }}
+          path: qa-out
+          retention-days: 14
+
+  aggregate:
+    name: Fail-closed aggregate
+    runs-on: ubuntu-latest
+    needs: [provenance, domain, visual, persist, journey, gate]
+    if: always()
+    timeout-minutes: 10
+    steps:
+      - name: Require every QA job and an unchanged Draft head
+        env:
+          PROVENANCE: ${{ needs.provenance.result }}
+          DOMAIN: ${{ needs.domain.result }}
+          VISUAL: ${{ needs.visual.result }}
+          PERSIST: ${{ needs.persist.result }}
+          JOURNEY: ${{ needs.journey.result }}
+          GATE: ${{ needs.gate.result }}
+        run: |
+          set -eu
+          printf '%s\n' "$PROVENANCE" "$DOMAIN" "$VISUAL" "$PERSIST" "$JOURNEY" "$GATE"
+          test "$PROVENANCE" = success
+          test "$DOMAIN" = success
+          test "$VISUAL" = success
+          test "$PERSIST" = success
+          test "$JOURNEY" = success
+          test "$GATE" = success
+          gh api repos/${{ github.repository }}/pulls/93 --jq '[.state,.draft,.head.sha,.base.sha] | @tsv' | grep -qx $'open\ttrue\t09745c0b456aa17195ac815c13d1ad18f0921db4\t8ccaac7ab4f86b0382ee53f729bc70c90afeb704'

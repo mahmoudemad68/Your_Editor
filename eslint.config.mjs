@@ -56,6 +56,21 @@ export default tseslint.config(
     },
   },
   {
+    files: ["qa/pr93/**/*.mjs"],
+    languageOptions: {
+      globals: {
+        AbortController: "readonly",
+        Buffer: "readonly",
+        URL: "readonly",
+        console: "readonly",
+        document: "readonly",
+        fetch: "readonly",
+        process: "readonly",
+        setTimeout: "readonly",
+      },
+    },
+  },
+  {
     files: ["tests/**/*.mjs"],
     languageOptions: {
       globals: {
