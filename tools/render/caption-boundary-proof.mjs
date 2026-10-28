@@ -31,6 +31,7 @@ export async function captionBoundaryProof(root, directory, privateDir, exported
     c.lines.flat().map((w, i, a) => ({ caption: c, word: w, index: i, count: a.length })),
   );
   const selected = [
+    all.find((x) => x.index === 0 && BigInt(x.word.startUs) < 8000000n),
     all.find(
       (x) =>
         x.index > 0 &&
@@ -47,8 +48,9 @@ export async function captionBoundaryProof(root, directory, privateDir, exported
     ),
   ];
   await progress("select-native-boundary-words", {
-    englishCandidate: Boolean(selected[0]),
-    arabicCandidate: Boolean(selected[1]),
+    initialEnglishCandidate: Boolean(selected[0]),
+    englishCandidate: Boolean(selected[1]),
+    arabicCandidate: Boolean(selected[2]),
   });
   assert.ok(selected.every(Boolean), "Missing a measurable interior word in either source portion");
   const pixels = (file) =>
@@ -77,6 +79,7 @@ export async function captionBoundaryProof(root, directory, privateDir, exported
       // Independent integer ceiling for this exact 25fps output clock.
       const first = Number((BigInt(word.startUs) + 39999n) / 40000n),
         end = Number((BigInt(word.endUs) + 39999n) / 40000n);
+      assert.ok(end > first, "Selected native word has no sampled output frame");
       const props = {
         width: 360,
         height: 640,
@@ -123,7 +126,9 @@ export async function captionBoundaryProof(root, directory, privateDir, exported
       });
       assert.ok(mask.length > 4, "Native active-word reference has no visible pixels");
       const measurements = [];
-      for (const frame of [first - 1, first, first + 1, end - 1, end]) {
+      for (const frame of [...new Set([first - 1, first, first + 1, end - 1, end])].filter(
+        (f) => f >= 0 && f < 400,
+      )) {
         const file = path.join(directory, `boundary-${part}-${frame}.png`);
         execFileSync(
           "ffmpeg",
@@ -183,7 +188,8 @@ export async function captionBoundaryProof(root, directory, privateDir, exported
       assert.equal(observedStart - first, 0);
       assert.equal(observedEnd - end, 0);
       rows.push({
-        sourcePart: part === 0 ? "licensed-en" : "licensed-ar",
+        sourcePart: ["licensed-en-initial", "licensed-en", "licensed-ar"][part],
+        beforeFrameAvailable: first > 0,
         wordIndex: index,
         nativeStartUs: word.startUs,
         nativeEndUs: word.endUs,

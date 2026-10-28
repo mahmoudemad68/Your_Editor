@@ -7,6 +7,7 @@ import path from "node:path";
 import process from "node:process";
 import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
+import { captionPortalRegression } from "./caption-portal-regression.mjs";
 
 export async function captionVisualProof(root, directory, privateDir) {
   const require = createRequire(path.join(root, "workers/render-worker/package.json"));
@@ -28,12 +29,16 @@ export async function captionVisualProof(root, directory, privateDir) {
   const webRequire = createRequire(path.join(root, "apps/web/package.json"));
   let referenceBrowser;
   const referenceCache = new Map();
+  let portalRegression;
   try {
     await mkdir(privateDir, { recursive: true });
     referenceBrowser = await webRequire("@playwright/test").chromium.launch({
       executablePath: process.env.PLAYWRIGHT_CHROME_EXECUTABLE ?? "/opt/google/chrome/chrome",
-      args: ["--no-sandbox"],
+      // Match Remotion's raster profile, while keeping the DOM reference and
+      // expected word indices independent of the production component.
+      args: ["--no-sandbox", "--font-render-hinting=none", "--force-color-profile=srgb"],
     });
+    portalRegression = await captionPortalRegression(referenceBrowser, server.serveUrl);
     const referenceContext = await referenceBrowser.newContext({
       offline: true,
       deviceScaleFactor: 1,
@@ -96,7 +101,7 @@ export async function captionVisualProof(root, directory, privateDir) {
           { zone, active },
         );
         const file = path.join(privateDir, `native-reference-${preset}-${active}.png`);
-        await page.screenshot({ path: file });
+        await page.screenshot({ path: file, omitBackground: true });
         const pixels = execFileSync(
           "ffmpeg",
           [
@@ -362,6 +367,7 @@ export async function captionVisualProof(root, directory, privateDir) {
           evidence:
             "synthetic component timing; actual Remotion/browser pixels; not speech annotation accuracy",
           profiles: rows,
+          portalRegression,
         },
         null,
         2,

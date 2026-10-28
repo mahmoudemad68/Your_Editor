@@ -1,5 +1,5 @@
 import React, { useLayoutEffect, useRef } from "react";
-import { useCurrentFrame } from "remotion";
+import { useCurrentFrame, useDelayRender } from "remotion";
 import { captionWordAtFrame, safeCaptionZone, type ProjectedCaptionV1 } from "@editagent/domain";
 import { UnicodeText } from "./unicode-text.js";
 
@@ -30,50 +30,95 @@ export const WordCaption: React.FC<WordCaptionPropsV1> = (p) => {
   const display = c.lines.map((l) => l.map((w) => w.text.trim()).join(" ")).join("\n");
   const zone = safeCaptionZone(p.width, p.height, c.style);
   const name = `caption-${c.captionId}-${c.sourceClipId}`;
+  const { delayRender, continueRender, cancelRender } = useDelayRender();
+  // Remotion initially mounts in an off-screen portal. Moving that DOM subtree
+  // collapses live Range endpoints into its old container, without a React
+  // render. Observe placement as well as commits, and block capture until bound.
   useLayoutEffect(() => {
     const root = ref.current,
       browser = window as unknown as HighlightWindow;
     if (!root) return;
-    const bounds = root.getBoundingClientRect(),
-      zoneBounds = root.parentElement!.getBoundingClientRect();
-    if (
-      root.scrollWidth > root.clientWidth + 1 ||
-      root.scrollHeight > root.clientHeight + 1 ||
-      bounds.left < zoneBounds.left - 0.5 ||
-      bounds.top < zoneBounds.top - 0.5 ||
-      bounds.right > zoneBounds.right + 0.5 ||
-      bounds.bottom > zoneBounds.bottom + 0.5
-    )
-      throw new Error("Caption layout exceeds its safe zone.");
-    if (!browser.Highlight || !browser.CSS?.highlights)
-      throw new Error("Native caption highlighting is unsupported.");
-    browser.CSS.highlights.delete(name);
-    if (active < 0) return;
-    let start = 0;
-    for (let i = 0; i < active; i++) start += words[i]!.text.trim().length + 1;
-    const stop = start + words[active]!.text.trim().length;
-    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT),
-      range = document.createRange();
-    let offset = 0,
-      begun = false,
-      complete = false;
-    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-      const end = offset + (node.textContent?.length ?? 0);
-      if (!begun && start >= offset && start < end) {
-        range.setStart(node, start - offset);
-        begun = true;
+    const handle = delayRender("Caption DOM placement");
+    let released = false;
+    const release = () => {
+      if (!released) {
+        released = true;
+        continueRender(handle);
       }
-      if (begun && stop <= end) {
-        range.setEnd(node, stop - offset);
-        complete = true;
-        break;
+    };
+    const observer = new MutationObserver(() => bind());
+    const bind = () => {
+      try {
+        const bounds = root.getBoundingClientRect(),
+          zoneBounds = root.parentElement!.getBoundingClientRect();
+        // The renderer's preparation portal is outside the capture viewport. Its
+        // eventual move triggers the observer; no wall-clock delay or time shift.
+        if (
+          !root.isConnected ||
+          zoneBounds.bottom <= 0 ||
+          zoneBounds.right <= 0 ||
+          zoneBounds.top >= window.innerHeight ||
+          zoneBounds.left >= window.innerWidth
+        )
+          return;
+        if (
+          root.scrollWidth > root.clientWidth + 1 ||
+          root.scrollHeight > root.clientHeight + 1 ||
+          bounds.left < zoneBounds.left - 0.5 ||
+          bounds.top < zoneBounds.top - 0.5 ||
+          bounds.right > zoneBounds.right + 0.5 ||
+          bounds.bottom > zoneBounds.bottom + 0.5
+        )
+          throw new Error("Caption layout exceeds its safe zone.");
+        if (!browser.Highlight || !browser.CSS?.highlights)
+          throw new Error("Native caption highlighting is unsupported.");
+        browser.CSS.highlights.delete(name);
+        if (active < 0) {
+          release();
+          return;
+        }
+        let start = 0;
+        for (let i = 0; i < active; i++) start += words[i]!.text.trim().length + 1;
+        const stop = start + words[active]!.text.trim().length;
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT),
+          range = document.createRange();
+        let offset = 0,
+          begun = false,
+          complete = false;
+        for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+          const end = offset + (node.textContent?.length ?? 0);
+          if (!begun && start >= offset && start < end) {
+            range.setStart(node, start - offset);
+            begun = true;
+          }
+          if (begun && stop <= end) {
+            range.setEnd(node, stop - offset);
+            complete = true;
+            break;
+          }
+          offset = end;
+        }
+        if (!complete) throw new Error("Caption text range differs from its timed words.");
+        browser.CSS.highlights.set(name, new browser.Highlight(range));
+        release();
+      } catch (error) {
+        observer.disconnect();
+        cancelRender(error instanceof Error ? error : new Error("Caption placement failed."));
+        release();
       }
-      offset = end;
-    }
-    if (!complete) throw new Error("Caption text range differs from its timed words.");
-    browser.CSS.highlights.set(name, new browser.Highlight(range));
-    return () => browser.CSS.highlights.delete(name);
-  }, [active, display, name]);
+    };
+    observer.observe(document.documentElement, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+    });
+    bind();
+    return () => {
+      observer.disconnect();
+      browser.CSS?.highlights?.delete(name);
+      release();
+    };
+  });
   const rate = {
     numerator: BigInt(p.frameRate.numerator),
     denominator: BigInt(p.frameRate.denominator),

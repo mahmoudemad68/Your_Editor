@@ -107,8 +107,11 @@ test("bilingual upload → real analysis → caption tools → undo/edit/reload 
     await expect
       .poll(async () => (await read()).timeline.captionsV1?.[0]?.style.highlight)
       .toBe("#00ff00");
+    await page.reload();
+    await expect(page.getByLabel("Caption highlight color")).toHaveValue("#00ff00");
     await page.getByRole("button", { name: "Undo last caption edit", exact: true }).click();
     await expect.poll(async () => (await read()).stateSha256).toBe(captionHash);
+    await expect(page.getByLabel("Caption highlight color")).toHaveValue("#ffff00");
     // Choose a real inter-block frame boundary, never guess a lexical timestamp.
     let splitFrame: number | null = null;
     for (let i = 0; i < caption.blocks.length - 1; i++) {

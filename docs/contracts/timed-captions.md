@@ -116,6 +116,12 @@ admission check, not a substitute for visual proof.
 Arabic shaping uses a continuous Unicode text stream. The native CSS Highlight
 API paints an active DOM Range without inserting a span at every word boundary.
 Emoji runs reuse the existing UnicodeText fallback.
+Remotion moves its preparation portal into the capture canvas after initial
+mount. Live Range endpoints collapse when that subtree moves. The component
+observes DOM placement and rebinds the range before releasing Remotion capture
+readiness, including captures starting directly on an active word. React commits
+and later DOM moves also refresh the binding. Existing render-readiness timeouts
+remain in force; no clock offset or arbitrary sleep is used.
 Oversized grapheme clusters and excessive combining-mark stacks are refused;
 ordinary Arabic diacritics and emoji ZWJ clusters stay intact. Actual layout must
 fit the selected zone at runtime; overflow is contained defensively and is not

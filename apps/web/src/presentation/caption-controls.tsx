@@ -33,31 +33,47 @@ export function CaptionControls({
   const existing = stored.timeline.captionsV1?.find((c) => c.assetId === assetId);
   const [busy, setBusy] = useState(false),
     [error, setError] = useState<string | null>(null);
-  const [highlight, setHighlight] = useState("#ffff00"),
-    [direction, setDirection] = useState<CaptionStyle["direction"]>("auto");
-  const [preset, setPreset] = useState<CaptionStyle["preset"]>(
+  const defaultPreset: CaptionStyle["preset"] =
     stored.timeline.composition.height > stored.timeline.composition.width
       ? "vertical"
       : stored.timeline.composition.height === stored.timeline.composition.width
         ? "square"
-        : "landscape",
-  );
+        : "landscape";
+  const [highlight, setHighlight] = useState(existing?.style.highlight ?? "#ffff00"),
+    [direction, setDirection] = useState<CaptionStyle["direction"]>(
+      existing?.style.direction ?? "auto",
+    ),
+    [preset, setPreset] = useState<CaptionStyle["preset"]>(existing?.style.preset ?? defaultPreset);
+  useEffect(() => {
+    setHighlight(existing?.style.highlight ?? "#ffff00");
+    setDirection(existing?.style.direction ?? "auto");
+    setPreset(existing?.style.preset ?? defaultPreset);
+  }, [
+    assetId,
+    existing?.id,
+    existing?.style.highlight,
+    existing?.style.direction,
+    existing?.style.preset,
+    defaultPreset,
+  ]);
   const active = useRef(false);
   const activeController = useRef<AbortController | null>(null);
   useEffect(() => () => activeController.current?.abort(), []);
   const base = `/api/projects/${encodeURIComponent(projectId)}/editor/${encodeURIComponent(stored.timeline.id)}/captions`;
   const style: CaptionStyle = {
-    color: "#ffffff",
-    background: "#000000",
+    ...(existing?.style ?? {
+      color: "#ffffff",
+      background: "#000000",
+      outline: "#000000",
+      outlinePx: 0,
+      shadowPx: 1,
+      font: "DejaVu Sans",
+      fontSize: Math.max(8, Math.min(48, Math.floor(stored.timeline.composition.width * 0.028))),
+      marginPermille: 0,
+    }),
     highlight,
-    outline: "#000000",
-    outlinePx: 0,
-    shadowPx: 1,
-    font: "DejaVu Sans",
-    fontSize: Math.max(8, Math.min(48, Math.floor(stored.timeline.composition.width * 0.028))),
     direction,
     preset,
-    marginPermille: 0,
   };
   const take = <T,>(r: ApiResult<T>): T => {
     if (!r.ok) {
