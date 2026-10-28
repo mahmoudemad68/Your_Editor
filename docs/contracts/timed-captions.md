@@ -107,8 +107,14 @@ UI revision. Placement is bottom-center within that rectangle. No qualified face
 tracks are available to this caption path; no face/speaker avoidance is claimed.
 Known installed DejaVu Sans/Noto Color Emoji fonts are used. Styles accept only
 bounded hex colors, 8–96 pixel fonts, 0–2 pixel outline, 0–4 pixel shadow and known
-direction/preset enums. Foreground, background and highlight colors must differ;
-arbitrary palettes are not advertised as independently qualified accessibility
+direction/preset enums. Foreground, background and highlight colors must differ.
+The editor defaults to 4% of composition width, clamped to 14–48 pixels (28 at
+720 pixels), and the tool adapts line length to that size within the same safe
+zone. The former 10-pixel default at 360 pixels produced thin strokes whose
+active color was substantially attenuated by H.264/yuv420p encoding. Existing
+saved styles are preserved; the default does not qualify every allowed custom
+font size or palette for every codec/profile.
+Arbitrary palettes are not advertised as independently qualified accessibility
 combinations. The browser measures actual caption bounds during visual
 qualification; conservative domain width/line-height bounds are an additional
 admission check, not a substitute for visual proof.

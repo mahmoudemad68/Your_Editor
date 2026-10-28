@@ -90,6 +90,7 @@ test("bilingual upload → real analysis → caption tools → undo/edit/reload 
     expect(saved.stateSha256).not.toBe(original);
     const caption = saved.timeline.captionsV1?.[0];
     if (!caption) throw new Error("Caption persistence is unavailable.");
+    expect(caption.style.fontSize).toBe(14);
     expect(caption.evidence.kind).toBe("media-analysis");
     expect(caption.sourceSha256).toBe(document.source.sha256);
     const projected = caption.blocks.flatMap((b) => b.lines.flat());

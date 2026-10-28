@@ -68,7 +68,7 @@ export function CaptionControls({
       outlinePx: 0,
       shadowPx: 1,
       font: "DejaVu Sans",
-      fontSize: Math.max(8, Math.min(48, Math.floor(stored.timeline.composition.width * 0.028))),
+      fontSize: Math.max(14, Math.min(48, Math.floor(stored.timeline.composition.width * 0.04))),
       marginPermille: 0,
     }),
     highlight,

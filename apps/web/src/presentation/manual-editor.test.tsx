@@ -44,6 +44,7 @@ test("caption controls request current evidence and persist through fixed routes
     assert.ok(calls[0]!.url.endsWith(`/captions/sources/${ID}`));
     assert.ok(calls[1]!.url.endsWith("/captions"));
     assert.equal(calls[1]!.body!.stateSha256, stored.stateSha256);
+    assert.equal((calls[1]!.body!.style as CaptionStyle).fontSize, 25);
     assert.match(
       String(calls[1]!.body!.requestId),
       /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
