@@ -373,6 +373,17 @@ try {
     analysisSha256: contentHash(document),
     style,
   };
+  const directAdd = (stateSha256, requestId) => ({
+    stateSha256,
+    requestId,
+    operation: "add-caption",
+    input: {
+      assetId: source,
+      sourceSha256: "b".repeat(64),
+      analysisSha256: contentHash(document),
+      style,
+    },
+  });
   function runChild(requestBody) {
     const childPath = path.join(path.dirname(fileURLToPath(import.meta.url)), "kill-child.mjs");
     return spawn(
@@ -434,14 +445,7 @@ try {
     async () => {
       const current = await store.load(project, timeline);
       const before = current.stateSha256;
-      const body = {
-        stateSha256: before,
-        requestId: newId(),
-        assetId: source,
-        sourceSha256: "b".repeat(64),
-        analysisSha256: contentHash(document),
-        style,
-      };
+      const body = directAdd(before, newId());
       await pool.query("UPDATE qa_pause SET mode='wait'");
       const baseline = await toolCount();
       const child = runChild(body);
@@ -490,14 +494,7 @@ try {
     async () => {
       const current = await store.load(project, timeline);
       const before = current.stateSha256;
-      const body = {
-        stateSha256: before,
-        requestId: newId(),
-        assetId: source,
-        sourceSha256: "b".repeat(64),
-        analysisSha256: contentHash(document),
-        style,
-      };
+      const body = directAdd(before, newId());
       await pool.query("UPDATE qa_pause SET mode='wait'");
       const baseline = await toolCount();
       const child = runChild(body);

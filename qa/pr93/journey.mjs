@@ -145,18 +145,17 @@ try {
       await other.getByLabel("Password", { exact: true }).fill(password);
       await other.getByRole("button", { name: "Sign up", exact: true }).click();
       await other.getByRole("button", { name: "Sign out", exact: true }).waitFor();
-      const hidden = await other.goto(`http://127.0.0.1:3000/projects/${projectId}`);
-      const body = await other.locator("body").innerText();
+      await other.goto(`http://127.0.0.1:3000/projects/${projectId}`);
+      await other
+        .getByRole("heading", { name: "Project is not available" })
+        .waitFor({ timeout: 20000 });
+      const leaked = (await other.locator("body").innerText()).includes("QA93 captions");
       await outsider.close();
-      const ok =
-        hostile.status() >= 400 &&
-        hostile.status() < 500 &&
-        hidden.status() >= 400 &&
-        !body.includes("QA93 captions");
+      const ok = hostile.status() >= 400 && hostile.status() < 500 && !leaked;
       return {
         status: ok ? "PASS" : "FAIL",
-        expected: "4xx hostile post and outsider cannot see the project",
-        actual: { hostile: hostile.status(), outsider: hidden.status() },
+        expected: "hostile post rejected and outsider sees no project",
+        actual: { hostile: hostile.status(), leaked },
       };
     },
   );
@@ -326,10 +325,47 @@ try {
         ),
       );
       await page.getByRole("button", { name: "Render saved timeline", exact: true }).click();
-      await page
-        .getByRole("region", { name: "Export job" })
-        .getByText("Completed", { exact: true })
-        .waitFor({ timeout: 480000 });
+      const exportRegion = page.getByRole("region", { name: "Export job" });
+      await exportRegion.waitFor({ timeout: 30000 });
+      const exportDeadline = Date.now() + 360000;
+      let exportStatus = "";
+      while (Date.now() < exportDeadline) {
+        exportStatus = (await exportRegion.getByRole("status").innerText()).trim();
+        if (/^(Completed|Failed|Cancelled)\b/.test(exportStatus)) break;
+        await page.waitForTimeout(2000);
+      }
+      if (!exportStatus.startsWith("Completed")) {
+        const worker = (() => {
+          try {
+            return execFileSync(
+              "docker",
+              [
+                "compose",
+                "ps",
+                "--format",
+                "{{.Service}} {{.State}} {{.Health}}",
+                "render-worker",
+                "render-executor",
+              ],
+              {
+                cwd: app,
+                encoding: "utf8",
+                env: {
+                  ...process.env,
+                  COMPOSE_PROJECT_NAME: process.env.COMPOSE_PROJECT_NAME ?? "qa93",
+                },
+              },
+            ).trim();
+          } catch {
+            return "unavailable";
+          }
+        })();
+        return {
+          status: "FAIL",
+          expected: "render reaches Completed",
+          actual: { ready, blocks, hashMatch: savedHash === sourceHash, exportStatus, worker },
+        };
+      }
       const downloadUrl = await page
         .getByRole("link", { name: "Download MP4" })
         .getAttribute("href");
