@@ -23,6 +23,8 @@ export async function captionBoundaryProof(root, directory, privateDir, exported
   );
   const browser = await openBrowser("chrome", {
     browserExecutable: process.env.PLAYWRIGHT_CHROME_EXECUTABLE ?? "/opt/google/chrome/chrome",
+    // Match render-child: single-process Chromium is not our production profile.
+    chromiumOptions: { enableMultiProcessOnLinux: true },
     logLevel: "error",
   });
   const all = plan.captionsV1.flatMap((c) =>
@@ -93,7 +95,9 @@ export async function captionBoundaryProof(root, directory, privateDir, exported
         puppeteerInstance: browser,
       });
       await progress("render-native-word-reference", { sourcePart: part, frame: first });
-      const reference = path.join(privateDir, `range-reference-${part}.png`);
+      // Only the licensed qualification words, under the existing audited
+      // boundary-image allowlist. No private log or arbitrary source is copied.
+      const reference = path.join(directory, `boundary-reference-${part}.png`);
       await renderStill({
         serveUrl: server.serveUrl,
         composition,
@@ -111,6 +115,11 @@ export async function captionBoundaryProof(root, directory, privateDir, exported
         sourcePart: part,
         frame: first,
         referenceMaskPixels: mask.length,
+        referenceVisiblePixels: expected.reduce(
+          (count, value, i) =>
+            count + Number(i % 3 === 0 && Math.max(value, expected[i + 1], expected[i + 2]) > 32),
+          0,
+        ),
       });
       assert.ok(mask.length > 4, "Native active-word reference has no visible pixels");
       const measurements = [];

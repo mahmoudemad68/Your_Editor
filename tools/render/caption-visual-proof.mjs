@@ -21,6 +21,7 @@ export async function captionVisualProof(root, directory, privateDir) {
   );
   const browser = await openBrowser("chrome", {
     browserExecutable: process.env.PLAYWRIGHT_CHROME_EXECUTABLE ?? "/opt/google/chrome/chrome",
+    chromiumOptions: { enableMultiProcessOnLinux: true },
     logLevel: "error",
   });
   const rows = [];
