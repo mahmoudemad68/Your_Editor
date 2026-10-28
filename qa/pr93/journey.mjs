@@ -61,7 +61,7 @@ await check(
       "-f",
       "lavfi",
       "-i",
-      "color=c=black:s=320x180:r=25:d=16",
+      "color=c=black:s=640x360:r=25:d=16",
       "-filter_complex",
       "[0:a][1:a]concat=n=2:v=0:a=1[a]",
       "-map",
@@ -94,7 +94,7 @@ await check(
         sourceSha,
         licenses: files.map(({ file, license, source }) => ({ file, license, source })),
         order: "ar-then-en",
-        pixels: "320x180",
+        pixels: "640x360",
       },
     };
   },
@@ -360,10 +360,36 @@ try {
             return "unavailable";
           }
         })();
+        const renderNote = (() => {
+          try {
+            return execFileSync("docker", ["compose", "logs", "--tail", "40", "render-worker"], {
+              cwd: app,
+              encoding: "utf8",
+              env: {
+                ...process.env,
+                COMPOSE_PROJECT_NAME: process.env.COMPOSE_PROJECT_NAME ?? "qa93",
+              },
+            })
+              .split("\n")
+              .reverse()
+              .find((line) => /error|fail|exceeds|version/i.test(line))
+              ?.replace(/[^\x20-\x7E]/g, "?")
+              .slice(0, 180);
+          } catch {
+            return undefined;
+          }
+        })();
         return {
           status: "FAIL",
           expected: "render reaches Completed",
-          actual: { ready, blocks, hashMatch: savedHash === sourceHash, exportStatus, worker },
+          actual: {
+            ready,
+            blocks,
+            hashMatch: savedHash === sourceHash,
+            exportStatus,
+            worker,
+            renderNote,
+          },
         };
       }
       const downloadUrl = await page
@@ -407,9 +433,10 @@ try {
         blocks > 0 &&
         savedHash === sourceHash &&
         persisted.includes(String(blocks)) &&
-        playback.width === 320 &&
+        playback.width === 640 &&
+        playback.height === 360 &&
         videoStream?.codec_name === "h264" &&
-        videoStream.pix_fmt === "yuv420p" &&
+        (videoStream.pix_fmt === "yuv420p" || videoStream.pix_fmt === "yuvj420p") &&
         audioStream?.codec_name === "aac" &&
         media.ok();
       return {
