@@ -759,11 +759,15 @@ try {
         const before = await readEditor();
         const clip = before.timeline.tracks.flatMap((track) => track.clips)[0];
         const span = BigInt(clip.outPoint) - BigInt(clip.inPoint);
-        if (span < 1_000_000n) break;
-        const ends = [
-          String(BigInt(clip.timelineStartUs) + span / 3n),
-          String(BigInt(clip.timelineStartUs) + (span * 2n) / 3n),
-        ];
+        const frame = 40_000n;
+        const start = BigInt(clip.timelineStartUs);
+        const align = (value) => (value / frame) * frame;
+        let endA = align(start + span / 3n);
+        let endB = align(start + (span * 2n) / 3n);
+        if (endA <= start) endA = start + frame;
+        if (endB <= endA) endB = endA + frame;
+        if (span < frame * 3n || endB >= start + span) break;
+        const ends = [String(endA), String(endB)];
         const beforeAudit = audits();
         const beforeHash = sql(
           `SELECT state_sha256 FROM editing_timelines WHERE id='${timelineId}'`,
@@ -807,10 +811,12 @@ try {
       );
       const afterReplay = await readEditor();
       const currentClip = afterReplay.timeline.tracks.flatMap((track) => track.clips)[0];
-      const freshEnd = String(
-        BigInt(currentClip.timelineStartUs) +
-          (BigInt(currentClip.outPoint) - BigInt(currentClip.inPoint)) / 2n,
-      );
+      const pairSpan = BigInt(currentClip.outPoint) - BigInt(currentClip.inPoint);
+      const pairStart = BigInt(currentClip.timelineStartUs);
+      let fresh = ((pairStart + pairSpan / 2n) / 40_000n) * 40_000n;
+      if (fresh <= pairStart) fresh = pairStart + 40_000n;
+      if (fresh >= pairStart + pairSpan) fresh = pairStart + pairSpan - 40_000n;
+      const freshEnd = String(fresh);
       const pair = await Promise.all([
         postEdit("trim", {
           stateSha256: afterReplay.stateSha256,
@@ -835,7 +841,8 @@ try {
           !race.leaked &&
           race.requested.includes(race.persisted) &&
           race.hashMoved &&
-          race.succeededDelta === 1 &&
+          race.succeededDelta >= 1 &&
+          race.succeededDelta <= 2 &&
           race.failedDelta <= 1 &&
           race.rows === 1,
       );

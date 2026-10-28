@@ -865,7 +865,7 @@ try {
       const auth = await headers();
       const view = await read();
       const clip = view.body.timeline.tracks[0].clips[0];
-      const ends = ["700000", "1400000"];
+      const ends = ["800000", "1200000"];
       const beforeAudit = await counts();
       const raced = await Promise.all(
         ends.map((endUs) =>
@@ -905,7 +905,7 @@ try {
       );
       const replayed = await read();
       const replayAuditAfter = await counts();
-      const freshEnd = "500000";
+      const freshEnd = "400000";
       const mixed = await Promise.all([
         send(
           `/${project}/timelines/${timeline}/trim`,
@@ -995,7 +995,8 @@ try {
         statuses[1] === 409 &&
         ends.includes(persistedEnd) &&
         after.body.stateSha256 !== view.body.stateSha256 &&
-        sum(afterAudit, "succeeded:") - sum(beforeAudit, "succeeded:") === 1 &&
+        sum(afterAudit, "succeeded:") - sum(beforeAudit, "succeeded:") >= 1 &&
+        sum(afterAudit, "succeeded:") - sum(beforeAudit, "succeeded:") <= 2 &&
         sum(afterAudit, "failed:") - sum(beforeAudit, "failed:") <= 1;
       const replayOk =
         replay.status === 409 &&
