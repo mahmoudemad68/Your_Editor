@@ -325,7 +325,7 @@ try {
               endUs: "1200000",
               words: [
                 { text: wordA, startUs: "300000", endUs: "600000", confidence: 0.4 },
-                { text: wordB, startUs: "700000", endUs: "1200000", confidence: null },
+                { text: wordB, startUs: "700000", endUs: "1200000" },
               ],
             },
           ],

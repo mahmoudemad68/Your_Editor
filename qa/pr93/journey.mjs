@@ -10,7 +10,7 @@ const app = process.env.QA_APP_ROOT;
 const outDir = process.env.QA_JOURNEY_DIR ?? path.join(process.cwd(), "qa-out", "journey");
 mkdirSync(outDir, { recursive: true });
 const require = createRequire(path.join(app, "apps/web/package.json"));
-const { chromium } = require(require.resolve("playwright"));
+const { chromium } = require("@playwright/test");
 const { parseMediaAnalysis } = createRequire(path.join(app, "apps/api/package.json"))(
   "@editagent/schemas",
 );
