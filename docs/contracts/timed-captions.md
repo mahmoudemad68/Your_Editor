@@ -26,6 +26,17 @@ This inventory identifies reusable implementation, not an independent QA verdict
 Real bilingual visuals, frame measurements and Linux integration remain required
 before this batch can be reported ready.
 
+Decoded-video boundary qualification calibrates native word paint through the
+same H.264/yuv420p/CRF23/veryfast profile as production. Chroma subsampling changes
+thin glyph colors; lossless PNG RGB thresholds alone are not a codec reference.
+The probe retains native pixels whose active color survives that reference encode,
+never selecting coordinates from the actual video under test. Both raw and
+calibrated fractions are reported. A native end-frame codec control must have
+at most 20% target paint; actual active/inactive thresholds remain 70%/20%, with
+more than four measurable pixels and zero measured onset/end frame error. Missing,
+unmeasurable, persistent or wrong-word paint fails closed. Independent native
+shaping comparisons still cover every glyph in the separate lossless frame matrix.
+
 ## Versions and historical compatibility
 
 Legacy caption clips, TimelineV1, project schema v1 and command schema v1 remain

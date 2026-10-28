@@ -6,6 +6,7 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 import process from "node:process";
 import assert from "node:assert/strict";
+import { calibrateCaptionPaint, captionPaintFraction } from "./caption-paint-metric.mjs";
 export async function captionBoundaryProof(root, directory, privateDir, exported, plan) {
   const progress = (phase, measurements = {}) =>
     writeFile(
@@ -14,7 +15,12 @@ export async function captionBoundaryProof(root, directory, privateDir, exported
     );
   await progress("load-native-reference-renderer");
   const require = createRequire(path.join(root, "workers/render-worker/package.json"));
-  const { openBrowser, selectComposition, renderStill } = require("@remotion/renderer");
+  const {
+    openBrowser,
+    selectComposition,
+    renderStill,
+    renderMedia,
+  } = require("@remotion/renderer");
   const { startBundleServer } = require("./dist/infrastructure/local-bundle-server.js");
   const server = await startBundleServer(
     path.join(root, "workers/render-worker/dist/bundle"),
@@ -71,7 +77,6 @@ export async function captionBoundaryProof(root, directory, privateDir, exported
       ],
       { maxBuffer: 360 * 640 * 3 + 1024, timeout: 10000 },
     );
-  const yellow = (b, i) => b[i * 3] > 180 && b[i * 3 + 1] > 180 && b[i * 3 + 2] < 100;
   const rows = [];
   try {
     for (let part = 0; part < selected.length; part++) {
@@ -80,6 +85,7 @@ export async function captionBoundaryProof(root, directory, privateDir, exported
       const first = Number((BigInt(word.startUs) + 39999n) / 40000n),
         end = Number((BigInt(word.endUs) + 39999n) / 40000n);
       assert.ok(end > first, "Selected native word has no sampled output frame");
+      assert.ok(end < 400, "Selected word has no measurable native end-frame control");
       const props = {
         width: 360,
         height: 640,
@@ -111,13 +117,49 @@ export async function captionBoundaryProof(root, directory, privateDir, exported
         puppeteerInstance: browser,
         logLevel: "error",
       });
-      const expected = pixels(reference),
-        mask = [];
-      for (let i = 0; i < 360 * 640; i++) if (yellow(expected, i)) mask.push(i);
+      const expected = pixels(reference);
+      const controls = [];
+      // Match render-child's codec, pixel format, quality and preset. The controls
+      // contain only the same licensed caption, with unchanged native intervals.
+      // Decode with the same FFmpeg path as the actual exported media below.
+      for (const [kind, frame] of [
+        ["codec", first],
+        ["inactive", end],
+      ]) {
+        await progress("render-native-codec-control", { sourcePart: part, kind, frame });
+        const media = path.join(privateDir, `boundary-${kind}-${part}.mp4`),
+          decoded = path.join(directory, `boundary-${kind}-reference-${part}.png`);
+        await renderMedia({
+          serveUrl: server.serveUrl,
+          composition,
+          inputProps: props,
+          frameRange: [frame, frame],
+          outputLocation: media,
+          codec: "h264",
+          pixelFormat: "yuv420p",
+          crf: 23,
+          x264Preset: "veryfast",
+          concurrency: 1,
+          puppeteerInstance: browser,
+          logLevel: "error",
+        });
+        execFileSync("ffmpeg", ["-v", "error", "-y", "-i", media, "-frames:v", "1", decoded], {
+          timeout: 10000,
+          maxBuffer: 1048576,
+        });
+        controls.push(pixels(decoded));
+      }
+      await progress("calibrate-native-codec-mask", { sourcePart: part });
+      const { rawMask, mask, negativeFraction } = calibrateCaptionPaint(
+        expected,
+        controls[0],
+        controls[1],
+      );
       await progress("validate-native-reference-mask", {
         sourcePart: part,
         frame: first,
         referenceMaskPixels: mask.length,
+        nativeReferenceMaskPixels: rawMask.length,
         referenceVisiblePixels: expected.reduce(
           (count, value, i) =>
             count + Number(i % 3 === 0 && Math.max(value, expected[i + 1], expected[i + 2]) > 32),
@@ -147,7 +189,8 @@ export async function captionBoundaryProof(root, directory, privateDir, exported
           { timeout: 10000, maxBuffer: 1048576 },
         );
         const actual = pixels(file),
-          fraction = mask.filter((i) => yellow(actual, i)).length / mask.length;
+          fraction = captionPaintFraction(actual, mask),
+          rawFraction = captionPaintFraction(actual, rawMask);
         const active =
           BigInt(frame) * 40000n >= BigInt(word.startUs) &&
           BigInt(frame) * 40000n < BigInt(word.endUs);
@@ -160,6 +203,8 @@ export async function captionBoundaryProof(root, directory, privateDir, exported
             expectedActive: active,
             targetYellowFraction: fraction,
             referenceMaskPixels: mask.length,
+            nativeReferenceMaskPixels: rawMask.length,
+            rawYellowFraction: rawFraction,
           }) + "\n",
         );
         if (active)
@@ -177,6 +222,7 @@ export async function captionBoundaryProof(root, directory, privateDir, exported
           expectedActive: active,
           measuredActive: fraction >= 0.7,
           targetYellowFraction: fraction,
+          rawYellowFraction: rawFraction,
           file: path.basename(file),
           sha256: createHash("sha256")
             .update(await readFile(file))
@@ -194,6 +240,13 @@ export async function captionBoundaryProof(root, directory, privateDir, exported
         nativeStartUs: word.startUs,
         nativeEndUs: word.endUs,
         referenceMaskPixels: mask.length,
+        nativeReferenceMaskPixels: rawMask.length,
+        codecCalibration: {
+          profile: { codec: "h264", pixelFormat: "yuv420p", crf: 23, preset: "veryfast" },
+          positiveFraction: 1,
+          negativeFraction,
+          coordinatesSelectedFromActualOutput: false,
+        },
         firstFrame: first,
         endFrame: end,
         measuredOnsetErrorFrames: observedStart - first,
