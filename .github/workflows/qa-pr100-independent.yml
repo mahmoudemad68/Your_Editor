@@ -180,8 +180,16 @@ jobs:
           PR_HEAD_SHA: 12b09f704d32bc68f662404872586f89d26f284f
         run: |
           set +e
-          pnpm render:test --graduation-demo > "$RUNNER_TEMP/render.log" 2>&1
-          code=$?
+          # Graduation inspects the image produced by the ASR container build.
+          node tools/asr/container.mjs --build-only --model tiny > "$RUNNER_TEMP/asr-image.log" 2>&1
+          image_code=$?
+          if [ "$image_code" = 0 ]; then
+            pnpm render:test --graduation-demo > "$RUNNER_TEMP/render.log" 2>&1
+            code=$?
+          else
+            code=$image_code
+            cp "$RUNNER_TEMP/asr-image.log" "$RUNNER_TEMP/render.log"
+          fi
           set -e
           tail -n 160 "$RUNNER_TEMP/render.log" || true
           if [ "$code" = 0 ]; then
@@ -208,6 +216,7 @@ jobs:
             .local/graduation-demo-public/report.json
             .local/graduation-demo-public/*.png
             ${{ runner.temp }}/render.log
+            ${{ runner.temp }}/asr-image.log
 
   walking-skeleton:
     name: G3 walking skeleton
@@ -369,6 +378,7 @@ jobs:
           fi
           set -e
           tail -n 120 "$RUNNER_TEMP/asr-container.log" || true
+          python3 qa/pr100/redact_asr_diagnostic.py "$RUNNER_TEMP/asr-diagnostic.txt" || true
           if [ "$code" = 0 ]; then
             python3 qa/pr100/emit_cli.py "$RUNNER_TEMP/g3-container.jsonl" g3.asr_container G3 PASS true "pnpm asr:container passed"
           else
@@ -388,6 +398,7 @@ jobs:
           path: |
             ${{ runner.temp }}/asr-container.log
             ${{ runner.temp }}/asr-build.log
+            ${{ runner.temp }}/asr-diagnostic.txt
 
   fail-closed:
     name: G4 fail-closed proof
