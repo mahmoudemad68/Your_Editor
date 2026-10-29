@@ -5,6 +5,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtemp, mkdir, readFile, writeFile, rm } from "node:fs/promises";
 import path from "node:path";
 import {
+  parseCommitMetadata,
   validateIdentity,
   validateProducer,
   validateArtifact,
@@ -293,6 +294,7 @@ test("offline build, clean runtime and native PR failure propagation remain expl
   const build = await read("infra/seaweedfs/build-weed.sh");
   assert.match(build, /cmp \/out\/weed \/out\/weed.second/);
   assert.match(build, /sha256sum -c -/);
+  assert.match(build.split("compile)\n")[0], /go mod download all/);
   assert.equal(/go get -u|go mod tidy|GOSUMDB=off|fips140=off/.test(build), false);
   const ci = await read(".github/workflows/ci.yml"),
     walking = await read(".github/workflows/e2e.yml");
@@ -506,3 +508,13 @@ archive('donor.tar',base,False);archive('candidate-input.tar',candidate,True)
       else assert.throws(check, variant);
     }
   }));
+
+test("shallow H metadata is permitted while original M still requires both exact parents", () => {
+  const f = identity();
+  f.head = parseCommitMetadata(`${H}\n${T}\n\n`);
+  f.merge = parseCommitMetadata(`${M}\n${T}\n${BASE} ${H}\n`);
+  assert.deepEqual(f.head.parents, []);
+  assert.doesNotThrow(() => checkIdentity(f));
+  f.merge = parseCommitMetadata(`${M}\n${T}\n\n`);
+  assert.throws(() => checkIdentity(f), /MERGE_PARENT_DRIFT/);
+});

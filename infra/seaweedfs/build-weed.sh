@@ -59,7 +59,9 @@ prepare)
   go mod edit -require=github.com/andybalholm/brotli@v1.2.7
   go mod download -json github.com/go-jose/go-jose/v4@v4.1.6 github.com/andybalholm/brotli@v1.2.7 > /build/targets.json
   /build/check downloads
-  go mod download
+  # Include existing upstream test dependencies in the authenticated preparation.
+  # The graph and original-plus-four checksum guard below still reject drift.
+  go mod download all
   go list -mod=readonly -m -json all > /build/after.json
   /build/check graph
   go mod verify
@@ -77,6 +79,7 @@ compile)
   done
   cmp /out/weed /out/weed.second
   sha256sum /out/weed /out/weed.second > /out/provenance/elf-sha256.txt
+  cat /out/provenance/elf-sha256.txt
   go version -m /out/weed > /out/provenance/go-version-m.txt
   grep -F 'go1.26.10' /out/provenance/go-version-m.txt
   grep -F 'github.com/go-jose/go-jose/v4' /out/provenance/go-version-m.txt | grep -F 'v4.1.6'

@@ -348,6 +348,16 @@ async function pages(suffix, field, publicOnly = false) {
   }
   throw new AdmissionError("API_PAGE_LIMIT");
 }
+export function parseCommitMetadata(text) {
+  // A fetched depth-2 merge has its H/B parents as shallow boundaries. H's
+  // own parents may therefore be absent; M must still expose exactly [B,H].
+  const [sha, tree, parents = ""] = text.trim().split("\n");
+  return {
+    sha,
+    tree: { sha: tree },
+    parents: parents ? parents.split(" ").map((sha) => ({ sha })) : [],
+  };
+}
 async function identity(env = process.env) {
   requireThat(
     env.GITHUB_ACTIONS === "true" && env.GITHUB_EVENT_NAME === "pull_request",
@@ -364,16 +374,9 @@ async function identity(env = process.env) {
   // checkout fetch-depth=2 retains original M and its H/B parents. Git object
   // hashes are immutable; only live PR/run state needs repeated network reads.
   const commit = (ref) => {
-    const [sha, tree, parents] = run("git", [
-      "--no-replace-objects",
-      "show",
-      "-s",
-      "--format=%H%n%T%n%P",
-      ref,
-    ])
-      .trim()
-      .split("\n");
-    return { sha, tree: { sha: tree }, parents: parents.split(" ").map((sha) => ({ sha })) };
+    return parseCommitMetadata(
+      run("git", ["--no-replace-objects", "show", "-s", "--format=%H%n%T%n%P", ref]),
+    );
   };
   const head = commit(H),
     merge = commit(M);
