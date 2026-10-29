@@ -1,0 +1,385 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "documentRole",
+    "status",
+    "formalProtocolApproval",
+    "baseMain",
+    "tree",
+    "authority",
+    "publicationScope",
+    "originalLocalArtifactHashes",
+    "reviewArtifacts",
+    "reviewSchemas",
+    "availability",
+    "originalGold",
+    "sourceInventory",
+    "historicalLocalEvidence",
+    "verificationScope",
+    "officialExternalSources",
+    "remainingDecisions",
+    "restrictions",
+    "methodologyRevision"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "1.0.0-draft.2"
+    },
+    "documentRole": {
+      "const": "PUBLIC_REVIEW_INVENTORY"
+    },
+    "status": {
+      "const": "BLOCKED_REFERENCE_DATA"
+    },
+    "formalProtocolApproval": {
+      "const": "PENDING"
+    },
+    "baseMain": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "tree": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "authority": {
+      "type": "string",
+      "format": "uri",
+      "maxLength": 2048
+    },
+    "publicationScope": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1200
+    },
+    "originalLocalArtifactHashes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["artifact", "sha256"],
+        "properties": {
+          "artifact": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        }
+      },
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "reviewArtifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "sha256", "role"],
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "role": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          }
+        }
+      },
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "reviewSchemas": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "sha256", "role"],
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "role": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          }
+        }
+      },
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "availability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "actualPeopleAssigned",
+        "newHumanLabelsCreated",
+        "collectionStarted",
+        "paidServicesAuthorized",
+        "externalSharingAuthorized",
+        "realIAA",
+        "realUs203IndependentPrecision",
+        "realIndependentNaturalAcousticF1"
+      ],
+      "properties": {
+        "actualPeopleAssigned": {
+          "const": 0
+        },
+        "newHumanLabelsCreated": {
+          "const": 0
+        },
+        "collectionStarted": {
+          "const": false
+        },
+        "paidServicesAuthorized": {
+          "const": false
+        },
+        "externalSharingAuthorized": {
+          "const": false
+        },
+        "realIAA": {
+          "const": "NOT_MEASURED"
+        },
+        "realUs203IndependentPrecision": {
+          "const": "NOT_MEASURED"
+        },
+        "realIndependentNaturalAcousticF1": {
+          "const": "NOT_MEASURED"
+        }
+      }
+    },
+    "originalGold": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "sha256", "originalUnchanged"],
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "originalUnchanged": {
+            "const": true
+          }
+        }
+      },
+      "minItems": 6,
+      "maxItems": 6
+    },
+    "sourceInventory": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "gitBlob", "sha256"],
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "gitBlob": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{40}$"
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        }
+      },
+      "minItems": 1,
+      "maxItems": 128
+    },
+    "historicalLocalEvidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["artifact", "sha256", "availability"],
+        "properties": {
+          "artifact": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "availability": {
+            "const": "HASH_ONLY_NOT_PUBLISHED"
+          }
+        }
+      },
+      "minItems": 0,
+      "maxItems": 16
+    },
+    "verificationScope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "originalStageAReviewUtc",
+        "originalGoldHashesVerified",
+        "protectedFilesUnchanged",
+        "priorFrozenArchivesUnchanged",
+        "currentHumanReferenceQualification",
+        "historicalMetricsRole"
+      ],
+      "properties": {
+        "originalStageAReviewUtc": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "originalGoldHashesVerified": {
+          "const": 6
+        },
+        "protectedFilesUnchanged": {
+          "const": 27
+        },
+        "priorFrozenArchivesUnchanged": {
+          "const": 3
+        },
+        "currentHumanReferenceQualification": {
+          "const": "NOT_PERFORMED"
+        },
+        "historicalMetricsRole": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1200
+        }
+      }
+    },
+    "officialExternalSources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["title", "url", "finding"],
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1200
+          },
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "maxLength": 2048
+          },
+          "finding": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1200
+          }
+        }
+      },
+      "minItems": 1,
+      "maxItems": 8
+    },
+    "remainingDecisions": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 1200
+      },
+      "minItems": 1,
+      "maxItems": 8
+    },
+    "restrictions": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 1200
+      },
+      "minItems": 8,
+      "maxItems": 8
+    },
+    "methodologyRevision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "previousVersion",
+        "previousPublishedHead",
+        "previousPublishedArtifactHashes",
+        "authority",
+        "decisions",
+        "formalProtocolApproval",
+        "actualHumanQualification"
+      ],
+      "properties": {
+        "previousVersion": {
+          "const": "1.0.0-draft.1"
+        },
+        "previousPublishedHead": {
+          "const": "f1ff69d7e849f15a86a7d1fa42680fdc5c0dd43f"
+        },
+        "previousPublishedArtifactHashes": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["SPECIFICATION.md", "protocol.json", "evidence-inventory.json"],
+          "properties": {
+            "SPECIFICATION.md": {
+              "const": "cee60c49fcd118939b55f484f2f1b89211f344c0ae6ddfcc46be327f7a9a9eb9"
+            },
+            "protocol.json": {
+              "const": "8f06bad51f8d6d6faff2de65d364cff0970376518e9f9ee10cceca0f2da8dda4"
+            },
+            "evidence-inventory.json": {
+              "const": "8dcb756e41c2863a30e48905cc0b3b02dea0eb9f363e123e0881a8097c310335"
+            }
+          }
+        },
+        "authority": {
+          "const": "https://github.com/mahmoudemad68/Your_Editor/pull/98#issuecomment-6487456998"
+        },
+        "decisions": {
+          "type": "array",
+          "items": {
+            "enum": ["ARABIC_SCOPE", "POOLED_PRECISION", "FAIL_CLOSED_DISAGREEMENT"]
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "uniqueItems": true
+        },
+        "formalProtocolApproval": {
+          "const": "PENDING"
+        },
+        "actualHumanQualification": {
+          "const": "NOT_PERFORMED"
+        }
+      }
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://your-editor.local/reference-review/inventory/1.0.0-draft.2.schema.json",
+  "title": "Public reference-review evidence inventory 1.0.0-draft.2",
+  "description": "Non-sensitive hash/source inventory; not human labels or approval."
+}
