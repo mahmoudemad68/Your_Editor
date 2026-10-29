@@ -6,6 +6,9 @@ import { mkdtemp, mkdir, readFile, writeFile, rm } from "node:fs/promises";
 import path from "node:path";
 import {
   parseCommitMetadata,
+  FILTER_PROFILE,
+  validateFilterAttempt,
+  runBoundedFilterExperiment,
   transferBudgetReport,
   reportAndEnforceTransfer,
   REPORT_FILES,
@@ -957,3 +960,218 @@ test("forensics cannot alter default compression or upload after produce fails",
   );
   assert.equal(gate.includes("continue-on-error"), false);
 });
+
+function filteredFixture() {
+  const m = budgetFixture(120 * MiB, 100);
+  const identity = {
+    image_id: "sha256:" + "c".repeat(64),
+    config_sha256: "c".repeat(64),
+    elf_sha256: "d".repeat(64),
+    layer_diff_ids: Array.from({ length: 6 }, (_, i) => "sha256:" + String(i).repeat(64)),
+    old_elf_absent: true,
+    runtime_preserved: true,
+    native_brotli: "1.2.1-r0",
+    rust_sha256: { "usr/bin/weed-volume": "e".repeat(64), "usr/bin/weed-worker": "f".repeat(64) },
+  };
+  const expected = {
+    archive_sha256: "a".repeat(64),
+    archive_bytes: 512 * MiB,
+    report_file_bytes: m.report_file_bytes,
+    identity,
+  };
+  const encoder = {
+    ...m.compression,
+    profile: FILTER_PROFILE,
+    filter_chain: ["X86", "LZMA2_PRESET_9"],
+    preset: 9,
+    check: "CRC64",
+    runtime: { platform: "linux", python: "3.12.3", implementation: "CPython", liblzma: "5.8.1" },
+    process_wall_seconds: 2,
+    uncompressed_bytes: expected.archive_bytes,
+    compressed_bytes: m.C,
+    limits: { address_space_bytes: 1073741824, cpu_seconds: 480 },
+  };
+  const result = {
+    encoder,
+    budget: transferBudgetReport({ ...m, compression: encoder }),
+    decoding: {
+      elapsed_seconds: 1,
+      peak_rss_bytes: 128 * MiB,
+      uncompressed_bytes: expected.archive_bytes,
+      limits: { address_space_bytes: 268435456 },
+    },
+    archive_sha256: expected.archive_sha256,
+    identity: globalThis.structuredClone(identity),
+    artifact_uploaded: false,
+  };
+  return { expected, result };
+}
+test("filtered capacity/resource/integrity success permits exactly two independent measurements and no qualification", async () => {
+  const f = filteredFixture(),
+    records = [];
+  assert.doesNotThrow(() => validateFilterAttempt(f.result, f.expected));
+  let attempts = 0;
+  const verdict = await runBoundedFilterExperiment(
+    f.expected,
+    async () => {
+      attempts++;
+      return globalThis.structuredClone(f.result);
+    },
+    async (r) => records.push(r),
+  );
+  assert.equal(attempts, 2);
+  assert.equal(verdict, "FULL_IMAGE_FILTER_FEASIBILITY=MET_EXPERIMENT_ONLY");
+  assert.ok(records.every((r) => r.qualified === false));
+});
+for (const [name, mutate] of [
+  [
+    "candidate over cap",
+    (f) => {
+      f.result.encoder.compressed_bytes++;
+      f.result.budget = transferBudgetReport({
+        uncompressed_archive_bytes: f.expected.archive_bytes,
+        C: f.result.encoder.compressed_bytes,
+        report_file_bytes: f.expected.report_file_bytes,
+        compression: f.result.encoder,
+      });
+    },
+  ],
+  [
+    "provenance over cap",
+    (f) => {
+      const m = budgetFixture(1, 8355841);
+      f.expected.report_file_bytes = m.report_file_bytes;
+      f.result.encoder.compressed_bytes = 1;
+      f.result.budget = transferBudgetReport({ ...m, compression: f.result.encoder });
+    },
+  ],
+  [
+    "combined over cap",
+    (f) => {
+      const m = budgetFixture(120 * MiB + 1);
+      f.expected.report_file_bytes = m.report_file_bytes;
+      f.result.encoder.compressed_bytes = m.C;
+      f.result.budget = transferBudgetReport({ ...m, compression: f.result.encoder });
+    },
+  ],
+  ["nonidentical decoded archive", (f) => (f.result.archive_sha256 = "0".repeat(64))],
+  ["encoder wall exceeded", (f) => (f.result.encoder.process_wall_seconds = 540.001)],
+  ["encoder CPU exceeded", (f) => (f.result.encoder.user_cpu_seconds = 480.1)],
+  ["encoder RSS exceeded", (f) => (f.result.encoder.peak_rss_bytes = 1073741825)],
+  ["encoder limits unavailable", (f) => delete f.result.encoder.limits],
+  ["decoder memory exceeded", (f) => (f.result.decoding.peak_rss_bytes = 256 * MiB + 1)],
+  ["decoder limit unavailable", (f) => delete f.result.decoding.limits],
+  ["decoder expansion exceeded", (f) => (f.result.decoding.uncompressed_bytes = 4 * 1024 ** 3 + 1)],
+  ["decoder deadline exceeded", (f) => (f.result.decoding.elapsed_seconds = 601)],
+  ["measurement unavailable", (f) => (f.result = null)],
+  ["unknown liblzma runtime", (f) => (f.result.encoder.runtime.liblzma = "UNAVAILABLE")],
+  ["unexpected filter", (f) => f.result.encoder.filter_chain.reverse()],
+  ["unexpected image", (f) => (f.result.identity.image_id = "sha256:" + "0".repeat(64))],
+  ["unexpected config", (f) => (f.result.identity.config_sha256 = "0".repeat(64))],
+  ["unexpected layer", (f) => (f.result.identity.layer_diff_ids[0] = "sha256:" + "f".repeat(64))],
+  ["unexpected ELF", (f) => (f.result.identity.elf_sha256 = "0".repeat(64))],
+  ["old vulnerable ELF retained", (f) => (f.result.identity.old_elf_absent = false)],
+  ["native runtime changed", (f) => (f.result.identity.native_brotli = "1.2.0-r1")],
+  ["experimental artifact promoted", (f) => (f.result.artifact_uploaded = true)],
+])
+  test(`filtered first-attempt failure stops all further compression: ${name}`, async () => {
+    const f = filteredFixture();
+    mutate(f);
+    let attempts = 0;
+    const records = [];
+    const verdict = await runBoundedFilterExperiment(
+      f.expected,
+      async () => {
+        attempts++;
+        return f.result;
+      },
+      async (r) => records.push(r),
+    );
+    assert.equal(verdict, "FULL_IMAGE_FILTER_FEASIBILITY=NOT_MET");
+    assert.equal(attempts, 1);
+    assert.equal(records.at(-1).verdict, verdict);
+  });
+test("unequal independent compressed outputs fail reproducibility and cannot request another profile", async () => {
+  const f = filteredFixture(),
+    records = [];
+  let n = 0;
+  const verdict = await runBoundedFilterExperiment(
+    f.expected,
+    async () => {
+      const r = globalThis.structuredClone(f.result);
+      if (++n === 2) r.encoder.output_sha256 = "e".repeat(64);
+      return r;
+    },
+    async (r) => records.push(r),
+  );
+  assert.equal(n, 2);
+  assert.equal(verdict, "FULL_IMAGE_FILTER_FEASIBILITY=NOT_MET");
+  assert.equal(records.at(-1).failure, "FILTER_REPRODUCIBILITY_FAILED");
+});
+test("compression exception cannot trigger a second attempt or leak its private message", async () => {
+  const f = filteredFixture(),
+    records = [];
+  let n = 0;
+  const verdict = await runBoundedFilterExperiment(
+    f.expected,
+    async () => {
+      n++;
+      throw Error("PRIVATE_SENTINEL");
+    },
+    async (r) => records.push(r),
+  );
+  assert.equal(n, 1);
+  assert.equal(verdict, "FULL_IMAGE_FILTER_FEASIBILITY=NOT_MET");
+  assert.equal(JSON.stringify(records).includes("PRIVATE_SENTINEL"), false);
+});
+test("filtered feasibility success never promotes the experiment or rescues the original XZ6 failure", async () => {
+  const f = filteredFixture();
+  let consumer = false;
+  await assert.rejects(
+    async () => {
+      await reportAndEnforceTransfer(
+        budgetFixture(120 * MiB + 1),
+        async () => {},
+        () =>
+          runBoundedFilterExperiment(
+            f.expected,
+            async () => f.result,
+            async () => {},
+          ),
+      );
+      consumer = true;
+    },
+    (e) => e.code === "TRANSFER_BUDGET_EXCEEDED",
+  );
+  assert.equal(consumer, false);
+});
+test("real BCJ/LZMA2 stream roundtrips, repeats compressed bytes, and rejects corruption", async () =>
+  temporary(async (dir) => {
+    const src = path.join(dir, "full-archive.bin");
+    const bytes = Buffer.concat([
+      Buffer.from([0xe8, 0x40, 0, 0, 0, 0xe9, 0x80, 0, 0, 0]),
+      Buffer.from("public synthetic binary fixture".repeat(200)),
+    ]);
+    await writeFile(src, bytes);
+    const hashes = [];
+    for (const n of [1, 2]) {
+      const packed = path.join(dir, `bcj-${n}.xz`),
+        decoded = path.join(dir, `decoded-${n}.bin`);
+      const m = compressArchive(src, packed, 9, python, FILTER_PROFILE);
+      assert.deepEqual(m.filter_chain, ["X86", "LZMA2_PRESET_9"]);
+      assert.equal(m.input_sha256, sha256(bytes));
+      hashes.push(m.output_sha256);
+      await decompress(packed, decoded, python);
+      assert.deepEqual(await readFile(decoded), bytes);
+    }
+    assert.equal(hashes[0], hashes[1]);
+    const corrupt = await readFile(path.join(dir, "bcj-1.xz"));
+    corrupt[Math.floor(corrupt.length / 2)] ^= 255;
+    const bad = path.join(dir, "corrupt.xz");
+    await writeFile(bad, corrupt);
+    await assert.rejects(decompress(bad, path.join(dir, "rejected.bin"), python));
+    assert.throws(
+      () => compressArchive(src, path.join(dir, "bad.xz"), 6, python, FILTER_PROFILE),
+      (e) => e.code === "COMPRESSION_SETTING_REJECTED",
+    );
+  }));

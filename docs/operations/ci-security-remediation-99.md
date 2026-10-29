@@ -250,3 +250,31 @@ reviewable transport proposal; do not implement reconstruction, alter filesystem
 contents/scanner evidence, increase caps or change authentication. External exact-H
 policy review, whole-producer success and controlled consumer qualification remain
 separate gates. RELEASE_HOLD remains ACTIVE and READY_FOR_INDEPENDENT_RE_QA is NO.
+
+### Approved bounded BCJ feasibility profile — no default change
+
+The next diagnostic replaces the historical plain-preset-9 probe with exactly
+an XZ(CRC64) container with filters `X86 BCJ -> LZMA2 preset 9` on the original Docker-save
+archive. Preset 6 remains the only candidate format. There is no normalization,
+runtime modification, new dependency, alternate transport or experimental upload.
+The encoder records CPython/liblzma versions, filter chain, wall/CPU/RSS, input and
+compressed hashes and all unchanged C/R predicates. Encoder limits stay 1GiB
+address space, 480 CPU seconds and 540 wall seconds; decoder limits stay 256MiB
+and 4GiB expansion. Scratch is checked before execution.
+
+Each attempt must independently decode to the exact original archive hash and
+repeat the existing image/config/all-six-layer/ELF/native-files verification,
+including absence of old weed and compiler. Capacity, resources and measurements
+must all pass. A first-attempt failure prevents any second compression. Only a
+fully passing first attempt permits one fresh-process repetition with identical
+compressed SHA-256 and runtime profile, with its own decode/integrity verification.
+There is no third attempt or alternative profile search.
+
+The only outcomes are FULL_IMAGE_FILTER_FEASIBILITY=MET_EXPERIMENT_ONLY or
+FULL_IMAGE_FILTER_FEASIBILITY=NOT_MET. Either outcome retains the original
+TRANSFER_BUDGET_EXCEEDED, failed Supply aggregate and blocked consumers. No result
+changes the default compression or policy approval. A MET finding needs separate
+Technical Lead review before any default change and full artifact qualification;
+a NOT_MET finding stops implementation and returns a design-only analysis.
+Release hold and all existing protected-file, policy, permission and QA boundaries
+remain unchanged.
