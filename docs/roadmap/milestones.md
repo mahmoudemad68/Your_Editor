@@ -49,7 +49,7 @@ Milestones are release-level outcomes reviewed with the supervisor at Sprint Rev
 
 - [ ] Faster-Whisper transcribes 10 minutes of speech in at most 3 minutes on the reference GPU, or a CPU-viable model is selected
 - [ ] Remotion renders 60 seconds of 1080p with captions in at most 5 minutes on the reference machine
-- [ ] The chosen LLM returns schema-valid tool calls for at least 9 of 10 scripted editing requests
+- [ ] The chosen LLM returns schema-valid tool calls for at least 9 of 10 primary scripted editing requests. Abstention guardrails are measured separately and do not count toward those 10.
 
 **Requires:** [US-105](phases/phase-1-foundation.md#us-105---asr-and-vad-feasibility-spike), [US-106](phases/phase-1-foundation.md#us-106---rendering-feasibility-spike-ffmpeg-vs-remotion), [US-107](phases/phase-1-foundation.md#us-107---llm-tool-calling-feasibility-spike)
 
