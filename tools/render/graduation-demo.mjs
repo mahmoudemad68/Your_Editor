@@ -6,7 +6,7 @@ import { URL } from "node:url";
 import { readFile, writeFile, mkdir, copyFile, rm } from "node:fs/promises";
 import { createHash, randomBytes } from "node:crypto";
 import { Pool } from "pg";
-import { CreateBucketCommand } from "@aws-sdk/client-s3";
+import { CreateBucketCommand, PutBucketCorsCommand } from "@aws-sdk/client-s3";
 import { buildProductImages } from "../test/compose-build.mjs";
 import process from "node:process";
 import console from "node:console";
@@ -55,6 +55,8 @@ export async function runGraduationDemo({
   codeIdentity,
   renderVersion,
 }) {
+  const storage = services.objectStorage ?? services.minio;
+  codeIdentity = { ...codeIdentity, storageBackend: storage.identity ?? { backend: "minio" } };
   const privateDir = path.join(root, ".local/graduation-demo/private");
   const publicDir = path.join(root, ".local/graduation-demo-public");
   await mkdir(privateDir, { recursive: true });
@@ -105,19 +107,34 @@ export async function runGraduationDemo({
     // server-side loopback-origin CORS; production SeaweedFS policy is unchanged.
     // Require its real browser-facing preflight rather than assume support.
     phase = "demo-browser-storage-preflight";
-    for (const method of ["PUT", "GET"]) {
-      const cors = await globalThis.fetch(
-        `${services.minio.endpoint}/${bucket}/browser-preflight`,
-        {
-          method: "OPTIONS",
-          headers: {
-            origin: webUrl,
-            "access-control-request-method": method,
-            "access-control-request-headers": "content-type",
+    if (storage.backend === "seaweedfs") {
+      await s3.send(
+        new PutBucketCorsCommand({
+          Bucket: bucket,
+          CORSConfiguration: {
+            CORSRules: [
+              {
+                AllowedOrigins: [webUrl],
+                AllowedMethods: ["GET", "PUT", "HEAD"],
+                AllowedHeaders: ["content-type", "content-md5", "x-amz-*"],
+                ExposeHeaders: ["ETag"],
+                MaxAgeSeconds: 60,
+              },
+            ],
           },
-          signal: globalThis.AbortSignal.timeout(5000),
-        },
+        }),
       );
+    }
+    for (const method of ["PUT", "GET"]) {
+      const cors = await globalThis.fetch(`${storage.endpoint}/${bucket}/browser-preflight`, {
+        method: "OPTIONS",
+        headers: {
+          origin: webUrl,
+          "access-control-request-method": method,
+          "access-control-request-headers": "content-type",
+        },
+        signal: globalThis.AbortSignal.timeout(5000),
+      });
       if (
         !cors.ok ||
         cors.headers.get("access-control-allow-origin") !== webUrl ||
@@ -128,9 +145,9 @@ export async function runGraduationDemo({
     }
     const shared = {
       S3_BUCKET: bucket,
-      S3_REGION: services.minio.region,
-      S3_ACCESS_KEY_ID: services.minio.credentials.accessKeyId,
-      S3_SECRET_ACCESS_KEY: services.minio.credentials.secretAccessKey,
+      S3_REGION: storage.region,
+      S3_ACCESS_KEY_ID: storage.credentials.accessKeyId,
+      S3_SECRET_ACCESS_KEY: storage.credentials.secretAccessKey,
       EDITAGENT_ASR_MODEL: "small",
       EDITAGENT_ASR_CPU_THREADS: "2",
     };
@@ -139,8 +156,8 @@ export async function runGraduationDemo({
       ...shared,
       DATABASE_URL: hostPg.href,
       REDIS_URL: hostRedis.href,
-      S3_ENDPOINT: services.minio.endpoint,
-      S3_PUBLIC_ENDPOINT: services.minio.endpoint,
+      S3_ENDPOINT: storage.endpoint,
+      S3_PUBLIC_ENDPOINT: storage.endpoint,
       EDITAGENT_RENDER_VERSION: renderVersion,
       PORT: String(apiPort),
       HOST: "127.0.0.1",
@@ -189,7 +206,7 @@ export async function runGraduationDemo({
       ...shared,
       DATABASE_URL: internalPg.href,
       REDIS_URL: "redis://redis:6379/9",
-      S3_ENDPOINT: "http://minio:9000",
+      S3_ENDPOINT: storage.internalEndpoint ?? "http://minio:9000",
     };
     const envArgs = Object.entries(internalEnv).flatMap(([key, value]) => [
       "-e",

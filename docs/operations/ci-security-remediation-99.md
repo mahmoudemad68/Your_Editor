@@ -57,3 +57,94 @@ SHA-256 provenance of exact report bytes (local copies retained; published workf
 The failed-run SBOM lists native decoder `/usr/lib/libbrotlidec.so.1.2.0` and the encoder/common shared libraries. The separate Go module is embedded in `/usr/bin/weed`. Image availability and package versions are not sufficient proof of S3 compatibility: exact-head container, lifecycle, rendering and workflow results are required in the frozen handoff.
 
 Reproduce scoped controls with `node --test tests/architecture/ffmpeg-download.test.mjs tests/architecture/seaweedfs-object-storage.test.mjs` on Linux with Python 3, OpenSSL and curl. Full gates remain the existing `pnpm test`, `pnpm render:test --graduation-demo`, `pnpm asr:container`, CI, Walking Skeleton and Supply Chain workflows. No original gold, model identity, held file, PR #98 document, secret-scanning exception or CI budget is changed. CP1 remains NOT_VERIFIED, CP2 NOT_MET, Tiny Arabic NOT_QUALIFIED, US-309 BLOCKED and PLANNER_NOT_CONFIGURED.
+
+## Phase 2 — custom Go security rebuild (qualification pending)
+
+Owner authorization: [6497156507](https://github.com/mahmoudemad68/Your_Editor/pull/100#issuecomment-6497156507).
+The earlier results above describe the frozen Phase-1 head only. They do not qualify
+this changed implementation. RELEASE_HOLD remains ACTIVE and SAFE_TO_MERGE remains NO.
+
+The reviewed input lock is `infra/seaweedfs/security-build.lock.json`: SeaweedFS
+`ffa87c25fdf587178b1521ad87f2a4a72a02e584`, Go 1.26.10, linux/amd64, CGO=0,
+GOAMD64=v1, default tags, go-jose v4.1.6 and Go Brotli v1.2.7. Original source and
+module ZIP/checksum-database records are checked before compilation. The upstream
+go-bip39 replacement is preserved; no replacement is added. Other graph/version
+or checksum changes fail the build. No `go get -u`, tidy, alternative mirror,
+FIPS override or RSA-cap increase is permitted.
+
+BuildKit actually disables the compile RUN network. Two empty, separate compiler
+caches produce the same ELF; comparison is byte-for-byte, not normalized. The
+native donor filesystem, Rust binaries, uid/mode/link behavior and native Brotli
+1.2.1-r0 are compared before admission. The final scratch image receives the donor
+filesystem with old weed removed, then the new ELF and bounded provenance. It
+inherits neither the old ELF layer nor compiler/source/cache stages. Actual ELF
+module information is read using the pinned compiler without executing weed.
+
+### Native PR qualification and the external policy record
+
+All three native PR triggers and genuine `ci`, `supply-chain-security` and
+`walking-skeleton` contexts remain. Consumers fail explicitly with
+PRODUCER_NOT_YET_CREATED or PRODUCER_NOT_YET_COMPLETE until the entire original
+Supply run succeeds. Only that initial prerequisite failure permits exactly one
+controller-requested full re-run of the original consumer run ID. No partial,
+failed-producer, security/integrity/test retry or dispatch substitution qualifies.
+Original M, H, B, their trees and merge parents are checked through live PR/run
+metadata and content-addressed Git objects; checkout retains M and its parents.
+
+After publishing the complete implementation, the Coding Agent runs:
+
+```sh
+node tools/test/load-qualified-storage.mjs policy-inventory
+```
+
+This prints REVIEW_REQUIRED_NOT_APPROVED, H/B/TH and the complete expected-policy
+file SHA-256 map. It **does not approve itself**. Technical Lead must inspect the
+actual workflow/build/scanner/guard files and publish a separate Owner-associated
+review comment containing that exact record with decision APPROVED in a fenced
+`seaweedfs-policy-v1` block. The review is external to candidate artifacts; exactly
+one matching record is required. The Coding Agent must not fabricate it. Merely
+having a job name, successful run, manifest, artifact or Owner account name is not
+the required human review. Policy admission is not independent QA or the two
+distinct human release-security approvals.
+
+The loader verifies the completed producer's attempt-specific jobs, all eleven
+image scans, actual module/zero-HIGH controls, aggregate check app/PR association,
+reviewed policy and controlled artifact upload. It verifies GitHub ZIP digest,
+bounded safe extraction, inner digest, final image/layers and actual ELF before
+load. Missing/failed/forged/expired evidence is a hard failure, not retryable.
+
+Walking's preparation job alone receives the already authorized contents-read and
+Actions-read grant. Its downstream contents-only job retrieves an exact promoted
+same-run artifact ID and validates its receipt and image hashes before load. CI
+downloads the original source artifact using its existing permitted Actions access.
+No PAT, signed URL or GitHub token enters artifacts or product containers. Source
+and promoted replicas share identical compressed bytes. C <=120 MiB, provenance
+including transfer receipts R <=16 MiB, 2*C+R <=256 MiB and one-day retention are
+enforced. Size, runtime and successful contents-only transfer remain NOT_PROVEN
+until clean Linux qualification; a cap failure returns CI_DESIGN_BLOCKED.
+
+### Required new evidence, not yet claimed
+
+- Two clean-cache ELF hashes; actual `go version -m`; source/lock/recipe/OCI IDs.
+- Fresh pinned Trivy/Syft with zero HIGH/CRITICAL and the explicitly fixed Low
+  module. Existing scanner policy, canary and all other images remain required.
+- Resource-limited RSA 2048/4096, default-cap/invalid/private JWK and Brotli
+  positive/malformed controls. No external OpenBao/KMS is configured or assumed
+  compatible with >4096-bit RSA keys; those need a separate operator decision.
+- Production-isolated JWT/S3/firewall/restart, stopped backup/delete/restore,
+  missing/corrupt archive rejection and disposable baseline-to-candidate snapshot
+  upgrade/rollback. Rollback restores the old snapshot and loses subsequent writes;
+  in-place downgrade is not claimed. Production migration is NOT_AUTHORIZED and
+  NOT_VERIFIED.
+- Retained MinIO journey plus explicit `--storage-seaweedfs` journey with actual
+  candidate image/backend, Small ASR, saved captions/editing/undo/restart, render,
+  browser playback/download and FFprobe. The existing readiness helper's legacy
+  network alias `minio` does not identify the backend; SeaweedFS uses its actual
+  gateway endpoint and image receipts. Private fixture CORS permits only the real
+  test web origin. No fallback or mock is used.
+- Original 45m repository, 15m Walking, 60m image and 600000ms inference limits,
+  all six ASR shards and the separate <=45m SeaweedFS regression job.
+
+CP1, CP2 NOT_MET, Tiny Arabic unqualified, immutable model/gold identities,
+PLANNER_NOT_CONFIGURED, protected files and other PRs remain unchanged. The new
+head cannot be READY_FOR_INDEPENDENT_RE_QA until every entry gate has actual proof.

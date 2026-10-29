@@ -157,6 +157,9 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+          persist-credentials: false
 
       - name: Build image
         run: |
@@ -199,6 +202,53 @@ jobs:
 
       - name: Generate SBOM and scan
         run: ./infra/scripts/supply-chain-scan-image.sh "${{ matrix.service }}" "editagent-${{ matrix.service }}:${GITHUB_SHA}"
+
+      - name: Fixed module reproducibility and zero HIGH gate
+        if: matrix.service == 'seaweedfs' && github.event_name == 'pull_request'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node tools/test/load-qualified-storage.mjs produce 'editagent-seaweedfs:${{ github.sha }}' .local/seaweedfs-transfer/bundle
+      - name: Bounded RSA JWK and Brotli controls
+        if: matrix.service == 'seaweedfs' && github.event_name == 'pull_request'
+        run: |
+          docker build --platform linux/amd64 --target security-probes -f infra/seaweedfs/Dockerfile -t editagent-seaweedfs-probes .
+          probe_name="editagent-seaweed-crypto-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          trap 'docker rm -f "$probe_name" >/dev/null 2>&1 || true' EXIT
+          for probe in rsa jwk brotli; do
+            timeout 60 docker run --rm --name "$probe_name" --user 65534:65534 --cap-drop ALL --security-opt no-new-privileges:true --cpus 1 --memory 384m --memory-swap 384m --pids-limit 64 --read-only --network none --tmpfs /tmp:rw,noexec,nosuid,size=32m,mode=1777 -e GODEBUG=fips140=on editagent-seaweedfs-probes "$probe"
+          done
+          for suite in jose brotli; do
+            timeout 180 docker run --rm --name "$probe_name" --workdir "/tests/$suite" --user 65534:65534 --cap-drop ALL --security-opt no-new-privileges:true --cpus 1 --memory 384m --memory-swap 384m --pids-limit 64 --read-only --network none --tmpfs /tmp:rw,noexec,nosuid,size=32m,mode=1777 -e GODEBUG=fips140=on --entrypoint "/$suite.test" editagent-seaweedfs-probes -test.timeout=150s
+          done
+      - name: Upload qualified candidate
+        id: qualified-candidate
+        if: matrix.service == 'seaweedfs' && github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v7
+        with:
+          name: seaweedfs-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            .local/seaweedfs-transfer/bundle/image.tar.xz
+            .local/seaweedfs-transfer/bundle/candidate-manifest.json
+            .local/seaweedfs-transfer/bundle/verification.json
+            .local/seaweedfs-transfer/bundle/go-version-m.txt
+            .local/seaweedfs-transfer/bundle/full-trivy.json
+            .local/seaweedfs-transfer/bundle/sbom.spdx.json
+            .local/seaweedfs-transfer/bundle/scanner-versions.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 1
+      - name: Seal qualified candidate upload
+        if: matrix.service == 'seaweedfs' && github.event_name == 'pull_request'
+        run: node tools/test/load-qualified-storage.mjs seal '${{ steps.qualified-candidate.outputs.artifact-id }}' '${{ steps.qualified-candidate.outputs.artifact-digest }}'
+      - name: Upload candidate seal
+        if: matrix.service == 'seaweedfs' && github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v7
+        with:
+          name: seaweedfs-seal-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .local/seaweedfs-transfer/seal/seal.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 1
 
       - name: Preserve scanned production image for main publication
         if: github.event_name == 'push' && github.ref == 'refs/heads/main' && matrix.service != 'test-minio'

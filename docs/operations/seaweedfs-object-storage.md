@@ -160,3 +160,57 @@ exercises concurrent idempotent completion through separate repository instances
 Derived objects use the private namespace `projects/<projectId>/derived/<mediaAssetId>/<kind>/<parameterSignature>/<variant>.<extension>`. Variants are proxy MP4, ASR/mix WAV and poster/sprite JPEG. The worker alone chooses keys; display filenames and job payload paths are never used. Writes carry Content-Type, exact Content-Length and `If-None-Match: *`. Object metadata contains a versioned parameter descriptor, source SHA-256 and incremental output SHA-256 for DB/object crash reconciliation. No ACL grants, credentials or presigned URLs are persisted. Existing bucket privacy and anonymous-GET denial stay required.
 
 Provision scratch disk for the staged source plus derived outputs and concurrency; float PCM can exceed the compressed source size. Outputs use bounded-memory streams. Normal error/cancel paths remove temporary files. After host loss/hard kill, retire the stopped worker's ephemeral scratch volume before reuse; do not delete scratch directories belonging to running jobs. US-128 uses an explicit operator opt-in while US-127 is absent; it is not unrestricted production approval or hostile-media validation. Runtime/generation-policy changes require a parameter version bump. Full output policies and deadlines are in `workers/media-worker/README.md`.
+
+## Pinned Go security rebuild and recovery
+
+The custom EditAgent 4.51 security build uses the exact source/runtime/compiler
+and Go module hashes in `infra/seaweedfs/security-build.lock.json`. It changes only
+go-jose to v4.1.6 and Go Brotli to v1.2.7. Native Brotli stays 1.2.1-r0; Rust,
+default on-disk tags, original uid 1000 entrypoint, JWT/mTLS and firewall controls
+are retained. No production migration or release is authorized by these commands.
+
+Normal operator startup builds and verifies the final immutable image **before**
+preparing secrets. It then creates all four roles, confirms one image ID, applies
+host/container isolation and only then permits normal service readiness:
+
+```sh
+./infra/seaweedfs/start-storage.sh
+```
+
+Requirements include Docker with BuildKit and image API >=1.48 (explicit amd64
+archive export), Python 3, curl/CA trust, OpenSSL and
+the existing firewall/flock tooling. The build pulls only reviewed immutable
+images, exact HTTPS source and authenticated Go modules. Go compilation is
+network-disabled. No host package is automatically installed. Record actual CPU,
+memory, elapsed time and scratch disk; build limits or artifact-size failure
+must be investigated rather than increased silently.
+
+Admin helpers resolve actual immutable images; multi-stage FROM lines are not
+runtime identities. Backup/restore require four consistent live-role image IDs.
+Every checksum/archive is validated before restore deletes any data. Use absolute
+backup paths; archives and credentials remain private:
+
+```sh
+./infra/seaweedfs/backup-volumes.sh "$PWD/.local/storage-backup"
+./infra/seaweedfs/restore-volumes.sh "$PWD/.local/storage-backup"
+```
+
+Stopped snapshots must include all three data volumes and consistent separately
+protected role secrets. Preserve the old snapshot before a trial upgrade. A
+rollback restores that snapshot; do not claim post-cutover writes survive it or
+assume old binaries can safely open newly written volumes. Real production-volume
+upgrade/rollback remains NOT_VERIFIED. Test rehearsals use disposable
+`seaweed-qualification-*` projects only; they refuse an existing storage stack.
+
+The patched go-jose default RSA modulus cap is 4096 bits. This build never raises
+it or disables FIPS. Optional external KMS/OpenBao configurations with larger keys
+need explicit compatibility review; the current Compose defaults do not prove
+those configurations safe or supported.
+
+CI startup requires independently revalidated whole-Supply-run evidence. Setting
+SEAWEED_QUALIFIED_RECEIPT or tagging an arbitrary local image is insufficient.
+The completion-first native PR checks, external Technical Lead policy binding,
+cross-run transfer and one permitted prerequisite-only full re-run are documented
+in `ci-security-remediation-99.md`. Walking's downstream job retains contents-only
+permissions. No operator should treat a generated REVIEW_REQUIRED inventory as
+approval or bypass an admission failure by unsetting CI security variables.

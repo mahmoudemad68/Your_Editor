@@ -12,7 +12,7 @@ import { test } from "node:test";
 const root = path.resolve(import.meta.dirname, "../..");
 
 function read(relativePath) {
-  return readFileSync(path.join(root, relativePath), "utf8");
+  return readFileSync(path.join(root, relativePath), "utf8").replace(/\r\n/g, "\n");
 }
 
 test("the active stack publishes only the SeaweedFS S3 gateway", () => {
@@ -91,7 +91,7 @@ test("object migration refuses to delete historical volumes", () => {
   assert.equal(backup.includes("minio-data"), false);
   assert.equal(restore.includes("volume rm"), false);
   const rejected = spawnSync(
-    "python3",
+    process.env.TEST_PYTHON ?? "python3",
     [path.join(root, "infra/scripts/migrate-minio-objects.py"), "--delete-volumes"],
     { encoding: "utf8" },
   );
