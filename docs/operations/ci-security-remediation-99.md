@@ -190,3 +190,20 @@ fail specifically because BuildKit's disabled network prevents fetching that
 same approved module; a timeout or unrelated error is not accepted as proof.
 Native build/scan and consumer success remain subject to fresh exact-head evidence
 and a separately reviewed `seaweedfs-policy-v1` binding, never this documentation.
+
+The recorded native failures at H `940fd7e` establish an API-contract defect:
+`X-GitHub-Api-Version: 2026-03-10` deliberately removes `merge_commit_sha`, while
+all other recorded identity comparisons matched. This is not classified as a
+harmless merge-computation race. [GitHub's breaking-change record](https://docs.github.com/en/rest/about-the-rest-api/breaking-changes#version-2026-03-10)
+confirms the removal. An authenticated, version-controlled comparison and an
+anonymous distinct-query comparison observed the field missing under 2026 and
+present with the exact original M under 2022-11-28.
+
+The PR identity request is therefore explicitly pinned to the still-supported
+2022-11-28 contract, with a constant version-qualified query key and mandatory
+verification of GitHub's selected API-version response header. Other API calls
+retain their existing version. There is no version fallback, permission increase,
+M substitution, or adoption of a moving ref as proof. A missing field under the
+pinned contract remains an immediate failure. Diagnostics now distinguish absent
+versus null values and record requested/selected API versions. Any failure to
+establish exact original M remains terminal, never a producer prerequisite.

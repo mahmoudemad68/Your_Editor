@@ -7,6 +7,9 @@ import path from "node:path";
 import {
   parseCommitMetadata,
   identityEvidence,
+  PR_IDENTITY_API,
+  readIdentityPr,
+  validateIdentityApiVersion,
   reconcileIdentity,
   validateIdentity,
   validateProducer,
@@ -684,4 +687,70 @@ test("identity diagnostics expose only selected public identity fields, never re
   assert.equal(JSON.stringify(record).includes("CONFIDENTIAL_SENTINEL"), false);
   assert.equal(record.api.request_id, null);
   assert.deepEqual(record.git.merge_parents, [BASE, H]);
+});
+
+test("PR identity pins the supported merge-SHA API and rejects wrong or absent selected versions", () => {
+  assert.deepEqual(PR_IDENTITY_API, {
+    version: "2022-11-28",
+    path: "pulls/100?identity_api=2022-11-28",
+  });
+  assert.doesNotThrow(() => validateIdentityApiVersion("2022-11-28"));
+  for (const version of ["2026-03-10", null, undefined, "caller-controlled"])
+    assert.throws(
+      () => validateIdentityApiVersion(version),
+      (e) => e.code === "PR_API_VERSION_DRIFT",
+    );
+});
+test("diagnostics distinguish a removed merge field from a genuine null merge computation", () => {
+  const p = identity().pr;
+  delete p.merge_commit_sha;
+  const missing = identityEvidence(reconciliationInput(), p, 1, {}, "HEAD_BASE_MERGE_DRIFT");
+  assert.equal(missing.live_pr.M_present, false);
+  assert.equal(missing.live_pr.M_type, "undefined");
+  const pending = identityEvidence(
+    reconciliationInput(),
+    incomplete(),
+    1,
+    {},
+    "PR_MERGE_METADATA_INCOMPLETE_REFRESH",
+  );
+  assert.equal(pending.live_pr.M_present, true);
+  assert.equal(pending.live_pr.M_type, "object");
+});
+
+test("the actual PR reader sends the pinned API version, cache-qualified route and no credentials", async () => {
+  const original = globalThis.fetch;
+  let selected = "2022-11-28",
+    calls = 0,
+    correlation;
+  globalThis.fetch = async (url, options) => {
+    calls++;
+    assert.equal(
+      url,
+      "https://api.github.com/repos/mahmoudemad68/Your_Editor/pulls/100?identity_api=2022-11-28",
+    );
+    assert.equal(options.headers["X-GitHub-Api-Version"], "2022-11-28");
+    assert.equal(options.headers["Cache-Control"], "no-cache");
+    assert.equal(options.headers.Authorization, undefined);
+    return new globalThis.Response(JSON.stringify(identity().pr), {
+      status: 200,
+      headers: { "x-github-api-version-selected": selected, "x-github-request-id": "AB12:CD34" },
+    });
+  };
+  try {
+    const p = await readIdentityPr((v) => {
+      correlation = v;
+    });
+    assert.equal(p.merge_commit_sha, M);
+    assert.equal(correlation.api_version_selected, "2022-11-28");
+    assert.equal(correlation.api_version_requested, "2022-11-28");
+    selected = "2026-03-10";
+    await assert.rejects(
+      readIdentityPr(() => {}),
+      (e) => e.code === "PR_API_VERSION_DRIFT",
+    );
+    assert.equal(calls, 2);
+  } finally {
+    globalThis.fetch = original;
+  }
 });

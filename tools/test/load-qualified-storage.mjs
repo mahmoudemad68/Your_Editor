@@ -14,6 +14,16 @@ const ROOT = path.resolve(import.meta.dirname, "../..");
 export const REPOSITORY = "mahmoudemad68/Your_Editor";
 export const REPOSITORY_ID = 1395822921;
 export const BASE = "5cdb1d794d347a36d869027947bb62504dddff92";
+// 2026-03-10 deliberately removed merge_commit_sha. Pin the still-supported
+// PR contract rather than substituting a moving ref for immutable event M.
+export const PR_IDENTITY_API = Object.freeze({
+  version: "2022-11-28",
+  path: "pulls/100?identity_api=2022-11-28",
+});
+export function validateIdentityApiVersion(selected) {
+  requireThat(selected === PR_IDENTITY_API.version, "PR_API_VERSION_DRIFT");
+}
+
 export const WORKFLOWS = Object.freeze({
   CI: { id: 370458734, path: ".github/workflows/ci.yml" },
   "Walking skeleton E2E": { id: 377653530, path: ".github/workflows/e2e.yml" },
@@ -225,6 +235,8 @@ export function identityEvidence(input, pr, observation, correlation, outcome) {
       H: safeSha(pr.head?.sha),
       B: safeSha(pr.base?.sha),
       M: safeSha(pr.merge_commit_sha),
+      M_present: Object.hasOwn(pr, "merge_commit_sha"),
+      M_type: typeof pr.merge_commit_sha,
       head_repo: safeId(pr.head?.repo?.id),
       base_repo: safeId(pr.base?.repo?.id),
       state: ["open", "closed"].includes(pr.state) ? pr.state : null,
@@ -288,6 +300,14 @@ export function identityEvidence(input, pr, observation, correlation, outcome) {
           ? correlation.age
           : null,
       refresh: correlation?.refresh === true,
+      api_version_requested: ["2022-11-28", "2026-03-10"].includes(
+        correlation?.api_version_requested,
+      )
+        ? correlation.api_version_requested
+        : null,
+      api_version_selected: ["2022-11-28", "2026-03-10"].includes(correlation?.api_version_selected)
+        ? correlation.api_version_selected
+        : null,
     },
   };
 }
@@ -479,13 +499,14 @@ async function request(
     correlate,
     refresh = false,
     timeout = 30000,
+    apiVersion = "2026-03-10",
   } = {},
 ) {
   requireThat(
     url.startsWith("https://api.github.com/repos/mahmoudemad68/Your_Editor/"),
     "API_ORIGIN_REJECTED",
   );
-  const headers = { Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2026-03-10" };
+  const headers = { Accept: "application/vnd.github+json", "X-GitHub-Api-Version": apiVersion };
   if (refresh) headers["Cache-Control"] = "no-cache";
   const started = new Date().toISOString();
   const actionMetadata = url.includes("/actions/");
@@ -506,7 +527,10 @@ async function request(
       date: response.headers.get("date"),
       age: response.headers.get("age"),
       refresh,
+      api_version_requested: apiVersion,
+      api_version_selected: response.headers.get("x-github-api-version-selected"),
     });
+  if (correlate) validateIdentityApiVersion(response.headers.get("x-github-api-version-selected"));
   if (bytes && response.status === 302) {
     const next = new URL(response.headers.get("location"));
     requireThat(
@@ -535,6 +559,15 @@ async function request(
 }
 const api = (suffix, options) =>
   request(`https://api.github.com/repos/${REPOSITORY}/${suffix}`, options);
+export async function readIdentityPr(correlate) {
+  return api(PR_IDENTITY_API.path, {
+    publicOnly: true,
+    apiVersion: PR_IDENTITY_API.version,
+    refresh: true,
+    timeout: 3000,
+    correlate,
+  });
+}
 async function pages(suffix, field, publicOnly = false) {
   const out = [];
   for (let page = 1; page <= 20; page++) {
@@ -607,20 +640,14 @@ async function identity(env = process.env) {
       async (observation) => {
         let correlation;
         try {
-          const pr = await api("pulls/100", {
-            publicOnly: true,
-            refresh: true,
-            timeout: 3000,
-            correlate: (value) => {
-              correlation = value;
-            },
+          const pr = await readIdentityPr((value) => {
+            correlation = value;
           });
           return { pr, correlation };
-        } catch {
-          await record(
-            identityEvidence(input, {}, observation, correlation, "PR_METADATA_READ_FAILED"),
-          );
-          throw new AdmissionError("PR_METADATA_READ_FAILED");
+        } catch (error) {
+          const outcome = error instanceof AdmissionError ? error.code : "PR_METADATA_READ_FAILED";
+          await record(identityEvidence(input, {}, observation, correlation, outcome));
+          throw new AdmissionError(outcome);
         }
       },
       (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
