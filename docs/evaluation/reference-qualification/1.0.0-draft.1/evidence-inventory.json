@@ -1,0 +1,289 @@
+{
+  "schemaVersion": "1.0.0-draft.1",
+  "documentRole": "PUBLIC_REVIEW_INVENTORY",
+  "status": "BLOCKED_REFERENCE_DATA",
+  "formalProtocolApproval": "PENDING",
+  "baseMain": "5cdb1d794d347a36d869027947bb62504dddff92",
+  "tree": "86e94e6a4b2d5eb705a9d5c9804c3196c69310f4",
+  "authority": "https://github.com/mahmoudemad68/Your_Editor/issues/97#issuecomment-6485649471",
+  "publicationScope": "Docs-only review edition. Specification edits only replace unavailable local pointers and format Markdown; protocol formatting only. Original local artifact bytes remain unchanged. This inventory is an explicit non-sensitive public projection, not the unchanged local inventory.",
+  "originalLocalArtifactHashes": [
+    {
+      "artifact": "SPECIFICATION.md",
+      "sha256": "fea4dcc9364c0031b07a8d65c288b6b283ce6693c75d47354de91822575c3fef"
+    },
+    {
+      "artifact": "protocol.json",
+      "sha256": "1b830b6a884bc36895fb4669ab4a98f88dd2e4bc89ade0fff29dda87abf1e03f"
+    },
+    {
+      "artifact": "evidence-inventory.json",
+      "sha256": "dd78480f77430b9760b97a447b5d8954983822b4bdb42446ef0e8511afda56fd"
+    }
+  ],
+  "reviewArtifacts": [
+    {
+      "path": "SPECIFICATION.md",
+      "sha256": "cee60c49fcd118939b55f484f2f1b89211f344c0ae6ddfcc46be327f7a9a9eb9",
+      "role": "Versioned annotation and evaluation specification"
+    },
+    {
+      "path": "protocol.json",
+      "sha256": "8f06bad51f8d6d6faff2de65d364cff0970376518e9f9ee10cceca0f2da8dda4",
+      "role": "Machine-readable proposed protocol"
+    }
+  ],
+  "reviewSchemas": [
+    {
+      "path": "protocol.schema.json",
+      "sha256": "5aae4df51572c1e099cb2adaffc09564a658ab11127607d65f3015d2a5a47251",
+      "role": "Draft 2020-12 review protocol schema"
+    },
+    {
+      "path": "evidence-inventory.schema.json",
+      "sha256": "398dac55c21331c2374276edea4fd5820a5fe0a926bff55274e9a2915a50255b",
+      "role": "Draft 2020-12 public inventory schema"
+    }
+  ],
+  "availability": {
+    "actualPeopleAssigned": 0,
+    "newHumanLabelsCreated": 0,
+    "collectionStarted": false,
+    "paidServicesAuthorized": false,
+    "externalSharingAuthorized": false,
+    "realIAA": "NOT_MEASURED",
+    "realUs203IndependentPrecision": "NOT_MEASURED",
+    "realIndependentNaturalAcousticF1": "NOT_MEASURED"
+  },
+  "originalGold": [
+    {
+      "path": "docs/evaluation/artifacts/commons-28956463-silence-labels.json",
+      "sha256": "7f990d09069e66a9cb444cee5d082fa0d17a749f87abd7321d099ae45dd9e3c0",
+      "originalUnchanged": true
+    },
+    {
+      "path": "docs/evaluation/artifacts/commons-28956463-word-alignment.json",
+      "sha256": "4a42f08f7eab4538c745ad01c2a32d42ada28a733b7d847fb691c0937b49fe0f",
+      "originalUnchanged": true
+    },
+    {
+      "path": "docs/evaluation/artifacts/commons-82236797-silence-labels.json",
+      "sha256": "11f5bd5144ff391e9cd408058b5dda41c5f36dbbe7c727bcdbdb740baac38733",
+      "originalUnchanged": true
+    },
+    {
+      "path": "docs/evaluation/artifacts/commons-82236797-word-alignment.json",
+      "sha256": "342aa5a4d71c9ec0dac6263bfbe9139c58ab559c23245fb95093689d26f46f82",
+      "originalUnchanged": true
+    },
+    {
+      "path": "docs/evaluation/artifacts/commons-98650286-silence-labels.json",
+      "sha256": "5ef12f76d5897f724d7d616c9d3b5488c6ee5fa786093b274c3147930583f36d",
+      "originalUnchanged": true
+    },
+    {
+      "path": "docs/evaluation/artifacts/commons-98650286-word-alignment.json",
+      "sha256": "89b0d1ece0f2353594342416fd4f3131d6bb30a069bc75b1b9e7a1e3e52a6494",
+      "originalUnchanged": true
+    }
+  ],
+  "sourceInventory": [
+    {
+      "path": "docs/roadmap/backlog/phases/phase-2-perception-editing-core.yaml",
+      "gitBlob": "f0d1b8f79ea15db20d6c07a047ca5f0304dee668",
+      "sha256": "0bee3d857c9a66d1dae0c4b6c47abb279b6f8815782ca7df8388037ea9762f50"
+    },
+    {
+      "path": "docs/roadmap/backlog/phases/phase-3-agent-mvp-alpha.yaml",
+      "gitBlob": "83f5a6ff7cc3b3a21942412965ea63592a7c252d",
+      "sha256": "7be9357884f8a0cc5a7f1eeba5e1e4bf0b7642fb2316a7f7abd93073b060ea87"
+    },
+    {
+      "path": "docs/roadmap/milestones.md",
+      "gitBlob": "22696eb9866c881ee9d40e2f5c84b848b6011572",
+      "sha256": "68cc8c21a69a75e6eab0c23c2995879ed18f21ef4556e8ade53c60abeec49a95"
+    },
+    {
+      "path": "docs/evaluation/manifest.json",
+      "gitBlob": "5e29007ec72dcccfa76b1fd8202eb5ba12fb83e9",
+      "sha256": "68fb43444605c626bb5dd34f1fa20e66a896f33bc15d1b7416513e53e46727eb"
+    },
+    {
+      "path": "docs/evaluation/OWNER_DECISION.md",
+      "gitBlob": "1f770ae7beb80c8874aa53fb031000527b108844",
+      "sha256": "a614099f9a4a14c5a3c7be024692cb1debef1274731fdaba6a14ee6030fddb2f"
+    },
+    {
+      "path": "docs/evaluation/METRICS.md",
+      "gitBlob": "780dc5cf33bf86aa5055b7179b9a51a5d3267ff9",
+      "sha256": "6894ff6ff179c64137b01b0e3ec8187ea8e3a2a8ea2df37a9653b1264fa2bb3c"
+    },
+    {
+      "path": "docs/evaluation/metrics.json",
+      "gitBlob": "148b20eda91542cd2aa3d9b45210aaa3d60da679",
+      "sha256": "2e1690b7423fef945c287d2f296b313c9a589cfd73588b349a9b1e046fec9141"
+    },
+    {
+      "path": "docs/evaluation/CP2_SILENCE_QUALIFICATION.md",
+      "gitBlob": "c622cbcd8f5ac22fff61b7e52f258b6069947e8b",
+      "sha256": "a230922157313d22dfd879f8d7a24c44956d2983133a622d9e86d13ebc0dda12"
+    },
+    {
+      "path": "docs/contracts/transcription-analysis.md",
+      "gitBlob": "18c949632e00f27dccd56cbc24943adf1d2f2529",
+      "sha256": "f73ef336e2243810d8cf0f20fb6febac09239d981c4a94638112879146ef83d5"
+    },
+    {
+      "path": "docs/contracts/media-editing.md",
+      "gitBlob": "909fe6eee4b625dbc4e4f8da3ad9547dcd7adefc",
+      "sha256": "202ce29bfdce40ce2a6fd009da50e2dc2e269c12969a6e9ec32129fce3b20ba1"
+    },
+    {
+      "path": "packages/media-core/src/audio-analyzer.ts",
+      "gitBlob": "52a6f476026314d3751c23de7a0efd4b22a6aa0c",
+      "sha256": "3265d8a7698c9b704c5ce752b207ad92f253e10dd7e078ed030211a398d2848f"
+    },
+    {
+      "path": "packages/media-core/src/ffmpeg-cuts.ts",
+      "gitBlob": "5fe776d7da201622f9abd8885f4699390066995d",
+      "sha256": "cd4d458037cbfb3294515c79e5b387021b443e686c3611327be88ed5e403e5b5"
+    },
+    {
+      "path": "packages/analysis-core/src/silence-safety.ts",
+      "gitBlob": "dca7ea98027d56b7636686ebecd2d25fcc2f04ba",
+      "sha256": "acb7a2945ebaa5cca36cd4e8a6c8e92ad02a0e5e28529fe8341269d5a55552c2"
+    },
+    {
+      "path": "packages/analysis-core/src/silence-safety.test.ts",
+      "gitBlob": "30b4671ce47f6b2c51419f8ea0abb386adffa444",
+      "sha256": "94940e83ee9743c6420590f5b4cc09199581db9f2528468675479709ee21c7bf"
+    },
+    {
+      "path": "packages/schemas/src/media-analysis-versions.ts",
+      "gitBlob": "cb7a21755b5cba632257b4ac481a0578bb2cedee",
+      "sha256": "63f689d43a1be48a1c626ab282b2c8df8d8d780fca66c1f85f242477039c4521"
+    },
+    {
+      "path": "packages/schemas/src/analysis-transcript.schema.json",
+      "gitBlob": "8d7b8cbe2ad2368300740c3f445215f739b871c5",
+      "sha256": "9532738683f15d46130cca089b8e7ea8e79f7637609c4d36e85c6b135ba2cfc3"
+    },
+    {
+      "path": "packages/schemas/src/analysis-transcript-v1_2.schema.json",
+      "gitBlob": "2e5883813ea7e90a47a078159acfd52fbe9b06f4",
+      "sha256": "71214336c700b3269f15437b60c5ae6766369371a4aca1c895fd2efe527b6525"
+    },
+    {
+      "path": "packages/tool-sdk/src/editing-tools.ts",
+      "gitBlob": "f20a4a3b7ffeaca37b04857a55509ba5ea00d783",
+      "sha256": "b5a488a7164fa16ad4561a4c5a043600a0dc2e63c15719f32dddc8d9dded8c0f"
+    },
+    {
+      "path": "packages/tool-sdk/src/caption-tools.ts",
+      "gitBlob": "ce14fce80e378cdc747887b976762c8c6851a6f7",
+      "sha256": "bd2c9bc9f9bb06278ee95ad5d6b06c15b4e922348e978c8c1d6505e176e10b01"
+    },
+    {
+      "path": "packages/domain/src/modules/editing/commands.ts",
+      "gitBlob": "4cc3c4d511e12205ef6a91e5ad7faef902b9178e",
+      "sha256": "07deb75e4b35278cacbd803f34c575028a179e765d0ef204c76e546803674ca3"
+    },
+    {
+      "path": "tools/audio/interval-metrics.mjs",
+      "gitBlob": "38898ee8413be1cff8a2f5591e98e323719fd46a",
+      "sha256": "ad5d30ff8c3306e8a2e5f446223d446a4ca4fe51f86e9b89d7c2aede75a39052"
+    },
+    {
+      "path": "tools/audio/verify_metrics.py",
+      "gitBlob": "6a127a1978c5e3e457fcb7f6ef5016a449d51b2d",
+      "sha256": "bc6aae807b8f85457ee6b550bc08008936fc2e29436118af68d490cb813711f3"
+    },
+    {
+      "path": "tools/audio/evaluate.mjs",
+      "gitBlob": "9189019b643b4f993e792e89271b13fc82e96a42",
+      "sha256": "738f0a6ade5272cdeccdc5eafbfe0728e1551f6700a119c5d161c3f7cdc9e438"
+    },
+    {
+      "path": "tools/evaluation/scoped-inputs.mjs",
+      "gitBlob": "de0582a0df00d7fbff7a82c0b1ffbe5d73f181de",
+      "sha256": "6a4d8fd9a9a249ab5a253a6f548c5b1aa36b25d345b432fdbaba4e91a66bd5ef"
+    }
+  ],
+  "historicalLocalEvidence": [
+    {
+      "artifact": "DESIGN_AND_EVIDENCE.md",
+      "sha256": "be1bf2edbb36238a010abbcc0535dcbf8c0051f9a656e813bbbb1b086daea171",
+      "availability": "HASH_ONLY_NOT_PUBLISHED"
+    },
+    {
+      "artifact": "evidence-record.json",
+      "sha256": "e2df4265d57997ba43476ef0532abe4ad91deaf95817d48ff1450788de677617",
+      "availability": "HASH_ONLY_NOT_PUBLISHED"
+    },
+    {
+      "artifact": "label-provenance-audit.json",
+      "sha256": "32e590d78509348edc50893753157f04dd03a2f0aae68b555afeafc15087f5ef",
+      "availability": "HASH_ONLY_NOT_PUBLISHED"
+    },
+    {
+      "artifact": "independent-metrics-recheck.json",
+      "sha256": "e29146d113edf8dc9f834099d596897c145187e1297e2248308c16eb22fefc5c",
+      "availability": "HASH_ONLY_NOT_PUBLISHED"
+    },
+    {
+      "artifact": "dataset-validation.json",
+      "sha256": "42be0d20c0dd9aad17c00b0826cefe4dd5adb58ac7418da85008231c4fe952e2",
+      "availability": "HASH_ONLY_NOT_PUBLISHED"
+    }
+  ],
+  "verificationScope": {
+    "originalStageAReviewUtc": "2026-10-28T21:39:40.006383+00:00",
+    "originalGoldHashesVerified": 6,
+    "protectedFilesUnchanged": 27,
+    "priorFrozenArchivesUnchanged": 3,
+    "currentHumanReferenceQualification": "NOT_PERFORMED",
+    "historicalMetricsRole": "Stage A independent recheck of stored predictions against immutable generated NON_SPEECH; not independent natural acoustic/filler acceptance."
+  },
+  "officialExternalSources": [
+    {
+      "title": "AudioSet strong official release",
+      "url": "https://research.google.com/audioset/download_strong.html",
+      "finding": "Public sound-event annotation metadata; no qualifying project EN/AR audio/reference corpus established Annotation release CC BY 4.0; original media permission/availability separate No paid acquisition proposed; no raw media downloaded"
+    },
+    {
+      "title": "AudioSet Silence ontology",
+      "url": "https://research.google.com/audioset/ontology/silence_1.html",
+      "finding": "Perceptual class, not a documented -60dBFS/200ms physical condition"
+    },
+    {
+      "title": "NXT Switchboard Annotations",
+      "url": "https://catalog.ldc.upenn.edu/LDC2009T26",
+      "finding": "English disfluency annotation lead; source speech/timing/protocol compatibility not qualified here Catalogue lists noncommercial-share-alike route and separate commercial membership terms Applicable fee requires login; no quote, licence acceptance or download"
+    },
+    {
+      "title": "CALLHOME Egyptian Arabic Speech",
+      "url": "https://catalog.ldc.upenn.edu/LDC97S45",
+      "finding": "Speech only; no project entitlement verified LDC agreement; not accepted here Applicable fee requires login; unquoted; no purchase"
+    },
+    {
+      "title": "CALLHOME Egyptian Arabic Transcripts",
+      "url": "https://catalog.ldc.upenn.edu/LDC97T19",
+      "finding": "Separate turn-timestamped transcripts; not a ready word-level acoustic/filler qualification reference LDC agreement; not accepted here Applicable fee requires login; unquoted; no purchase"
+    }
+  ],
+  "remainingDecisions": [
+    "Approve protocol target/matching/aggregation and reference scope",
+    "Authorize actual independent annotators/adjudicator/custodian and capped time/budget",
+    "Approve source rights/privacy and local access/retention; any external sharing remains a separate explicit decision"
+  ],
+  "restrictions": [
+    "CP1_NOT_VERIFIED",
+    "CP2_NOT_MET",
+    "TINY_ARABIC_NOT_QUALIFIED",
+    "PLANNER_NOT_CONFIGURED",
+    "US309_BLOCKED",
+    "NO_READY_MERGE_DEPLOY",
+    "NO_PAID_LLM",
+    "NO_GOLD_THRESHOLD_SECURITY_OR_HELD_FILE_CHANGES"
+  ]
+}
