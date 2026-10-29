@@ -1990,7 +1990,7 @@ test("actual read-only ELF parser rejects malformed bounds, unsupported headers 
       "-c",
       String.raw`
 import struct,sys
-b=bytearray(1024);ident=b'\x7fELF\x02\x01'+b'\0'*10
+b=bytearray(1024);ident=b'\x7fELF\x02\x01\x01'+b'\0'*9
 struct.pack_into('<16sHHIQQQIHHHHHH',b,0,ident,2,62,1,0x400000,64,512,0,64,56,1,64,2,1)
 struct.pack_into('<IIQQQQQQ',b,64,1,5,0,0x400000,0x400000,1024,1024,4096)
 names=b'\0.shstrtab\0';b[256:256+len(names)]=names
@@ -2091,3 +2091,98 @@ test("final report byte accounting includes its own budget and verdict without u
     assert.throws(() => terminateDiagnostic(r), /NON_PROMOTABLE/);
   }
 });
+
+// Real ELF64LE bytes with the same memory-only section shape as the native Go
+// failure. No parser mock, ELF execution, compiler or success stub is used.
+function goNOBITSFixture() {
+  return execFileSync(python, [
+    "-c",
+    String.raw`
+import struct,sys
+b=bytearray(1024);ident=b'\x7fELF\x02\x01\x01'+b'\0'*9
+struct.pack_into('<16sHHIQQQIHHHHHH',b,0,ident,2,62,1,0x400000,64,512,0,64,56,2,64,5,1)
+struct.pack_into('<IIQQQQQQ',b,64,1,5,0,0x400000,0x400000,384,384,4096)
+struct.pack_into('<IIQQQQQQ',b,120,1,6,384,0x401000,0x401000,64,256,16)
+names=b'\0.shstrtab\0.bss\0.noptrbss\0.data\0';b[256:256+len(names)]=names
+for i,(name,t,flags,addr,off,size,align) in enumerate([
+ (b'.shstrtab',3,0,0,256,len(names),1),
+ (b'.bss',8,3,0x401040,448,64,64),
+ (b'.noptrbss',8,3,0x401080,4096,128,128),
+ (b'.data',1,3,0x401000,384,64,32),
+],1):
+ struct.pack_into('<IIQQQQIIQQ',b,512+i*64,names.index(name),t,flags,addr,off,size,0,0,align,0)
+sys.stdout.buffer.write(b)
+`,
+  ]);
+}
+
+for (const variant of ["bss", "noptrbss-beyond-EOF", "memory-boundary", "unused-offset-uint64-max"])
+  test(`real inspectSWELF accepts legal ${variant} without file payload`, async () =>
+    temporary(async (dir) => {
+      const bytes = goNOBITSFixture();
+      if (variant === "unused-offset-uint64-max")
+        bytes.writeBigUInt64LE((1n << 64n) - 1n, 512 + 3 * 64 + 24);
+      const f = path.join(dir, "go-memory-only.elf");
+      await writeFile(f, bytes);
+      const actual = inspectSWELF(f, python);
+      assert.equal(actual.sha256, sha256(bytes));
+      assert.equal(actual.file_bytes, 1024);
+      const bss = actual.sections.find((s) => s.name === ".bss"),
+        noptr = actual.sections.find((s) => s.name === ".noptrbss");
+      assert.equal(bss.file_bytes, 0);
+      assert.equal(bss.logical_bytes, 64);
+      assert.equal(noptr.file_bytes, 0);
+      assert.ok(noptr.offset > actual.file_bytes);
+      assert.equal(
+        noptr.address + noptr.logical_bytes,
+        actual.program_headers[1].virtual_address + actual.program_headers[1].memory_bytes,
+      );
+      assert.equal(actual.sections.find((s) => s.name === ".data").file_bytes, 64);
+    }));
+
+const sh = (index, field) => 512 + index * 64 + field;
+for (const [name, mutate] of [
+  ["file-backed section EOF overrun", (b) => b.writeBigUInt64LE(1020n, sh(1, 24))],
+  ["file-backed section offset overflow", (b) => b.writeBigUInt64LE((1n << 64n) - 1n, sh(1, 24))],
+  ["truncated section table", (b) => b.writeBigUInt64LE(900n, 40)],
+  ["truncated program table", (b) => b.writeBigUInt64LE(1000n, 32)],
+  ["malformed section record size", (b) => b.writeUInt16LE(63, 58)],
+  ["malformed program record size", (b) => b.writeUInt16LE(55, 54)],
+  ["malformed names-table type", (b) => b.writeUInt32LE(8, sh(1, 4))],
+  [
+    "unterminated section-name table",
+    (b) => (b[256 + Number(b.readBigUInt64LE(sh(1, 32))) - 1] = 65),
+  ],
+  ["invalid section name index", (b) => b.writeUInt32LE(10000, sh(3, 0))],
+  ["NOBITS outside load memory", (b) => b.writeBigUInt64LE(0x401100n, sh(3, 16))],
+  ["NOBITS one byte over memory boundary", (b) => b.writeBigUInt64LE(129n, sh(3, 32))],
+  ["NOBITS incompatible read-only segment", (b) => b.writeUInt32LE(4, 124)],
+  ["NOBITS executable section in nonexecuting segment", (b) => b.writeBigUInt64LE(7n, sh(3, 8))],
+  ["NOBITS virtual address overflow", (b) => b.writeBigUInt64LE(0xffffffffffffff80n, sh(3, 16))],
+  ["load memory overflow", (b) => b.writeBigUInt64LE(0xfffffffffffffff0n, 120 + 16)],
+  ["load file range overflow", (b) => b.writeBigUInt64LE(0xfffffffffffffff0n, 120 + 8)],
+  ["non-power-of-two section alignment", (b) => b.writeBigUInt64LE(3n, sh(3, 48))],
+  ["misaligned allocated NOBITS address", (b) => b.writeBigUInt64LE(0x401081n, sh(3, 16))],
+  ["non-power-of-two segment alignment", (b) => b.writeBigUInt64LE(3n, 120 + 48)],
+  ["incongruent segment offset/address alignment", (b) => b.writeBigUInt64LE(385n, 120 + 8)],
+  ["file size exceeds memory size", (b) => b.writeBigUInt64LE(257n, 120 + 32)],
+  ["writable executable load", (b) => b.writeUInt32LE(7, 124)],
+  ["interpreter program", (b) => b.writeUInt32LE(3, 120)],
+  ["unsupported ELF class", (b) => (b[4] = 1)],
+  ["unsupported ELF endianness", (b) => (b[5] = 2)],
+  ["invalid identification version", (b) => (b[6] = 0)],
+  ["invalid ELF version", (b) => b.writeUInt32LE(0, 20)],
+  ["unsupported executable type", (b) => b.writeUInt16LE(3, 16)],
+  ["unsupported machine", (b) => b.writeUInt16LE(183, 18)],
+  ["entry outside executable file mapping", (b) => b.writeBigUInt64LE(0x401080n, 24)],
+  ["file-backed allocated section mapping mismatch", (b) => b.writeBigUInt64LE(416n, sh(4, 24))],
+  ["nonzero inactive section header", (b) => b.writeUInt32LE(1, 512)],
+])
+  test(`real inspectSWELF rejects ${name}`, async () =>
+    temporary(async (dir) => {
+      const bytes = goNOBITSFixture();
+      mutate(bytes);
+      const f = path.join(dir, "malformed.elf");
+      await writeFile(f, bytes);
+      assert.throws(() => inspectSWELF(f, python));
+    }));

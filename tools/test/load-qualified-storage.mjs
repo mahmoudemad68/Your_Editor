@@ -2647,26 +2647,54 @@ with open(p,'rb') as f:
  with mmap.mmap(f.fileno(),0,access=mmap.ACCESS_READ) as b:
   if b[:6]!=b'\x7fELF\x02\x01': raise ValueError('ELF64LE required')
   e=struct.unpack_from('<16sHHIQQQIHHHHHH',b,0)
-  _,typ,machine,_,entry,po,so,_,eh,pe,pn,se,sn,ss=e
-  if typ!=2 or machine!=62 or eh!=64 or pe!=56 or se!=64 or not 0<pn<=64 or not 0<sn<=256 or ss>=sn: raise ValueError('ELF header rejected')
+  ident,typ,machine,version,entry,po,so,_,eh,pe,pn,se,sn,ss=e
+  if ident[6]!=1 or version!=1 or typ!=2 or machine!=62 or eh!=64 or pe!=56 or se!=64 or not 0<pn<=64 or not 0<sn<=256 or not 0<ss<sn: raise ValueError('ELF header rejected')
+  maximum=(1<<64)-1
+  def end64(start,length):
+   if start<0 or length<0 or start>maximum or length>maximum-start: raise ValueError('ELF integer range rejected')
+   return start+length
   def bounded(off,n):
-   if off<0 or n<0 or off+n>size: raise ValueError('ELF range rejected')
+   if end64(off,n)>size: raise ValueError('ELF range rejected')
+  def aligned(value,alignment):
+   if alignment not in (0,1) and (alignment&(alignment-1) or value%alignment): raise ValueError('ELF alignment rejected')
   bounded(po,pn*pe);bounded(so,sn*se)
   sh=[struct.unpack_from('<IIQQQQIIQQ',b,so+i*se) for i in range(sn)]
-  st=sh[ss];bounded(st[4],st[5]);names=b[st[4]:st[4]+st[5]];sections=[]
+  if any(sh[0]): raise ValueError('ELF null section rejected')
+  st=sh[ss]
+  if st[1]!=3 or st[5]==0: raise ValueError('ELF section names table rejected')
+  bounded(st[4],st[5]);names=b[st[4]:st[4]+st[5]]
+  if names[0]!=0 or names[-1]!=0: raise ValueError('ELF section names table malformed')
+  programs=[]
+  for i in range(pn):
+   t,flags,off,va,pa,fs,ms,align=struct.unpack_from('<IIQQQQQQ',b,po+i*pe)
+   bounded(off,fs);end64(va,ms)
+   if fs>ms: raise ValueError('ELF file size exceeds memory size')
+   if t==3 or flags&3==3: raise ValueError('ELF interpreter or WX program')
+   aligned(0,align)
+   if align>1 and off%align!=va%align: raise ValueError('ELF segment alignment rejected')
+   programs.append({'type':t,'flags':flags,'offset':off,'file_bytes':fs,'memory_bytes':ms,'virtual_address':va,'align':align})
+  loads=[p for p in programs if p['type']==1]
+  if not any(p['flags']&1 and p['virtual_address']<=entry<end64(p['virtual_address'],p['file_bytes']) for p in loads): raise ValueError('ELF entry mapping rejected')
+  sections=[]
   for s in sh:
    n,t,flags,addr,off,nbytes,_,_,align,_=s
    if n>=len(names): raise ValueError('ELF section name rejected')
    end=names.find(b'\0',n)
    if end<0: raise ValueError('ELF section name unterminated')
    name=names[n:end].decode('ascii');disk=0 if t==8 else nbytes
-   bounded(off,disk)
+   # NOBITS has no physical payload; sh_offset is unused, not a file range.
+   if t!=8: bounded(off,disk)
+   aligned(0,align)
+   if flags&2:
+    memory_end=end64(addr,nbytes);aligned(addr,align)
+    def compatible(p):
+     start=p['virtual_address']
+     if not p['flags']&4 or flags&1 and not p['flags']&2 or flags&4 and not p['flags']&1: return False
+     if not start<=addr or memory_end>end64(start,p['memory_bytes']): return False
+     if t!=8 and (memory_end>end64(start,p['file_bytes']) or off!=end64(p['offset'],addr-start)): return False
+     return True
+    if not any(compatible(p) for p in loads): raise ValueError('ELF allocated section mapping rejected')
    sections.append({'name':name,'type':t,'flags':flags,'address':addr,'offset':off,'file_bytes':disk,'logical_bytes':nbytes,'align':align})
-  programs=[]
-  for i in range(pn):
-   t,flags,off,va,pa,fs,ms,align=struct.unpack_from('<IIQQQQQQ',b,po+i*pe);bounded(off,fs)
-   if t==3 or flags&3==3: raise ValueError('ELF interpreter or WX program')
-   programs.append({'type':t,'flags':flags,'offset':off,'file_bytes':fs,'memory_bytes':ms,'virtual_address':va,'align':align})
 print(json.dumps({'sha256':h,'file_bytes':size,'entry':entry,'type':typ,'machine':machine,'sections':sections,'program_headers':programs,'inspector':'python-stdlib-elf64le-read-only-v1'}))
 `,
         file,
