@@ -22,6 +22,7 @@ BODY = b"bounded download regression fixture\n"
 
 class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
+        self.server.paths.append(self.path)
         self.send_response(200)
         partial = self.server.partial and self.server.connections == 1
         self.send_header("Content-Length", str(len(BODY)))
@@ -87,6 +88,7 @@ class DownloadControls(unittest.TestCase):
             server.connections = 0
             server.resets = resets
             server.partial = partial
+            server.paths = []
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
             try:
@@ -97,10 +99,17 @@ class DownloadControls(unittest.TestCase):
                         "https://ffmpeg.org/releases/${archive}",
                         f"https://localhost:{server.server_port}/fixture",
                     )
+                    prefix = prefix.replace(
+                        "https://security.debian.org/debian-security/pool/updates/main/f/ffmpeg/ffmpeg_${version}.orig.tar.xz",
+                        f"https://localhost:{server.server_port}/fallback",
+                    )
                     expected = hashlib.sha256(b"wrong" if corrupt else BODY).hexdigest()
                     prefix = prefix.replace(PIN, expected)
                     if default_retry:
                         prefix = prefix.replace("--retry-all-errors", "")
+                        begin = prefix.index('if download "$url"; then')
+                        end = prefix.index("\nfi", begin) + len("\nfi")
+                        prefix = prefix[:begin] + 'download "$url"' + prefix[end:]
                     env = {
                         key: value
                         for key, value in os.environ.items()
@@ -118,40 +127,56 @@ class DownloadControls(unittest.TestCase):
                     archive = Path(directory) / "ffmpeg-7.1.5.tar.xz"
                     content = archive.read_bytes() if archive.exists() else None
                     self.assertFalse(Path(str(archive) + ".part").exists())
-                    return result, server.connections, content
+                    return result, server.connections, content, server.paths
             finally:
                 server.shutdown()
                 thread.join(timeout=5)
 
     def test_original_default_retry_reproduces_tls_failure(self):
-        result, attempts, content = self.execute(resets=1, default_retry=True)
+        result, attempts, content, _ = self.execute(resets=1, default_retry=True)
         self.assertEqual(result.returncode, 35, result.stderr)
         self.assertEqual(attempts, 1)
         self.assertIsNone(content)
 
     def test_tls_reset_recovers_and_verifies_complete_bytes(self):
-        result, attempts, content = self.execute(resets=1)
+        result, attempts, content, paths = self.execute(resets=1)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(attempts, 2)
         self.assertEqual(content, BODY)
+        self.assertEqual(paths, ["/fixture"])
 
     def test_partial_transfer_restarts_without_appending_bytes(self):
-        result, attempts, content = self.execute(partial=True)
+        result, attempts, content, _ = self.execute(partial=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(attempts, 2)
         self.assertEqual(content, BODY)
 
-    def test_persistent_tls_failure_stops_at_four_attempts(self):
-        result, attempts, content = self.execute(resets=100)
+    def test_persistent_tls_failure_stops_at_eight_total_attempts(self):
+        result, attempts, content, _ = self.execute(resets=100)
         self.assertEqual(result.returncode, 35, result.stderr)
-        self.assertEqual(attempts, 4)
+        self.assertEqual(attempts, 8)
         self.assertIsNone(content)
 
     def test_checksum_mismatch_is_not_retried_or_promoted(self):
-        result, attempts, content = self.execute(corrupt=True)
+        result, attempts, content, paths = self.execute(corrupt=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("FAILED", result.stdout)
         self.assertEqual(attempts, 1)
+        self.assertIsNone(content)
+        self.assertEqual(paths, ["/fixture"])
+
+    def test_exhausted_primary_uses_only_the_pinned_fallback(self):
+        result, attempts, content, paths = self.execute(resets=4)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(attempts, 5)
+        self.assertEqual(paths, ["/fallback"])
+        self.assertEqual(content, BODY)
+
+    def test_fallback_checksum_mismatch_fails_closed(self):
+        result, attempts, content, paths = self.execute(resets=4, corrupt=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(attempts, 5)
+        self.assertEqual(paths, ["/fallback"])
         self.assertIsNone(content)
 
     def test_production_identity_and_transfer_bounds(self):
@@ -160,9 +185,9 @@ class DownloadControls(unittest.TestCase):
         self.assertIn('url="https://ffmpeg.org/releases/${archive}"', SOURCE)
         for option in [
             "--retry 3",
-            "--retry-max-time 300",
+            "--retry-max-time 120",
             "--connect-timeout 15",
-            "--max-time 120",
+            "--max-time 90",
             "--proto '=https'",
             "--proto-redir '=https'",
         ]:

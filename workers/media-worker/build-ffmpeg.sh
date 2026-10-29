@@ -10,17 +10,29 @@ version=7.1.5
 expected=de668509caf9e35e3cd162473441fdb29538c6d96ed080292b3cf9e6fc5d558f
 archive="ffmpeg-${version}.tar.xz"
 url="https://ffmpeg.org/releases/${archive}"
+fallback_url="https://security.debian.org/debian-security/pool/updates/main/f/ffmpeg/ffmpeg_${version}.orig.tar.xz"
 
 cd /src
 # A TLS receive reset (curl 35) is not covered by --retry alone. This is an
-# idempotent, checksum-pinned GET to one trusted HTTPS source. Retry all transfer
-# errors, with at most four attempts; a final transfer can finish at most 120s
-# after the 300s retry window. Never extract a partial or unverified archive.
+# idempotent, checksum-pinned GET. Both fixed HTTPS origins must supply the same
+# bytes. Each has at most four attempts and a 120s retry window plus a final 90s
+# transfer (at most 420s across both). Never extract partial/unverified archives.
 trap 'rm -f "${archive}.part"' EXIT HUP INT TERM
-curl -fsSL --proto '=https' --proto-redir '=https' \
-  --retry 3 --retry-all-errors --retry-delay 2 --retry-max-time 300 \
-  --connect-timeout 15 --max-time 120 --remove-on-error \
-  --output "${archive}.part" "$url"
+download() {
+  curl -fsSL --proto '=https' --proto-redir '=https' \
+    --retry 3 --retry-all-errors --retry-delay 2 --retry-max-time 120 \
+    --connect-timeout 15 --max-time 90 --remove-on-error \
+    --output "${archive}.part" "$1"
+}
+if download "$url"; then
+  :
+else
+  echo "Primary FFmpeg transfer failed; trying the checksum-identical Debian source" >&2
+  rm -f "${archive}.part"
+  download "$fallback_url"
+fi
+# A successful transfer with wrong bytes fails closed, without trying another
+# origin. Transport recovery must never conceal a checksum-integrity failure.
 echo "${expected}  ${archive}.part" | sha256sum -c -
 mv "${archive}.part" "$archive"
 tar -xJf "$archive"
