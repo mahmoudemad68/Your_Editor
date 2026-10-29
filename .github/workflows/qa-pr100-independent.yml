@@ -1,0 +1,407 @@
+name: Independent QA
+
+on:
+  push:
+    branches:
+      - qa/pr100-12b09f7
+    paths-ignore:
+      - qa/pr100/reports/**
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: qa-pr100-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  identity:
+    name: G0 identity
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Pin product commit
+        run: python3 qa/pr100/assert_product_pin.py
+      - name: Identity and preserved-policy checks
+        run: python3 qa/pr100/g0_identity.py "$RUNNER_TEMP/g0.jsonl" "$RUNNER_TEMP/g0-evidence"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: qa-results-g0
+          path: ${{ runner.temp }}/g0.jsonl
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: qa-evidence-g0
+          path: ${{ runner.temp }}/g0-evidence
+
+  ffmpeg-controls:
+    name: G1 download controls
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Pin product commit
+        run: python3 qa/pr100/assert_product_pin.py
+      - name: Adversarial download controls and Debian checksum
+        run: python3 qa/pr100/g1_ffmpeg_adversarial.py "$RUNNER_TEMP/g1.jsonl"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: qa-results-g1-controls
+          path: ${{ runner.temp }}/g1.jsonl
+
+  ffmpeg-media:
+    name: G1 media image
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          lfs: true
+      - name: Pin product commit
+        run: python3 qa/pr100/assert_product_pin.py
+      - name: Build media-worker with primary forced down
+        run: sh qa/pr100/g1_build_images.sh media "$RUNNER_TEMP/g1-media.jsonl" "$RUNNER_TEMP/g1-media"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: qa-results-g1-media
+          path: ${{ runner.temp }}/g1-media.jsonl
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: qa-evidence-g1-media
+          path: ${{ runner.temp }}/g1-media
+
+  ffmpeg-render:
+    name: G1 render images
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Pin product commit
+        run: python3 qa/pr100/assert_product_pin.py
+      - name: Build render-worker and render-executor with primary forced down
+        run: sh qa/pr100/g1_build_images.sh render "$RUNNER_TEMP/g1-render.jsonl" "$RUNNER_TEMP/g1-render"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: qa-results-g1-render
+          path: ${{ runner.temp }}/g1-render.jsonl
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: qa-evidence-g1-render
+          path: ${{ runner.temp }}/g1-render
+
+  seaweed:
+    name: G2 SeaweedFS
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          cache: pnpm
+          node-version-file: .nvmrc
+      - name: Pin product commit
+        run: python3 qa/pr100/assert_product_pin.py
+      - name: Install workspace for the S3 SDK
+        run: pnpm install --frozen-lockfile
+      - name: Qualify SeaweedFS image, scan, auth, and restore
+        run: sh qa/pr100/g2_qualify.sh "$RUNNER_TEMP/g2.jsonl" "$RUNNER_TEMP/g2"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: qa-results-g2
+          path: ${{ runner.temp }}/g2.jsonl
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: qa-evidence-g2
+          if-no-files-found: ignore
+          path: |
+            ${{ runner.temp }}/g2/trivy-seaweedfs-full.json
+            ${{ runner.temp }}/g2/sbom-seaweedfs.spdx.json
+            ${{ runner.temp }}/g2/reachability.txt
+            ${{ runner.temp }}/g2/image-facts.txt
+            ${{ runner.temp }}/g2/index.txt
+
+  render-regression:
+    name: G3 browser export
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          lfs: true
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          cache: pnpm
+          node-version-file: .nvmrc
+      - name: Pin product commit
+        env:
+          PR_HEAD_SHA: 12b09f704d32bc68f662404872586f89d26f284f
+        run: python3 qa/pr100/assert_product_pin.py
+      - name: Install workspace, FFmpeg, and Chrome
+        run: |
+          pnpm install --frozen-lockfile
+          sh tools/test/ensure-ffmpeg.sh
+          sh tools/test/ensure-chrome.sh
+      - name: Real render, edit, and browser export
+        env:
+          PR_HEAD_SHA: 12b09f704d32bc68f662404872586f89d26f284f
+        run: |
+          set +e
+          pnpm render:test --graduation-demo > "$RUNNER_TEMP/render.log" 2>&1
+          code=$?
+          set -e
+          if [ "$code" = 0 ]; then
+            python3 qa/pr100/emit_cli.py "$RUNNER_TEMP/g3-render.jsonl" g3.render_regression G3 PASS true "pnpm render:test --graduation-demo passed"
+          else
+            python3 qa/pr100/emit_cli.py "$RUNNER_TEMP/g3-render.jsonl" g3.render_regression G3 FAIL true "pnpm render:test --graduation-demo exited $code"
+          fi
+          python3 qa/pr100/g3_finish_render.py "$RUNNER_TEMP/g3-render.jsonl" "$RUNNER_TEMP/g3-render"
+          exit "$code"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: qa-results-g3-render
+          path: ${{ runner.temp }}/g3-render.jsonl
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: qa-evidence-g3-render
+          if-no-files-found: ignore
+          path: |
+            ${{ runner.temp }}/g3-render/export-ffprobe.json
+            ${{ runner.temp }}/g3-render/graduation-report.json
+            .local/graduation-demo-public/demo-export.mp4
+            .local/graduation-demo-public/report.json
+            .local/graduation-demo-public/*.png
+
+  walking-skeleton:
+    name: G3 walking skeleton
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          lfs: true
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          cache: pnpm
+          node-version-file: .nvmrc
+      - name: Pin product commit
+        run: python3 qa/pr100/assert_product_pin.py
+      - name: Install workspace, FFmpeg, and Chrome
+        run: |
+          pnpm install --frozen-lockfile
+          sh tools/test/ensure-ffmpeg.sh
+          sh tools/test/ensure-chrome.sh
+      - name: Real Compose upload on SeaweedFS
+        run: |
+          set +e
+          pnpm test:walking-skeleton --verify-failure > "$RUNNER_TEMP/walking.log" 2>&1
+          code=$?
+          set -e
+          if [ "$code" = 0 ]; then
+            python3 qa/pr100/emit_cli.py "$RUNNER_TEMP/g3-walking.jsonl" g3.walking_skeleton G3 PASS true "walking skeleton passed on compose SeaweedFS"
+          else
+            python3 qa/pr100/emit_cli.py "$RUNNER_TEMP/g3-walking.jsonl" g3.walking_skeleton G3 FAIL true "walking skeleton exited $code"
+          fi
+          exit "$code"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: qa-results-g3-walking
+          path: ${{ runner.temp }}/g3-walking.jsonl
+
+  asr:
+    name: G3 ASR (${{ matrix.shard }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: native
+            case: g3.asr_native
+          - shard: languages
+            case: g3.asr_languages
+          - shard: state-single
+            case: g3.asr_state_single
+          - shard: state-multi
+            case: g3.asr_state_multi
+          - shard: long-input
+            case: g3.asr_long_input
+          - shard: alignment
+            case: g3.asr_alignment
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          lfs: true
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          cache-python: true
+          enable-cache: true
+          python-version: "3.11"
+          version: "0.12.20"
+      - name: Pin product commit
+        run: python3 qa/pr100/assert_product_pin.py
+      - name: Install pinned audio runtime
+        run: sh tools/test/ensure-ffmpeg.sh
+      - name: Prepare models and run the shard
+        working-directory: workers/ai-worker
+        run: |
+          set +e
+          uv sync --frozen
+          uv run python -m editagent_ai_worker.infrastructure.vad_model
+          uv run python -m editagent_ai_worker.infrastructure.asr_model --root ../../.local/asr-models --model tiny
+          uv run python -m editagent_ai_worker.infrastructure.asr_model --root ../../.local/asr-models --model small
+          uv run python ../../tools/asr/test_partition.py --check
+          uv run python ../../tools/asr/test_partition.py --shard "${{ matrix.shard }}"
+          code=$?
+          set -e
+          if [ "$code" = 0 ]; then
+            python3 ../../qa/pr100/emit_cli.py "$RUNNER_TEMP/g3-asr-${{ matrix.shard }}.jsonl" ${{ matrix.case }} G3 PASS true "shard ${{ matrix.shard }} passed"
+          else
+            python3 ../../qa/pr100/emit_cli.py "$RUNNER_TEMP/g3-asr-${{ matrix.shard }}.jsonl" ${{ matrix.case }} G3 FAIL true "shard ${{ matrix.shard }} exited $code"
+          fi
+          exit "$code"
+      - uses: actions/setup-node@v7
+        if: ${{ !cancelled() && matrix.shard == 'long-input' }}
+        with:
+          node-version-file: .nvmrc
+      - name: Production CPU jail qualification
+        if: ${{ !cancelled() && matrix.shard == 'long-input' }}
+        env:
+          PR_HEAD_SHA: 12b09f704d32bc68f662404872586f89d26f284f
+        run: |
+          set +e
+          node tools/asr/container.mjs --build-only --model tiny
+          node tools/asr/qualification.mjs
+          code=$?
+          set -e
+          if [ "$code" = 0 ]; then
+            python3 qa/pr100/emit_cli.py "$RUNNER_TEMP/g3-asr-long-input.jsonl" g3.asr_cpu_jail G3 PASS true "600000ms production CPU jail qualification passed"
+          else
+            python3 qa/pr100/emit_cli.py "$RUNNER_TEMP/g3-asr-long-input.jsonl" g3.asr_cpu_jail G3 FAIL true "qualification exited $code"
+          fi
+          exit "$code"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: qa-results-g3-asr-${{ matrix.shard }}
+          path: ${{ runner.temp }}/g3-asr-${{ matrix.shard }}.jsonl
+
+  asr-container:
+    name: G3 ASR container
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          lfs: true
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          cache: pnpm
+          node-version-file: .nvmrc
+      - name: Pin product commit
+        run: python3 qa/pr100/assert_product_pin.py
+      - name: Install workspace
+        run: pnpm install --frozen-lockfile
+      - name: Non-root ASR container
+        run: |
+          set +e
+          pnpm asr:container > "$RUNNER_TEMP/asr-container.log" 2>&1
+          code=$?
+          set -e
+          if [ "$code" = 0 ]; then
+            python3 qa/pr100/emit_cli.py "$RUNNER_TEMP/g3-container.jsonl" g3.asr_container G3 PASS true "pnpm asr:container passed"
+          else
+            python3 qa/pr100/emit_cli.py "$RUNNER_TEMP/g3-container.jsonl" g3.asr_container G3 FAIL true "pnpm asr:container exited $code"
+          fi
+          exit "$code"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: qa-results-g3-container
+          path: ${{ runner.temp }}/g3-container.jsonl
+
+  fail-closed:
+    name: G4 fail-closed proof
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Pin product commit
+        run: python3 qa/pr100/assert_product_pin.py
+      - name: Injected failing evidence must fail the gate
+        run: python3 qa/pr100/prove_fail_closed.py "$RUNNER_TEMP/g4.jsonl"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: qa-results-g4
+          path: ${{ runner.temp }}/g4.jsonl
+
+  aggregate:
+    name: QA evidence gate
+    runs-on: ubuntu-latest
+    needs:
+      - identity
+      - ffmpeg-controls
+      - ffmpeg-media
+      - ffmpeg-render
+      - seaweed
+      - render-regression
+      - walking-skeleton
+      - asr
+      - asr-container
+      - fail-closed
+    if: always()
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Pin product commit
+        run: python3 qa/pr100/assert_product_pin.py
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: qa-results-*
+          merge-multiple: true
+          path: qa-results
+      - name: Fail closed on missing or bad evidence
+        run: python3 qa/pr100/evidence_gate.py qa-results/*.jsonl --summary qa-summary.json
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: qa-summary
+          path: qa-summary.json
