@@ -1,0 +1,80 @@
+{
+  "schemaDialect": "https://json-schema.org/draft/2020-12/schema",
+  "scope": "Review-document structure and content bindings only; not formal approval or human qualification",
+  "validator": {
+    "name": "Ajv",
+    "version": "8.20.0",
+    "formatsVersion": "3.0.1",
+    "nodeVersion": "v22.23.2",
+    "strict": true,
+    "allErrors": true,
+    "networkUsed": false
+  },
+  "positiveValidations": [
+    {
+      "document": "protocol.json",
+      "schema": "protocol.schema.json",
+      "schemaMetaValidation": "PASS",
+      "documentValidation": "PASS",
+      "sha256": "8f06bad51f8d6d6faff2de65d364cff0970376518e9f9ee10cceca0f2da8dda4",
+      "schemaSha256": "5aae4df51572c1e099cb2adaffc09564a658ab11127607d65f3015d2a5a47251"
+    },
+    {
+      "document": "evidence-inventory.json",
+      "schema": "evidence-inventory.schema.json",
+      "schemaMetaValidation": "PASS",
+      "documentValidation": "PASS",
+      "sha256": "8dcb756e41c2863a30e48905cc0b3b02dea0eb9f363e123e0881a8097c310335",
+      "schemaSha256": "398dac55c21331c2374276edea4fd5820a5fe0a926bff55274e9a2915a50255b"
+    }
+  ],
+  "negativeControls": [
+    {
+      "case": "missing protocol version",
+      "result": "REJECTED_AS_EXPECTED"
+    },
+    {
+      "case": "removal guard claimed enabled",
+      "result": "REJECTED_AS_EXPECTED"
+    },
+    {
+      "case": "silence threshold lowered",
+      "result": "REJECTED_AS_EXPECTED"
+    },
+    {
+      "case": "duplicate label",
+      "result": "REJECTED_AS_EXPECTED"
+    },
+    {
+      "case": "unexpected root property",
+      "result": "REJECTED_AS_EXPECTED"
+    },
+    {
+      "case": "invalid artifact digest",
+      "result": "REJECTED_AS_EXPECTED"
+    },
+    {
+      "case": "claimed reference readiness",
+      "result": "REJECTED_AS_EXPECTED"
+    },
+    {
+      "case": "unassigned human work claimed",
+      "result": "REJECTED_AS_EXPECTED"
+    },
+    {
+      "case": "well-formed incorrect digest",
+      "result": "SCHEMA_VALID_BUT_HASH_BINDING_REJECTED_AS_EXPECTED"
+    }
+  ],
+  "crossFileShaBindings": "PASS",
+  "protocolSemanticEqualityToOriginalLocalDraft": "PASS",
+  "specification": {
+    "path": "SPECIFICATION.md",
+    "sha256": "cee60c49fcd118939b55f484f2f1b89211f344c0ae6ddfcc46be327f7a9a9eb9",
+    "schemaValidation": "NOT_APPLICABLE_MARKDOWN"
+  },
+  "formalProtocolApproval": "PENDING",
+  "referenceAvailability": "BLOCKED_REFERENCE_DATA",
+  "us309": "BLOCKED",
+  "humanQualification": "NOT_PERFORMED"
+}
