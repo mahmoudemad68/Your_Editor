@@ -23,18 +23,93 @@ concurrency:
   group: walking-skeleton-${{ github.ref }}
   cancel-in-progress: true
 jobs:
-  walking-skeleton:
+  storage-admission:
+    name: qualified storage admission
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      producer: ${{ steps.admit.outputs.producer }}
+      producer_attempt: ${{ steps.admit.outputs.producer_attempt }}
+      artifact: ${{ steps.admit.outputs.artifact }}
+      receipt_sha256: ${{ steps.admit.outputs.receipt_sha256 }}
+      promoted_id: ${{ steps.promote.outputs.artifact-id }}
+      promoted_digest: ${{ steps.promote.outputs.artifact-digest }}
+      outcome: ${{ steps.admit.outputs.outcome }}
     steps:
       - uses: actions/checkout@v7
         with:
+          fetch-depth: 2
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+      - name: Admit completed exact-head Supply workflow
+        id: admit
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node tools/test/load-qualified-storage.mjs admit
+      - name: Preserve bounded admission outcome
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: admission-outcome-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .local/issue99/admission-outcome.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 1
+      - name: Promote unchanged verified image into this run
+        id: promote
+        uses: actions/upload-artifact@v7
+        with:
+          name: qualified-storage-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ steps.admit.outputs.bundle }}/image.tar.xz
+            ${{ steps.admit.outputs.bundle }}/candidate-manifest.json
+            ${{ steps.admit.outputs.bundle }}/verification.json
+            ${{ steps.admit.outputs.bundle }}/go-version-m.txt
+            ${{ steps.admit.outputs.bundle }}/full-trivy.json
+            ${{ steps.admit.outputs.bundle }}/sbom.spdx.json
+            ${{ steps.admit.outputs.bundle }}/scanner-versions.json
+            ${{ steps.admit.outputs.bundle }}/admission.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 1
+
+  walking-skeleton:
+    needs: storage-admission
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Explicitly reject failed admission
+        env:
+          ADMISSION_RESULT: ${{ needs.storage-admission.result }}
+        run: test "$ADMISSION_RESULT" = success
+      - uses: actions/checkout@v7
+        with:
           lfs: true
+          fetch-depth: 2
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
           cache: pnpm
+      - name: Retrieve exact same-run promoted artifact
+        uses: actions/download-artifact@v7
+        with:
+          artifact-ids: ${{ needs.storage-admission.outputs.promoted_id }}
+          path: .local/walking-qualified
+      - name: Revalidate promoted bytes before loading
+        id: storage-load
+        run: node tools/test/load-qualified-storage.mjs promoted .local/walking-qualified '${{ needs.storage-admission.outputs.receipt_sha256 }}'
+      - name: Bind revalidated evidence
+        run: echo 'SEAWEED_QUALIFIED_RECEIPT=${{ steps.storage-load.outputs.receipt }}' >> "$GITHUB_ENV"
       - name: Install workspace
         run: pnpm install --frozen-lockfile
       - name: Install FFprobe and Chromium
@@ -49,9 +124,11 @@ jobs:
           ./infra/scripts/validate-compose.sh
       - name: Real Compose upload and broken-worker failure proof
         run: pnpm test:walking-skeleton --verify-failure
+      - name: Verify final producer and PR identity
+        run: node tools/test/load-qualified-storage.mjs final '${{ steps.storage-load.outputs.receipt }}'
       - name: Collect and sanitize runtime diagnostics
         id: diagnostics
-        if: always()
+        if: ${{ always() && needs.storage-admission.result == 'success' && steps.storage-load.outcome == 'success' }}
         run: |
           mkdir -p .local/walking-skeleton-artifacts
           COMPOSE_PROJECT_NAME=walking-skeleton docker compose ps --all --format json > .local/walking-skeleton-artifacts/final-compose-status.json
@@ -67,5 +144,5 @@ jobs:
           if-no-files-found: error
           retention-days: 7
       - name: Remove disposable Compose stack
-        if: always()
+        if: ${{ always() && needs.storage-admission.result == 'success' && steps.storage-load.outcome == 'success' }}
         run: COMPOSE_PROJECT_NAME=walking-skeleton docker compose down -v --remove-orphans

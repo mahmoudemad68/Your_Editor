@@ -9,8 +9,7 @@ set -eu
 root="$(CDPATH= cd -- "$(dirname "$0")/../.." && pwd)"
 # shellcheck disable=SC1091
 . "$root/infra/seaweedfs/storage-network.env"
-dockerfile="$root/infra/seaweedfs/Dockerfile"
-image="$(sed -n 's/^FROM //p' "$dockerfile")"
+image="$("$root/infra/seaweedfs/image-reference.sh" built)"
 dir="${SEAWEED_SECRET_DIR:-$root/.local/seaweedfs}"
 
 if [ "${SEAWEED_REQUIRE_S3_ENV:-}" = "1" ]; then

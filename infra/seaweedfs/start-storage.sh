@@ -28,14 +28,20 @@ mkdir -p "$lock_dir"
 exec 9>"$lock_dir/editagent-storage.lock"
 flock -w 180 9
 
+if [ "${GITHUB_ACTIONS:-}" = true ]; then
+  : "${SEAWEED_QUALIFIED_RECEIPT:?CI must admit the completed Supply Chain producer first}"
+else
+  docker compose build seaweed-master
+fi
+./infra/seaweedfs/image-reference.sh built >/dev/null
 ./infra/seaweedfs/prepare-secrets.sh
 ./infra/seaweedfs/ensure-storage-network.sh
-docker compose build seaweed-master
 
 # Stop first so a running volume cannot serve /status while rules change.
 docker compose stop seaweed-s3 seaweed-filer seaweed-volume seaweed-master >/dev/null 2>&1 || true
 docker compose create --force-recreate \
   seaweed-master seaweed-volume seaweed-filer seaweed-s3 >/dev/null
+./infra/seaweedfs/image-reference.sh live >/dev/null
 
 ./infra/seaweedfs/apply-host-isolation.sh
 ./infra/seaweedfs/apply-host-isolation.sh --check
