@@ -278,3 +278,65 @@ Technical Lead review before any default change and full artifact qualification;
 a NOT_MET finding stops implementation and returns a design-only analysis.
 Release hold and all existing protected-file, policy, permission and QA boundaries
 remain unchanged.
+
+### OCI100 bounded diagnostic — not a transport implementation
+
+Technical Lead decision
+[6507055898](https://github.com/mahmoudemad68/Your_Editor/pull/100#issuecomment-6507055898)
+authorizes one three-file diagnostic patch on the existing Draft PR. The sole
+new native experiment is `complete-oci-raw-xz6-v1`: complete original config bytes,
+six ordered raw layer tar streams, one closed OCI index/manifest and all unique
+raw blobs, inside deterministic USTAR and one XZ/CRC64 preset-6 stream. Repeated
+empty-layer positions remain ordered descriptors referencing one stored blob.
+The former BCJ native callback is replaced; it is not run alongside OCI.
+
+Only the outer representation changes in this diagnostic. Original layer bytes
+are never normalized, retarred, edited or discarded. The streaming parser checks
+source blob hashes, raw DiffIDs, config/image identity, bounded PAX metadata,
+backward hardlinks, virtual-root links, traversal, duplicates, whiteouts, compiler
+paths and ELF fingerprints before emitting the layout. Unsupported legitimate
+metadata is a blocking result. The decoded layout must have exactly the allowed
+closure and descriptor types. A fixed Docker-load adapter preserves config and
+every raw stream; the unchanged existing verifier runs against it and the actual
+post-load resave. Native and runtime identity checks remain in force.
+
+Each native attempt records per-blob encoded/raw sizes, metadata forms, USTAR
+header/padding bytes, all digests, actual report byte lengths, C/R/R_total, encoder
+and decoder resources, adapter/parser/verifier/import/export measurements, daemon
+observations, scratch and remaining job time. Imported-image checks run in the
+existing producer daemon: observed daemon RSS/HWM is shared/lifetime evidence,
+not import-exclusive peak memory or fresh-runner qualification. No new daemon,
+privileged service or dependency is introduced. Encoder address space is 1 GiB,
+CPU 480 s and wall 540 s; decoder/parser address space is 256 MiB, expansion is
+4 GiB, and existing parent job deadlines are unchanged. Original config, raw
+layer identities, ELF/native files and scanner-image binding must all agree.
+
+Reports are measured as finalized, non-uploaded diagnostic JSON plus the actual
+unchanged source scan/module/version reports; image blobs stay inside C. The
+caps remain C <= 125829120, R_total = 2R + 65536 <= 16777216 and
+2C + R_total <= 268435456 bytes, retention one day. A conservative default-zlib
+DEFLATE/ZIP64 model includes a fixed-name promotion wrapper, bounded receipts and
+seal. Its assumptions and byte figures are reported rather than presented as
+measured GitHub archive sizes. If that bound cannot fit the existing reserve,
+the diagnostic fails with `OCI_ZIP_BOUND_NOT_PROVEN`; it does not claim actual
+wire overage or silently spend extra reserve. Real wire/action behavior remains
+NOT_PROVEN because uploads are prohibited. The model follows the default-parameter
+bound in [zlib 1.3.1 deflate.c](https://github.com/madler/zlib/blob/v1.3.1/deflate.c);
+it does not certify uninspected action parameters or other library versions.
+The budget is for two retained candidate copies, not all workflow network I/O.
+Experimental artifact uploads/downloads are zero; existing scanner artifacts and
+build/reference-image network activity remain separately observable workflow costs.
+
+A first capacity, resource, metadata, measurement, identity, adapter or ZIP-bound
+failure stops further encoding. Only a complete first pass permits one additional
+fresh packaging/compression process over the same source/profile, followed by
+independent decode/verification and identical compressed hashes. No third attempt,
+parameter sweep, native BCJ trial, historical workflow retry or format fallback.
+
+Possible outcomes are `OCI_REPRESENTATION_FEASIBILITY=MET_DIAGNOSTIC_ONLY` or
+`OCI_REPRESENTATION_FEASIBILITY=NOT_MET`. Either preserves the original
+Docker-save/XZ6 candidate and its nonretryable `TRANSFER_BUDGET_EXCEEDED`, failed
+Supply aggregate and blocked consumers. All diagnostic files remain in private
+producer scratch; no candidate/seal/promotion or policy approval is produced.
+Complete OCI producer/consumer/wire implementation, cold-runner compatibility,
+Walking action-boundary proof and Independent Re-QA remain separately gated.

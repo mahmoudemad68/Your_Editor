@@ -1288,10 +1288,13 @@ export async function reportAndEnforceTransfer(measurement, emit, forensic) {
   return report;
 }
 export const FILTER_PROFILE = "xz-x86-bcj-lzma2-preset9";
+export const OCI_PROFILE = "complete-oci-raw-xz6-v1";
 export function compressArchive(source, target, preset = 6, python = "python3", profile = "plain") {
   requireThat(
     [6, 9].includes(preset) &&
-      (profile === "plain" || (profile === FILTER_PROFILE && preset === 9)),
+      (profile === "plain" ||
+        (profile === FILTER_PROFILE && preset === 9) ||
+        (profile === OCI_PROFILE && preset === 6)),
     "COMPRESSION_SETTING_REJECTED",
   );
   const started = Date.now();
@@ -1308,7 +1311,7 @@ try:
  import resource
  if sys.platform=='linux':
   resource.setrlimit(resource.RLIMIT_AS,(1073741824,1073741824))
-  limit=480 if preset==9 else 540
+  limit=480 if preset==9 or profile=='complete-oci-raw-xz6-v1' else 540
   resource.setrlimit(resource.RLIMIT_CPU,(limit,limit))
   limits={'address_space_bytes':1073741824,'cpu_seconds':limit}
 except ImportError: resource=None
@@ -1333,7 +1336,7 @@ print(json.dumps({'algorithm':'xz','preset':preset,'profile':profile,'filter_cha
         String(preset),
         profile,
       ],
-      { timeout: preset === 9 ? 540000 : 600000 },
+      { timeout: preset === 9 || profile === OCI_PROFILE ? 540000 : 600000 },
     ),
   );
   return { ...result, process_wall_seconds: (Date.now() - started) / 1000 };
@@ -1538,69 +1541,915 @@ function filterIdentity(verification, layers) {
     rust_sha256: verification.rust_sha256,
   };
 }
-async function losslessCompressionProbe(report, work, verification) {
-  const emit = async (record) => console.log(JSON.stringify(record));
+export const OCI_DIAGNOSTIC_PY = String.raw`import sys,json,hashlib,tarfile,posixpath,gzip,tempfile,os,time,contextlib,re
+from pathlib import Path
+try: import resource
+except ImportError: resource=None
+LIMIT=4*1024**3
+PROFILE='complete-oci-raw-xz6-v1'
+RAW='application/vnd.oci.image.layer.v1.tar'
+MAN='application/vnd.oci.image.manifest.v1+json'
+CFG='application/vnd.oci.image.config.v1+json'
+IDX='application/vnd.oci.image.index.v1+json'
+OBS={}
+class Reject(Exception):pass
+def need(ok,code):
+ if not ok:raise Reject(code)
+def sha(b):return hashlib.sha256(b).hexdigest()
+def filehash(p):
+ with open(p,'rb') as f:return hashlib.file_digest(f,'sha256').hexdigest()
+def digest(s):return isinstance(s,str) and len(s)==71 and s.startswith('sha256:') and all(c in '0123456789abcdef' for c in s[7:])
+def integer(n):return type(n) is int and 0<=n<=LIMIT
+def pairs(a):
+ d={}
+ for k,v in a:
+  need(k not in d,'OCI_JSON_DUPLICATE');d[k]=v
+ return d
+def parse(b):
+ need(len(b)<=1048576,'OCI_METADATA_LIMIT')
+ v=json.loads(b.decode('utf8'),object_pairs_hook=pairs,parse_constant=lambda _:need(False,'OCI_JSON_NUMBER'))
+ def walk(x,n=0):
+  need(n<=32,'OCI_METADATA_DEPTH')
+  if isinstance(x,dict):
+   for a in x.values():walk(a,n+1)
+  if isinstance(x,list):
+   for a in x:walk(a,n+1)
+ walk(v);return v
+def encode(v):return (json.dumps(v,sort_keys=True,separators=(',',':'),ensure_ascii=True)+'\n').encode()
+def path(s,root=False):
+ need(isinstance(s,str),'OCI_PATH')
+ s=s.removeprefix('./').rstrip('/')
+ if s in ('','.'):need(root,'OCI_PATH');return ''
+ need(not s.startswith('/') and '\\' not in s and ':' not in s and '\x00' not in s and all(p not in ('','..','.') for p in s.split('/')),'OCI_PATH')
+ return s
+def copy(src,dst,count):
+ h=hashlib.sha256();remaining=count
+ while remaining:
+  b=src.read(min(1048576,remaining));need(bool(b),'OCI_TRUNCATED');remaining-=len(b);h.update(b)
+  if dst:dst.write(b)
+ return h.hexdigest()
+def header(name,size,kind=tarfile.REGTYPE):
+ t=tarfile.TarInfo(name);t.size=size;t.type=kind;t.mode=0o755 if kind==tarfile.DIRTYPE else 0o644
+ t.uid=t.gid=t.mtime=0;t.uname=t.gname=''
+ return t.tobuf(format=tarfile.USTAR_FORMAT,encoding='utf8',errors='strict')
+def wrap(target,items,dirs=False):
+ need(len({n for n,_,_ in items})==len(items),'OCI_DUPLICATE_ENTRY')
+ total=1024;payload=0
+ for n,size,_ in items:total+=512+((size+511)//512)*512;payload+=size
+ if dirs:total+=1024
+ need(total<=LIMIT,'OCI_EXPANSION_LIMIT')
+ with open(target,'xb') as out:
+  if dirs:
+   for n in ('blobs/','blobs/sha256/'):out.write(header(n,0,tarfile.DIRTYPE))
+  for n,size,source in sorted(items):
+   out.write(header(n,size))
+   with source() as f:copy(f,out,size)
+   out.write(b'\0'*((-size)%512))
+  out.write(b'\0'*1024)
+ need(Path(target).stat().st_size==total,'OCI_WRITER_SIZE')
+ return {'bytes':total,'sha256':filehash(target),'header_padding_bytes':total-payload,'payload_bytes':payload}
+class Segment:
+ def __init__(self,p,offset,size):self.p=p;self.offset=offset;self.size=size
+ def __enter__(self):self.f=open(self.p,'rb');self.f.seek(self.offset);return self
+ def __exit__(self,*a):self.f.close()
+ def read(self,n=-1):
+  if n<0:n=self.size
+  n=min(n,self.size);b=self.f.read(n);self.size-=len(b);return b
+def records(p):
+ # Fixed canonical USTAR only; no implicit PAX/long-name interpretation.
+ need(Path(p).stat().st_size<=LIMIT,'OCI_EXPANSION_LIMIT');result={}
+ with open(p,'rb') as f:
+  while True:
+   b=f.read(512);need(len(b)==512,'OCI_TRUNCATED')
+   if b==b'\0'*512:
+    need(f.read(512)==b'\0'*512 and not f.read(1),'OCI_TRAILING_DATA');break
+   t=tarfile.TarInfo.frombuf(b,'utf8','strict');n=t.name+('/' if t.isdir() and not t.name.endswith('/') else '')
+   need(n not in result and len(result)<16,'OCI_DUPLICATE_OR_EXCESS_ENTRY')
+   need(t.type in (tarfile.REGTYPE,tarfile.DIRTYPE) and b==header(n,t.size,t.type),'OCI_OUTER_HEADER')
+   if t.isdir():need(n in ('blobs/','blobs/sha256/') and t.size==0,'OCI_OUTER_PATH')
+   else:need(n in ('oci-layout','index.json') or (n.startswith('blobs/sha256/') and digest('sha256:'+n[13:])),'OCI_OUTER_PATH')
+   need(integer(t.size),'OCI_SIZE');result[n]={'offset':f.tell(),'bytes':t.size,'directory':t.isdir()}
+   f.seek(t.size,1);padding=f.read((-t.size)%512);need(padding==b'\0'*len(padding) and len(padding)==(-t.size)%512,'OCI_PADDING')
+ return result
+def pax(b):
+ need(len(b)<=1048576,'OCI_PAX_LIMIT');d={}
+ while b:
+  n,boundary,b2=b.partition(b' ');need(boundary and n.isdigit(),'OCI_PAX')
+  length=int(n);need(0<length<=len(b),'OCI_PAX')
+  entry=b[len(n)+1:length];need(entry.endswith(b'\n'),'OCI_PAX')
+  k,sep,v=entry[:-1].partition(b'=');need(sep,'OCI_PAX');k=k.decode('utf8');v=v.decode('utf8')
+  need(k not in d and len(v.encode())<=65536,'OCI_PAX')
+  OBS['pax_key_sha256']=sha(k.encode('utf8'));need(k in ('path','linkpath','size','uid','gid','uname','gname','mtime','atime','ctime') or k.startswith('SCHILY.xattr.'),'OCI_PAX_UNSUPPORTED')
+  if k in ('mtime','atime','ctime'):need(re.fullmatch(r'-?[0-9]{1,20}(?:\.[0-9]{1,9})?',v) is not None,'OCI_PAX_NUMBER')
+  d[k]=v;b=b[length:]
+ return d
+def layer(f,length,state,old,counts):
+ need(length>=1024 and length%512==0,'OCI_LAYER_END')
+ remaining=length;seen=set();pending={};longname=None;longlink=None;forms={};elfs=[];ended=False;extended=0
+ def read(n):
+  nonlocal remaining
+  need(0<=n<=remaining,'OCI_LAYER_TRUNCATED');b=f.read(n);need(len(b)==n,'OCI_LAYER_TRUNCATED');remaining-=n;return b
+ while remaining:
+  b=read(512)
+  if b==b'\0'*512:
+   ended=True
+   need(remaining>=512 and read(512)==b'\0'*512 and not pending and longname is None and longlink is None,'OCI_LAYER_END')
+   while remaining:need(not any(read(min(1048576,remaining))),'OCI_LAYER_TRAILING')
+   break
+  t=tarfile.TarInfo.frombuf(b,'utf8','strict');OBS.update(header_type_hex=t.type.hex(),header_name_sha256=sha(t.name.encode('utf8')));need(integer(t.size),'OCI_LAYER_SIZE')
+  need(type(t.uid) is int and 0<=t.uid<=4294967295 and type(t.gid) is int and 0<=t.gid<=4294967295 and 0<=t.mode<=0o7777,'OCI_LAYER_OWNER_MODE')
+  forms[t.type.decode('ascii')]=forms.get(t.type.decode('ascii'),0)+1
+  if t.type in (tarfile.XHDTYPE,tarfile.GNUTYPE_LONGNAME,tarfile.GNUTYPE_LONGLINK):
+   counts['extended_bytes']+=t.size;extended+=t.size;need(extended<=1048576,'OCI_PAX_LIMIT')
+   v=read(t.size);read((-t.size)%512)
+   if t.type==tarfile.XHDTYPE:need(not pending,'OCI_PAX');pending=pax(v)
+   elif t.type==tarfile.GNUTYPE_LONGNAME:need(longname is None,'OCI_PAX');longname=v.rstrip(b'\0').decode('utf8')
+   else:need(longlink is None,'OCI_PAX');longlink=v.rstrip(b'\0').decode('utf8')
+   continue
+  need(t.type in (tarfile.REGTYPE,tarfile.AREGTYPE,tarfile.DIRTYPE,tarfile.SYMTYPE,tarfile.LNKTYPE),'OCI_LAYER_TYPE_UNSUPPORTED')
+  name=path(pending.get('path',longname if longname is not None else t.name),True)
+  link=pending.get('linkpath',longlink if longlink is not None else t.linkname)
+  for key in ('size','uid','gid'):
+   if key in pending:need(pending[key].isdigit() and int(pending[key])==getattr(t,key),'OCI_PAX_OVERRIDE_UNSUPPORTED')
+  need(name not in seen,'OCI_LAYER_DUPLICATE');seen.add(name);counts['entries']+=1;need(counts['entries']<=200000,'OCI_ENTRY_LIMIT')
+  need(not posixpath.basename(name).startswith('.wh.'),'OCI_WHITEOUT_UNSUPPORTED')
+  need(not(name=='usr/local/go' or name.startswith(('usr/local/go/','root/go/','build/'))),'OCI_COMPILER_IN_LAYER')
+  for parent in [name.rsplit('/',i)[0] for i in range(1,name.count('/')+1)]:
+   need(parent not in state or state[parent]['type']=='5','OCI_LINK_PARENT_UNSUPPORTED')
+  h=None;iself=False
+  if t.isfile():
+   need(t.size<=512*1024**2,'OCI_FILE_LIMIT');hasher=hashlib.sha256();left=t.size;first=True
+   while left:
+    v=read(min(1048576,left));left-=len(v);hasher.update(v)
+    if first:iself=v.startswith(b'\x7fELF');first=False
+   h=hasher.hexdigest()
+   if iself:need(h!=old and not name.startswith('usr/share/editagent-seaweedfs/'),'OCI_OLD_OR_HIDDEN_ELF');elfs.append(h)
+  else:need(t.size==0,'OCI_LINK_OR_DIR_DATA')
+  read((-t.size)%512)
+  if t.issym() or t.islnk():
+   need(link and '\\' not in link and '\0' not in link,'OCI_LINK_UNSUPPORTED')
+   target=posixpath.normpath((link.lstrip('/') if link.startswith('/') else posixpath.join(posixpath.dirname(name),link)) if t.issym() else link)
+   target=path(target,True)
+   if t.islnk():need(target in state and state[target]['type'] in ('0','1'),'OCI_HARDLINK_UNSUPPORTED');h=state[target]['sha256']
+   visited={name};cur=target
+   while cur in state and state[cur]['type']=='2':
+    need(cur not in visited and len(visited)<40,'OCI_LINK_CYCLE');visited.add(cur);cur=state[cur]['target']
+   need(cur!=name,'OCI_LINK_CYCLE')
+  else:target=None
+  if name in state and state[name]['type']=='5' and not t.isdir():
+   need(not any(p.startswith(name+'/') for p in state),'OCI_DIRECTORY_REPLACEMENT_UNSUPPORTED')
+  state[name]={'type':'0' if t.isfile() else t.type.decode('ascii'),'mode':t.mode,'uid':t.uid,'gid':t.gid,'link':link,'target':target,'sha256':h,'mtime':str(t.mtime),'pax':pending}
+  pending={};longname=longlink=None
+ need(remaining==0 and ended,'OCI_LAYER_TRUNCATED')
+ return {'forms':forms,'elfs':elfs}
+def source(p,tmp,expected,old):
+ need(Path(p).stat().st_size<=LIMIT,'OCI_SOURCE_LIMIT');sourcehash=filehash(p)
+ OBS.update(source_sha256=sourcehash,source_bytes=Path(p).stat().st_size)
+ if expected.get('source_sha256'):need(sourcehash==expected['source_sha256'],'OCI_SOURCE_DRIFT')
+ with tarfile.open(p,'r:') as t:
+  members=t.getmembers();names={}
+  need(len(members)<=20000,'OCI_SOURCE_LIMIT')
+  for m in members:
+   n=path(m.name,True);need(n not in names and (m.isfile() or m.isdir()),'OCI_SOURCE_ENTRY');names[n]=m
+  def stream(n):
+   n=path(n);need(n in names and names[n].isfile(),'OCI_MISSING_BLOB');return t.extractfile(names[n])
+  def data(n):
+   n=path(n);need(n in names and names[n].size<=1048576,'OCI_METADATA_LIMIT')
+   with stream(n) as f:return f.read()
+  m=parse(data('manifest.json'));need(type(m) is list and len(m)==1,'OCI_SOURCE_MANIFEST');m=m[0]
+  config=data(m['Config']);cfg=parse(config);q=sha(config)
+  need('sha256:'+q==expected['image_id'] and cfg.get('architecture')=='amd64' and cfg.get('os')=='linux','OCI_CONFIG_OR_PLATFORM')
+  ds=cfg['rootfs']['diff_ids'];need(cfg['rootfs']['type']=='layers' and len(ds)==6 and all(digest(d) for d in ds) and len(m['Layers'])==6,'OCI_LAYER_ORDER')
+  if 'index.json' in names:
+   need(parse(data('oci-layout')).get('imageLayoutVersion')=='1.0.0','OCI_SOURCE_LAYOUT')
+   leaves=[]
+   def desc(d,depth=0):
+    need(depth<=4 and digest(d.get('digest')) and integer(d.get('size')) and not any(k in d for k in ('urls','data')),'OCI_SOURCE_DESCRIPTOR')
+    n='blobs/sha256/'+d['digest'][7:];v=data(n);need(len(v)==d['size'] and sha(v)==d['digest'][7:],'OCI_SOURCE_DESCRIPTOR')
+    mt=d.get('mediaType')
+    if mt in (IDX,'application/vnd.docker.distribution.manifest.list.v2+json'):
+     children=parse(v)['manifests'];need(len(children)==1,'OCI_SOURCE_DESCRIPTOR');desc(children[0],depth+1)
+    else:need(mt in (MAN,'application/vnd.docker.distribution.manifest.v2+json'),'OCI_SOURCE_MEDIA');leaves.append(parse(v))
+   idx=parse(data('index.json'));need(len(idx['manifests'])==1,'OCI_SOURCE_DESCRIPTOR');desc(idx['manifests'][0])
+   need(len(leaves)==1 and leaves[0]['config']['mediaType'] in (CFG,'application/vnd.docker.container.image.v1+json') and leaves[0]['config']['digest']=='sha256:'+q and leaves[0]['config']['size']==len(config),'OCI_SOURCE_DESCRIPTOR')
+   ls=leaves[0]['layers'];need(len(ls)==6,'OCI_LAYER_ORDER')
+   for d,n in zip(ls,m['Layers']):
+    need(digest(d.get('digest')) and d.get('mediaType') in (RAW,RAW+'+gzip','application/vnd.docker.image.rootfs.diff.tar.gzip') and not any(k in d for k in ('urls','data')),'OCI_SOURCE_MEDIA')
+    need(path(n)=='blobs/sha256/'+d['digest'][7:] and names[path(n)].size==d['size'],'OCI_SOURCE_DESCRIPTOR')
+  state={};layers=[];blobs={};counts={'entries':0,'extended_bytes':0};semantic=0
+  for i,(n,d) in enumerate(zip(m['Layers'],ds)):
+   OBS['layer_position']=i
+   n=path(n);raw=Path(tmp)/('layer-'+str(i));h=hashlib.sha256();size=0
+   with stream(n) as f:
+    encodedhash=hashlib.file_digest(f,'sha256').hexdigest()
+   if n.startswith('blobs/sha256/'):need(n[13:]==encodedhash,'OCI_SOURCE_BLOB_DIGEST')
+   with stream(n) as f:
+    magic=f.read(2)
+   if 'index.json' in names:need((ls[i]['mediaType']==RAW and magic!=b'\x1f\x8b') or (ls[i]['mediaType']!=RAW and magic==b'\x1f\x8b'),'OCI_SOURCE_ENCODING_MEDIA_DRIFT')
+   with stream(n) as f,contextlib.ExitStack() as stack,open(raw,'xb') as out:
+    src=stack.enter_context(gzip.GzipFile(fileobj=f)) if magic==b'\x1f\x8b' else f
+    while b:=src.read(1048576):
+     size+=len(b);semantic+=len(b);need(semantic<=LIMIT,'OCI_EXPANSION_LIMIT');h.update(b);out.write(b)
+   need('sha256:'+h.hexdigest()==d,'OCI_RAW_DIFFID')
+   with open(raw,'rb') as f:meta=layer(f,size,state,old,counts)
+   layers.append({'position':i,'diff_id':d,'raw_bytes':size,'source_encoded_bytes':names[n].size,'source_encoded_sha256':encodedhash,'metadata':meta})
+   if d not in blobs:blobs[d]=raw
+  need(state.get('usr/bin/weed',{}).get('sha256')==expected['elf_sha256'],'OCI_ELF_DRIFT')
+  for n,h in expected['rust_sha256'].items():need(state.get(n,{}).get('sha256')==h,'OCI_NATIVE_DRIFT')
+  return config,ds,layers,blobs,{'source_sha256':sourcehash,'source_bytes':Path(p).stat().st_size,'image_id':'sha256:'+q,'config_bytes':len(config),'layers':layers,'semantic_layer_bytes':semantic,'metadata_sha256':sha(encode(state)),'entry_count':counts['entries']}
+def oldelf(p):
+ value=None
+ with tarfile.open(p,'r:') as t:
+  m=parse(t.extractfile('manifest.json').read(1048577))[0]
+  for n in m['Layers']:
+   with t.extractfile(n) as f:magic=f.read(2)
+   with t.extractfile(n) as f,contextlib.ExitStack() as stack:
+    src=stack.enter_context(gzip.GzipFile(fileobj=f)) if magic==b'\x1f\x8b' else f
+    with tarfile.open(fileobj=src,mode='r|') as layer_tar:
+     for x in layer_tar:
+      if path(x.name,True)=='usr/bin/weed' and x.isfile():value=hashlib.file_digest(layer_tar.extractfile(x),'sha256').hexdigest()
+ need(value is not None,'OCI_OLD_ELF_REFERENCE_MISSING');return {'old_elf_sha256':value}
+def check_descriptor(d,media):
+ need(type(d) is dict and set(d)=={'mediaType','digest','size'} and d['mediaType']==media and digest(d['digest']) and integer(d['size']),'OCI_DESCRIPTOR')
+def validate(p,target,expected,old):
+ rs=records(p)
+ def data(n):
+  need(n in rs and rs[n]['bytes']<=1048576,'OCI_MISSING_OR_OVERSIZE_METADATA')
+  with Segment(p,rs[n]['offset'],rs[n]['bytes']) as f:return f.read()
+ need(data('oci-layout')==b'{"imageLayoutVersion":"1.0.0"}\n','OCI_LAYOUT')
+ index_data=data('index.json');idx=parse(index_data);need(encode(idx)==index_data,'OCI_CANONICAL_JSON');need(set(idx)=={'schemaVersion','mediaType','manifests'} and type(idx['schemaVersion']) is int and idx['schemaVersion']==2 and idx['mediaType']==IDX and len(idx['manifests'])==1,'OCI_INDEX')
+ desc=idx['manifests'][0];need(set(desc)=={'mediaType','digest','size','platform'} and desc['platform']=={'os':'linux','architecture':'amd64'},'OCI_PLATFORM')
+ check_descriptor({k:v for k,v in desc.items() if k!='platform'},MAN)
+ mn='blobs/sha256/'+desc['digest'][7:];mb=data(mn);need(len(mb)==desc['size'] and sha(mb)==desc['digest'][7:],'OCI_MANIFEST_DIGEST')
+ m=parse(mb);need(encode(m)==mb,'OCI_CANONICAL_JSON');need(set(m)=={'schemaVersion','mediaType','config','layers'} and type(m['schemaVersion']) is int and m['schemaVersion']==2 and m['mediaType']==MAN and len(m['layers'])==6,'OCI_MANIFEST')
+ check_descriptor(m['config'],CFG);cn='blobs/sha256/'+m['config']['digest'][7:];config=data(cn);cfg=parse(config)
+ need(len(config)==m['config']['size'] and 'sha256:'+sha(config)==m['config']['digest']==expected['image_id'] and len(config)==expected['config_bytes'],'OCI_CONFIG_DRIFT')
+ ds=cfg['rootfs']['diff_ids'];need(cfg.get('os')=='linux' and cfg.get('architecture')=='amd64' and cfg['rootfs']['type']=='layers' and ds==[v['diff_id'] for v in expected['layers']],'OCI_LAYER_ORDER')
+ closure={'blobs/','blobs/sha256/','oci-layout','index.json',mn,cn};items=[];state={};counts={'entries':0,'extended_bytes':0};semantic=0
+ for i,(d,original) in enumerate(zip(m['layers'],expected['layers'])):
+  check_descriptor(d,RAW);need(d['digest']==ds[i] and d['size']==original['raw_bytes'],'OCI_LAYER_ORDER')
+  n='blobs/sha256/'+d['digest'][7:];closure.add(n);need(n in rs and rs[n]['bytes']==d['size'],'OCI_MISSING_BLOB')
+  with Segment(p,rs[n]['offset'],d['size']) as f:need(copy(f,None,d['size'])==ds[i][7:],'OCI_RAW_DIFFID')
+  semantic+=d['size'];need(semantic<=LIMIT,'OCI_EXPANSION_LIMIT')
+  with Segment(p,rs[n]['offset'],d['size']) as f:layer(f,d['size'],state,old,counts)
+  items.append(('layers/'+str(i).zfill(4)+'/layer.tar',d['size'],lambda n=n:Segment(p,rs[n]['offset'],rs[n]['bytes'])))
+ need(set(rs)==closure,'OCI_CLOSURE_EXTRA_OR_MISSING')
+ need(sha(encode(state))==expected['metadata_sha256'],'OCI_RUNTIME_METADATA_DRIFT')
+ need(state.get('usr/bin/weed',{}).get('sha256')==expected['elf_sha256'],'OCI_ELF_DRIFT')
+ for n,h in expected['rust_sha256'].items():need(state.get(n,{}).get('sha256')==h,'OCI_NATIVE_DRIFT')
+ q=sha(config);import io
+ items.append((q+'.json',len(config),lambda:io.BytesIO(config)))
+ adapter_manifest=encode([{'Config':q+'.json','RepoTags':[],'Layers':[v[0] for v in items if v[0].startswith('layers/')]}])
+ items.append(('manifest.json',len(adapter_manifest),lambda:io.BytesIO(adapter_manifest)))
+ adapter=wrap(target,items)
+ return {'image_id':expected['image_id'],'ordered_diff_ids':ds,'elf_sha256':state['usr/bin/weed']['sha256'],'metadata_sha256':sha(encode(state)),'layout_sha256':filehash(p),'layout_bytes':Path(p).stat().st_size,'config_sha256':q,'manifest_sha256':sha(mb),'adapter':adapter}
+def main():
+ mode,p,target,expected_json=sys.argv[1:5];expected=json.loads(expected_json);old=expected.get('old_elf_sha256')
+ if mode=='old-elf':return oldelf(p)
+ need(digest('sha256:'+str(old)) and digest(expected.get('image_id')) and digest('sha256:'+str(expected.get('elf_sha256'))),'OCI_REFERENCE_MISSING')
+ if mode=='validate':return validate(p,target,expected,old)
+ need(mode in ('pack','resave'),'OCI_MODE')
+ with tempfile.TemporaryDirectory(prefix='oci-raw-',dir=str(Path(target).parent)) as tmp:
+  config,ds,layers,blobs,inventory=source(p,tmp,expected,old)
+  if mode=='resave':return inventory
+  import io
+  q=sha(config);content={'oci-layout':b'{"imageLayoutVersion":"1.0.0"}\n','blobs/sha256/'+q:config}
+  manifest=encode({'schemaVersion':2,'mediaType':MAN,'config':{'mediaType':CFG,'digest':'sha256:'+q,'size':len(config)},'layers':[{'mediaType':RAW,'digest':d,'size':v['raw_bytes']} for d,v in zip(ds,layers)]})
+  content['blobs/sha256/'+sha(manifest)]=manifest
+  content['index.json']=encode({'schemaVersion':2,'mediaType':IDX,'manifests':[{'mediaType':MAN,'digest':'sha256:'+sha(manifest),'size':len(manifest),'platform':{'os':'linux','architecture':'amd64'}}]})
+  items=[(n,len(b),lambda b=b:io.BytesIO(b)) for n,b in content.items()]
+  items.extend(('blobs/sha256/'+d[7:],Path(f).stat().st_size,lambda f=f:open(f,'rb')) for d,f in blobs.items())
+  result=wrap(target,items,True)
+  return {**inventory,'layout':result,'manifest_sha256':sha(manifest),'index_bytes':len(content['index.json']),'manifest_bytes':len(manifest),'unique_raw_blobs':len(blobs),'metadata_file_bytes':sum(map(len,content.values())),'blob_inventory':[{'path':n,'bytes':size} for n,size,_ in sorted(items)]}
+try:
+ limits=None
+ if resource and sys.platform=='linux':
+  resource.setrlimit(resource.RLIMIT_AS,(268435456,268435456));resource.setrlimit(resource.RLIMIT_CPU,(120,120));limits={'address_space_bytes':268435456,'cpu_seconds':120}
+ started=time.perf_counter();value=main();u=resource.getrusage(resource.RUSAGE_SELF) if resource else None
+ visible={}
+ for key in ('cpu.max','memory.max','pids.max'):
+  try:
+   text=(Path('/sys/fs/cgroup')/key).read_text()[:4096].strip();visible[key]=text if re.fullmatch(r'(?:max|[0-9]+)(?: [0-9]+)?',text) else 'UNTRUSTWORTHY'
+  except OSError:visible[key]='UNAVAILABLE'
+ value['measurement']={'visible_resources':{'affinity_cpus':len(os.sched_getaffinity(0)) if hasattr(os,'sched_getaffinity') else None,'cgroup_current_namespace':visible,'visibility':'observations only; hidden parent limits not attested'},'wall_seconds':time.perf_counter()-started,'peak_rss_bytes':u.ru_maxrss*1024 if u and sys.platform=='linux' else None,'user_cpu_seconds':u.ru_utime if u else None,'system_cpu_seconds':u.ru_stime if u else None,'limits':limits}
+ print(json.dumps(value,sort_keys=True))
+except Exception as error:
+ print(json.dumps({'error':str(error) if isinstance(error,Reject) else 'OCI_TOOL_FAILURE','observed':OBS}));sys.exit(1)
+`;
+export function runOCITool(mode, input, target, expected, python = "python3") {
+  requireThat(["old-elf", "pack", "validate", "resave"].includes(mode), "OCI_MODE");
   try {
-    requireThat(process.platform === "linux", "FILTER_LINUX_REQUIRED");
+    return JSON.parse(
+      run(python, ["-c", OCI_DIAGNOSTIC_PY, mode, input, target, JSON.stringify(expected)], {
+        timeout: 180000,
+      }),
+    );
+  } catch (error) {
+    let code = "OCI_TOOL_RESOURCE_OR_MEASUREMENT_FAILURE";
+    const observed = {};
+    try {
+      const failure = JSON.parse(String(error.stdout));
+      if (/^OCI_[A-Z0-9_]+$/.test(failure.error)) code = failure.error;
+      for (const key of ["source_sha256", "header_name_sha256", "pax_key_sha256"])
+        if (/^[a-f0-9]{64}$/.test(failure.observed?.[key])) observed[key] = failure.observed[key];
+      for (const key of ["source_bytes", "layer_position"])
+        if (byteCount(failure.observed?.[key])) observed[key] = failure.observed[key];
+      if (/^[a-f0-9]{2}$/.test(failure.observed?.header_type_hex))
+        observed.header_type_hex = failure.observed.header_type_hex;
+    } catch {
+      /* never disclose exception payloads */
+    }
+    const rejection = new AdmissionError(code);
+    rejection.ociObserved = observed;
+    throw rejection;
+  }
+}
+export function ociZipBound(C, reportFileBytes) {
+  requireThat(byteCount(C), "OCI_ZIP_MEASUREMENT_INVALID");
+  requireThat(
+    isDeepStrictEqual(Object.keys(reportFileBytes).sort(), [...REPORT_FILES].sort()),
+    "OCI_ZIP_MEASUREMENT_INVALID",
+  );
+  for (const n of Object.values(reportFileBytes))
+    requireThat(byteCount(n), "OCI_ZIP_MEASUREMENT_INVALID");
+  // zlib default deflateBound form, plus conservative ZIP64/header allowances.
+  // This is a model, not measured GitHub wire compatibility or upload approval.
+  const deflate = (n) =>
+    n + Math.floor(n / 4096) + Math.floor(n / 16384) + Math.floor(n / 33554432) + 13;
+  const zip = (files) =>
+    98 +
+    files.reduce((n, [name, size]) => n + deflate(size) + 148 + 2 * Buffer.byteLength(name), 0);
+  const files = [["image.oci.tar.xz", C], ...Object.entries(reportFileBytes)];
+  const R = Object.values(reportFileBytes).reduce((a, b) => a + b, 0);
+  const receipt = 8192,
+    seal = 2048;
+  const wrapper =
+    1024 +
+    [...files, ["admission.json", receipt]].reduce(
+      (n, [, size]) => n + 512 + Math.ceil(size / 512) * 512,
+      0,
+    );
+  const source = zip(files),
+    promoted = zip([["promoted-bundle.tar", wrapper]]);
+  const ancillary = zip([["admission.json", receipt]]) + zip([["seal.json", seal]]);
+  const extra = Math.max(0, source - C - R) + Math.max(0, promoted - C - R) + ancillary;
+  return {
+    model: "default-deflate-bound-plus-ZIP64-v1",
+    source_zip_upper_bytes: source,
+    promotion_wrapper_upper_bytes: wrapper,
+    promoted_zip_upper_bytes: promoted,
+    ancillary_zip_upper_bytes: ancillary,
+    extra_upper_bytes: extra,
+    reserve_bytes: 65536,
+    within_reserve: extra <= 65536,
+    diagnostic_artifact_uploads: 0,
+    diagnostic_artifact_downloads: 0,
+    wire_qualification: "NOT_PROVEN_NO_UPLOAD",
+  };
+}
+function measureOCICommand(command, timeout = 240, daemon = false) {
+  const script = String.raw`
+import sys,json,time,subprocess,os,signal,resource
+from pathlib import Path
+command=json.loads(sys.argv[1]);limit=int(sys.argv[2]);daemon=sys.argv[3]=='true'
+samples=0;peak=0;hwm=0;pids=[]
+if daemon:
+ for entry in Path('/proc').iterdir():
+  if entry.name.isdigit():
+   try:
+    if (entry/'comm').read_text().strip() in ('dockerd','containerd'):pids.append(entry)
+   except OSError:pass
+ if not pids:print(json.dumps({'error':'OCI_DAEMON_MEASUREMENT_UNAVAILABLE'}));sys.exit(1)
+started=time.monotonic();p=subprocess.Popen(command,stdout=sys.stderr,stderr=sys.stderr,start_new_session=True)
+failed=False
+try:
+ while True:
+  rss=high=0
+  for entry in pids:
+   fields={line.split(':',1)[0]:line.split(':',1)[1].strip() for line in (entry/'status').read_text().splitlines() if ':' in line}
+   rss+=int(fields['VmRSS'].split()[0])*1024;high+=int(fields['VmHWM'].split()[0])*1024
+  samples+=1;peak=max(peak,rss);hwm=max(hwm,high)
+  if p.poll() is not None:break
+  if time.monotonic()-started>limit:failed=True;break
+  time.sleep(.05)
+finally:
+ if p.poll() is None:
+  os.killpg(p.pid,signal.SIGTERM)
+  try:p.wait(timeout=5)
+  except subprocess.TimeoutExpired:os.killpg(p.pid,signal.SIGKILL);p.wait()
+ if failed and command[:2]==['sh','infra/seaweedfs/verify-image.sh']:
+  subprocess.run(['docker','rm','-f','editagent-seaweed-metadata-'+str(p.pid)],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=15)
+u=resource.getrusage(resource.RUSAGE_CHILDREN)
+if failed or p.returncode!=0:print(json.dumps({'error':'OCI_COMMAND_DEADLINE' if failed else 'OCI_COMMAND_FAILED'}));sys.exit(1)
+print(json.dumps({'wall_seconds':time.monotonic()-started,'peak_waited_child_rss_bytes':u.ru_maxrss*1024,'user_cpu_seconds':u.ru_utime,'system_cpu_seconds':u.ru_stime,'deadline_seconds':limit,'daemon':{'observed_processes':len(pids),'samples':samples,'peak_sampled_rss_bytes':peak,'lifetime_hwm_upper_bytes':hwm,'attribution':'shared daemon observations, not import-exclusive or cold-store proof'} if daemon else None}))
+`;
+  try {
+    return JSON.parse(
+      run("python3", ["-c", script, JSON.stringify(command), String(timeout), String(daemon)], {
+        timeout: (timeout + 25) * 1000,
+      }),
+    );
+  } catch (error) {
+    let code = "OCI_COMMAND_RESOURCE_OR_MEASUREMENT_FAILURE";
+    try {
+      const r = JSON.parse(String(error.stdout));
+      if (/^OCI_[A-Z0-9_]+$/.test(r.error)) code = r.error;
+    } catch {
+      /* bounded public code only */
+    }
+    throw new AdmissionError(code);
+  }
+}
+export function validateOCIAttempt(r, expected) {
+  requireThat(
+    r && r.pack && r.encoder && r.decoding && r.validation && r.imported && r.resave && r.budget,
+    "OCI_MEASUREMENTS_UNAVAILABLE",
+  );
+  requireThat(
+    r.artifact_uploaded === false && r.production_format_unchanged === true,
+    "OCI_PROMOTION_FORBIDDEN",
+  );
+  const c = r.encoder,
+    positive = (n) => Number.isFinite(n) && n > 0;
+  requireThat(
+    c.profile === OCI_PROFILE &&
+      c.algorithm === "xz" &&
+      c.preset === 6 &&
+      c.check === "CRC64" &&
+      isDeepStrictEqual(c.filter_chain, ["LZMA2_PRESET_6"]),
+    "OCI_PROFILE_DRIFT",
+  );
+  requireThat(
+    Number.isSafeInteger(c.compressed_bytes) &&
+      c.compressed_bytes > 0 &&
+      /^[a-f0-9]{64}$/.test(c.output_sha256),
+    "OCI_ENCODER_MEASUREMENT_INVALID",
+  );
+  requireThat(
+    c.runtime?.platform === "linux" &&
+      c.runtime.implementation === "CPython" &&
+      /^\d+\.\d+\.\d+$/.test(c.runtime.python) &&
+      /^\d+\.\d+\.\d+$/.test(c.runtime.liblzma),
+    "OCI_RUNTIME_UNAVAILABLE",
+  );
+  requireThat(
+    positive(c.process_wall_seconds) &&
+      c.process_wall_seconds <= 540 &&
+      positive(c.elapsed_seconds) &&
+      c.elapsed_seconds <= 540 &&
+      positive(c.peak_rss_bytes) &&
+      c.peak_rss_bytes <= 1073741824 &&
+      Number.isFinite(c.user_cpu_seconds) &&
+      c.user_cpu_seconds >= 0 &&
+      Number.isFinite(c.system_cpu_seconds) &&
+      c.system_cpu_seconds >= 0 &&
+      c.user_cpu_seconds + c.system_cpu_seconds <= 480 &&
+      c.limits?.address_space_bytes === 1073741824 &&
+      c.limits?.cpu_seconds === 480,
+    "OCI_ENCODER_RESOURCE_LIMIT",
+  );
+  const d = r.decoding;
+  requireThat(
+    positive(d.elapsed_seconds) &&
+      d.elapsed_seconds <= 600 &&
+      positive(d.peak_rss_bytes) &&
+      d.peak_rss_bytes <= 256 * MIB &&
+      d.limits?.address_space_bytes === 268435456 &&
+      d.uncompressed_bytes === r.pack.layout.bytes &&
+      d.uncompressed_bytes <= 4 * 1024 ** 3,
+    "OCI_DECODER_RESOURCE_LIMIT",
+  );
+  for (const phase of [r.pack, r.validation, r.resave]) {
+    const m = phase.measurement;
+    requireThat(
+      m &&
+        positive(m.wall_seconds) &&
+        m.wall_seconds <= 180 &&
+        positive(m.peak_rss_bytes) &&
+        m.peak_rss_bytes <= 256 * MIB &&
+        Number.isFinite(m.user_cpu_seconds) &&
+        m.user_cpu_seconds >= 0 &&
+        Number.isFinite(m.system_cpu_seconds) &&
+        m.system_cpu_seconds >= 0 &&
+        m.user_cpu_seconds + m.system_cpu_seconds <= 120 &&
+        m.limits?.address_space_bytes === 268435456 &&
+        m.limits?.cpu_seconds === 120,
+      "OCI_PARSER_RESOURCE_LIMIT",
+    );
+  }
+  for (const m of [
+    r.adapter_verification,
+    r.loaded_verification,
+    r.import_measurement,
+    r.export_measurement,
+  ])
+    requireThat(
+      m &&
+        positive(m.wall_seconds) &&
+        m.wall_seconds <= m.deadline_seconds &&
+        positive(m.peak_waited_child_rss_bytes) &&
+        m.peak_waited_child_rss_bytes <= 1073741824,
+      "OCI_COMMAND_MEASUREMENT_INVALID",
+    );
+  requireThat(
+    r.import_measurement.daemon?.observed_processes > 0 &&
+      r.import_measurement.daemon.peak_sampled_rss_bytes > 0 &&
+      r.import_measurement.daemon.lifetime_hwm_upper_bytes > 0,
+    "OCI_DAEMON_MEASUREMENT_UNAVAILABLE",
+  );
+  requireThat(
+    r.pack.source_sha256 === expected.source_sha256 &&
+      r.pack.image_id === expected.identity.image_id &&
+      c.input_sha256 === r.pack.layout.sha256 &&
+      r.decoded_sha256 === r.pack.layout.sha256 &&
+      r.validation.layout_sha256 === r.pack.layout.sha256 &&
+      r.validation.layout_bytes === r.pack.layout.bytes &&
+      r.validation.metadata_sha256 === r.pack.metadata_sha256 &&
+      r.validation.config_sha256 === expected.identity.config_sha256 &&
+      r.validation.image_id === expected.identity.image_id &&
+      r.validation.elf_sha256 === expected.identity.elf_sha256,
+    "OCI_SOURCE_OR_LAYOUT_DRIFT",
+  );
+  const ds = r.pack.layers.map((l) => l.diff_id);
+  requireThat(
+    ds.length === 6 &&
+      isDeepStrictEqual(ds, expected.identity.layer_diff_ids) &&
+      isDeepStrictEqual(ds, r.validation.ordered_diff_ids) &&
+      isDeepStrictEqual(ds, r.imported.RootFS?.Layers) &&
+      isDeepStrictEqual(
+        ds,
+        r.resave.layers.map((l) => l.diff_id),
+      ),
+    "OCI_ORDERED_DIFFID_DRIFT",
+  );
+  requireThat(
+    r.imported.Id === expected.identity.image_id &&
+      r.imported.RootFS?.Type === "layers" &&
+      r.imported.Os === "linux" &&
+      r.imported.Architecture === "amd64" &&
+      r.resave.image_id === expected.identity.image_id &&
+      r.resave.config_bytes === r.pack.config_bytes &&
+      r.resave.metadata_sha256 === r.pack.metadata_sha256 &&
+      isDeepStrictEqual(r.adapter_identity, expected.identity) &&
+      isDeepStrictEqual(r.loaded_identity, expected.identity),
+    "OCI_IMPORT_OR_RUNTIME_DRIFT",
+  );
+  const b = transferBudgetReport({
+    uncompressed_archive_bytes: r.pack.layout.bytes,
+    C: c.compressed_bytes,
+    report_file_bytes: r.report_file_bytes,
+    compression: c,
+  });
+  requireThat(
+    r.budget.C === b.C &&
+      r.budget.R === b.R &&
+      r.budget.R_total === b.R_total &&
+      r.budget.combined_transfer_bytes === b.combined_transfer_bytes,
+    "OCI_BUDGET_ACCOUNTING_DRIFT",
+  );
+  requireThat(b.within_budget, "OCI_CAPACITY_FAILED");
+  const z = ociZipBound(b.C, r.report_file_bytes);
+  requireThat(isDeepStrictEqual(z, r.zip_bound), "OCI_ZIP_MEASUREMENT_INVALID");
+  requireThat(z.within_reserve, "OCI_ZIP_BOUND_NOT_PROVEN");
+}
+export async function runBoundedOCIExperiment(expected, attempt, emit) {
+  let started = 0;
+  const results = [];
+  try {
+    for (let number = 1; number <= 2; number++) {
+      started = number;
+      const r = await attempt(number);
+      results.push(globalThis.structuredClone(r));
+      try {
+        validateOCIAttempt(r, expected);
+      } catch (error) {
+        await emit({
+          kind: "OCI_DIAGNOSTIC_ATTEMPT",
+          attempt: number,
+          qualified: false,
+          result: globalThis.structuredClone(r),
+          failure: error instanceof AdmissionError ? error.code : "OCI_VALIDATION_FAILED",
+        });
+        throw error;
+      }
+      await emit({
+        kind: "OCI_DIAGNOSTIC_ATTEMPT",
+        attempt: number,
+        qualified: false,
+        result: globalThis.structuredClone(r),
+        outcome: "ATTEMPT_CONDITIONS_PASS",
+      });
+      if (number === 2)
+        requireThat(
+          results[0].encoder.output_sha256 === r.encoder.output_sha256 &&
+            results[0].pack.layout.sha256 === r.pack.layout.sha256 &&
+            isDeepStrictEqual(results[0].encoder.runtime, r.encoder.runtime),
+          "OCI_REPRODUCIBILITY_FAILED",
+        );
+    }
+    await emit({
+      kind: "OCI_REPRESENTATION_FEASIBILITY",
+      verdict: "OCI_REPRESENTATION_FEASIBILITY=MET_DIAGNOSTIC_ONLY",
+      attempts: 2,
+      qualified: false,
+      baseline_disposition: "TRANSFER_BUDGET_EXCEEDED",
+      wire_compatibility: "NOT_PROVEN_NO_UPLOAD",
+      cold_runner_compatibility: "NOT_PROVEN",
+    });
+    return "OCI_REPRESENTATION_FEASIBILITY=MET_DIAGNOSTIC_ONLY";
+  } catch (error) {
+    await emit({
+      kind: "OCI_REPRESENTATION_FEASIBILITY",
+      verdict: "OCI_REPRESENTATION_FEASIBILITY=NOT_MET",
+      attempts: started,
+      completed_measurements: results.length,
+      qualified: false,
+      failure: error instanceof AdmissionError ? error.code : "OCI_RESOURCE_OR_MEASUREMENT_FAILURE",
+      observed: error instanceof AdmissionError ? error.ociObserved : undefined,
+      baseline_disposition: "TRANSFER_BUDGET_EXCEEDED",
+    });
+    return "OCI_REPRESENTATION_FEASIBILITY=NOT_MET";
+  }
+}
+async function losslessCompressionProbe(report, work, verification, context) {
+  const emit = async (r) => console.log(JSON.stringify(r));
+  try {
+    requireThat(process.platform === "linux", "OCI_LINUX_REQUIRED");
+    const jobs = await pages(`actions/runs/${id(process.env.GITHUB_RUN_ID)}/jobs`, "jobs");
+    const matches = jobs.filter(
+      (j) =>
+        j.name === "image seaweedfs" &&
+        j.run_attempt === id(process.env.GITHUB_RUN_ATTEMPT) &&
+        j.status === "in_progress",
+    );
+    requireThat(
+      matches.length === 1 && Number.isFinite(Date.parse(matches[0].started_at)),
+      "OCI_JOB_DEADLINE_UNAVAILABLE",
+    );
+    const deadline = Date.parse(matches[0].started_at) + 59 * 60000;
+    const remaining = (seconds) =>
+      requireThat(deadline - Date.now() >= seconds * 1000, "OCI_REMAINING_JOB_TIME");
+    remaining(1500);
     const disk = await statfs(work),
       scratchFree = disk.bavail * disk.bsize;
-    const scratchRequired = 2 * report.uncompressed_archive_bytes + report.C + 512 * MIB;
-    requireThat(scratchFree >= scratchRequired, "FILTER_SCRATCH_LIMIT");
-    const input = path.join(work, "candidate.tar");
-    const expected = {
-      archive_sha256: report.compression.input_sha256,
-      archive_bytes: report.uncompressed_archive_bytes,
-      report_file_bytes: report.report_file_bytes,
-      identity: filterIdentity(verification, await archiveIdentity(input)),
+    const scratchRequired =
+      report.uncompressed_archive_bytes + 4 * 4 * 1024 ** 3 + report.C * 2 + 1024 * MIB;
+    requireThat(scratchFree >= scratchRequired, "OCI_SCRATCH_LIMIT");
+    const dockerVersion = JSON.parse(run("docker", ["version", "--format", "{{json .Server}}"]));
+    const dockerInfo = JSON.parse(run("docker", ["info", "--format", "{{json .}}"]));
+    const rootDisk = await statfs(dockerInfo.DockerRootDir);
+    requireThat(rootDisk.bavail * rootDisk.bsize >= 9 * 1024 ** 3, "OCI_DOCKER_SCRATCH_LIMIT");
+    const source = path.join(work, "candidate.tar");
+    const old = runOCITool("old-elf", path.join(work, "donor.tar"), path.join(work, "unused"), {});
+    const identityExpected = filterIdentity(verification, await archiveIdentity(source));
+    const expected = { source_sha256: report.compression.input_sha256, identity: identityExpected };
+    const inputExpected = {
+      source_sha256: expected.source_sha256,
+      image_id: verification.image_id,
+      elf_sha256: verification.elf_sha256,
+      rust_sha256: verification.rust_sha256,
+      old_elf_sha256: old.old_elf_sha256,
     };
-    await runBoundedFilterExperiment(
+    await emit({
+      kind: "OCI_DIAGNOSTIC_START",
+      profile: OCI_PROFILE,
+      context,
+      run_id: id(process.env.GITHUB_RUN_ID),
+      attempt: id(process.env.GITHUB_RUN_ATTEMPT),
+      original: identityExpected,
+      source_sha256: expected.source_sha256,
+      source_bytes: report.uncompressed_archive_bytes,
+      scratch_free_bytes: scratchFree,
+      scratch_required_bytes: scratchRequired,
+      docker_root_free_bytes: rootDisk.bavail * rootDisk.bsize,
+      artifact_uploaded: false,
+    });
+    await runBoundedOCIExperiment(
       expected,
       async (number) => {
-        const packed = path.join(work, `experimental-bcj-${number}.xz`),
-          decoded = path.join(work, `experimental-bcj-${number}.tar`),
-          inspection = path.join(work, `bcj-inspection-${number}`);
-        // A new Python process and fresh encoder dictionary for each attempt.
-        const encoder = compressArchive(input, packed, 9, "python3", FILTER_PROFILE);
+        remaining(1500);
         requireThat(
-          encoder.compressed_bytes === (await fileBytes(packed)),
-          "FILTER_MEASUREMENT_DRIFT",
+          isDeepStrictEqual((await identity()).context, context),
+          "OCI_LIVE_IDENTITY_DRIFT",
         );
+        const raw = path.join(work, `oci-${number}.tar`),
+          packed = path.join(work, `oci-${number}.xz`),
+          decoded = path.join(work, `oci-${number}-decoded.tar`),
+          adapter = path.join(work, `oci-${number}-adapter.tar`),
+          loaded = path.join(work, `oci-${number}-loaded.tar`);
+        const pack = runOCITool("pack", source, raw, inputExpected);
+        await emit({
+          kind: "OCI_DIAGNOSTIC_STAGE",
+          attempt: number,
+          stage: "RAW_LAYOUT_PREPARED",
+          pack,
+          qualified: false,
+        });
+        remaining(540);
+        await emit({
+          kind: "OCI_DIAGNOSTIC_STAGE",
+          attempt: number,
+          stage: "ENCODER_START",
+          profile: OCI_PROFILE,
+          qualified: false,
+        });
+        const encoder = compressArchive(raw, packed, 6, "python3", OCI_PROFILE);
+        await emit({
+          kind: "OCI_DIAGNOSTIC_STAGE",
+          attempt: number,
+          stage: "ENCODER_COMPLETE",
+          encoder,
+          C_cap: 125829120,
+          C_within_cap: encoder.compressed_bytes <= 125829120,
+          qualified: false,
+        });
+        requireThat(
+          (await fileBytes(packed)) === encoder.compressed_bytes &&
+            (await fileDigest(packed)) === encoder.output_sha256,
+          "OCI_ENCODER_MEASUREMENT_DRIFT",
+        );
+        remaining(600);
+        const decoding = await decompress(packed, decoded, "python3", 4 * 1024 ** 3, true),
+          decoded_sha256 = await fileDigest(decoded);
+        await emit({
+          kind: "OCI_DIAGNOSTIC_STAGE",
+          attempt: number,
+          stage: "DECODED",
+          decoding,
+          decoded_sha256,
+          qualified: false,
+        });
+        requireThat(decoded_sha256 === pack.layout.sha256, "OCI_LAYOUT_DIGEST_DRIFT");
+        const completeExpected = { ...inputExpected, ...pack };
+        remaining(180);
+        const validation = runOCITool("validate", decoded, adapter, completeExpected);
+        await emit({
+          kind: "OCI_DIAGNOSTIC_STAGE",
+          attempt: number,
+          stage: "ADAPTER_PREPARED",
+          validation,
+          qualified: false,
+        });
+        remaining(240);
+        const inspection = path.join(work, `oci-inspection-${number}`);
+        const adapter_verification = measureOCICommand([
+          "sh",
+          "infra/seaweedfs/verify-image.sh",
+          adapter,
+          inspection,
+        ]);
+        const adapter_identity = filterIdentity(
+          await jsonFile(path.join(inspection, "verify-image.json")),
+          await archiveIdentity(adapter),
+        );
+        requireThat(
+          isDeepStrictEqual(adapter_identity, identityExpected),
+          "OCI_ADAPTER_IDENTITY_DRIFT",
+        );
+        await emit({
+          kind: "OCI_DIAGNOSTIC_STAGE",
+          attempt: number,
+          stage: "ADAPTER_VERIFIED",
+          adapter_identity,
+          adapter_verification,
+          qualified: false,
+        });
+        remaining(120);
+        const import_measurement = measureOCICommand(["docker", "load", "-i", adapter], 120, true);
+        await emit({
+          kind: "OCI_DIAGNOSTIC_STAGE",
+          attempt: number,
+          stage: "IMPORTED",
+          import_measurement,
+          qualified: false,
+        });
+        const importedAll = JSON.parse(
+          run("docker", ["image", "inspect", verification.image_id]),
+        )[0];
+        const imported = {
+          Id: importedAll.Id,
+          Os: importedAll.Os,
+          Architecture: importedAll.Architecture,
+          RootFS: importedAll.RootFS,
+        };
+        remaining(120);
+        const export_measurement = measureOCICommand(
+          [
+            "docker",
+            "image",
+            "save",
+            "--platform",
+            "linux/amd64",
+            verification.image_id,
+            "-o",
+            loaded,
+          ],
+          120,
+        );
+        remaining(180);
+        const resave = runOCITool("resave", loaded, path.join(work, "unused"), {
+          ...completeExpected,
+          source_sha256: undefined,
+        });
+        remaining(240);
+        const loadedInspection = path.join(work, `oci-loaded-inspection-${number}`);
+        const loaded_verification = measureOCICommand([
+          "sh",
+          "infra/seaweedfs/verify-image.sh",
+          loaded,
+          loadedInspection,
+        ]);
+        const loaded_identity = filterIdentity(
+          await jsonFile(path.join(loadedInspection, "verify-image.json")),
+          await archiveIdentity(loaded),
+        );
+        requireThat(
+          isDeepStrictEqual(loaded_identity, identityExpected),
+          "OCI_LOADED_IDENTITY_DRIFT",
+        );
+        requireThat(
+          isDeepStrictEqual((await identity()).context, context),
+          "OCI_FINAL_IDENTITY_DRIFT",
+        );
+        const diagnosticVerification = {
+          original: verification,
+          adapter: adapter_identity,
+          loaded: loaded_identity,
+          metadata_sha256: pack.metadata_sha256,
+          profile: OCI_PROFILE,
+        };
+        const diagnosticManifest = {
+          schema_version: "1.0.0-draft.1",
+          diagnostic_only: true,
+          format: OCI_PROFILE,
+          context,
+          producer: {
+            run_id: id(process.env.GITHUB_RUN_ID),
+            attempt: id(process.env.GITHUB_RUN_ATTEMPT),
+          },
+          pack,
+          payload: { sha256: encoder.output_sha256, bytes: encoder.compressed_bytes },
+          source_reports: report.report_file_bytes,
+        };
+        const report_file_bytes = {
+          ...report.report_file_bytes,
+          "verification.json": Buffer.byteLength(JSON.stringify(diagnosticVerification) + "\n"),
+          "candidate-manifest.json": Buffer.byteLength(JSON.stringify(diagnosticManifest) + "\n"),
+        };
         const budget = transferBudgetReport({
-          uncompressed_archive_bytes: await fileBytes(input),
+          uncompressed_archive_bytes: pack.layout.bytes,
           C: encoder.compressed_bytes,
-          report_file_bytes: report.report_file_bytes,
+          report_file_bytes,
           compression: encoder,
         });
-        const decoding = await decompress(packed, decoded, "python3", 4 * 1024 ** 3, true),
-          archive_sha256 = await fileDigest(decoded);
-        requireThat(archive_sha256 === expected.archive_sha256, "FILTER_ARCHIVE_DRIFT");
-        run("sh", ["infra/seaweedfs/verify-image.sh", decoded, inspection], { stdio: "inherit" });
-        const actual = await jsonFile(path.join(inspection, "verify-image.json"));
         const result = {
+          pack,
           encoder,
-          budget,
           decoding,
-          archive_sha256,
-          identity: filterIdentity(actual, await archiveIdentity(decoded)),
+          decoded_sha256,
+          validation,
+          adapter_verification,
+          adapter_identity,
+          imported,
+          import_measurement,
+          export_measurement,
+          resave,
+          loaded_verification,
+          loaded_identity,
+          report_file_bytes,
+          budget,
+          zip_bound: ociZipBound(budget.C, report_file_bytes),
           scratch_free_bytes: scratchFree,
           scratch_required_bytes: scratchRequired,
+          docker_root_free_bytes: rootDisk.bavail * rootDisk.bsize,
+          remaining_job_seconds: Math.floor((deadline - Date.now()) / 1000),
+          runtime: {
+            docker_version: dockerVersion.Version,
+            api_version: dockerVersion.ApiVersion,
+            os: dockerVersion.Os,
+            architecture: dockerVersion.Arch,
+            storage_driver: dockerInfo.Driver,
+            python_decoder: "configured producer runtime",
+            warm_image_cache: true,
+            cold_runner_qualification: "NOT_PROVEN",
+          },
           artifact_uploaded: false,
+          production_format_unchanged: true,
         };
-        await rm(packed);
-        await rm(decoded);
+        for (const f of [raw, packed, decoded, adapter, loaded]) await rm(f);
         await dispose(inspection);
+        await dispose(loadedInspection);
         return result;
       },
       emit,
     );
   } catch (error) {
     await emit({
-      kind: "BCJ_FILTER_FEASIBILITY",
-      verdict: "FULL_IMAGE_FILTER_FEASIBILITY=NOT_MET",
-      qualified: false,
+      kind: "OCI_REPRESENTATION_FEASIBILITY",
+      verdict: "OCI_REPRESENTATION_FEASIBILITY=NOT_MET",
       attempts: 0,
-      failure:
-        error instanceof AdmissionError ? error.code : "FILTER_RESOURCE_OR_MEASUREMENT_FAILURE",
+      qualified: false,
+      failure: error instanceof AdmissionError ? error.code : "OCI_RESOURCE_OR_MEASUREMENT_FAILURE",
       baseline_disposition: "TRANSFER_BUDGET_EXCEEDED",
     });
   }
@@ -1739,7 +2588,7 @@ async function produce(image, destination) {
         }),
       );
     },
-    (report) => losslessCompressionProbe(report, work, verification),
+    (report) => losslessCompressionProbe(report, work, verification, context),
   );
   const R = budget.R;
   await writeFile(path.join(folder, "candidate-manifest.json"), text);

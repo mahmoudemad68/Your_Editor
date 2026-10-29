@@ -9,6 +9,11 @@ import {
   FILTER_PROFILE,
   validateFilterAttempt,
   runBoundedFilterExperiment,
+  OCI_PROFILE,
+  runOCITool,
+  validateOCIAttempt,
+  runBoundedOCIExperiment,
+  ociZipBound,
   transferBudgetReport,
   reportAndEnforceTransfer,
   REPORT_FILES,
@@ -1175,3 +1180,426 @@ test("real BCJ/LZMA2 stream roundtrips, repeats compressed bytes, and rejects co
       (e) => e.code === "COMPRESSION_SETTING_REJECTED",
     );
   }));
+
+function ociFixture(dir, scenario = "raw") {
+  const result = execFileSync(
+    python,
+    [
+      "-c",
+      String.raw`
+import tarfile,io,json,hashlib,sys,gzip
+from pathlib import Path
+p=Path(sys.argv[1]);scenario=sys.argv[2];sha=lambda b:hashlib.sha256(b).hexdigest()
+new=b'\x7fELFpublic synthetic new weed';old=b'\x7fELFpublic synthetic old weed';rust=[b'\x7fELFpublic volume',b'\x7fELFpublic worker']
+def regular(n,b):
+ t=tarfile.TarInfo(n);t.mode=0o755 if n.startswith('usr/bin/') else 0o644;t.size=len(b);return t,b
+def layer(entries,fmt=tarfile.USTAR_FORMAT):
+ b=io.BytesIO()
+ with tarfile.open(fileobj=b,mode='w',format=fmt) as t:
+  for info,data in entries:t.addfile(info,io.BytesIO(data))
+ return b.getvalue()
+entries=[regular('usr/bin/weed',new)]
+if scenario=='old-elf':entries.append(regular('usr/lib/old-weed',old))
+if scenario=='hidden-elf':entries.append(regular('usr/share/editagent-seaweedfs/hidden',old))
+if scenario=='compiler':entries.append(regular('usr/local/go/bin/go',b'compiler'))
+if scenario=='traversal':entries.append(regular('../escape',b'x'))
+if scenario=='whiteout':entries.append(regular('usr/bin/.wh.weed',b''))
+if scenario=='duplicate':entries.append(regular('usr/bin/weed',new))
+if scenario in ('hardlink','symlink','parent-link'):
+ t=tarfile.TarInfo('usr/link');t.type=tarfile.LNKTYPE if scenario=='hardlink' else tarfile.SYMTYPE;t.linkname='missing' if scenario=='hardlink' else ('link' if scenario=='symlink' else '/tmp')
+ entries.append((t,b''))
+ if scenario=='parent-link':entries.append(regular('usr/link/file',b'x'))
+fmt=tarfile.USTAR_FORMAT
+if scenario in ('pax-bad','pax-good'):
+ fmt=tarfile.PAX_FORMAT;entries[0][0].pax_headers={'UNAPPROVED.key':'x'} if scenario=='pax-bad' else {'mtime':'123.25'}
+empty=layer([]);layers=[layer(entries,fmt),layer([regular('usr/bin/weed-volume',rust[0])]),layer([regular('usr/bin/weed-worker',rust[1])]),empty,layer([regular('etc/public',b'public synthetic metadata')]),empty]
+ds=['sha256:'+sha(x) for x in layers]
+if scenario=='encoded-confusion':ds[0]='sha256:'+sha(gzip.compress(layers[0],mtime=0))
+cfg=json.dumps({'architecture':'arm64' if scenario=='platform' else 'amd64','os':'linux','rootfs':{'type':'layers','diff_ids':ds},'config':{'Env':['PUBLIC_SYNTHETIC=1']},'history':[]},sort_keys=True).encode();q=sha(cfg)
+files={q+'.json':cfg};names=[]
+for i,b in enumerate(layers):n='layers/'+str(i)+'/layer.tar';names.append(n);files[n]=b
+if scenario in ('gzip','source-index-drift'):
+ files={'blobs/sha256/'+q:cfg};names=[];descs=[]
+ for b in layers:
+  z=gzip.compress(b,mtime=0);d=sha(z);n='blobs/sha256/'+d;files[n]=z;names.append(n);descs.append({'mediaType':'application/vnd.oci.image.layer.v1.tar+gzip','digest':'sha256:'+d,'size':len(z)})
+ manifest=json.dumps({'schemaVersion':2,'mediaType':'application/vnd.oci.image.manifest.v1+json','config':{'mediaType':'application/vnd.oci.image.config.v1+json','digest':'sha256:'+('0'*64 if scenario=='source-index-drift' else q),'size':len(cfg)},'layers':descs}).encode()
+ files['blobs/sha256/'+sha(manifest)]=manifest;files['oci-layout']=b'{"imageLayoutVersion":"1.0.0"}';files['index.json']=json.dumps({'schemaVersion':2,'manifests':[{'mediaType':'application/vnd.oci.image.manifest.v1+json','digest':'sha256:'+sha(manifest),'size':len(manifest)}]}).encode();config_name='blobs/sha256/'+q
+else:config_name=q+'.json'
+files['manifest.json']=json.dumps([{'Config':config_name,'RepoTags':[],'Layers':names}]).encode()
+src=p/'source.tar'
+with tarfile.open(src,'w',format=tarfile.USTAR_FORMAT) as t:
+ for n,b in files.items():t.addfile(*((lambda a:(a,io.BytesIO(b)))(regular(n,b)[0])))
+print(json.dumps({'source':str(src),'source_sha256':sha(src.read_bytes()),'image_id':'sha256:'+q,'elf_sha256':sha(new),'rust_sha256':{'usr/bin/weed-volume':sha(rust[0]),'usr/bin/weed-worker':sha(rust[1])},'old_elf_sha256':sha(old)}))
+`,
+      dir,
+      scenario,
+    ],
+    { encoding: "utf8" },
+  );
+  return JSON.parse(result);
+}
+function mutateOCI(source, target, variant) {
+  execFileSync(python, [
+    "-c",
+    String.raw`
+import tarfile,json,hashlib,sys
+src,dst,variant=sys.argv[1:];sha=lambda b:hashlib.sha256(b).hexdigest();enc=lambda v:(json.dumps(v,sort_keys=True,separators=(',',':'))+'\n').encode()
+with tarfile.open(src,'r:') as t:
+ files={m.name+('/' if m.isdir() and not m.name.endswith('/') else ''):(m,b'' if m.isdir() else t.extractfile(m).read()) for m in t}
+idx=json.loads(files['index.json'][1]);mn='blobs/sha256/'+idx['manifests'][0]['digest'][7:];m=json.loads(files[mn][1]);cn='blobs/sha256/'+m['config']['digest'][7:];ln='blobs/sha256/'+m['layers'][0]['digest'][7:]
+if variant=='missing':files.pop(ln)
+elif variant=='extra':files['blobs/sha256/'+'e'*64]=(tarfile.TarInfo('x'),b'EXTRA')
+elif variant=='blob':files[ln]=(files[ln][0],files[ln][1][:-1]+b'X')
+elif variant=='config':files[cn]=(files[cn][0],files[cn][1]+b' ')
+elif variant=='platform':idx['manifests'][0]['platform']['architecture']='arm64'
+elif variant=='index-many':idx['manifests']*=2
+elif variant in ('media','order','urls'):
+ if variant=='media':m['layers'][0]['mediaType']+=' +gzip'
+ if variant=='order':m['layers'][0],m['layers'][1]=m['layers'][1],m['layers'][0]
+ if variant=='urls':m['layers'][0]['urls']=['https://untrusted.invalid/blob']
+ b=enc(m);files.pop(mn);mn='blobs/sha256/'+sha(b);files[mn]=(tarfile.TarInfo('x'),b);idx['manifests'][0]['digest']='sha256:'+sha(b);idx['manifests'][0]['size']=len(b)
+elif variant=='traversal':files['../escape']=(tarfile.TarInfo('x'),b'x')
+elif variant=='outer-link':
+ t=tarfile.TarInfo('x');t.type=tarfile.SYMTYPE;t.linkname='../escape';files['blobs/sha256/'+'f'*64]=(t,b'')
+files['index.json']=(files['index.json'][0],enc(idx))
+if variant=='invalid-json':files['index.json']=(files['index.json'][0],b'\xff')
+if variant=='json-duplicate':files['index.json']=(files['index.json'][0],b'{"schemaVersion":2,"schemaVersion":2}')
+with open(dst,'xb') as out:
+ for n,(old,b) in files.items():
+  t=tarfile.TarInfo(n);t.type=old.type;t.linkname=old.linkname;t.size=len(b);t.mode=0o755 if t.isdir() else 0o644;t.uid=t.gid=t.mtime=0;t.uname=t.gname=''
+  h=t.tobuf(format=tarfile.USTAR_FORMAT);out.write(h);out.write(b);out.write(b'\0'*((-len(b))%512))
+  if variant=='duplicate' and n=='index.json':out.write(h);out.write(b);out.write(b'\0'*((-len(b))%512))
+ out.write(b'\0'*1024)
+ if variant=='trailing':out.write(b'EVIL')
+`,
+    source,
+    target,
+    variant,
+  ]);
+}
+for (const scenario of ["raw", "gzip", "pax-good"])
+  test(`OCI software fixture preserves config, six layer positions, metadata and adapter: ${scenario}`, async () =>
+    temporary(async (dir) => {
+      const f = ociFixture(dir, scenario),
+        raw = path.join(dir, "oci.tar");
+      const p = runOCITool("pack", f.source, raw, f, python);
+      assert.equal(p.layers.length, 6);
+      assert.equal(p.unique_raw_blobs, 5);
+      assert.equal(p.layers[3].diff_id, p.layers[5].diff_id);
+      const adapter = path.join(dir, "adapter.tar"),
+        expected = { ...f, ...p };
+      const v = runOCITool("validate", raw, adapter, expected, python);
+      assert.equal(v.config_sha256, f.image_id.slice(7));
+      assert.equal(v.image_id, f.image_id);
+      const r = runOCITool(
+        "resave",
+        adapter,
+        path.join(dir, "unused"),
+        { ...expected, source_sha256: undefined },
+        python,
+      );
+      assert.equal(r.metadata_sha256, p.metadata_sha256);
+      assert.deepEqual(
+        r.layers.map((l) => l.diff_id),
+        p.layers.map((l) => l.diff_id),
+      );
+      const second = path.join(dir, "second.tar");
+      runOCITool("pack", f.source, second, f, python);
+      assert.equal(sha256(await readFile(raw)), sha256(await readFile(second)));
+    }));
+for (const scenario of [
+  "traversal",
+  "whiteout",
+  "duplicate",
+  "hardlink",
+  "symlink",
+  "parent-link",
+  "pax-bad",
+  "old-elf",
+  "hidden-elf",
+  "compiler",
+  "platform",
+  "encoded-confusion",
+  "source-index-drift",
+])
+  test(`OCI refuses unsupported or unsafe original layer without rewriting: ${scenario}`, async () =>
+    temporary(async (dir) => {
+      const f = ociFixture(dir, scenario);
+      assert.throws(
+        () => runOCITool("pack", f.source, path.join(dir, "oci.tar"), f, python),
+        (e) => /^OCI_/.test(e.code),
+      );
+    }));
+for (const variant of [
+  "missing",
+  "duplicate",
+  "extra",
+  "blob",
+  "config",
+  "platform",
+  "index-many",
+  "media",
+  "order",
+  "urls",
+  "traversal",
+  "outer-link",
+  "invalid-json",
+  "json-duplicate",
+  "trailing",
+])
+  test(`OCI decoded closure negative control: ${variant}`, async () =>
+    temporary(async (dir) => {
+      const f = ociFixture(dir),
+        raw = path.join(dir, "raw.tar"),
+        p = runOCITool("pack", f.source, raw, f, python),
+        bad = path.join(dir, "bad.tar");
+      mutateOCI(raw, bad, variant);
+      assert.throws(
+        () => runOCITool("validate", bad, path.join(dir, "adapter.tar"), { ...f, ...p }, python),
+        (e) => /^OCI_/.test(e.code),
+      );
+    }));
+
+function ociResultFixture() {
+  const f = filteredFixture(),
+    identity = f.expected.identity;
+  const measurement = {
+    wall_seconds: 1,
+    peak_rss_bytes: 64 * MiB,
+    user_cpu_seconds: 1,
+    system_cpu_seconds: 0,
+    limits: { address_space_bytes: 268435456, cpu_seconds: 120 },
+  };
+  const command = { wall_seconds: 1, peak_waited_child_rss_bytes: 64 * MiB, deadline_seconds: 240 };
+  const reports = budgetFixture(1, 100).report_file_bytes;
+  const encoder = {
+    ...f.result.encoder,
+    profile: OCI_PROFILE,
+    preset: 6,
+    filter_chain: ["LZMA2_PRESET_6"],
+    compressed_bytes: 1024,
+    input_sha256: "b".repeat(64),
+  };
+  const pack = {
+    source_sha256: f.expected.archive_sha256,
+    image_id: identity.image_id,
+    config_bytes: 100,
+    layers: identity.layer_diff_ids.map((diff_id) => ({ diff_id })),
+    layout: { bytes: 4096, sha256: encoder.input_sha256 },
+    metadata_sha256: "a".repeat(64),
+    measurement,
+  };
+  const result = {
+    pack,
+    encoder,
+    decoding: { ...f.result.decoding, uncompressed_bytes: 4096 },
+    decoded_sha256: pack.layout.sha256,
+    validation: {
+      image_id: identity.image_id,
+      config_sha256: identity.config_sha256,
+      elf_sha256: identity.elf_sha256,
+      layout_sha256: pack.layout.sha256,
+      layout_bytes: pack.layout.bytes,
+      metadata_sha256: pack.metadata_sha256,
+      ordered_diff_ids: identity.layer_diff_ids,
+      measurement,
+    },
+    imported: {
+      Id: identity.image_id,
+      Os: "linux",
+      Architecture: "amd64",
+      RootFS: { Type: "layers", Layers: identity.layer_diff_ids },
+    },
+    resave: {
+      image_id: identity.image_id,
+      config_bytes: 100,
+      layers: pack.layers,
+      metadata_sha256: pack.metadata_sha256,
+      measurement,
+    },
+    adapter_verification: command,
+    loaded_verification: command,
+    import_measurement: {
+      ...command,
+      daemon: { observed_processes: 1, peak_sampled_rss_bytes: MiB, lifetime_hwm_upper_bytes: MiB },
+    },
+    export_measurement: command,
+    adapter_identity: identity,
+    loaded_identity: identity,
+    report_file_bytes: reports,
+    artifact_uploaded: false,
+    production_format_unchanged: true,
+  };
+  result.budget = transferBudgetReport({
+    uncompressed_archive_bytes: 4096,
+    C: 1024,
+    report_file_bytes: reports,
+    compression: encoder,
+  });
+  result.zip_bound = ociZipBound(1024, reports);
+  return { expected: { source_sha256: f.expected.archive_sha256, identity }, result };
+}
+test("OCI first full pass permits exactly one repeat, remains diagnostic-only", async () => {
+  const f = ociResultFixture(),
+    records = [];
+  let attempts = 0;
+  assert.doesNotThrow(() => validateOCIAttempt(f.result, f.expected));
+  assert.equal(
+    await runBoundedOCIExperiment(
+      f.expected,
+      async () => {
+        attempts++;
+        return globalThis.structuredClone(f.result);
+      },
+      async (r) => records.push(r),
+    ),
+    "OCI_REPRESENTATION_FEASIBILITY=MET_DIAGNOSTIC_ONLY",
+  );
+  assert.equal(attempts, 2);
+  assert.ok(records.every((r) => r.qualified === false));
+});
+for (const [name, mutate] of [
+  ["promotion", (f) => (f.result.artifact_uploaded = true)],
+  ["default format", (f) => (f.result.production_format_unchanged = false)],
+  ["missing measurements", (f) => delete f.result.decoding],
+  ["CPU", (f) => (f.result.encoder.user_cpu_seconds = 481)],
+  ["encoder memory", (f) => (f.result.encoder.peak_rss_bytes = 1073741825)],
+  ["wall deadline", (f) => (f.result.encoder.process_wall_seconds = 541)],
+  ["decoder memory", (f) => (f.result.decoding.peak_rss_bytes = 268435457)],
+  [
+    "parser memory",
+    (f) => {
+      f.result.pack.measurement = { ...f.result.pack.measurement, peak_rss_bytes: 268435457 };
+    },
+  ],
+  ["daemon measurement", (f) => delete f.result.import_measurement.daemon],
+  ["config", (f) => (f.result.validation.config_sha256 = "0".repeat(64))],
+  ["import", (f) => (f.result.imported.Id = "sha256:" + "0".repeat(64))],
+  [
+    "raw diff",
+    (f) => {
+      f.result.resave.layers = globalThis.structuredClone(f.result.resave.layers);
+      f.result.resave.layers[0].diff_id = "sha256:" + "f".repeat(64);
+    },
+  ],
+  [
+    "ELF",
+    (f) => {
+      f.result.loaded_identity = { ...f.result.loaded_identity, elf_sha256: "0".repeat(64) };
+    },
+  ],
+  [
+    "capacity",
+    (f) => {
+      f.result.encoder.compressed_bytes = 125829121;
+      f.result.budget = transferBudgetReport({
+        uncompressed_archive_bytes: 4096,
+        C: 125829121,
+        report_file_bytes: f.result.report_file_bytes,
+        compression: f.result.encoder,
+      });
+    },
+  ],
+  [
+    "ZIP reserve",
+    (f) => {
+      f.result.encoder.compressed_bytes = 120 * MiB;
+      f.result.budget = transferBudgetReport({
+        uncompressed_archive_bytes: 4096,
+        C: 120 * MiB,
+        report_file_bytes: f.result.report_file_bytes,
+        compression: f.result.encoder,
+      });
+      f.result.zip_bound = ociZipBound(120 * MiB, f.result.report_file_bytes);
+    },
+  ],
+  ["invalid ZIP metadata", (f) => (f.result.zip_bound.within_reserve = false)],
+])
+  test(`OCI first failure stops all subsequent encoding: ${name}`, async () => {
+    const f = ociResultFixture();
+    mutate(f);
+    let n = 0;
+    assert.equal(
+      await runBoundedOCIExperiment(
+        f.expected,
+        async () => {
+          n++;
+          return f.result;
+        },
+        async () => {},
+      ),
+      "OCI_REPRESENTATION_FEASIBILITY=NOT_MET",
+    );
+    assert.equal(n, 1);
+  });
+test("OCI unequal independent encodings fail; exception cannot leak or retry", async () => {
+  const f = ociResultFixture();
+  let n = 0;
+  const records = [];
+  assert.equal(
+    await runBoundedOCIExperiment(
+      f.expected,
+      async () => {
+        const r = globalThis.structuredClone(f.result);
+        if (++n === 2) r.encoder.output_sha256 = "f".repeat(64);
+        return r;
+      },
+      async (r) => records.push(r),
+    ),
+    "OCI_REPRESENTATION_FEASIBILITY=NOT_MET",
+  );
+  assert.equal(n, 2);
+  n = 0;
+  assert.equal(
+    await runBoundedOCIExperiment(
+      f.expected,
+      async () => {
+        n++;
+        throw Error("PRIVATE_SENTINEL");
+      },
+      async (r) => records.push(r),
+    ),
+    "OCI_REPRESENTATION_FEASIBILITY=NOT_MET",
+  );
+  assert.equal(n, 1);
+  assert.equal(JSON.stringify(records).includes("PRIVATE_SENTINEL"), false);
+});
+test("synthetic complete OCI uses only fixed XZ6 and decodes byte-identically", async () =>
+  temporary(async (dir) => {
+    const f = ociFixture(dir),
+      raw = path.join(dir, "raw.tar"),
+      packed = path.join(dir, "oci.xz"),
+      decoded = path.join(dir, "decoded.tar");
+    const p = runOCITool("pack", f.source, raw, f, python);
+    const c = compressArchive(raw, packed, 6, python, OCI_PROFILE);
+    assert.equal(c.profile, OCI_PROFILE);
+    assert.deepEqual(c.filter_chain, ["LZMA2_PRESET_6"]);
+    await decompress(packed, decoded, python, 4 * 1024 ** 3, true);
+    assert.equal(sha256(await readFile(decoded)), p.layout.sha256);
+    runOCITool("validate", decoded, path.join(dir, "adapter.tar"), { ...f, ...p }, python);
+    assert.throws(
+      () => compressArchive(raw, path.join(dir, "wrong.xz"), 9, python, OCI_PROFILE),
+      (e) => e.code === "COMPRESSION_SETTING_REJECTED",
+    );
+  }));
+test("even successful OCI diagnostic cannot rescue production budget or activate consumers", async () => {
+  const f = ociResultFixture();
+  let continued = false;
+  await assert.rejects(
+    async () => {
+      await reportAndEnforceTransfer(
+        budgetFixture(125829121),
+        async () => {},
+        () =>
+          runBoundedOCIExperiment(
+            f.expected,
+            async () => f.result,
+            async () => {},
+          ),
+      );
+      continued = true;
+    },
+    (e) => e.code === "TRANSFER_BUDGET_EXCEEDED",
+  );
+  assert.equal(continued, false);
+});
