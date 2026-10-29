@@ -5,6 +5,7 @@ import console from "node:console";
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
+import { setTimeout } from "node:timers";
 import { readFile, writeFile, mkdir, mkdtemp, stat, realpath, rm } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, URL } from "node:url";
@@ -125,7 +126,7 @@ async function dispose(directory) {
   );
   await rm(target, { recursive: true, force: true });
 }
-export function validateIdentity(context, pr, headCommit, mergeCommit, nativeRun, env) {
+function validateStableIdentity(context, pr, headCommit, mergeCommit, nativeRun, env) {
   const { H, B, M, TH, TM } = context;
   for (const v of [H, B, M, TH, TM]) requireThat(/^[0-9a-f]{40}$/.test(v), "INVALID_IDENTITY");
   requireThat(B === BASE && TH === TM, "TREE_OR_BASE_DRIFT");
@@ -137,10 +138,7 @@ export function validateIdentity(context, pr, headCommit, mergeCommit, nativeRun
     pr.head?.repo?.id === REPOSITORY_ID && pr.base?.repo?.id === REPOSITORY_ID,
     "REPOSITORY_DRIFT",
   );
-  requireThat(
-    pr.head.sha === H && pr.base.sha === B && pr.merge_commit_sha === M,
-    "HEAD_BASE_MERGE_DRIFT",
-  );
+  requireThat(pr.head.sha === H && pr.base.sha === B, "HEAD_BASE_MERGE_DRIFT");
   requireThat(
     headCommit.sha === H &&
       headCommit.tree.sha === TH &&
@@ -173,6 +171,187 @@ export function validateIdentity(context, pr, headCommit, mergeCommit, nativeRun
     "PR_ASSOCIATION_MISSING",
   );
   requireThat(env.GITHUB_SHA === M && env.GITHUB_REF === "refs/pull/100/merge", "EVENT_REF_DRIFT");
+}
+export function validateIdentity(context, pr, headCommit, mergeCommit, nativeRun, env) {
+  validateStableIdentity(context, pr, headCommit, mergeCommit, nativeRun, env);
+  requireThat(pr.merge_commit_sha === context.M, "HEAD_BASE_MERGE_DRIFT");
+}
+const safeSha = (v) => (typeof v === "string" && /^[a-f0-9]{40}$/.test(v) ? v : null);
+const safeId = (v) => (Number.isSafeInteger(v) && v > 0 ? v : null);
+const safeDate = (v) =>
+  typeof v === "string" && v.length <= 128 && Number.isFinite(Date.parse(v))
+    ? new Date(v).toISOString()
+    : null;
+const safeText = (v) => (typeof v === "string" && /^[A-Za-z0-9_.:/ -]{1,128}$/.test(v) ? v : null);
+let lastIdentityEvidence;
+let identityObservations = [];
+export function identityEvidence(input, pr, observation, correlation, outcome) {
+  const { context: c, headCommit: h, mergeCommit: m, checkout, nativeRun: n, env, suite } = input;
+  const association = (p) => ({
+    number: safeId(p.number),
+    H: safeSha(p.head?.sha),
+    B: safeSha(p.base?.sha),
+  });
+  return {
+    version: 1,
+    observed_at: new Date().toISOString(),
+    observation,
+    outcome,
+    event: {
+      H: safeSha(c.H),
+      B: safeSha(c.B),
+      M: safeSha(c.M),
+      TH: safeSha(c.TH),
+      TM: safeSha(c.TM),
+      workflow: Object.hasOwn(WORKFLOWS, env.GITHUB_WORKFLOW) ? env.GITHUB_WORKFLOW : "UNEXPECTED",
+      run_id: safeId(Number(env.GITHUB_RUN_ID)),
+      attempt: safeId(Number(env.GITHUB_RUN_ATTEMPT)),
+      ref_matches: env.GITHUB_REF === "refs/pull/100/merge",
+    },
+    checkout: {
+      commit: safeSha(checkout?.sha),
+      tree: safeSha(checkout?.tree?.sha),
+      parents: checkout?.parents?.map((p) => safeSha(p.sha)),
+    },
+    git: {
+      H: safeSha(h.sha),
+      TH: safeSha(h.tree?.sha),
+      M: safeSha(m.sha),
+      TM: safeSha(m.tree?.sha),
+      merge_parents: m.parents?.map((p) => safeSha(p.sha)),
+    },
+    live_pr: {
+      number: safeId(pr.number),
+      H: safeSha(pr.head?.sha),
+      B: safeSha(pr.base?.sha),
+      M: safeSha(pr.merge_commit_sha),
+      head_repo: safeId(pr.head?.repo?.id),
+      base_repo: safeId(pr.base?.repo?.id),
+      state: ["open", "closed"].includes(pr.state) ? pr.state : null,
+      draft: typeof pr.draft === "boolean" ? pr.draft : null,
+      merged: typeof pr.merged === "boolean" ? pr.merged : null,
+      mergeable: typeof pr.mergeable === "boolean" ? pr.mergeable : null,
+      mergeable_state: [
+        "unknown",
+        "clean",
+        "dirty",
+        "unstable",
+        "blocked",
+        "behind",
+        "draft",
+        "has_hooks",
+      ].includes(pr.mergeable_state)
+        ? pr.mergeable_state
+        : null,
+    },
+    native: {
+      run_id: safeId(n.id),
+      attempt: safeId(n.run_attempt),
+      workflow_id: safeId(n.workflow_id),
+      path: Object.values(WORKFLOWS).some((w) => w.path === n.path) ? n.path : "UNEXPECTED",
+      event: n.event === "pull_request" ? n.event : "UNEXPECTED",
+      H: safeSha(n.head_sha),
+      repository: safeId(n.repository?.id),
+      head_repository: safeId(n.head_repository?.id),
+      check_suite: safeId(n.check_suite_id),
+      associations: (n.pull_requests ?? []).slice(0, 8).map(association),
+      app: safeId(suite?.app?.id),
+      suite_H: safeSha(suite?.head_sha),
+      suite_associations: (suite?.pull_requests ?? []).slice(0, 8).map((p) => safeId(p.number)),
+    },
+    comparisons: {
+      event_H_live_H: c.H === pr.head?.sha,
+      event_B_live_B: c.B === pr.base?.sha,
+      event_M_live_M: c.M === pr.merge_commit_sha,
+      checkout_M: checkout?.sha === c.M,
+      checkout_tree: checkout?.tree?.sha === c.TM,
+      merge_parents: isDeepStrictEqual(
+        m.parents?.map((p) => p.sha),
+        [c.B, c.H],
+      ),
+      equal_trees: c.TH === c.TM,
+      native_run: n.id === Number(env.GITHUB_RUN_ID),
+      native_attempt: n.run_attempt === Number(env.GITHUB_RUN_ATTEMPT),
+    },
+    api: {
+      request_started_at: safeText(correlation?.request_started_at),
+      received_at: safeText(correlation?.received_at),
+      status: safeId(correlation?.status),
+      request_id:
+        typeof correlation?.request_id === "string" &&
+        /^[A-Fa-f0-9:]{1,128}$/.test(correlation.request_id)
+          ? correlation.request_id
+          : null,
+      date: safeDate(correlation?.date),
+      age:
+        typeof correlation?.age === "string" && /^\d{1,8}$/.test(correlation.age)
+          ? correlation.age
+          : null,
+      refresh: correlation?.refresh === true,
+    },
+  };
+}
+// At most three 3-second PR reads and two 500ms delays, in this SAME
+// admission attempt. Only a null merge SHA while GitHub computes mergeability
+// may be refreshed. A concrete different SHA, H/B drift or any other failed
+// guard is immediately terminal, never a producer-prerequisite classification.
+export async function reconcileIdentity(input, readPr, pause, record) {
+  for (let observation = 1; observation <= 3; observation++) {
+    const { pr, correlation } = await readPr(observation);
+    let outcome = "IDENTITY_CONFIRMED",
+      failure;
+    try {
+      validateStableIdentity(
+        input.context,
+        pr,
+        input.headCommit,
+        input.mergeCommit,
+        input.nativeRun,
+        input.env,
+      );
+      requireThat(
+        input.checkout.sha === input.context.M &&
+          input.checkout.tree.sha === input.context.TM &&
+          isDeepStrictEqual(
+            input.checkout.parents.map((p) => p.sha),
+            [input.context.B, input.context.H],
+          ),
+        "CHECKOUT_COMMIT_DRIFT",
+      );
+      requireThat(
+        input.suite.app?.id === 15368 &&
+          input.suite.head_sha === input.context.H &&
+          input.suite.pull_requests?.some((p) => p.number === 100),
+        "NATIVE_CHECK_SOURCE_DRIFT",
+      );
+      if (pr.merge_commit_sha !== input.context.M) {
+        const incomplete =
+          pr.merge_commit_sha === null && pr.mergeable === null && pr.mergeable_state === "unknown";
+        if (incomplete && observation < 3) outcome = "PR_MERGE_METADATA_INCOMPLETE_REFRESH";
+        else
+          throw new AdmissionError(
+            incomplete ? "PR_MERGE_METADATA_UNRESOLVED" : "HEAD_BASE_MERGE_DRIFT",
+          );
+      }
+      if (outcome === "IDENTITY_CONFIRMED")
+        validateIdentity(
+          input.context,
+          pr,
+          input.headCommit,
+          input.mergeCommit,
+          input.nativeRun,
+          input.env,
+        );
+    } catch (error) {
+      outcome = error instanceof AdmissionError ? error.code : "ADMISSION_INTERNAL_ERROR";
+      failure = error;
+    }
+    await record(identityEvidence(input, pr, observation, correlation, outcome));
+    if (failure) throw failure;
+    if (outcome === "IDENTITY_CONFIRMED") return;
+    await pause(500);
+  }
+  throw new AdmissionError("PR_MERGE_METADATA_UNRESOLVED");
 }
 export function validateProducer(source, jobs, context) {
   requireThat(
@@ -291,12 +470,24 @@ export function validateCheck(check, context, suiteId, name, completed = true) {
     );
 }
 
-async function request(url, { publicOnly = false, bytes = false, cap = 4 * 1024 * 1024 } = {}) {
+async function request(
+  url,
+  {
+    publicOnly = false,
+    bytes = false,
+    cap = 4 * 1024 * 1024,
+    correlate,
+    refresh = false,
+    timeout = 30000,
+  } = {},
+) {
   requireThat(
     url.startsWith("https://api.github.com/repos/mahmoudemad68/Your_Editor/"),
     "API_ORIGIN_REJECTED",
   );
   const headers = { Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2026-03-10" };
+  if (refresh) headers["Cache-Control"] = "no-cache";
+  const started = new Date().toISOString();
   const actionMetadata = url.includes("/actions/");
   if (process.env.GITHUB_TOKEN && (!publicOnly || actionMetadata)) {
     headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
@@ -304,8 +495,18 @@ async function request(url, { publicOnly = false, bytes = false, cap = 4 * 1024 
   let response = await globalThis.fetch(url, {
     headers,
     redirect: "manual",
-    signal: globalThis.AbortSignal.timeout(30000),
+    signal: globalThis.AbortSignal.timeout(timeout),
   });
+  if (correlate)
+    correlate({
+      request_started_at: started,
+      received_at: new Date().toISOString(),
+      status: response.status,
+      request_id: response.headers.get("x-github-request-id"),
+      date: response.headers.get("date"),
+      age: response.headers.get("age"),
+      refresh,
+    });
   if (bytes && response.status === 302) {
     const next = new URL(response.headers.get("location"));
     requireThat(
@@ -367,30 +568,80 @@ async function identity(env = process.env) {
   const H = event.pull_request.head.sha,
     B = event.pull_request.base.sha,
     M = env.GITHUB_SHA;
-  const [pr, nativeRun] = await Promise.all([
-    api("pulls/100", { publicOnly: true }),
-    api(`actions/runs/${id(env.GITHUB_RUN_ID)}`, { publicOnly: true }),
-  ]);
-  // checkout fetch-depth=2 retains original M and its H/B parents. Git object
-  // hashes are immutable; only live PR/run state needs repeated network reads.
-  const commit = (ref) => {
-    return parseCommitMetadata(
+  const commit = (ref) =>
+    parseCommitMetadata(
       run("git", ["--no-replace-objects", "show", "-s", "--format=%H%n%T%n%P", ref]),
     );
-  };
   const head = commit(H),
-    merge = commit(M);
+    merge = commit(M),
+    checkout = commit("HEAD");
   const context = { H, B, M, TH: head.tree.sha, TM: merge.tree.sha };
-  validateIdentity(context, pr, head, merge, nativeRun, env);
-  const suite = await api(`check-suites/${id(nativeRun.check_suite_id)}`, { publicOnly: true });
-  requireThat(
-    suite.app?.id === 15368 &&
-      suite.head_sha === H &&
-      suite.pull_requests?.some((p) => p.number === 100),
-    "NATIVE_CHECK_SOURCE_DRIFT",
-  );
-  return { context, nativeRun };
+  const input = {
+    context,
+    headCommit: head,
+    mergeCommit: merge,
+    checkout,
+    nativeRun: {},
+    env,
+    suite: {},
+  };
+  lastIdentityEvidence = undefined;
+  identityObservations = [];
+  const record = async (evidence) => {
+    lastIdentityEvidence = evidence;
+    identityObservations.push(evidence);
+    console.log("IDENTITY_EVIDENCE " + JSON.stringify(evidence));
+    await writeFile(
+      path.join(ROOT, ".local/issue99/identity-evidence.jsonl"),
+      JSON.stringify(evidence) + "\n",
+      { flag: "a", mode: 0o600 },
+    );
+  };
+  try {
+    input.nativeRun = await api(`actions/runs/${id(env.GITHUB_RUN_ID)}`, { publicOnly: true });
+    input.suite = await api(`check-suites/${id(input.nativeRun.check_suite_id)}`, {
+      publicOnly: true,
+    });
+    await reconcileIdentity(
+      input,
+      async (observation) => {
+        let correlation;
+        try {
+          const pr = await api("pulls/100", {
+            publicOnly: true,
+            refresh: true,
+            timeout: 3000,
+            correlate: (value) => {
+              correlation = value;
+            },
+          });
+          return { pr, correlation };
+        } catch {
+          await record(
+            identityEvidence(input, {}, observation, correlation, "PR_METADATA_READ_FAILED"),
+          );
+          throw new AdmissionError("PR_METADATA_READ_FAILED");
+        }
+      },
+      (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+      record,
+    );
+  } catch (error) {
+    if (!lastIdentityEvidence)
+      await record(
+        identityEvidence(
+          input,
+          {},
+          0,
+          {},
+          error instanceof AdmissionError ? error.code : "NATIVE_METADATA_READ_FAILED",
+        ),
+      );
+    throw error;
+  }
+  return { context, nativeRun: input.nativeRun };
 }
+
 export function reviewedBinding(comments, context) {
   const approved = [];
   for (const c of comments) {
@@ -991,6 +1242,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       ),
       run_id: process.env.GITHUB_RUN_ID,
       attempt: process.env.GITHUB_RUN_ATTEMPT,
+      identity_evidence: lastIdentityEvidence,
+      identity_observations: identityObservations,
     };
     console.error(JSON.stringify(result));
     if (process.env.GITHUB_OUTPUT) await output("outcome", outcome);

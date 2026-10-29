@@ -148,3 +148,45 @@ until clean Linux qualification; a cap failure returns CI_DESIGN_BLOCKED.
 CP1, CP2 NOT_MET, Tiny Arabic unqualified, immutable model/gold identities,
 PLANNER_NOT_CONFIGURED, protected files and other PRs remain unchanged. The new
 head cannot be READY_FOR_INDEPENDENT_RE_QA until every entry gate has actual proof.
+
+### Narrow blocked-head repair — identity and dependency preparation
+
+The failures at `1c548f0` remain historical FAIL, not waived or rerun. The original
+identity mismatch cause is NOT_PROVEN: its instantaneous API values were absent.
+The repaired reader emits selected public event H/B/M, checked-out commit/tree,
+merge parents, live PR H/B/M and mergeability, native workflow/run/attempt/PR/check
+identity, per-field comparisons, observation time and allowlisted API request/date
+correlation. Response bodies, authorization headers, URLs and account fields are
+excluded. The failure-outcome artifact embeds this sanitized identity snapshot;
+all observations also appear as `IDENTITY_EVIDENCE` records in the job log.
+
+A same-attempt refresh is bounded to three PR reads (3s each) with two 500ms
+pauses, at most 10s. It is allowed only for an explicit null merge SHA with null
+mergeability and state unknown, after all other guards pass. A concrete different
+merge SHA, wrong H/B, repo, workflow, run, attempt, checkout, parents, tree or check
+association fails immediately. Incomplete metadata remaining after the bound is
+non-retryable failure. Every success still requires the original M, `[B,H]`
+parents, equal trees and exact live H/B/M. This is not a workflow rerun or a
+substitution of the current PR merge for the original event merge.
+
+Dependency preparation downloads only existing root requirements, the two
+approved upgraded targets, and the upstream Brotli test dependency
+`github.com/xyproto/randomstring@v1.0.5`. Both exact records below occur in the
+approved original source go.sum (SHA-256
+`78c8b44110c4633c5721e0f7dad0fe99308116ebb7bdd5dafb160dc378f31d89`):
+
+```text
+github.com/xyproto/randomstring v1.0.5 h1:YtlWPoRdgMu3NZtP45drfy1GKoojuR7hmRcnhZqKjWU=
+github.com/xyproto/randomstring v1.0.5/go.mod h1:rgmS5DeNXLivK7YprL0pY+lTuhNQW3iGxZ18UQApw/E=
+```
+
+The native verifier additionally requires this exact unreplaced version in the
+original module graph, both downloaded h1 records and actual cached archives.
+The original-plus-four checksum set remains strict; no `download all`, extra
+module, replacement or unrelated upgrade is accepted. Offline-stage negative
+controls exercise unknown modules, checksum changes, missing archives, graph and
+replacement drift. A separate synthetic compile with an empty module cache must
+fail specifically because BuildKit's disabled network prevents fetching that
+same approved module; a timeout or unrelated error is not accepted as proof.
+Native build/scan and consumer success remain subject to fresh exact-head evidence
+and a separately reviewed `seaweedfs-policy-v1` binding, never this documentation.

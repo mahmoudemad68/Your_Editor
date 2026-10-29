@@ -6,6 +6,8 @@ import { mkdtemp, mkdir, readFile, writeFile, rm } from "node:fs/promises";
 import path from "node:path";
 import {
   parseCommitMetadata,
+  identityEvidence,
+  reconcileIdentity,
   validateIdentity,
   validateProducer,
   validateArtifact,
@@ -294,7 +296,28 @@ test("offline build, clean runtime and native PR failure propagation remain expl
   const build = await read("infra/seaweedfs/build-weed.sh");
   assert.match(build, /cmp \/out\/weed \/out\/weed.second/);
   assert.match(build, /sha256sum -c -/);
-  assert.match(build.split("compile)\n")[0], /go mod download all/);
+  assert.match(
+    build.split("compile)\n")[0],
+    /go mod download -json github\.com\/xyproto\/randomstring@v1\.0\.5/,
+  );
+  assert.equal(build.includes("go mod download all"), false);
+  assert.match(build, /\/build\/check existing/);
+  assert.match(build, /compile\)\n {2}cd \/build\/source\n {2}\/build\/check controls/);
+  for (const name of [
+    "unknown-module",
+    "unexpected-checksum",
+    "dependency-graph-drift",
+    "unexpected-replacement",
+    "unknown-test-download",
+    "test-checksum-drift",
+    "missing-original-test-checksum",
+    "original-test-graph-drift",
+    "missing-dependency-archive",
+    "missing-security-module-archive",
+    "attempted-online-compilation",
+  ])
+    assert.ok(build.includes('"' + name + '"'), name);
+
   assert.equal(/go get -u|go mod tidy|GOSUMDB=off|fips140=off/.test(build), false);
   const ci = await read(".github/workflows/ci.yml"),
     walking = await read(".github/workflows/e2e.yml");
@@ -517,4 +540,148 @@ test("shallow H metadata is permitted while original M still requires both exact
   assert.doesNotThrow(() => checkIdentity(f));
   f.merge = parseCommitMetadata(`${M}\n${T}\n\n`);
   assert.throws(() => checkIdentity(f), /MERGE_PARENT_DRIFT/);
+});
+
+function reconciliationInput() {
+  const f = identity();
+  f.native.check_suite_id = 40;
+  return {
+    context,
+    headCommit: f.head,
+    mergeCommit: f.merge,
+    checkout: f.merge,
+    nativeRun: f.native,
+    env,
+    suite: { app: { id: 15368 }, head_sha: H, pull_requests: [{ number: 100 }] },
+  };
+}
+async function reconciliation(prs, input = reconciliationInput()) {
+  const snapshots = [],
+    pauses = [];
+  let reads = 0;
+  const task = reconcileIdentity(
+    input,
+    async () => ({
+      pr: prs[Math.min(reads++, prs.length - 1)],
+      correlation: {
+        request_id: "AB12:CD34",
+        request_started_at: "2026-10-29T16:00:00.000Z",
+        received_at: "2026-10-29T16:00:00.001Z",
+        date: "Thu, 29 Oct 2026 16:00:00 GMT",
+        status: 200,
+        refresh: true,
+      },
+    }),
+    async (ms) => {
+      pauses.push(ms);
+    },
+    async (value) => {
+      snapshots.push(value);
+    },
+  );
+  return { task, snapshots, pauses, reads: () => reads };
+}
+function incomplete() {
+  return { ...identity().pr, merge_commit_sha: null, mergeable: null, mergeable_state: "unknown" };
+}
+test("exact identity needs no refresh and records safe API correlation", async () => {
+  const r = await reconciliation([identity().pr]);
+  await r.task;
+  assert.equal(r.reads(), 1);
+  assert.deepEqual(r.pauses, []);
+  assert.equal(r.snapshots[0].outcome, "IDENTITY_CONFIRMED");
+  assert.equal(r.snapshots[0].api.request_id, "AB12:CD34");
+  assert.equal(r.snapshots[0].api.date, "2026-10-29T16:00:00.000Z");
+});
+test("incomplete merge computation may reconcile only to the immutable original M", async () => {
+  const r = await reconciliation([incomplete(), incomplete(), identity().pr]);
+  await r.task;
+  assert.equal(r.reads(), 3);
+  assert.deepEqual(r.pauses, [500, 500]);
+  assert.deepEqual(
+    r.snapshots.map((s) => s.outcome),
+    [
+      "PR_MERGE_METADATA_INCOMPLETE_REFRESH",
+      "PR_MERGE_METADATA_INCOMPLETE_REFRESH",
+      "IDENTITY_CONFIRMED",
+    ],
+  );
+});
+test("unresolved metadata exhausts exactly three reads and remains non-retryable drift", async () => {
+  const r = await reconciliation([incomplete()]);
+  await assert.rejects(r.task, (e) => e.code === "PR_MERGE_METADATA_UNRESOLVED");
+  assert.equal(r.reads(), 3);
+  assert.equal(r.snapshots.at(-1).outcome, "PR_MERGE_METADATA_UNRESOLVED");
+});
+for (const [name, mutation, code] of [
+  ["genuine HEAD drift", (p) => (p.head.sha = M), "HEAD_BASE_MERGE_DRIFT"],
+  ["genuine base drift", (p) => (p.base.sha = H), "HEAD_BASE_MERGE_DRIFT"],
+  ["wrong repository", (p) => p.head.repo.id++, "REPOSITORY_DRIFT"],
+  ["unexpected concrete merge", (p) => (p.merge_commit_sha = H), "HEAD_BASE_MERGE_DRIFT"],
+  ["missing merge field", (p) => delete p.merge_commit_sha, "HEAD_BASE_MERGE_DRIFT"],
+])
+  test(`metadata refresh never conceals ${name}`, async () => {
+    const p = globalThis.structuredClone(identity().pr);
+    mutation(p);
+    const r = await reconciliation([p, identity().pr]);
+    await assert.rejects(r.task, (e) => e.code === code);
+    assert.equal(r.reads(), 1);
+    assert.deepEqual(r.pauses, []);
+    assert.equal(r.snapshots[0].outcome, code);
+  });
+test("a concrete stale SHA is never refreshed even when mergeability is unknown", async () => {
+  const r = await reconciliation([{ ...incomplete(), merge_commit_sha: H }, identity().pr]);
+  await assert.rejects(r.task, (e) => e.code === "HEAD_BASE_MERGE_DRIFT");
+  assert.equal(r.reads(), 1);
+});
+test("HEAD changing during the bounded refresh invalidates reconciliation", async () => {
+  const p = globalThis.structuredClone(identity().pr);
+  p.head.sha = M;
+  const r = await reconciliation([incomplete(), p, identity().pr]);
+  await assert.rejects(r.task, (e) => e.code === "HEAD_BASE_MERGE_DRIFT");
+  assert.equal(r.reads(), 2);
+  assert.equal(r.snapshots.at(-1).comparisons.event_H_live_H, false);
+});
+for (const [name, mutate, code] of [
+  ["wrong checkout", (v) => (v.checkout = { ...v.checkout, sha: H }), "CHECKOUT_COMMIT_DRIFT"],
+  ["wrong parents", (v) => v.mergeCommit.parents.reverse(), "MERGE_PARENT_DRIFT"],
+  ["unequal trees", (v) => (v.context = { ...v.context, TM: H }), "TREE_OR_BASE_DRIFT"],
+  ["wrong native attempt", (v) => v.nativeRun.run_attempt++, "ATTEMPT_DRIFT"],
+  ["wrong workflow", (v) => v.nativeRun.workflow_id++, "WORKFLOW_DRIFT"],
+  [
+    "missing native PR association",
+    (v) => (v.nativeRun.pull_requests = []),
+    "PR_ASSOCIATION_MISSING",
+  ],
+  ["wrong check App", (v) => v.suite.app.id++, "NATIVE_CHECK_SOURCE_DRIFT"],
+])
+  test(`incomplete PR metadata cannot defer ${name}`, async () => {
+    const input = globalThis.structuredClone(reconciliationInput());
+    mutate(input);
+    const r = await reconciliation([incomplete(), identity().pr], input);
+    await assert.rejects(r.task, (e) => e.code === code);
+    assert.equal(r.reads(), 1);
+    assert.deepEqual(r.pauses, []);
+  });
+test("identity diagnostics expose only selected public identity fields, never response extras or credentials", () => {
+  const f = reconciliationInput(),
+    p = globalThis.structuredClone(identity().pr);
+  p.body = "CONFIDENTIAL_SENTINEL";
+  p.user = { login: "CONFIDENTIAL_SENTINEL" };
+  p.head.label = "CONFIDENTIAL_SENTINEL";
+  f.nativeRun.actor = { token: "CONFIDENTIAL_SENTINEL" };
+  const record = identityEvidence(
+    f,
+    p,
+    1,
+    {
+      request_id: "Bearer CONFIDENTIAL_SENTINEL",
+      authorization: "CONFIDENTIAL_SENTINEL",
+      url: "https://example.invalid/?token=CONFIDENTIAL_SENTINEL",
+    },
+    "IDENTITY_CONFIRMED",
+  );
+  assert.equal(JSON.stringify(record).includes("CONFIDENTIAL_SENTINEL"), false);
+  assert.equal(record.api.request_id, null);
+  assert.deepEqual(record.git.merge_parents, [BASE, H]);
 });

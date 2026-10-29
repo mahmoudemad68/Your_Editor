@@ -29,13 +29,54 @@ func build(label,output string){
  report:=map[string]interface{}{"label":label,"wall_seconds":time.Since(started).Seconds(),"max_rss_kib":usage.Maxrss,"user_seconds":float64(usage.Utime.Sec)+float64(usage.Utime.Usec)/1e6,"system_seconds":float64(usage.Stime.Sec)+float64(usage.Stime.Usec)/1e6,"cache_initially_empty":true,"elf_sha256":hash(output),"visible_cgroup_only":visible}
  b,e:=json.MarshalIndent(report,"","  ");must(e);must(os.WriteFile("/out/provenance/build-"+label+".json",append(b,'\n'),0644))
 }
+func downloads(l Input,ms map[string]Module){if len(ms)!=2{panic("target count")};for p,w:=range l.Modules{m,ok:=ms[p];if !ok||m.Version!=w.Version||m.Replace!=nil||hash(m.Zip)!=w.Zip_sha256||hash(m.GoMod)!=w.Mod_sha256{panic("module archive mismatch: "+p)};if m.Sum!=strings.Fields(w.Go_sum_lines[0])[2]||m.GoModSum!=strings.Fields(w.Go_sum_lines[1])[2]{panic("sumdb mismatch: "+p)}}}
+func graph(l Input,a,b map[string]Module,originalMod,effectiveMod,originalSum,effectiveSum string){if len(a)!=len(b){panic("dependency graph size changed")};for p,m:=range a{n,ok:=b[p];if !ok{panic("module removed")};if w,changed:=l.Modules[p];changed{if m.Version!=l.Original_versions[p]||n.Version!=w.Version||m.Replace!=nil||n.Replace!=nil{panic("target changed unexpectedly")}}else if m.Version!=n.Version||!sameReplace(m.Replace,n.Replace){panic("unapproved graph change: "+p)}}
+ expected:=originalMod;for p,w:=range l.Modules{old:=p+" "+l.Original_versions[p];if strings.Count(expected,old)!=1{panic("original version ambiguous")};expected=strings.Replace(expected,old,p+" "+w.Version,1)};if expected!=effectiveMod{panic("unapproved go.mod edit")}
+ allowed:=map[string]bool{};for _,s:=range strings.Split(strings.TrimSpace(originalSum),"\n"){allowed[s]=true};for _,w:=range l.Modules{for _,s:=range w.Go_sum_lines{allowed[s]=true}};got:=map[string]bool{};for _,s:=range strings.Split(strings.TrimSpace(effectiveSum),"\n"){if !allowed[s]{panic("unapproved go.sum entry")};got[s]=true};for s:=range allowed{if !got[s]{panic("go.sum entry removed")}}}
+const testPath="github.com/xyproto/randomstring"
+const testVersion="v1.0.5"
+const testSum="h1:YtlWPoRdgMu3NZtP45drfy1GKoojuR7hmRcnhZqKjWU="
+const testModSum="h1:rgmS5DeNXLivK7YprL0pY+lTuhNQW3iGxZ18UQApw/E="
+func testSumLines()string{return testPath+" "+testVersion+" "+testSum+"\n"+testPath+" "+testVersion+"/go.mod "+testModSum+"\n"}
+func existing(ms,before map[string]Module,originalSum string){
+ m,ok:=ms[testPath];if len(ms)!=1||!ok||m.Path!=testPath||m.Version!=testVersion||m.Replace!=nil{panic("unapproved test dependency")}
+ prior,ok:=before[testPath];if !ok||prior.Version!=testVersion||prior.Replace!=nil{panic("test dependency absent from original graph")}
+ for _,line:=range strings.Split(strings.TrimSpace(testSumLines()),"\n"){if strings.Count("\n"+originalSum,"\n"+line+"\n")!=1{panic("test dependency lacks immutable original checksum")}}
+ if m.Sum!=testSum||m.GoModSum!=testModSum{panic("test dependency checksum drift")}
+ for _,p:=range []string{m.Zip,m.GoMod}{info,e:=os.Stat(p);must(e);if !info.Mode().IsRegular()||info.Size()==0{panic("missing test dependency archive")}}
+}
+func copyModules(in map[string]Module)map[string]Module{out:=map[string]Module{};for k,v:=range in{out[k]=v};return out}
+func rejected(label string,call func()){
+ caught:=false;func(){defer func(){if recover()!=nil{caught=true}}();call()}();if !caught{panic("negative control unexpectedly passed: "+label)};fmt.Println("NEGATIVE_CONTROL_PASS",label)
+}
+func controls(l Input){
+ a,b:=modules("/build/before.json"),modules("/build/after.json");targets:=modules("/build/targets.json");test:=modules("/build/existing-test.json")
+ om,em,osum,esum:=string(file("/build/original.go.mod")),string(file("/build/source/go.mod")),string(file("/build/original.go.sum")),string(file("/build/source/go.sum"))
+ check:=func(next map[string]Module,sum string){graph(l,a,next,om,em,osum,sum)};check(b,esum);downloads(l,targets);existing(test,a,osum)
+ rejected("unknown-module",func(){next:=copyModules(b);next["unapproved.invalid/module"]=Module{Path:"unapproved.invalid/module",Version:"v1.0.0"};check(next,esum)})
+ rejected("unexpected-checksum",func(){check(b,esum+"unapproved.invalid/module v1.0.0 h1:unapproved\n")})
+ rejected("dependency-graph-drift",func(){next:=copyModules(b);m:=next[testPath];m.Version="v1.0.6";next[testPath]=m;check(next,esum)})
+ rejected("unexpected-replacement",func(){next:=copyModules(b);m:=next[testPath];m.Replace=&Module{Path:"unapproved.invalid/module",Version:"v1.0.0"};next[testPath]=m;check(next,esum)})
+ rejected("unknown-test-download",func(){next:=copyModules(test);m:=next[testPath];delete(next,testPath);m.Path="unapproved.invalid/module";next[m.Path]=m;existing(next,a,osum)})
+ rejected("missing-original-test-checksum",func(){existing(test,a,strings.ReplaceAll(osum,testSum,"h1:unapproved"))})
+ rejected("original-test-graph-drift",func(){next:=copyModules(a);m:=next[testPath];m.Version="v1.0.6";next[testPath]=m;existing(test,next,osum)})
+ rejected("test-checksum-drift",func(){next:=copyModules(test);m:=next[testPath];m.Sum="h1:unapproved";next[testPath]=m;existing(next,a,osum)})
+ dir,e:=os.MkdirTemp("/tmp","offline-negative-");must(e);defer os.RemoveAll(dir)
+ rejected("missing-dependency-archive",func(){next:=copyModules(test);m:=next[testPath];m.Zip=dir+"/absent.zip";next[testPath]=m;existing(next,a,osum)})
+ rejected("missing-security-module-archive",func(){next:=copyModules(targets);m:=next["github.com/go-jose/go-jose/v4"];m.Zip=dir+"/absent.zip";next[m.Path]=m;downloads(l,next)})
+ must(os.WriteFile(dir+"/go.mod",[]byte("module offlinecontrol\ngo 1.26.10\nrequire "+testPath+" "+testVersion+"\n"),0600));must(os.WriteFile(dir+"/go.sum",[]byte(testSumLines()),0600));must(os.WriteFile(dir+"/main.go",[]byte("package main\nimport _ \""+testPath+"\"\nfunc main(){}\n"),0600))
+ if os.Getenv("GOPROXY")!="https://proxy.golang.org"||os.Getenv("GOSUMDB")!="sum.golang.org"{panic("offline control must retain authenticated official download settings")}
+ cmd:=exec.Command("timeout","10","go","build","-mod=readonly","-o",dir+"/program",".");cmd.Dir=dir;cmd.Env=append(os.Environ(),"GOCACHE="+dir+"/cache","GOMODCACHE="+dir+"/modules")
+ output,e:=cmd.CombinedOutput();if e==nil||!strings.Contains(string(output),"network is unreachable"){panic("online compilation rejection not demonstrated")};if _,e=os.Stat(dir+"/program");!os.IsNotExist(e){panic("offline control produced executable")}
+ fmt.Println("NEGATIVE_CONTROL_PASS","attempted-online-compilation");fmt.Println("ORIGINAL_TEST_DEPENDENCY_VERIFIED",testPath,testVersion,testSum,testModSum)
+}
 func main(){var l Input;must(json.Unmarshal(file("/build/security-build.lock.json"),&l));switch os.Args[1]{
 case "build":build(os.Args[2],os.Args[3])
 case "source":for _,p:=range []string{"go.mod","go.sum","docker/entrypoint.sh","docker/filer.toml"}{if hash("/build/source/"+p)!=l.Source[p+"_sha256"]{panic("source member mismatch: "+p)}}
-case "downloads":ms:=modules("/build/targets.json");if len(ms)!=2{panic("target count")};for p,w:=range l.Modules{m,ok:=ms[p];if !ok||m.Version!=w.Version||m.Replace!=nil||hash(m.Zip)!=w.Zip_sha256||hash(m.GoMod)!=w.Mod_sha256{panic("module archive mismatch: "+p)};if m.Sum!=strings.Fields(w.Go_sum_lines[0])[2]||m.GoModSum!=strings.Fields(w.Go_sum_lines[1])[2]{panic("sumdb mismatch: "+p)}}
-case "graph":a,b:=modules("/build/before.json"),modules("/build/after.json");if len(a)!=len(b){panic("dependency graph size changed")};for p,m:=range a{n,ok:=b[p];if !ok{panic("module removed")};if w,changed:=l.Modules[p];changed{if m.Version!=l.Original_versions[p]||n.Version!=w.Version||m.Replace!=nil||n.Replace!=nil{panic("target changed unexpectedly")}}else if m.Version!=n.Version||!sameReplace(m.Replace,n.Replace){panic("unapproved graph change: "+p)}}
- expected:=string(file("/build/original.go.mod"));for p,w:=range l.Modules{old:=p+" "+l.Original_versions[p];if strings.Count(expected,old)!=1{panic("original version ambiguous")};expected=strings.Replace(expected,old,p+" "+w.Version,1)};if expected!=string(file("/build/source/go.mod")){panic("unapproved go.mod edit")}
- allowed:=map[string]bool{};for _,s:=range strings.Split(strings.TrimSpace(string(file("/build/original.go.sum"))),"\n"){allowed[s]=true};for _,w:=range l.Modules{for _,s:=range w.Go_sum_lines{allowed[s]=true}};got:=map[string]bool{};for _,s:=range strings.Split(strings.TrimSpace(string(file("/build/source/go.sum"))),"\n"){if !allowed[s]{panic("unapproved go.sum entry")};got[s]=true};for s:=range allowed{if !got[s]{panic("go.sum entry removed")}}
+case "downloads":downloads(l,modules("/build/targets.json"))
+case "existing":existing(modules("/build/existing-test.json"),modules("/build/before.json"),string(file("/build/original.go.sum")))
+case "graph":graph(l,modules("/build/before.json"),modules("/build/after.json"),string(file("/build/original.go.mod")),string(file("/build/source/go.mod")),string(file("/build/original.go.sum")),string(file("/build/source/go.sum")))
+case "controls":controls(l)
 default:panic("unknown verification mode")}}
 GO
   GOCACHE=/tmp/bootstrap-cache go build -trimpath -buildvcs=false -o /build/check /build/check.go
@@ -59,9 +100,12 @@ prepare)
   go mod edit -require=github.com/andybalholm/brotli@v1.2.7
   go mod download -json github.com/go-jose/go-jose/v4@v4.1.6 github.com/andybalholm/brotli@v1.2.7 > /build/targets.json
   /build/check downloads
-  # Include existing upstream test dependencies in the authenticated preparation.
-  # The graph and original-plus-four checksum guard below still reject drift.
-  go mod download all
+  go mod download
+  # This upstream Brotli test dependency already has both immutable checksum
+  # records in the original SeaweedFS go.sum. Fetch it without enumerating
+  # unused modules or broadening the original-plus-four checksum set.
+  go mod download -json github.com/xyproto/randomstring@v1.0.5 > /build/existing-test.json
+  /build/check existing
   go list -mod=readonly -m -json all > /build/after.json
   /build/check graph
   go mod verify
@@ -69,6 +113,7 @@ prepare)
   ;;
 compile)
   cd /build/source
+  /build/check controls
   /build/check graph
   go mod verify
   mkdir -p /out/provenance /tmp/cache-one /tmp/cache-two
