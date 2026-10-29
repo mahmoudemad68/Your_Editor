@@ -4,9 +4,21 @@ import process from "node:process";
 import console from "node:console";
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
+import { createReadStream } from "node:fs";
+import { availableParallelism, totalmem, freemem } from "node:os";
 import { execFileSync } from "node:child_process";
 import { setTimeout } from "node:timers";
-import { readFile, writeFile, mkdir, mkdtemp, stat, realpath, rm } from "node:fs/promises";
+import {
+  readFile,
+  writeFile,
+  mkdir,
+  mkdtemp,
+  stat,
+  lstat,
+  statfs,
+  realpath,
+  rm,
+} from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, URL } from "node:url";
 
@@ -923,10 +935,14 @@ export async function decompress(source, target, python = "python3", maxBytes = 
     Number.isSafeInteger(maxBytes) && maxBytes > 0 && maxBytes <= 4 * 1024 ** 3,
     "IMAGE_EXPANSION_LIMIT_INVALID",
   );
-  run(python, [
-    "-c",
-    `
-import lzma,sys
+  return JSON.parse(
+    run(python, [
+      "-c",
+      `
+import lzma,sys,time,json
+try: import resource
+except ImportError: resource=None
+started=time.perf_counter()
 d=lzma.LZMADecompressor(memlimit=256*1024**2); total=0
 with open(sys.argv[1],'rb') as src,open(sys.argv[2],'xb') as dst:
  while b:=src.read(1048576):
@@ -941,11 +957,14 @@ with open(sys.argv[1],'rb') as src,open(sys.argv[2],'xb') as dst:
    if d.unused_data or src.read(1): raise ValueError('trailing compressed data')
    break
  if not d.eof: raise ValueError('truncated image')
+u=resource.getrusage(resource.RUSAGE_SELF) if resource else None
+print(json.dumps({'elapsed_seconds':time.perf_counter()-started,'uncompressed_bytes':total,'peak_rss_bytes':u.ru_maxrss*1024 if u and sys.platform=='linux' else None}))
 `,
-    source,
-    target,
-    String(maxBytes),
-  ]);
+      source,
+      target,
+      String(maxBytes),
+    ]),
+  );
 }
 async function fresh(receipt) {
   const { context } = await identity();
@@ -1134,6 +1153,279 @@ async function cli(mode, arg, extra) {
     }),
   );
 }
+
+const MIB = 1024 * 1024;
+export const REPORT_FILES = Object.freeze(FILES.filter((name) => name !== "image.tar.xz"));
+const byteCount = (value) => Number.isSafeInteger(value) && value > 0;
+export function transferBudgetReport(measurement) {
+  requireThat(
+    measurement && byteCount(measurement.uncompressed_archive_bytes) && byteCount(measurement.C),
+    "TRANSFER_MEASUREMENT_INVALID",
+  );
+  const sizes = measurement.report_file_bytes;
+  requireThat(
+    sizes &&
+      isDeepStrictEqual(Object.keys(sizes).sort(), [...REPORT_FILES].sort()) &&
+      Object.values(sizes).every(byteCount),
+    "TRANSFER_MEASUREMENT_INVALID",
+  );
+  const compression = measurement.compression;
+  requireThat(
+    compression &&
+      compression.algorithm === "xz" &&
+      [6, 9].includes(compression.preset) &&
+      Number.isFinite(compression.elapsed_seconds) &&
+      compression.elapsed_seconds > 0 &&
+      /^[a-f0-9]{64}$/.test(compression.input_sha256) &&
+      /^[a-f0-9]{64}$/.test(compression.output_sha256),
+    "TRANSFER_MEASUREMENT_INVALID",
+  );
+  for (const key of ["peak_rss_bytes", "user_cpu_seconds", "system_cpu_seconds"])
+    requireThat(
+      compression[key] === null || (Number.isFinite(compression[key]) && compression[key] >= 0),
+      "TRANSFER_MEASUREMENT_INVALID",
+    );
+  requireThat(
+    compression.peak_rss_bytes === null || Number.isSafeInteger(compression.peak_rss_bytes),
+    "TRANSFER_MEASUREMENT_INVALID",
+  );
+  const R = Object.values(sizes).reduce((sum, n) => sum + n, 0),
+    R_total = 2 * R + 65536,
+    combined = 2 * measurement.C + R_total;
+  requireThat([R, R_total, combined].every(Number.isSafeInteger), "TRANSFER_MEASUREMENT_INVALID");
+  const predicates = {
+    candidate: measurement.C <= IMAGE_CAP,
+    replicated_provenance: R_total <= REPORT_CAP,
+    combined: combined <= 256 * MIB,
+  };
+  return {
+    kind: "TRANSFER_BUDGET_MEASUREMENT",
+    schema_version: 1,
+    byte_unit: "bytes",
+    mib_unit_bytes: MIB,
+    uncompressed_archive_bytes: measurement.uncompressed_archive_bytes,
+    C: measurement.C,
+    report_file_bytes: { ...sizes },
+    R,
+    provenance_copies: 2,
+    provenance_reserve_bytes: 65536,
+    R_total,
+    combined_transfer_bytes: combined,
+    retention_days: 1,
+    thresholds: { C: IMAGE_CAP, R_total: REPORT_CAP, combined_transfer_bytes: 256 * MIB },
+    display_mib: {
+      uncompressed_archive: measurement.uncompressed_archive_bytes / MIB,
+      C: measurement.C / MIB,
+      R: R / MIB,
+      R_total: R_total / MIB,
+      combined: combined / MIB,
+    },
+    thresholds_mib: { C: 120, R_total: 16, combined: 256 },
+    predicates,
+    within_budget: Object.values(predicates).every(Boolean),
+    compression: {
+      algorithm: "xz",
+      preset: compression.preset,
+      elapsed_seconds: compression.elapsed_seconds,
+      input_sha256: compression.input_sha256,
+      output_sha256: compression.output_sha256,
+      peak_rss_bytes: compression.peak_rss_bytes,
+      user_cpu_seconds: compression.user_cpu_seconds,
+      system_cpu_seconds: compression.system_cpu_seconds,
+    },
+    observed_resources: {
+      visibility: "process_and_runner_observation_only",
+      platform: process.platform,
+      available_parallelism: availableParallelism(),
+      total_memory_bytes: totalmem(),
+      free_memory_bytes: freemem(),
+    },
+  };
+}
+export async function reportAndEnforceTransfer(measurement, emit, forensic) {
+  const report = transferBudgetReport(measurement);
+  const withinBudget = report.within_budget;
+  try {
+    await emit(globalThis.structuredClone(report));
+  } catch {
+    throw new AdmissionError(
+      withinBudget ? "BUDGET_REPORT_EMISSION_FAILED" : "TRANSFER_BUDGET_EXCEEDED",
+    );
+  }
+  if (!withinBudget) {
+    if (forensic) {
+      try {
+        await forensic(globalThis.structuredClone(report));
+      } catch {
+        try {
+          await emit({
+            kind: "LOSSLESS_COMPRESSION_PROBE",
+            outcome: "NOT_PROVEN_RESOURCE_OR_VERIFICATION_FAILURE",
+            qualified: false,
+          });
+        } catch {
+          /* preserve original rejection */
+        }
+      }
+    }
+    // Neither a successful diagnostic callback nor a smaller experimental file
+    // can change the disposition of the original baseline candidate.
+    throw new AdmissionError("TRANSFER_BUDGET_EXCEEDED");
+  }
+  return report;
+}
+export function compressArchive(source, target, preset = 6, python = "python3") {
+  requireThat([6, 9].includes(preset), "COMPRESSION_SETTING_REJECTED");
+  return JSON.parse(
+    run(
+      python,
+      [
+        "-c",
+        `
+import lzma,sys,time,hashlib
+from pathlib import Path
+preset=int(sys.argv[3]); limits=None
+try:
+ import resource
+ if sys.platform=='linux':
+  resource.setrlimit(resource.RLIMIT_AS,(1073741824,1073741824))
+  limit=480 if preset==9 else 540
+  resource.setrlimit(resource.RLIMIT_CPU,(limit,limit))
+  limits={'address_space_bytes':1073741824,'cpu_seconds':limit}
+except ImportError: resource=None
+started=time.perf_counter();h=hashlib.sha256();count=0
+with open(sys.argv[1],'rb') as src,lzma.open(sys.argv[2],'xb',format=lzma.FORMAT_XZ,preset=preset) as dst:
+ while b:=src.read(1048576): h.update(b);count+=len(b);dst.write(b)
+elapsed=time.perf_counter()-started;out=hashlib.sha256()
+with open(sys.argv[2],'rb') as f:
+ while b:=f.read(1048576): out.update(b)
+u=resource.getrusage(resource.RUSAGE_SELF) if resource else None
+import json
+print(json.dumps({'algorithm':'xz','preset':preset,'elapsed_seconds':elapsed,'input_sha256':h.hexdigest(),'output_sha256':out.hexdigest(),'uncompressed_bytes':count,'compressed_bytes':Path(sys.argv[2]).stat().st_size,'peak_rss_bytes':u.ru_maxrss*1024 if u and sys.platform=='linux' else None,'user_cpu_seconds':u.ru_utime if u else None,'system_cpu_seconds':u.ru_stime if u else None,'limits':limits}))
+`,
+        source,
+        target,
+        String(preset),
+      ],
+      { timeout: preset === 9 ? 540000 : 600000 },
+    ),
+  );
+}
+async function fileDigest(file) {
+  const hash = createHash("sha256");
+  for await (const chunk of createReadStream(file)) hash.update(chunk);
+  return hash.digest("hex");
+}
+async function fileBytes(file) {
+  try {
+    const info = await lstat(file);
+    requireThat(info.isFile() && byteCount(info.size), "TRANSFER_MEASUREMENT_INVALID");
+    return info.size;
+  } catch {
+    throw new AdmissionError("TRANSFER_MEASUREMENT_INVALID");
+  }
+}
+async function losslessCompressionProbe(report, work, verification) {
+  if (process.platform !== "linux" || !report.predicates.replicated_provenance) {
+    console.log(
+      JSON.stringify({
+        kind: "LOSSLESS_COMPRESSION_PROBE",
+        outcome: "NOT_APPLICABLE_PLATFORM_OR_REPORT_LIMIT",
+        qualified: false,
+      }),
+    );
+    return;
+  }
+  const disk = await statfs(work);
+  const scratchFree = disk.bavail * disk.bsize;
+  const scratchRequired = 2 * report.uncompressed_archive_bytes + report.C + 512 * MIB;
+  if (scratchFree < scratchRequired) {
+    console.log(
+      JSON.stringify({
+        kind: "LOSSLESS_COMPRESSION_PROBE",
+        outcome: "NOT_PROVEN_INSUFFICIENT_SCRATCH",
+        qualified: false,
+        scratch_free_bytes: scratchFree,
+        scratch_required_bytes: scratchRequired,
+      }),
+    );
+    return;
+  }
+  const input = path.join(work, "candidate.tar"),
+    packed = path.join(work, "experimental-preset9.xz"),
+    decoded = path.join(work, "experimental-roundtrip.tar");
+  const compression = compressArchive(input, packed, 9);
+  const experiment = transferBudgetReport({
+    uncompressed_archive_bytes: await fileBytes(input),
+    C: await fileBytes(packed),
+    report_file_bytes: report.report_file_bytes,
+    compression,
+  });
+  requireThat(compression.input_sha256 === report.compression.input_sha256, "PROBE_INPUT_DRIFT");
+  const decodeStarted = Date.now();
+  const decoding = await decompress(packed, decoded);
+  const roundtrip = await fileDigest(decoded);
+  requireThat(
+    roundtrip === compression.input_sha256 &&
+      (await fileBytes(decoded)) === report.uncompressed_archive_bytes,
+    "PROBE_ROUNDTRIP_DRIFT",
+  );
+  const inspection = path.join(work, "probe-inspection");
+  run("sh", ["infra/seaweedfs/verify-image.sh", decoded, inspection], { stdio: "inherit" });
+  const actual = await jsonFile(path.join(inspection, "verify-image.json"));
+  requireThat(
+    actual.image_id === verification.image_id && actual.elf_sha256 === verification.elf_sha256,
+    "PROBE_IMAGE_OR_ELF_DRIFT",
+  );
+  const layerIds = JSON.parse(
+    run("python3", [
+      "-c",
+      `
+import tarfile,json,sys,hashlib
+with tarfile.open(sys.argv[1],'r:') as t:
+ m=json.load(t.extractfile('manifest.json'))
+ if len(m)!=1: raise ValueError('ambiguous manifest')
+ b=t.extractfile(m[0]['Config']).read(1048577)
+ if len(b)>1048576: raise ValueError('config size')
+ c=json.loads(b)
+ print(json.dumps({'config_sha256':hashlib.sha256(b).hexdigest(),'layer_diff_ids':c['rootfs']['diff_ids']}))
+`,
+      decoded,
+    ]),
+  );
+  requireThat(
+    layerIds.config_sha256 === verification.image_id.slice(7) &&
+      Array.isArray(layerIds.layer_diff_ids) &&
+      layerIds.layer_diff_ids.length > 0 &&
+      layerIds.layer_diff_ids.length <= 64 &&
+      layerIds.layer_diff_ids.every((v) => /^sha256:[a-f0-9]{64}$/.test(v)),
+    "PROBE_LAYER_OR_CONFIG_DRIFT",
+  );
+  console.log(
+    JSON.stringify({
+      kind: "LOSSLESS_COMPRESSION_PROBE",
+      outcome: "ROUNDTRIP_VERIFIED_EXPERIMENT_ONLY",
+      qualified: false,
+      budget: experiment,
+      archive_bytes_identical: true,
+      decompressed_archive_sha256: roundtrip,
+      post_decompression: { image_id: actual.image_id, elf_sha256: actual.elf_sha256, ...layerIds },
+      decode_and_verification_seconds: (Date.now() - decodeStarted) / 1000,
+      decoding,
+      decoder_memory_limit_bytes: 256 * MIB,
+      scratch_free_bytes: scratchFree,
+      scratch_required_bytes: scratchRequired,
+      limits: compression.limits,
+      artifact_upload_download_compatibility: "NOT_PROVEN_NO_EXPERIMENTAL_ARTIFACT_UPLOAD",
+      reproducible_recompression: "NOT_PROVEN_SINGLE_DIAGNOSTIC",
+      baseline_disposition: "TRANSFER_BUDGET_EXCEEDED",
+    }),
+  );
+  await rm(packed);
+  await rm(decoded);
+  await dispose(inspection);
+}
+
 async function produce(image, destination) {
   const { context } = await identity();
   const folder = path.resolve(destination);
@@ -1215,21 +1507,21 @@ async function produce(image, destination) {
     (await jsonFile(path.join(folder, "full-trivy.json"))).Metadata?.ImageID === imageId,
     "SCAN_IMAGE_IDENTITY_DRIFT",
   );
-  run("python3", [
-    "-c",
-    `
-import lzma,sys
-with open(sys.argv[1],'rb') as src,lzma.open(sys.argv[2],'xb',preset=6) as dst:
- while b:=src.read(1048576): dst.write(b)
-`,
+  const originalArchiveBytes = await fileBytes(path.join(work, "candidate.tar"));
+  const compression = compressArchive(
     path.join(work, "candidate.tar"),
     path.join(folder, "image.tar.xz"),
-  ]);
+    6,
+  );
+  requireThat(
+    compression.uncompressed_bytes === originalArchiveBytes,
+    "TRANSFER_MEASUREMENT_INVALID",
+  );
   const files = {};
-  let R = 0;
+  const reportFileBytes = {};
   for (const name of FILES.filter((n) => n !== "candidate-manifest.json")) {
     files[name] = sha256(await readFile(path.join(folder, name)));
-    if (name !== "image.tar.xz") R += (await stat(path.join(folder, name))).size;
+    if (name !== "image.tar.xz") reportFileBytes[name] = await fileBytes(path.join(folder, name));
   }
   const policyFiles = {};
   for (const name of POLICY_FILES)
@@ -1246,12 +1538,30 @@ with open(sys.argv[1],'rb') as src,lzma.open(sys.argv[2],'xb',preset=6) as dst:
     policy_files: policyFiles,
   };
   const text = JSON.stringify(manifest, null, 2) + "\n";
-  R += Buffer.byteLength(text);
-  const C = (await stat(path.join(folder, "image.tar.xz"))).size;
-  requireThat(
-    C <= IMAGE_CAP && 2 * R + 65536 <= REPORT_CAP && 2 * C + 2 * R + 65536 <= 256 * 1024 * 1024,
-    "TRANSFER_BUDGET_EXCEEDED",
+  reportFileBytes["candidate-manifest.json"] = Buffer.byteLength(text);
+  const C = await fileBytes(path.join(folder, "image.tar.xz"));
+  requireThat(compression.compressed_bytes === C, "TRANSFER_MEASUREMENT_INVALID");
+  const budget = await reportAndEnforceTransfer(
+    {
+      uncompressed_archive_bytes: originalArchiveBytes,
+      C,
+      report_file_bytes: reportFileBytes,
+      compression,
+    },
+    async (report) => {
+      console.log(
+        JSON.stringify({
+          ...report,
+          context,
+          run_id: id(process.env.GITHUB_RUN_ID),
+          attempt: id(process.env.GITHUB_RUN_ATTEMPT),
+          image_id: imageId,
+        }),
+      );
+    },
+    (report) => losslessCompressionProbe(report, work, verification),
   );
+  const R = budget.R;
   await writeFile(path.join(folder, "candidate-manifest.json"), text);
   await dispose(work);
   console.log(

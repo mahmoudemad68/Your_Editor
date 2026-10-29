@@ -6,6 +6,10 @@ import { mkdtemp, mkdir, readFile, writeFile, rm } from "node:fs/promises";
 import path from "node:path";
 import {
   parseCommitMetadata,
+  transferBudgetReport,
+  reportAndEnforceTransfer,
+  REPORT_FILES,
+  compressArchive,
   identityEvidence,
   PR_IDENTITY_API,
   readIdentityPr,
@@ -753,4 +757,203 @@ test("the actual PR reader sends the pinned API version, cache-qualified route a
   } finally {
     globalThis.fetch = original;
   }
+});
+
+const MiB = 1024 * 1024;
+function budgetFixture(C = 120 * MiB, R = (16 * MiB - 65536) / 2) {
+  const sizes = Object.fromEntries(REPORT_FILES.map((n) => [n, 1]));
+  sizes["candidate-manifest.json"] = R - (REPORT_FILES.length - 1);
+  return {
+    uncompressed_archive_bytes: 512 * MiB,
+    C,
+    report_file_bytes: sizes,
+    compression: {
+      algorithm: "xz",
+      preset: 6,
+      elapsed_seconds: 1,
+      input_sha256: "a".repeat(64),
+      output_sha256: "b".repeat(64),
+      peak_rss_bytes: 1,
+      user_cpu_seconds: 0.5,
+      system_cpu_seconds: 0.1,
+    },
+  };
+}
+test("exact binary-MiB limits accept equality and account for both complete report copies", () => {
+  const r = transferBudgetReport(budgetFixture());
+  assert.equal(r.C, 125829120);
+  assert.equal(r.R, 8355840);
+  assert.equal(r.R_total, 16777216);
+  assert.equal(r.combined_transfer_bytes, 268435456);
+  assert.equal(r.within_budget, true);
+  assert.deepEqual(r.predicates, { candidate: true, replicated_provenance: true, combined: true });
+  assert.equal(r.retention_days, 1);
+});
+test("candidate one byte above its cap fails independently of the other predicates", () => {
+  const r = transferBudgetReport(budgetFixture(120 * MiB + 1, 100));
+  assert.deepEqual(r.predicates, { candidate: false, replicated_provenance: true, combined: true });
+});
+test("one extra provenance byte per copy exceeds the replicated cap by exactly two bytes", () => {
+  const r = transferBudgetReport(budgetFixture(1, (16 * MiB - 65536) / 2 + 1));
+  assert.equal(r.R_total, 16 * MiB + 2);
+  assert.deepEqual(r.predicates, { candidate: true, replicated_provenance: false, combined: true });
+});
+test("combined limit is enforced; integer two-copy accounting cannot produce a one-byte excess or an isolated total failure", () => {
+  const r = transferBudgetReport(budgetFixture(120 * MiB + 1));
+  assert.equal(r.combined_transfer_bytes, 256 * MiB + 2);
+  assert.equal(r.predicates.combined, false);
+  for (const C of [1, 120 * MiB - 1, 120 * MiB])
+    for (const R of [REPORT_FILES.length, 8355839, 8355840]) {
+      const b = transferBudgetReport(budgetFixture(C, R));
+      assert.equal(b.predicates.combined, true);
+      assert.equal(b.combined_transfer_bytes % 2, 0);
+    }
+});
+test("all report files and manifest contribute once per bundle and twice to stored provenance", () => {
+  const m = budgetFixture(1, 200),
+    r = transferBudgetReport(m);
+  assert.equal(
+    r.R,
+    Object.values(m.report_file_bytes).reduce((a, b) => a + b, 0),
+  );
+  assert.equal(r.R_total, 400 + 65536);
+  m.report_file_bytes["go-version-m.txt"]++;
+  const n = transferBudgetReport(m);
+  assert.equal(n.R, r.R + 1);
+  assert.equal(n.R_total, r.R_total + 2);
+});
+for (const [name, mutate] of [
+  ["missing C", (m) => delete m.C],
+  ["fractional bytes", (m) => (m.C = 1.5)],
+  ["negative bytes", (m) => (m.C = -1)],
+  ["infinite bytes", (m) => (m.C = Infinity)],
+  ["missing archive size", (m) => delete m.uncompressed_archive_bytes],
+  ["missing report", (m) => delete m.report_file_bytes["verification.json"]],
+  ["unexpected duplicate alias", (m) => (m.report_file_bytes["second-copy.json"] = 1)],
+  ["zero report", (m) => (m.report_file_bytes["verification.json"] = 0)],
+  ["unsafe total arithmetic", (m) => (m.C = Number.MAX_SAFE_INTEGER)],
+  ["missing compression", (m) => delete m.compression],
+  ["missing elapsed", (m) => delete m.compression.elapsed_seconds],
+  ["invalid digest", (m) => (m.compression.input_sha256 = "secret")],
+  ["unexpected algorithm", (m) => (m.compression.algorithm = "caller-controlled")],
+  ["unapproved preset", (m) => (m.compression.preset = 0)],
+  ["invalid RSS", (m) => (m.compression.peak_rss_bytes = -1)],
+  ["fractional RSS bytes", (m) => (m.compression.peak_rss_bytes = 1.5)],
+])
+  test(`budget measurements fail closed: ${name}`, () => {
+    const m = budgetFixture();
+    mutate(m);
+    assert.throws(
+      () => transferBudgetReport(m),
+      (e) => e.code === "TRANSFER_MEASUREMENT_INVALID",
+    );
+  });
+test("pre-gate report is emitted before budget rejection and cannot be mutated to make the gate pass", async () => {
+  const order = [];
+  let consumerActivated = false;
+  await assert.rejects(
+    async () => {
+      await reportAndEnforceTransfer(
+        budgetFixture(120 * MiB + 1),
+        async (r) => {
+          order.push("report");
+          r.within_budget = true;
+        },
+        async (r) => {
+          order.push("probe");
+          r.within_budget = true;
+          return true;
+        },
+      );
+      consumerActivated = true;
+    },
+    (e) => e.code === "TRANSFER_BUDGET_EXCEEDED",
+  );
+  assert.deepEqual(order, ["report", "probe"]);
+  assert.equal(consumerActivated, false);
+});
+test("diagnostic failures preserve the original rejection and never expose exception contents", async () => {
+  const records = [];
+  await assert.rejects(
+    reportAndEnforceTransfer(
+      budgetFixture(120 * MiB + 1),
+      async (r) => records.push(r),
+      async () => {
+        throw Error("PRIVATE_SENTINEL");
+      },
+    ),
+    (e) => e.code === "TRANSFER_BUDGET_EXCEEDED",
+  );
+  assert.equal(JSON.stringify(records).includes("PRIVATE_SENTINEL"), false);
+  await assert.rejects(
+    reportAndEnforceTransfer(budgetFixture(), async () => {
+      throw Error("PRIVATE_SENTINEL");
+    }),
+    (e) => e.code === "BUDGET_REPORT_EMISSION_FAILED",
+  );
+});
+test("missing measurement rejects before emitting any false passing report", async () => {
+  let emitted = false;
+  await assert.rejects(
+    reportAndEnforceTransfer(undefined, async () => {
+      emitted = true;
+    }),
+    (e) => e.code === "TRANSFER_MEASUREMENT_INVALID",
+  );
+  assert.equal(emitted, false);
+});
+test("an over-budget process exits nonzero before any consumer or artifact-success continuation", () => {
+  const script = `import {reportAndEnforceTransfer} from './tools/test/load-qualified-storage.mjs'; await reportAndEnforceTransfer(${JSON.stringify(budgetFixture(120 * MiB + 1))},async r=>console.log(JSON.stringify(r)),async()=>true); console.log('CONSUMER_ACTIVATED');`;
+  let output = "";
+  assert.throws(
+    () =>
+      execFileSync(process.execPath, ["--input-type=module", "-e", script], {
+        cwd: root,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      }),
+    (e) => {
+      output = e.stdout;
+      return e.status !== 0;
+    },
+  );
+  assert.ok(output.includes("TRANSFER_BUDGET_MEASUREMENT"));
+  assert.equal(output.includes("CONSUMER_ACTIVATED"), false);
+});
+test("real bounded XZ compression metadata and roundtrip agree with actual file bytes", async () =>
+  temporary(async (dir) => {
+    const src = path.join(dir, "source.bin"),
+      out = path.join(dir, "candidate.xz"),
+      decoded = path.join(dir, "roundtrip.bin");
+    const data = Buffer.from("public synthetic full-image byte preservation control\n".repeat(100));
+    await writeFile(src, data);
+    const c = compressArchive(src, out, 6, python);
+    assert.equal(c.input_sha256, sha256(data));
+    assert.equal(c.uncompressed_bytes, data.length);
+    assert.equal(c.output_sha256, sha256(await readFile(out)));
+    assert.ok(c.elapsed_seconds > 0);
+    const d = await decompress(out, decoded, python);
+    assert.equal(d.uncompressed_bytes, data.length);
+    assert.deepEqual(await readFile(decoded), data);
+  }));
+test("forensics cannot alter default compression or upload after produce fails", async () => {
+  const code = await readFile(path.join(root, "tools/test/load-qualified-storage.mjs"), "utf8");
+  assert.ok(
+    code
+      .replace(/\s/g, "")
+      .replaceAll(",)", ")")
+      .includes(
+        'compressArchive(path.join(work,"candidate.tar"),path.join(folder,"image.tar.xz"),6)',
+      ),
+  );
+  const flow = await readFile(path.join(root, ".github/workflows/supply-chain.yml"), "utf8");
+  assert.ok(
+    flow.indexOf("Fixed module reproducibility and zero HIGH gate") <
+      flow.indexOf("Upload qualified candidate"),
+  );
+  const gate = flow.slice(
+    flow.indexOf("Fixed module reproducibility and zero HIGH gate"),
+    flow.indexOf("Upload qualified candidate"),
+  );
+  assert.equal(gate.includes("continue-on-error"), false);
 });

@@ -207,3 +207,46 @@ M substitution, or adoption of a moving ref as proof. A missing field under the
 pinned contract remains an immediate failure. Diagnostics now distinguish absent
 versus null values and record requested/selected API versions. Any failure to
 establish exact original M remains terminal, never a producer prerequisite.
+
+### Transfer-budget forensics — measurement only
+
+`produce` emits `TRANSFER_BUDGET_MEASUREMENT` **before** enforcing the original
+caps. Authoritative values are integer bytes; one binary MiB is 1,048,576 bytes.
+The record includes raw Docker-save archive bytes, compressed C, each existing
+report/manifest size, one-copy R, two-copy provenance `R_total=2*R+65536`, total
+`2*C+R_total`, every threshold and predicate, XZ preset, elapsed/CPU time, peak RSS
+where available, and visible process/runner observations. It does not log report
+contents, archive bytes, secrets or environment values. The diagnostic is in the
+existing job log, not an extra candidate-bundle file; no provenance bytes are
+removed from the original accounting. Retention remains one day.
+
+C<=120MiB, R_total<=16MiB and combined<=256MiB remain mandatory. R includes all
+six report files, including the exact UTF-8 manifest bytes. Accounting for a
+second copy is never replaced by single-copy arithmetic. Given the two-copy
+formula, R_total and combined totals are even integer byte counts: one extra byte
+in C is possible; one extra one-bundle report byte adds two stored bytes. An
+isolated combined failure while both individual caps pass is mathematically
+impossible because 2*120+16=256; that redundant guard is still retained and tested.
+Missing, malformed or non-integer measurements fail closed. Diagnostic callbacks
+cannot mutate the decision or turn failure into success; a logging failure also
+prevents publication. The unchanged failed produce step prevents candidate upload,
+the entire Supply aggregate and all consumer admission.
+
+After an over-budget baseline is measured, at most one **diagnostic-only** XZ
+preset-9 probe may run on the exact same complete Docker archive. Preset 6 remains
+the candidate format. The separate experimental file is never promoted, uploaded
+or substituted, even if it fits. The original TRANSFER_BUDGET_EXCEEDED is always
+re-thrown. The probe is Linux-only, read-only with respect to source image bytes,
+and requires scratch for a full decoded copy plus inspection. Compression uses
+at most 1GiB process address space, 480 CPU seconds / 540 wall seconds. Decompression
+retains the existing 256MiB decoder and 4GiB expansion limits. It measures size,
+wall time, RSS/CPU and scratch, verifies byte-identical archive SHA-256 after
+decode, repeats existing image/layer/filesystem/ELF inspection, and records config,
+layer and ELF digests. Any resource or verification failure is NOT_PROVEN, never
+a passing alternative. A single probe does not prove recompression repeatability
+or GitHub artifact upload/download compatibility. It cannot qualify a replacement.
+If the measured settings cannot fit, freeze the failure and submit a separate
+reviewable transport proposal; do not implement reconstruction, alter filesystem
+contents/scanner evidence, increase caps or change authentication. External exact-H
+policy review, whole-producer success and controlled consumer qualification remain
+separate gates. RELEASE_HOLD remains ACTIVE and READY_FOR_INDEPENDENT_RE_QA is NO.
