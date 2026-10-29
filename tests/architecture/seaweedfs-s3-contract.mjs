@@ -4,6 +4,8 @@
  */
 import { createRequire } from "node:module";
 import { createHash, randomBytes } from "node:crypto";
+import { spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -11,6 +13,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 const require = createRequire(path.join(root, "apps/api/package.json"));
 const {
   CreateBucketCommand,
+  DeleteObjectCommand,
   GetObjectCommand,
   HeadObjectCommand,
   PutObjectCommand,
@@ -129,4 +132,41 @@ if (created.status !== 200 && created.status !== 204) {
   fail(`presigned create returned ${created.status} ${await created.text()}`);
 }
 console.log(`presigned create returned ${created.status}`);
+
+// Exercise the existing stopped-copy recovery procedure on disposable CI data.
+// Never pass production volumes or private evidence to this contract runner.
+if (process.argv.includes("--verify-backup")) {
+  const parent = path.join(root, ".local/seaweedfs-recovery");
+  mkdirSync(parent, { recursive: true });
+  const backup = mkdtempSync(path.join(parent, "contract-"));
+  function recovery(script) {
+    const result = spawnSync("sh", [path.join(root, "infra/seaweedfs", script), backup], {
+      encoding: "utf8",
+      timeout: 120_000,
+    });
+    if (result.status !== 0) fail(`SeaweedFS ${script} failed; inspect service readiness`);
+  }
+  try {
+    recovery("backup-volumes.sh");
+    await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
+    let deleted = false;
+    try {
+      await client.send(new HeadObjectCommand({ Bucket: bucket, Key: key }));
+    } catch (error) {
+      if (error?.$metadata?.httpStatusCode !== 404) throw error;
+      deleted = true;
+    }
+    if (!deleted) fail("backup recovery control object was not deleted");
+    recovery("restore-volumes.sh");
+    const restored = await client.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+    if (!Buffer.from(await restored.Body.transformToByteArray()).equals(body)) {
+      fail("restored object bytes do not match the pre-backup source");
+    }
+    const denied = await fetch(`${endpoint.replace(/\/$/, "")}/${bucket}/${key}`);
+    if (denied.status !== 403) fail("restored private object did not reject anonymous access");
+    console.log("SeaweedFS stopped backup/delete/restore: bytes and private access PASS");
+  } finally {
+    rmSync(backup, { recursive: true, force: true });
+  }
+}
 console.log(`SEAWEED_OBJECT_KEY=${key}`);
