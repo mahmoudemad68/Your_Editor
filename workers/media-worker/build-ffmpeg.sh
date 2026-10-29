@@ -12,8 +12,17 @@ archive="ffmpeg-${version}.tar.xz"
 url="https://ffmpeg.org/releases/${archive}"
 
 cd /src
-curl -fsSL --retry 3 --retry-delay 2 --output "$archive" "$url"
-echo "${expected}  ${archive}" | sha256sum -c -
+# A TLS receive reset (curl 35) is not covered by --retry alone. This is an
+# idempotent, checksum-pinned GET to one trusted HTTPS source. Retry all transfer
+# errors, with at most four attempts; a final transfer can finish at most 120s
+# after the 300s retry window. Never extract a partial or unverified archive.
+trap 'rm -f "${archive}.part"' EXIT HUP INT TERM
+curl -fsSL --proto '=https' --proto-redir '=https' \
+  --retry 3 --retry-all-errors --retry-delay 2 --retry-max-time 300 \
+  --connect-timeout 15 --max-time 120 --remove-on-error \
+  --output "${archive}.part" "$url"
+echo "${expected}  ${archive}.part" | sha256sum -c -
+mv "${archive}.part" "$archive"
 tar -xJf "$archive"
 cd "ffmpeg-${version}"
 

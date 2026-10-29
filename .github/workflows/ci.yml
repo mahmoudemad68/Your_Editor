@@ -149,7 +149,7 @@ jobs:
         run: python3 -m unittest discover -s tools/audio -p 'test_*.py'
 
       - name: Check SeaweedFS S3 contract
-        run: node tests/architecture/seaweedfs-s3-contract.mjs
+        run: node tests/architecture/seaweedfs-s3-contract.mjs --verify-backup
 
       - name: Build
         run: pnpm build

@@ -175,6 +175,17 @@ jobs:
         if: matrix.service == 'media-worker'
         run: ./infra/scripts/verify-media-ffmpeg.sh "editagent-${{ matrix.service }}:${GITHUB_SHA}"
 
+      - name: Verify fixed native Brotli and SeaweedFS privilege drop
+        if: matrix.service == 'seaweedfs'
+        run: |
+          docker run --rm --network none --read-only --entrypoint sh "editagent-seaweedfs:${GITHUB_SHA}" -ec '
+            test "$(apk info -v brotli-libs)" = brotli-libs-1.2.1-r0
+            curl --version | grep -F brotli/1.2.1
+            test "$(su-exec seaweed id -u)" = 1000
+            test -x /entrypoint.sh
+            test -x /usr/local/bin/editagent-entrypoint.sh
+          '
+
       - name: Verify packaged prompt registry in production agent image
         if: matrix.service == 'agent-worker'
         run: sh infra/scripts/verify-agent-prompts.sh "editagent-${{ matrix.service }}:${GITHUB_SHA}"
