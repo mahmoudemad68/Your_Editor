@@ -179,7 +179,7 @@ jobs:
         if: matrix.service == 'seaweedfs'
         run: |
           docker run --rm --network none --read-only --entrypoint sh "editagent-seaweedfs:${GITHUB_SHA}" -ec '
-            test "$(apk info -v brotli-libs)" = brotli-libs-1.2.1-r0
+            test "$(sed -n "/^P:brotli-libs$/,/^$/s/^V://p" /lib/apk/db/installed)" = 1.2.1-r0
             curl --version | grep -F brotli/1.2.1
             test "$(su-exec seaweed id -u)" = 1000
             test -x /entrypoint.sh
