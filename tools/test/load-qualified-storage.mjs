@@ -108,6 +108,99 @@ const BASELINE_POLICY = Object.freeze({
   ".dockerignore": "9e07120b810b89c44ba2a67b0717a7e551eceb976b34157350a0ecc3e182ea43",
 });
 export const sha256 = (data) => createHash("sha256").update(data).digest("hex");
+export const SW_PROFILE = "seaweedfs-go-s-w-diagnostic-v1";
+export const SW_FLAGS =
+  "-extldflags -static -X github.com/seaweedfs/seaweedfs/weed/util/version.COMMIT=ffa87c2+editagent-sec1 -s -w";
+export const ORIGINAL_ELF = "6b48572984287dcf64ed09a9080a720e65d4bf5c810c2282782fb4e5da8aa3c8";
+export function validateDiagnosticMarker(build, elfHash) {
+  requireThat(
+    build &&
+      isDeepStrictEqual(build.diagnostic_marker, {
+        schema_version: 1,
+        profile: SW_PROFILE,
+        diagnostic_only: true,
+        elf_sha256: elfHash,
+        flags_sha256: sha256(SW_FLAGS),
+        source_commit: "ffa87c25fdf587178b1521ad87f2a4a72a02e584",
+        go_version: "go1.26.10",
+      }) &&
+      build.output_profile === SW_PROFILE &&
+      build.elf?.linker_flags === SW_FLAGS &&
+      build.elf_sha256 === elfHash,
+    "S_W_DIAGNOSTIC_MARKER_INVALID",
+  );
+}
+export function diagnosticProfile(lock) {
+  const profile = lock.build?.output_profile;
+  if (profile === undefined) {
+    requireThat(lock.build?.diagnostic_only !== true, "S_W_PROFILE_MISSING");
+    return false;
+  }
+  requireThat(
+    profile === SW_PROFILE && lock.build.diagnostic_only === true,
+    "S_W_PROFILE_REJECTED",
+  );
+  return true;
+}
+export function diagnosticCommandGuard(lock, mode) {
+  if (diagnosticProfile(lock))
+    requireThat(["policy-inventory", "produce"].includes(mode), "S_W_PROMOTION_FORBIDDEN");
+}
+export function terminateDiagnostic(report) {
+  // A feasible measurement is deliberately a FAILED required check. This
+  // terminal exception has no retryable-prerequisite classification.
+  requireThat(
+    report.profile === SW_PROFILE &&
+      report.artifact_uploaded === false &&
+      report.promoted === false,
+    "S_W_PROMOTION_FORBIDDEN",
+  );
+  throw new AdmissionError("S_W_DIAGNOSTIC_NON_PROMOTABLE");
+}
+export function diagnosticEvidenceLines(report) {
+  const text = JSON.stringify(report),
+    chunkSize = 5000;
+  const total = Math.ceil(text.length / chunkSize),
+    digest = sha256(text);
+  return Array.from(
+    { length: total },
+    (_, index) =>
+      "S_W_DIAGNOSTIC_PART " +
+      JSON.stringify({
+        index,
+        total,
+        sha256: digest,
+        data: text.slice(index * chunkSize, (index + 1) * chunkSize),
+      }),
+  );
+}
+export function validateSWAttempt(attempt) {
+  requireThat(id(attempt) === 1, "S_W_HISTORICAL_RETRY_FORBIDDEN");
+}
+export function validateSWResources(compression, decoder) {
+  requireThat(
+    compression.limits?.address_space_bytes === 1024 ** 3 &&
+      compression.limits.cpu_seconds === 540 &&
+      compression.process_wall_seconds > 0 &&
+      compression.process_wall_seconds <= 600 &&
+      Number.isFinite(compression.user_cpu_seconds) &&
+      Number.isFinite(compression.system_cpu_seconds) &&
+      compression.user_cpu_seconds >= 0 &&
+      compression.system_cpu_seconds >= 0 &&
+      compression.user_cpu_seconds + compression.system_cpu_seconds <= 540 &&
+      compression.peak_rss_bytes > 0 &&
+      compression.peak_rss_bytes <= 1024 ** 3 &&
+      decoder.peak_rss_bytes > 0 &&
+      decoder.peak_rss_bytes <= 256 * 1024 ** 2 &&
+      decoder.elapsed_seconds > 0 &&
+      decoder.elapsed_seconds <= 600 &&
+      decoder.limits?.address_space_bytes === 256 * 1024 ** 2 &&
+      Number.isSafeInteger(decoder.uncompressed_bytes) &&
+      decoder.uncompressed_bytes > 0 &&
+      decoder.uncompressed_bytes <= 4 * 1024 ** 3,
+    "S_W_RESOURCE_MEASUREMENT_REJECTED",
+  );
+}
 export class AdmissionError extends Error {
   constructor(code) {
     super(code);
@@ -1016,6 +1109,10 @@ async function output(name, value) {
 }
 async function cli(mode, arg, extra) {
   await mkdir(path.join(ROOT, ".local/issue99"), { recursive: true, mode: 0o700 });
+  diagnosticCommandGuard(
+    await jsonFile(path.join(ROOT, "infra/seaweedfs/security-build.lock.json")),
+    mode,
+  );
   if (mode === "policy-inventory") {
     const H = run("git", ["rev-parse", "HEAD"]).trim();
     const TH = run("git", ["rev-parse", "HEAD^{tree}"]).trim();
@@ -2455,7 +2552,707 @@ async function losslessCompressionProbe(report, work, verification, context) {
   }
 }
 
+export function validateSWInventories(trivy, sbom, buildInfo, baseline) {
+  validateScans(trivy, sbom);
+  requireThat(
+    buildInfo?.GoVersion === "go1.26.10" &&
+      Array.isArray(buildInfo.Deps) &&
+      buildInfo.Deps.length > 0,
+    "S_W_BUILDINFO_MISSING",
+  );
+  const pair = (name, version) => {
+    requireThat(
+      typeof name === "string" && typeof version === "string" && version.length > 0,
+      "S_W_PACKAGE_INVALID",
+    );
+    return `${name}@${name === "stdlib" ? "v" + version.replace(/^(?:go|v)/, "") : version}`;
+  };
+  const fingerprint = (items) => {
+    requireThat(new Set(items).size === items.length, "S_W_DUPLICATE_PACKAGE");
+    return sha256(JSON.stringify(items.sort()));
+  };
+  const linked = buildInfo.Deps.map((m) => {
+    const effective = m.Replace ?? m;
+    requireThat(/^h1:[A-Za-z0-9+/]+=*$/.test(effective.Sum ?? ""), "S_W_MODULE_SUM_MISSING");
+    return pair(effective.Path, effective.Version);
+  });
+  linked.push(pair("stdlib", buildInfo.GoVersion));
+  const go = trivy.Results.filter((r) => r.Type === "gobinary" && r.Target === "usr/bin/weed")
+    .flatMap((r) => r.Packages ?? [])
+    .filter((p) => p.Version)
+    .map((p) => pair(p.Name, p.Version));
+  const native = trivy.Results.filter((r) => r.Type === "alpine")
+    .flatMap((r) => r.Packages ?? [])
+    .map((p) => pair(p.Name, p.Version));
+  const syftSet = (prefix) =>
+    sbom.packages
+      .filter((p) =>
+        p.externalRefs?.some(
+          (r) => r.referenceType === "purl" && r.referenceLocator.startsWith(prefix),
+        ),
+      )
+      .filter((p) => p.name !== buildInfo.Main?.Path)
+      .map((p) => pair(p.name, p.versionInfo));
+  const goHash = fingerprint(go),
+    nativeHash = fingerprint(native);
+  requireThat(
+    go.length === baseline.go_count &&
+      goHash === baseline.go_sha256 &&
+      fingerprint(linked) === goHash &&
+      fingerprint(syftSet("pkg:golang/")) === goHash,
+    "S_W_GO_INVENTORY_COLLAPSE_OR_DRIFT",
+  );
+  requireThat(
+    native.length === baseline.native_count &&
+      nativeHash === baseline.native_sha256 &&
+      fingerprint(syftSet("pkg:apk/")) === nativeHash,
+    "S_W_NATIVE_INVENTORY_COLLAPSE_OR_DRIFT",
+  );
+  requireThat(
+    go.includes("github.com/go-jose/go-jose/v4@v4.1.6") &&
+      go.includes("github.com/andybalholm/brotli@v1.2.7") &&
+      native.includes("brotli-libs@1.2.1-r0"),
+    "S_W_FIXED_MODULE_MISSING",
+  );
+  return {
+    go_count: go.length,
+    go_sha256: goHash,
+    native_count: native.length,
+    native_sha256: nativeHash,
+    go_packages: go,
+    native_packages: native,
+    source_verified_linked_modules_match: true,
+    trivy_syft_inventory_equal: true,
+    fixed_go_brotli: "v1.2.7",
+    high_critical: 0,
+  };
+}
+
+export function inspectSWELF(file, python = "python3") {
+  return JSON.parse(
+    run(
+      python,
+      [
+        "-c",
+        String.raw`
+import hashlib,json,mmap,os,struct,sys
+try:
+ import resource
+ resource.setrlimit(resource.RLIMIT_AS,(1073741824,1073741824));resource.setrlimit(resource.RLIMIT_CPU,(30,30))
+except ImportError: resource=None
+p=sys.argv[1];size=os.stat(p).st_size
+if not 0<size<=512*1024**2: raise ValueError('ELF size rejected')
+with open(p,'rb') as f:
+ h=hashlib.file_digest(f,'sha256').hexdigest();f.seek(0)
+ with mmap.mmap(f.fileno(),0,access=mmap.ACCESS_READ) as b:
+  if b[:6]!=b'\x7fELF\x02\x01': raise ValueError('ELF64LE required')
+  e=struct.unpack_from('<16sHHIQQQIHHHHHH',b,0)
+  _,typ,machine,_,entry,po,so,_,eh,pe,pn,se,sn,ss=e
+  if typ!=2 or machine!=62 or eh!=64 or pe!=56 or se!=64 or not 0<pn<=64 or not 0<sn<=256 or ss>=sn: raise ValueError('ELF header rejected')
+  def bounded(off,n):
+   if off<0 or n<0 or off+n>size: raise ValueError('ELF range rejected')
+  bounded(po,pn*pe);bounded(so,sn*se)
+  sh=[struct.unpack_from('<IIQQQQIIQQ',b,so+i*se) for i in range(sn)]
+  st=sh[ss];bounded(st[4],st[5]);names=b[st[4]:st[4]+st[5]];sections=[]
+  for s in sh:
+   n,t,flags,addr,off,nbytes,_,_,align,_=s
+   if n>=len(names): raise ValueError('ELF section name rejected')
+   end=names.find(b'\0',n)
+   if end<0: raise ValueError('ELF section name unterminated')
+   name=names[n:end].decode('ascii');disk=0 if t==8 else nbytes
+   bounded(off,disk)
+   sections.append({'name':name,'type':t,'flags':flags,'address':addr,'offset':off,'file_bytes':disk,'logical_bytes':nbytes,'align':align})
+  programs=[]
+  for i in range(pn):
+   t,flags,off,va,pa,fs,ms,align=struct.unpack_from('<IIQQQQQQ',b,po+i*pe);bounded(off,fs)
+   if t==3 or flags&3==3: raise ValueError('ELF interpreter or WX program')
+   programs.append({'type':t,'flags':flags,'offset':off,'file_bytes':fs,'memory_bytes':ms,'virtual_address':va,'align':align})
+print(json.dumps({'sha256':h,'file_bytes':size,'entry':entry,'type':typ,'machine':machine,'sections':sections,'program_headers':programs,'inspector':'python-stdlib-elf64le-read-only-v1'}))
+`,
+        file,
+      ],
+      { timeout: 60000 },
+    ),
+  );
+}
+
+export function validateSWEvidence(verification, elf, metadata) {
+  requireThat(
+    verification.old_elf_absent === true &&
+      verification.runtime_preserved === true &&
+      verification.reproducible_elf === true &&
+      verification.native_brotli === "1.2.1-r0",
+    "S_W_IMAGE_EVIDENCE_MISSING",
+  );
+  requireThat(
+    elf.sha256 === verification.elf_sha256 &&
+      elf.sha256 !== "6b48572984287dcf64ed09a9080a720e65d4bf5c810c2282782fb4e5da8aa3c8",
+    "S_W_ELF_IDENTITY_DRIFT",
+  );
+  for (const label of ["one", "two"]) {
+    const b = verification.build_measurements?.[label];
+    validateDiagnosticMarker(b, elf.sha256);
+    requireThat(
+      b?.cache_initially_empty === true &&
+        b.elf_sha256 === elf.sha256 &&
+        b.output_profile === SW_PROFILE &&
+        b.elf?.linker_flags === SW_FLAGS &&
+        b.elf.file_bytes === elf.file_bytes &&
+        b.wall_seconds > 0 &&
+        b.max_rss_kib > 0,
+      "S_W_REPRODUCIBILITY_OR_PROFILE_FAILURE",
+    );
+    requireThat(
+      isDeepStrictEqual(b.elf, verification.build_measurements.one.elf),
+      "S_W_REPRODUCIBILITY_OR_PROFILE_FAILURE",
+    );
+    const actualSections = elf.sections.map((s) => [s.name, s.offset, s.file_bytes]);
+    const claimedSections = b.elf.sections.map((s) => [s.name, s.offset, s.file_bytes]);
+    requireThat(isDeepStrictEqual(actualSections, claimedSections), "S_W_SECTION_IDENTITY_DRIFT");
+  }
+  requireThat(
+    elf.sections.some((s) => s.name === ".gopclntab" && s.file_bytes > 0) &&
+      elf.sections.some((s) => s.name === ".go.buildinfo" && s.file_bytes > 0),
+    "S_W_BUILDINFO_OR_PC_TABLE_MISSING",
+  );
+  requireThat(
+    !elf.sections.some((s) => /^\.(?:debug_|zdebug_|symtab$|strtab$)/.test(s.name)),
+    "S_W_DEBUG_SECTIONS_UNEXPECTED",
+  );
+  requireThat(
+    typeof metadata === "string" &&
+      metadata.length < 512 * 1024 &&
+      metadata.includes("go1.26.10") &&
+      metadata.includes("\tdep\tgithub.com/go-jose/go-jose/v4\tv4.1.6") &&
+      metadata.includes("\tdep\tgithub.com/andybalholm/brotli\tv1.2.7"),
+    "S_W_BUILDINFO_MISSING",
+  );
+}
+
+async function diagnosticResolverControls(imageId, work) {
+  const project = `sw-resolver-${id(process.env.GITHUB_RUN_ID)}-${id(process.env.GITHUB_RUN_ATTEMPT)}`;
+  const localTag = "editagent-seaweedfs:local";
+  let existing;
+  try {
+    existing = run("docker", ["image", "inspect", localTag, "--format", "{{.Id}}"]);
+  } catch {
+    /* absent */
+  }
+  requireThat(!existing, "S_W_RESOLVER_EXISTING_TAG_REFUSED");
+  const composeFile = path.join(work, "resolver-negative.compose.json");
+  const roles = ["seaweed-master", "seaweed-volume", "seaweed-filer", "seaweed-s3"];
+  await writeFile(
+    composeFile,
+    JSON.stringify({
+      services: Object.fromEntries(
+        roles.map((role) => [
+          role,
+          {
+            image: imageId,
+            entrypoint: ["diagnostic-must-never-start"],
+            network_mode: "none",
+            read_only: true,
+            user: "1000:1000",
+            cap_drop: ["ALL"],
+            security_opt: ["no-new-privileges:true"],
+            pids_limit: 64,
+          },
+        ]),
+      ),
+    }),
+  );
+  const args = ["compose", "--project-name", project, "--file", composeFile];
+  requireThat(
+    !run("docker", [...args, "ps", "--all", "--quiet"]).trim(),
+    "S_W_RESOLVER_EXISTING_PROJECT_REFUSED",
+  );
+  const containers = [];
+  try {
+    run("docker", ["tag", imageId, localTag]);
+    // Stopped containers only: no service process, network, port, secret or
+    // volume. Their sole purpose is the real live-selector negative control.
+    run("docker", [...args, "create", "--no-build"]);
+    for (const role of roles) {
+      const container = run("docker", [...args, "ps", "--all", "--quiet", role]).trim();
+      requireThat(/^[a-f0-9]{64}$/.test(container), "S_W_RESOLVER_CONTAINER_INVALID");
+      containers.push(container);
+      requireThat(
+        run("docker", ["inspect", "--format", "{{.Image}} {{.State.Status}}", container]).trim() ===
+          `${imageId} created`,
+        "S_W_RESOLVER_CONTAINER_STARTED",
+      );
+    }
+    for (const selector of ["built", "live"])
+      for (const actions of [undefined, "false", "true", "manipulated"]) {
+        const env = {
+          ...process.env,
+          COMPOSE_PROJECT_NAME: project,
+          COMPOSE_FILE: composeFile,
+          SEAWEED_QUALIFIED_RECEIPT: "diagnostic-forged-receipt-must-not-authorize",
+        };
+        delete env.GITHUB_ACTIONS;
+        if (actions !== undefined) env.GITHUB_ACTIONS = actions;
+        let rejected = false;
+        try {
+          run("sh", ["infra/seaweedfs/image-reference.sh", selector], { env, timeout: 180000 });
+        } catch (error) {
+          rejected =
+            error.status !== 0 &&
+            String(error.stdout ?? "") === "" &&
+            String(error.stderr ?? "").includes("S_W_OPERATOR_STARTUP_FORBIDDEN");
+        }
+        requireThat(rejected, "S_W_REAL_RESOLVER_REJECTION_FAILED");
+      }
+    return {
+      built: "PASS",
+      live: "PASS",
+      cases: 8,
+      env_states: ["absent", "false", "true", "manipulated"],
+      real_verified_image: imageId,
+      stopped_containers_only: true,
+      no_service_started: true,
+      stdout_image_ids: 0,
+    };
+  } finally {
+    for (const container of containers) run("docker", ["container", "rm", container]);
+    if (run("docker", ["image", "inspect", localTag, "--format", "{{.Id}}"]).trim() === imageId)
+      run("docker", ["image", "rm", localTag]);
+  }
+}
+
+async function diagnosticCryptoControls() {
+  run(
+    "docker",
+    [
+      "build",
+      "--platform",
+      "linux/amd64",
+      "--target",
+      "security-probes",
+      "-f",
+      "infra/seaweedfs/Dockerfile",
+      "-t",
+      "editagent-seaweedfs-probes",
+      ".",
+    ],
+    { stdio: "inherit" },
+  );
+  const name = `editagent-seaweed-crypto-${id(process.env.GITHUB_RUN_ID)}-${id(process.env.GITHUB_RUN_ATTEMPT)}`;
+  const common = [
+    "run",
+    "--rm",
+    "--name",
+    name,
+    "--user",
+    "65534:65534",
+    "--cap-drop",
+    "ALL",
+    "--security-opt",
+    "no-new-privileges:true",
+    "--cpus",
+    "1",
+    "--memory",
+    "384m",
+    "--memory-swap",
+    "384m",
+    "--pids-limit",
+    "64",
+    "--read-only",
+    "--network",
+    "none",
+    "--tmpfs",
+    "/tmp:rw,noexec,nosuid,size=32m,mode=1777",
+    "-e",
+    "GODEBUG=fips140=on",
+  ];
+  try {
+    for (const probe of ["rsa", "jwk", "brotli"])
+      run("timeout", ["60", "docker", ...common, "editagent-seaweedfs-probes", probe], {
+        stdio: "inherit",
+        timeout: 65000,
+      });
+    for (const suite of ["jose", "brotli"])
+      run(
+        "timeout",
+        [
+          "180",
+          "docker",
+          ...common,
+          "--workdir",
+          `/tests/${suite}`,
+          "--entrypoint",
+          `/${suite}.test`,
+          "editagent-seaweedfs-probes",
+          "-test.timeout=150s",
+        ],
+        { stdio: "inherit", timeout: 185000 },
+      );
+  } finally {
+    try {
+      run("docker", ["rm", "-f", name]);
+    } catch {
+      /* --rm already removed it */
+    }
+  }
+  return {
+    rsa: "PASS",
+    jwk: "PASS",
+    brotli: "PASS",
+    upstream_jose: "PASS",
+    upstream_brotli: "PASS",
+    fips140: "on",
+    policy: "unchanged bounded workflow controls executed before terminal diagnostic gate",
+  };
+}
+
+export function finalizeSWReports(
+  report,
+  verification,
+  metadata,
+  trivyBytes,
+  sbomBytes,
+  measurement,
+  policyFiles,
+) {
+  // A fixed-size JSON whitespace envelope avoids recursive byte-count/float
+  // length oscillation. Its entire padding is physically written and counted.
+  // Headroom is fixed before admission; exceeding it fails, never resizes.
+  const base = Buffer.byteLength(JSON.stringify({ ...verification, diagnostic_evidence: report }));
+  const envelope = Math.ceil((base + 16384) / 4096) * 4096;
+  requireThat(envelope <= 4 * 1024 ** 2, "S_W_REPORT_ENVELOPE_EXCEEDED");
+  report.provenance_envelope = { verification_bytes: envelope, padding_counted_in_R: true };
+  const render = () => {
+    const text = JSON.stringify({ ...verification, diagnostic_evidence: report }) + "\n";
+    const remaining = envelope - Buffer.byteLength(text);
+    requireThat(remaining >= 0, "S_W_REPORT_ENVELOPE_EXCEEDED");
+    const reports = {
+      "verification.json": text + " ".repeat(remaining),
+      "go-version-m.txt": metadata,
+      "full-trivy.json": trivyBytes,
+      "sbom.spdx.json": sbomBytes,
+      "scanner-versions.json": JSON.stringify(report.scanners) + "\n",
+    };
+    reports["candidate-manifest.json"] =
+      JSON.stringify({
+        diagnostic_only: true,
+        profile: SW_PROFILE,
+        context: report.context,
+        image_id: verification.image_id,
+        elf_sha256: verification.elf_sha256,
+        run_id: report.run_id,
+        attempt: 1,
+        policy_files: policyFiles,
+        files: {
+          "image.tar.xz": measurement.compression.output_sha256,
+          ...Object.fromEntries(
+            Object.entries(reports).map(([name, bytes]) => [name, sha256(bytes)]),
+          ),
+        },
+        upload: "FORBIDDEN",
+      }) + "\n";
+    return reports;
+  };
+  const sizes = (reports) =>
+    Object.fromEntries(Object.entries(reports).map(([n, b]) => [n, Buffer.byteLength(b)]));
+  report.budget = transferBudgetReport({ ...measurement, report_file_bytes: sizes(render()) });
+  report.verdict = report.budget.within_budget
+    ? "S_W_BUILD_FEASIBILITY=MET_DIAGNOSTIC_ONLY"
+    : "S_W_BUILD_FEASIBILITY=NOT_MET";
+  if (!report.budget.within_budget) report.failure = "TRANSFER_BUDGET_EXCEEDED";
+  const final = render();
+  requireThat(
+    isDeepStrictEqual(sizes(final), report.budget.report_file_bytes),
+    "S_W_FINAL_REPORT_MEASUREMENT_MISMATCH",
+  );
+  return final;
+}
+
+async function produceSWDiagnostic(image, destination) {
+  requireThat(
+    path.resolve(destination) === path.join(ROOT, ".local/seaweedfs-transfer/bundle"),
+    "ARTIFACT_DESTINATION_REJECTED",
+  );
+  validateSWAttempt(process.env.GITHUB_RUN_ATTEMPT);
+  const { context } = await identity();
+  const lock = await jsonFile(path.join(ROOT, "infra/seaweedfs/security-build.lock.json"));
+  requireThat(diagnosticProfile(lock), "S_W_PROFILE_REJECTED");
+  const work = await mkdtemp(path.join(ROOT, ".local/issue99/producer-"));
+  const report = {
+    profile: SW_PROFILE,
+    context,
+    run_id: id(process.env.GITHUB_RUN_ID),
+    attempt: 1,
+    artifact_uploaded: false,
+    promoted: false,
+    qualified: false,
+    verdict: "S_W_BUILD_FEASIBILITY=NOT_MET",
+    baseline_sections: "UNKNOWN",
+    execution_runtime: { node: process.version, platform: process.platform, arch: process.arch },
+    limitations: [
+      "Actual service ZIP and cross-job transfer NOT_PROVEN: upload prohibited",
+      "DIAGNOSTIC_REAL_SERVICE_E2E=NOT_RUN_BY_DESIGN: no qualified receipt, S3/mTLS/recovery/browser/Walking product execution",
+    ],
+    gates: {},
+  };
+  try {
+    let tap;
+    try {
+      tap = run(
+        process.execPath,
+        [
+          "--test",
+          "--test-reporter=tap",
+          "tests/architecture/seaweedfs-security-build.test.mjs",
+          "tests/architecture/seaweedfs-object-storage.test.mjs",
+          "tests/architecture/ffmpeg-download.test.mjs",
+        ],
+        { timeout: 180000 },
+      );
+      console.log(tap);
+    } catch (error) {
+      if (error.stdout) console.log(String(error.stdout).slice(-65536));
+      throw new AdmissionError("S_W_NATIVE_ARCHITECTURE_TEST_FAILED");
+    }
+    const count = (name) => Number(new RegExp("^# " + name + " (\\d+)$", "m").exec(tap)?.[1]);
+    report.architecture_tests = {
+      tests: count("tests"),
+      pass: count("pass"),
+      fail: count("fail"),
+      skipped: count("skipped"),
+    };
+    requireThat(
+      report.architecture_tests.tests > 0 &&
+        report.architecture_tests.pass === report.architecture_tests.tests &&
+        report.architecture_tests.fail === 0 &&
+        report.architecture_tests.skipped === 0,
+      "S_W_NATIVE_ARCHITECTURE_TEST_FAILED",
+    );
+    const imageId = run("docker", ["image", "inspect", image, "--format", "{{.Id}}"]).trim();
+    requireThat(/^sha256:[a-f0-9]{64}$/.test(imageId), "S_W_IMAGE_IDENTITY_DRIFT");
+    run("sh", ["infra/seaweedfs/verify-image.sh", imageId, work], { stdio: "inherit" });
+    const verification = await jsonFile(path.join(work, "verify-image.json"));
+    requireThat(
+      verification.image_id === imageId &&
+        verification.project_revision === context.M &&
+        verification.project_source === `https://github.com/${REPOSITORY}`,
+      "PRODUCER_IMAGE_IDENTITY_DRIFT",
+    );
+    const inspect = JSON.parse(run("docker", ["image", "inspect", imageId]))[0];
+    const configEvidence = (v) => ({
+      Id: v.Id,
+      Architecture: v.Architecture,
+      Os: v.Os,
+      RootFS: v.RootFS,
+      Config: v.Config,
+    });
+    report.image = { ...verification, config: configEvidence(inspect) };
+    const metadata = await readFile(path.join(work, "actual-go-version-m.txt"), "utf8");
+    const elf = inspectSWELF(path.join(work, "weed"));
+    validateSWEvidence(verification, elf, metadata);
+    report.elf = elf;
+    report.go_version_m = metadata;
+    report.gates.image_elf_provenance = "PASS";
+    const syftVersion = JSON.parse(run("syft", ["version", "-o", "json"]));
+    const cache = path.join(work, "trivy-cache"),
+      sbomFile = path.join(work, "sbom.spdx.json"),
+      trivyFile = path.join(work, "full-trivy.json");
+    const version = () =>
+      JSON.parse(run("trivy", ["--config=", "--cache-dir", cache, "version", "--format", "json"]));
+    requireThat(
+      syftVersion.version === "1.54.0" && version().Version === "0.75.0",
+      "SCANNER_VERSION_DRIFT",
+    );
+    run("syft", [imageId, "-o", `spdx-json=${sbomFile}`]);
+    const scan = (id, file) =>
+      run("trivy", [
+        "--config=",
+        "--cache-dir",
+        cache,
+        "image",
+        "--ignorefile=",
+        "--secret-config=",
+        "--ignore-unfixed=false",
+        "--severity",
+        "UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL",
+        "--format",
+        "json",
+        "--output",
+        file,
+        "--exit-code",
+        "0",
+        id,
+      ]);
+    scan(imageId, trivyFile);
+    const trivy = await jsonFile(trivyFile),
+      sbom = await jsonFile(sbomFile);
+    requireThat(
+      trivy.Metadata?.ImageID === imageId &&
+        Date.parse(version().VulnerabilityDB?.DownloadedAt) >=
+          Date.parse((await api(`actions/runs/${report.run_id}`)).created_at),
+      "FRESH_DB_OR_IMAGE_EVIDENCE_MISSING",
+    );
+    report.scanners = {
+      syft: syftVersion,
+      trivy: version(),
+      coverage: validateSWInventories(
+        trivy,
+        sbom,
+        verification.build_measurements.one.elf.go_build_info,
+        lock.build.baseline_inventory,
+      ),
+      sbom_sha256: sha256(await readFile(sbomFile)),
+      trivy_sha256: sha256(await readFile(trivyFile)),
+    };
+    const controlFile = path.join(work, "scanner-positive-control.json");
+    scan(lock.runtime_donor.image, controlFile);
+    requireThat(
+      (await jsonFile(controlFile)).Results?.some((r) =>
+        r.Vulnerabilities?.some(
+          (v) =>
+            v.PkgName === "github.com/go-jose/go-jose/v4" &&
+            v.VulnerabilityID === "CVE-2026-116587" &&
+            v.Severity === "HIGH",
+        ),
+      ),
+      "S_W_SCANNER_POSITIVE_CONTROL_FAILED",
+    );
+    report.gates.scanner_positive_control = "PASS";
+    report.real_resolver_controls = await diagnosticResolverControls(imageId, work);
+    report.runtime_version = run(
+      "timeout",
+      [
+        "30",
+        "docker",
+        "run",
+        "--rm",
+        "--network",
+        "none",
+        "--read-only",
+        "--user",
+        "1000:1000",
+        "--cap-drop",
+        "ALL",
+        "--security-opt",
+        "no-new-privileges:true",
+        "--cpus",
+        "1",
+        "--memory",
+        "384m",
+        "--memory-swap",
+        "384m",
+        "--pids-limit",
+        "64",
+        "-e",
+        "GODEBUG=fips140=on",
+        "--entrypoint",
+        "/usr/bin/weed",
+        imageId,
+        "version",
+      ],
+      { timeout: 35000 },
+    ).trim();
+    requireThat(
+      report.runtime_version.includes("ffa87c2+editagent-sec1"),
+      "S_W_RUNTIME_IDENTITY_FAILED",
+    );
+    report.gates.runtime_version_uid1000 = "PASS";
+    report.crypto = await diagnosticCryptoControls();
+    report.gates.crypto = "PASS";
+    const raw = path.join(work, "candidate.tar"),
+      packed = path.join(work, "diagnostic.tar.xz"),
+      roundtrip = path.join(work, "roundtrip.tar");
+    const beforeScratch = await statfs(work);
+    requireThat(
+      beforeScratch.bavail * beforeScratch.bsize >= 3 * 4 * 1024 ** 3,
+      "S_W_SCRATCH_UNAVAILABLE",
+    );
+    const compression = compressArchive(raw, packed, 6);
+    const decoder = await decompress(packed, roundtrip, "python3", 4 * 1024 ** 3, true);
+    requireThat(
+      (await fileDigest(raw)) === (await fileDigest(roundtrip)) &&
+        compression.input_sha256 === (await fileDigest(raw)) &&
+        compression.output_sha256 === (await fileDigest(packed)),
+      "S_W_ROUNDTRIP_MISMATCH",
+    );
+    run(
+      "sh",
+      ["infra/seaweedfs/verify-image.sh", roundtrip, path.join(work, "roundtrip-inspection")],
+      { stdio: "inherit" },
+    );
+    const after = await jsonFile(path.join(work, "roundtrip-inspection/verify-image.json"));
+    requireThat(isDeepStrictEqual(verification, after), "S_W_ROUNDTRIP_IMAGE_DRIFT");
+    const checkedConfig = JSON.parse(run("docker", ["image", "inspect", imageId]))[0];
+    requireThat(
+      isDeepStrictEqual(report.image.config, configEvidence(checkedConfig)),
+      "S_W_CONFIG_OR_LAYER_DRIFT",
+    );
+    report.compression = compression;
+    report.decoder = decoder;
+    validateSWResources(compression, decoder);
+    report.resources = {
+      visible_only: true,
+      available_parallelism: availableParallelism(),
+      host_total_memory: totalmem(),
+      host_free_memory: freemem(),
+      scratch_available_before: beforeScratch.bavail * beforeScratch.bsize,
+      scratch_available_after: (await statfs(work)).bavail * beforeScratch.bsize,
+      visible_cgroup: verification.build_measurements.two.visible_cgroup_only,
+      raw_archive_bytes: await fileBytes(raw),
+      expanded_archive_bytes: await fileBytes(roundtrip),
+    };
+    report.gates.roundtrip = "PASS";
+    requireThat(isDeepStrictEqual((await identity()).context, context), "S_W_FINAL_IDENTITY_DRIFT");
+    const policyFiles = {};
+    for (const name of POLICY_FILES)
+      policyFiles[name] = sha256(
+        run("git", ["show", `${context.M}:${name}`], { encoding: "buffer" }),
+      );
+    const prepared = finalizeSWReports(
+      report,
+      verification,
+      metadata,
+      await readFile(trivyFile),
+      await readFile(sbomFile),
+      { uncompressed_archive_bytes: await fileBytes(raw), C: await fileBytes(packed), compression },
+      policyFiles,
+    );
+    const privateReports = path.join(work, "reports");
+    await mkdir(privateReports);
+    for (const [name, bytes] of Object.entries(prepared)) {
+      await writeFile(path.join(privateReports, name), bytes);
+      requireThat(
+        (await fileBytes(path.join(privateReports, name))) ===
+          report.budget.report_file_bytes[name],
+        "S_W_FINAL_REPORT_MEASUREMENT_MISMATCH",
+      );
+    }
+    requireThat(report.budget.within_budget, "TRANSFER_BUDGET_EXCEEDED");
+  } catch (error) {
+    report.verdict = "S_W_BUILD_FEASIBILITY=NOT_MET";
+    report.failure =
+      error instanceof AdmissionError ? error.code : "S_W_NATIVE_EXECUTION_OR_EVIDENCE_FAILED";
+  } finally {
+    try {
+      await dispose(work);
+    } catch {
+      report.verdict = "S_W_BUILD_FEASIBILITY=NOT_MET";
+      report.failure = "S_W_PRIVATE_SCRATCH_CLEANUP_FAILED";
+    }
+    await writeFile(
+      path.join(ROOT, ".local/issue99/s-w-diagnostic-report.json"),
+      JSON.stringify(report, null, 2) + "\n",
+      { mode: 0o600 },
+    );
+    for (const line of diagnosticEvidenceLines(report)) console.log(line);
+  }
+  terminateDiagnostic(report);
+}
+
 async function produce(image, destination) {
+  if (
+    diagnosticProfile(await jsonFile(path.join(ROOT, "infra/seaweedfs/security-build.lock.json")))
+  )
+    return produceSWDiagnostic(image, destination);
   const { context } = await identity();
   const folder = path.resolve(destination);
   requireThat(

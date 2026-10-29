@@ -1,10 +1,24 @@
 /** Admission software controls; synthetic inputs are not runtime qualification. */
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtemp, mkdir, readFile, writeFile, rm } from "node:fs/promises";
 import path from "node:path";
 import {
+  finalizeSWReports,
+  SW_PROFILE,
+  SW_FLAGS,
+  ORIGINAL_ELF,
+  diagnosticCommandGuard,
+  diagnosticProfile,
+  terminateDiagnostic,
+  validateDiagnosticMarker,
+  diagnosticEvidenceLines,
+  validateSWAttempt,
+  validateSWResources,
+  validateSWInventories,
+  validateSWEvidence,
+  inspectSWELF,
   parseCommitMetadata,
   FILTER_PROFILE,
   validateFilterAttempt,
@@ -1602,4 +1616,478 @@ test("even successful OCI diagnostic cannot rescue production budget or activate
     (e) => e.code === "TRANSFER_BUDGET_EXCEEDED",
   );
   assert.equal(continued, false);
+});
+
+function swFixture(diagnostic = true) {
+  const imageId = `sha256:${"d".repeat(64)}`,
+    elf = diagnostic ? "e".repeat(64) : ORIGINAL_ELF;
+  const lock = { build: diagnostic ? { output_profile: SW_PROFILE, diagnostic_only: true } : {} };
+  const build = { elf_sha256: elf, cache_initially_empty: true };
+  if (diagnostic)
+    Object.assign(build, {
+      output_profile: SW_PROFILE,
+      elf: { linker_flags: SW_FLAGS },
+      diagnostic_marker: {
+        schema_version: 1,
+        profile: SW_PROFILE,
+        diagnostic_only: true,
+        elf_sha256: elf,
+        flags_sha256: sha256(SW_FLAGS),
+        source_commit: "ffa87c25fdf587178b1521ad87f2a4a72a02e584",
+        go_version: "go1.26.10",
+      },
+    });
+  return {
+    lock,
+    imageId,
+    verification: {
+      image_id: imageId,
+      lock_sha256: sha256(JSON.stringify(lock, null, 2) + "\n"),
+      elf_sha256: elf,
+      old_elf_absent: true,
+      runtime_preserved: true,
+      reproducible_elf: true,
+      native_brotli: "1.2.1-r0",
+      build_measurements: {
+        one: globalThis.structuredClone(build),
+        two: globalThis.structuredClone(build),
+      },
+    },
+  };
+}
+
+test("fixed profile refuses injected flags and every seal/admission/promotion command", () => {
+  const { lock } = swFixture();
+  assert.equal(diagnosticProfile(lock), true);
+  for (const injected of ["-s -w", SW_PROFILE + " -X injected", SW_PROFILE + "\n", "production"])
+    assert.throws(() =>
+      diagnosticProfile({ build: { output_profile: injected, diagnostic_only: true } }),
+    );
+  for (const mode of ["seal", "admit", "load", "promoted", "final", "verify-local", "unknown"])
+    assert.throws(() => diagnosticCommandGuard(lock, mode), /S_W_PROMOTION_FORBIDDEN/);
+  for (const mode of ["produce", "policy-inventory"])
+    assert.doesNotThrow(() => diagnosticCommandGuard(lock, mode));
+  assert.equal(diagnosticProfile({ build: {} }), false);
+  assert.throws(() => diagnosticProfile({ build: { diagnostic_only: true } }));
+});
+
+test("synthetic capacity/scanner PASS is always a terminal non-promotable failure", () => {
+  let uploadReached = false;
+  assert.throws(() => {
+    terminateDiagnostic({
+      profile: SW_PROFILE,
+      verdict: "S_W_BUILD_FEASIBILITY=MET_DIAGNOSTIC_ONLY",
+      capacity: "PASS",
+      scanner: "PASS",
+      artifact_uploaded: false,
+      promoted: false,
+      approval: "APPROVED",
+    });
+    uploadReached = true;
+  }, /S_W_DIAGNOSTIC_NON_PROMOTABLE/);
+  assert.equal(uploadReached, false);
+  for (const mutate of [
+    (x) => (x.artifact_uploaded = true),
+    (x) => (x.promoted = true),
+    (x) => (x.profile = "production"),
+  ]) {
+    const r = { profile: SW_PROFILE, artifact_uploaded: false, promoted: false };
+    mutate(r);
+    assert.throws(() => terminateDiagnostic(r), /S_W_PROMOTION_FORBIDDEN/);
+  }
+});
+
+// Shell control-flow qualification uses the REAL resolver/startup and actual
+// Python guard, with instrumented external Docker/image-verification I/O. Separate
+// archive tests above execute the unchanged verifier's real tar/layer parser.
+async function resolverShellFixture(dir, fixture) {
+  for (const sub of ["infra/seaweedfs", "tools/test", "bin", ".local/issue99"])
+    await mkdir(path.join(dir, sub), { recursive: true });
+  for (const file of [
+    "infra/seaweedfs/image-reference.sh",
+    "infra/seaweedfs/start-storage.sh",
+    "tools/test/load-qualified-storage.mjs",
+  ])
+    await writeFile(
+      path.join(dir, file),
+      (await readFile(path.join(root, file), "utf8")).replace(/\r\n/g, "\n"),
+      { mode: 0o755 },
+    );
+  await writeFile(
+    path.join(dir, "infra/seaweedfs/security-build.lock.json"),
+    JSON.stringify(fixture.lock, null, 2) + "\n",
+  );
+  await writeFile(path.join(dir, "fixture.json"), JSON.stringify(fixture));
+  await writeFile(
+    path.join(dir, "write-evidence.mjs"),
+    `import fs from 'node:fs';const f=JSON.parse(fs.readFileSync('fixture.json'));fs.mkdirSync(process.argv[2],{recursive:true});fs.writeFileSync(process.argv[2]+'/verify-image.json',JSON.stringify(f.verification));`,
+  );
+  await writeFile(
+    path.join(dir, "infra/seaweedfs/verify-image.sh"),
+    '#!/bin/sh\nset -eu\nprintf "VERIFY_ACTUAL_IMAGE\\n" >> calls\nnode write-evidence.mjs "$2"\n',
+    { mode: 0o755 },
+  );
+  await writeFile(
+    path.join(dir, "infra/seaweedfs/prepare-secrets.sh"),
+    "#!/bin/sh\necho UNSAFE_SECRET_PREPARATION >> calls\nexit 1\n",
+    { mode: 0o755 },
+  );
+  await writeFile(
+    path.join(dir, "bin/docker"),
+    `#!/bin/sh\nset -eu\nprintf '%s\\n' "DOCKER $*" >> calls\ncase "$1 $2" in\n'image inspect') printf '%s\\n' '${fixture.imageId}';;\n'compose ps') printf '%s\\n' synthetic-container;;\n'inspect --format') printf '%s\\n' '${fixture.imageId}';;\n'compose build') :;;\n*) echo UNEXPECTED_DOCKER >> calls;exit 1;;\nesac\n`,
+    { mode: 0o755 },
+  );
+  await writeFile(path.join(dir, "bin/flock"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  if (process.platform === "win32")
+    await writeFile(path.join(dir, "bin/python3"), '#!/bin/sh\nexec "$TEST_PYTHON" "$@"\n', {
+      mode: 0o755,
+    });
+  return (selector, actions, startup = false, extraEnv = {}) => {
+    const env = { ...process.env, TEST_PYTHON: python, ...extraEnv };
+    delete env.GITHUB_ACTIONS;
+    delete env.GH_TOKEN;
+    delete env.GITHUB_TOKEN;
+    if (actions !== undefined) env.GITHUB_ACTIONS = actions;
+    const shell = process.platform === "win32" ? "C:/Program Files/Git/bin/bash.exe" : "sh";
+    return spawnSync(
+      shell,
+      [
+        "-c",
+        'export PATH="$PWD/bin:$PATH"; exec sh "${1}" "${2}"',
+        "entry",
+        startup ? "infra/seaweedfs/start-storage.sh" : "infra/seaweedfs/image-reference.sh",
+        startup ? "--from-boot" : selector,
+      ],
+      { cwd: dir, env, encoding: "utf8", timeout: 20000 },
+    );
+  };
+}
+
+for (const selector of ["built", "live"])
+  for (const actions of [undefined, "false", "true", "manipulated"])
+    test(`actual resolver ${selector} rejects diagnostic before ID output with GITHUB_ACTIONS=${actions}`, async () =>
+      temporary(async (dir) => {
+        const run = await resolverShellFixture(dir, swFixture());
+        const result = run(selector, actions, false, {
+          SEAWEED_QUALIFIED_RECEIPT: "forged-receipt",
+          S_W_PROFILE: "normal",
+        });
+        assert.notEqual(result.status, 0, result.stderr);
+        assert.equal(result.stdout, "");
+        assert.match(result.stderr, /S_W_OPERATOR_STARTUP_FORBIDDEN/);
+        assert.match(await readFile(path.join(dir, "calls"), "utf8"), /VERIFY_ACTUAL_IMAGE/);
+      }));
+
+for (const selector of ["built", "live"])
+  test(`actual normal ${selector} runs verification and still requires CI receipt admission`, async () =>
+    temporary(async (dir) => {
+      const run = await resolverShellFixture(dir, swFixture(false));
+      const ordinary = run(selector, "false");
+      assert.equal(ordinary.status, 0, ordinary.stderr);
+      assert.equal(ordinary.stdout.trim(), swFixture(false).imageId);
+      const ci = run(selector, "true", false, { SEAWEED_QUALIFIED_RECEIPT: "forged-receipt" });
+      assert.notEqual(ci.status, 0);
+      assert.equal(ci.stdout, "");
+    }));
+
+test("actual normal startup rejects diagnostic before secret preparation, create or start", async () =>
+  temporary(async (dir) => {
+    const run = await resolverShellFixture(dir, swFixture());
+    const r = run("built", undefined, true);
+    assert.notEqual(r.status, 0);
+    assert.equal(r.stdout, "");
+    assert.match(r.stderr, /S_W_OPERATOR_STARTUP_FORBIDDEN/);
+    const calls = await readFile(path.join(dir, "calls"), "utf8");
+    assert.match(calls, /compose build/);
+    assert.doesNotMatch(calls, /UNSAFE|compose create|DOCKER start/);
+  }));
+
+for (const variant of [
+  "malformed",
+  "stale",
+  "unmarked",
+  "missing-marker",
+  "unknown-marker",
+  "wrong-elf",
+  "wrong-image",
+])
+  test(`actual shell rejects ${variant} image evidence for both selectors`, async () =>
+    temporary(async (dir) => {
+      const f = swFixture();
+      if (variant === "malformed")
+        f.verification.build_measurements.two.diagnostic_marker.flags_sha256 = "0".repeat(64);
+      if (variant === "stale") {
+        f.lock = { build: {} };
+        f.verification.lock_sha256 = sha256(JSON.stringify(f.lock, null, 2) + "\n");
+      }
+      if (variant === "unmarked") {
+        f.lock = { build: {} };
+        f.verification.lock_sha256 = sha256(JSON.stringify(f.lock, null, 2) + "\n");
+        for (const b of Object.values(f.verification.build_measurements)) {
+          delete b.output_profile;
+          delete b.diagnostic_marker;
+          delete b.elf;
+        }
+      }
+      if (variant === "missing-marker")
+        delete f.verification.build_measurements.two.diagnostic_marker;
+      if (variant === "unknown-marker")
+        f.verification.build_measurements.one.diagnostic_marker.profile = "unknown";
+      if (variant === "wrong-elf")
+        f.verification.build_measurements.two.diagnostic_marker.elf_sha256 = ORIGINAL_ELF;
+      if (variant === "wrong-image") f.verification.image_id = "sha256:" + "f".repeat(64);
+      const run = await resolverShellFixture(dir, f);
+      for (const selector of ["built", "live"]) {
+        const r = run(selector, "false");
+        assert.notEqual(r.status, 0);
+        assert.equal(r.stdout, "");
+      }
+    }));
+
+function swScannerFixture() {
+  const deps = [
+    { Path: "github.com/go-jose/go-jose/v4", Version: "v4.1.6", Sum: "h1:YWJjZA==" },
+    { Path: "github.com/andybalholm/brotli", Version: "v1.2.7", Sum: "h1:YWJjZA==" },
+  ];
+  const go = [
+    ...deps.map((m) => ({ Name: m.Path, Version: m.Version })),
+    { Name: "stdlib", Version: "v1.26.10" },
+  ];
+  const native = [{ Name: "brotli-libs", Version: "1.2.1-r0" }];
+  const sbom = {
+    spdxVersion: "SPDX-2.3",
+    packages: [
+      ...go.map((p) => ({
+        name: p.Name,
+        versionInfo: p.Version,
+        externalRefs: [{ referenceType: "purl", referenceLocator: "pkg:golang/" + p.Name }],
+      })),
+      ...native.map((p) => ({
+        name: p.Name,
+        versionInfo: p.Version,
+        externalRefs: [{ referenceType: "purl", referenceLocator: "pkg:apk/" + p.Name }],
+      })),
+    ],
+  };
+  const trivy = {
+    SchemaVersion: 2,
+    Results: [
+      { Type: "gobinary", Target: "usr/bin/weed", Packages: go },
+      { Type: "alpine", Packages: native },
+    ],
+  };
+  const digest = (p) => sha256(JSON.stringify(p.map((p) => p.Name + "@" + p.Version).sort()));
+  return {
+    trivy,
+    sbom,
+    info: { GoVersion: "go1.26.10", Deps: deps },
+    baseline: {
+      go_count: go.length,
+      go_sha256: digest(go),
+      native_count: native.length,
+      native_sha256: digest(native),
+    },
+  };
+}
+
+test("scanner zero findings cannot hide lost compiler, Go/native modules or source sums", () => {
+  const f = swScannerFixture();
+  assert.doesNotThrow(() => validateSWInventories(f.trivy, f.sbom, f.info, f.baseline));
+  for (const mutate of [
+    (x) => (x.info.GoVersion = "unknown"),
+    (x) => (x.info.Deps = []),
+    (x) => delete x.info.Deps[0].Sum,
+    (x) => x.trivy.Results[0].Packages.pop(),
+    (x) => x.sbom.packages.pop(),
+    (x) => (x.trivy.Results[0].Packages[0].Version = "v4.1.5"),
+    (x) => (x.trivy.Results[1].Packages = []),
+    (x) => (x.baseline.go_sha256 = "0".repeat(64)),
+  ]) {
+    const b = globalThis.structuredClone(f);
+    mutate(b);
+    assert.throws(() => validateSWInventories(b.trivy, b.sbom, b.info, b.baseline));
+  }
+});
+
+test("new diagnostic build remains two offline caches, one fixed profile, no baseline rebuild or other codec", async () => {
+  const b = await readFile(path.join(root, "infra/seaweedfs/build-weed.sh"), "utf8");
+  const loader = await readFile(path.join(root, "tools/test/load-qualified-storage.mjs"), "utf8");
+  assert.match(b, /originalLinkerFlags\+" -s -w"/);
+  assert.match(b, /GOFLAGS/);
+  assert.match(b, /GOEXPERIMENT/);
+  assert.match(b, /debug\/elf/);
+  assert.match(b, /debug\/buildinfo/);
+  assert.match(b, /diagnostic_marker/);
+  assert.match(b, /sumdb mismatch/);
+  assert.match(b, /unapproved go.sum entry/);
+  assert.match(b, /compile cache is not empty/);
+  const body = loader
+    .split("async function produceSWDiagnostic(")[1]
+    .split("async function produce(")[0];
+  assert.match(body, /compressArchive\(raw, packed, 6\)/);
+  assert.doesNotMatch(body, /losslessCompressionProbe|runBoundedOCI|runBoundedFilter|docker.*push/);
+  assert.match(body, /terminateDiagnostic\(report\)/);
+  assert.doesNotMatch(body, /await mkdir\(destination|path.join\(folder|writeFile\([^\n]*bundle/);
+});
+
+test("chunked diagnostic evidence is bounded and SHA-bound without image artifacts", () => {
+  const r = {
+    profile: SW_PROFILE,
+    data: "x".repeat(35000),
+    artifact_uploaded: false,
+    promoted: false,
+  };
+  const frames = diagnosticEvidenceLines(r).map((line) =>
+    JSON.parse(line.slice("S_W_DIAGNOSTIC_PART ".length)),
+  );
+  assert.ok(frames.length > 1);
+  assert.ok(
+    frames.every((v, i) => v.index === i && v.total === frames.length && v.data.length <= 5000),
+  );
+  const text = frames.map((f) => f.data).join("");
+  assert.equal(sha256(text), frames[0].sha256);
+  assert.deepEqual(JSON.parse(text), r);
+});
+
+test("diagnostic attempt and resource measurements fail closed", () => {
+  assert.doesNotThrow(() => validateSWAttempt("1"));
+  for (const n of [0, 2, 3, undefined, "forged"]) assert.throws(() => validateSWAttempt(n));
+  const c = {
+    limits: { address_space_bytes: 1024 ** 3, cpu_seconds: 540 },
+    process_wall_seconds: 2,
+    user_cpu_seconds: 1,
+    system_cpu_seconds: 0.1,
+    peak_rss_bytes: 1024 ** 2,
+  };
+  const d = {
+    limits: { address_space_bytes: 256 * 1024 ** 2 },
+    elapsed_seconds: 1,
+    peak_rss_bytes: 1024 ** 2,
+    uncompressed_bytes: 4096,
+  };
+  assert.doesNotThrow(() => validateSWResources(c, d));
+  for (const mutate of [
+    (x) => delete x.c.peak_rss_bytes,
+    (x) => (x.c.process_wall_seconds = 601),
+    (x) => (x.c.user_cpu_seconds = 541),
+    (x) => (x.c.peak_rss_bytes = 2 * 1024 ** 3),
+    (x) => (x.d.peak_rss_bytes = 257 * 1024 ** 2),
+    (x) => (x.d.uncompressed_bytes = 4 * 1024 ** 3 + 1),
+    (x) => (x.d.elapsed_seconds = 0),
+    (x) => (x.d.limits = {}),
+    (x) => (x.c.system_cpu_seconds = NaN),
+  ]) {
+    const x = globalThis.structuredClone({ c, d });
+    mutate(x);
+    assert.throws(() => validateSWResources(x.c, x.d));
+  }
+});
+
+test("actual read-only ELF parser rejects malformed bounds, unsupported headers and executable writable segments", async () =>
+  temporary(async (dir) => {
+    const f = path.join(dir, "synthetic-elf");
+    const bytes = execFileSync(python, [
+      "-c",
+      String.raw`
+import struct,sys
+b=bytearray(1024);ident=b'\x7fELF\x02\x01'+b'\0'*10
+struct.pack_into('<16sHHIQQQIHHHHHH',b,0,ident,2,62,1,0x400000,64,512,0,64,56,1,64,2,1)
+struct.pack_into('<IIQQQQQQ',b,64,1,5,0,0x400000,0x400000,1024,1024,4096)
+names=b'\0.shstrtab\0';b[256:256+len(names)]=names
+struct.pack_into('<IIQQQQIIQQ',b,576,1,3,0,0,256,len(names),0,0,1,0)
+sys.stdout.buffer.write(b)
+`,
+    ]);
+    await writeFile(f, bytes);
+    const actual = inspectSWELF(f, python);
+    assert.equal(actual.sha256, sha256(bytes));
+    assert.equal(actual.file_bytes, 1024);
+    for (const mutate of [
+      (b) => (b[4] = 1),
+      (b) => b.writeUInt32LE(7, 68),
+      (b) => b.writeBigUInt64LE(2n ** 63n, 40),
+      (b) => b.writeUInt16LE(65535, 60),
+    ]) {
+      const bad = Buffer.from(bytes);
+      mutate(bad);
+      await writeFile(f, bad);
+      assert.throws(() => inspectSWELF(f, python));
+    }
+  }));
+
+test("diagnostic evidence rejects non-reproducible ELF, missing PC/build info, changed sections and flags", () => {
+  const f = swFixture(),
+    hash = f.verification.elf_sha256;
+  const sections = [
+    { name: ".gopclntab", offset: 128, file_bytes: 64 },
+    { name: ".go.buildinfo", offset: 192, file_bytes: 64 },
+  ];
+  const elf = { sha256: hash, file_bytes: 512, sections };
+  for (const b of Object.values(f.verification.build_measurements))
+    Object.assign(b, {
+      wall_seconds: 1,
+      max_rss_kib: 1024,
+      elf: { ...b.elf, file_bytes: 512, sections },
+    });
+  const meta =
+    "weed: go1.26.10\n\tdep\tgithub.com/go-jose/go-jose/v4\tv4.1.6\th1:test\n\tdep\tgithub.com/andybalholm/brotli\tv1.2.7\th1:test\n";
+  assert.doesNotThrow(() => validateSWEvidence(f.verification, elf, meta));
+  assert.doesNotThrow(() => validateDiagnosticMarker(f.verification.build_measurements.one, hash));
+  for (const mutate of [
+    (x) => (x.v.build_measurements.two.elf_sha256 = ORIGINAL_ELF),
+    (x) => (x.v.build_measurements.one.cache_initially_empty = false),
+    (x) => (x.e.sha256 = ORIGINAL_ELF),
+    (x) => (x.v.old_elf_absent = false),
+    (x) => (x.e.sections = []),
+    (x) => x.e.sections.push({ name: ".symtab", offset: 256, file_bytes: 64 }),
+    (x) => (x.m = ""),
+    (x) => (x.v.build_measurements.two.elf.linker_flags += " -X forged"),
+  ]) {
+    const x = globalThis.structuredClone({ v: f.verification, e: elf, m: meta });
+    mutate(x);
+    assert.throws(() => validateSWEvidence(x.v, x.e, x.m));
+  }
+});
+
+test("final report byte accounting includes its own budget and verdict without upload", () => {
+  const report = {
+    profile: SW_PROFILE,
+    artifact_uploaded: false,
+    promoted: false,
+    scanners: { test: "synthetic" },
+    context,
+    run_id: 20,
+  };
+  const compression = {
+    algorithm: "xz",
+    preset: 6,
+    elapsed_seconds: 1,
+    input_sha256: "a".repeat(64),
+    output_sha256: "b".repeat(64),
+    peak_rss_bytes: 1024,
+    user_cpu_seconds: 1,
+    system_cpu_seconds: 0,
+  };
+  for (const C of [120 * 1024 ** 2, 120 * 1024 ** 2 + 1]) {
+    const r = globalThis.structuredClone(report);
+    const reports = finalizeSWReports(
+      r,
+      { image_id: "sha256:" + "c".repeat(64), elf_sha256: "d".repeat(64) },
+      "synthetic metadata",
+      Buffer.from("{}"),
+      Buffer.from("{}"),
+      { uncompressed_archive_bytes: 2 * C, C, compression },
+      {},
+    );
+    assert.deepEqual(Object.keys(reports).sort(), [...REPORT_FILES].sort());
+    for (const [name, bytes] of Object.entries(reports))
+      assert.equal(Buffer.byteLength(bytes), r.budget.report_file_bytes[name]);
+    assert.equal(r.budget.R_total, 2 * r.budget.R + 65536);
+    assert.equal(r.budget.combined_transfer_bytes, 2 * C + r.budget.R_total);
+    const encoded = JSON.parse(reports["verification.json"]).diagnostic_evidence;
+    assert.equal(encoded.verdict, r.verdict);
+    assert.deepEqual(encoded.budget, r.budget);
+    assert.equal(r.budget.within_budget, C <= 120 * 1024 ** 2);
+    assert.throws(() => terminateDiagnostic(r), /NON_PROMOTABLE/);
+  }
 });

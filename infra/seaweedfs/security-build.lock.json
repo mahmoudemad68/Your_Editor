@@ -88,7 +88,19 @@
     ],
     "goproxy": "https://proxy.golang.org",
     "gosumdb": "sum.golang.org",
-    "reproducibility": "two independent clean compile caches; byte-identical ELF required"
+    "reproducibility": "two independent clean compile caches; byte-identical ELF required",
+    "output_profile": "seaweedfs-go-s-w-diagnostic-v1",
+    "diagnostic_only": true,
+    "baseline_inventory": {
+      "source_head": "6a780965f2b490859a213470b9a2995e5e156d5e",
+      "elf_sha256": "6b48572984287dcf64ed09a9080a720e65d4bf5c810c2282782fb4e5da8aa3c8",
+      "trivy_report_sha256": "abeb34aed4173344ecaab9306a6858839c948ca77d2fe547837acea1fe230eb1",
+      "syft_report_sha256": "ddccdeb3e6092c4191ee0c883f20ffdba479bb9ec95a6d823094b96cec1ddc8f",
+      "go_count": 244,
+      "go_sha256": "bda2300142db14926ad613d2c7721dba0cd14965777b2d6c8f416a775f33370a",
+      "native_count": 29,
+      "native_sha256": "d9f3b105800b832029011c462dcc6be8ba735c1c132967e88fd00922b65e02f9"
+    }
   },
   "schema_version": "1.0.0",
   "baseline_replace": {
