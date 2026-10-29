@@ -182,6 +182,8 @@ def main() -> int:
     def log_has(run_id: str, needles: list[str]) -> str:
         destination = evidence / f"run-{run_id}-excerpt.txt"
         completed = subprocess.run(["gh", "run", "view", run_id, "--repo", REPO, "--log-failed"], capture_output=True, text=True, check=False)
+        if completed.returncode != 0:
+            raise RuntimeError((completed.stderr or completed.stdout).strip()[:500])
         text = completed.stdout + completed.stderr
         lines = [line for line in text.splitlines() if any(needle in line for needle in needles)]
         destination.write_text("\n".join(lines[:80]) + "\n", encoding="utf-8")

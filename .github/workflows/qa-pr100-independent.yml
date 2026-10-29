@@ -22,6 +22,8 @@ jobs:
     name: G0 identity
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -321,7 +323,7 @@ jobs:
   asr-container:
     name: G3 ASR container
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
         with:
@@ -339,9 +341,17 @@ jobs:
       - name: Non-root ASR container
         run: |
           set +e
-          pnpm asr:container > "$RUNNER_TEMP/asr-container.log" 2>&1
-          code=$?
+          pnpm build > "$RUNNER_TEMP/asr-build.log" 2>&1
+          build_code=$?
+          if [ "$build_code" = 0 ]; then
+            pnpm asr:container > "$RUNNER_TEMP/asr-container.log" 2>&1
+            code=$?
+          else
+            code=$build_code
+            cp "$RUNNER_TEMP/asr-build.log" "$RUNNER_TEMP/asr-container.log"
+          fi
           set -e
+          tail -n 120 "$RUNNER_TEMP/asr-container.log" || true
           if [ "$code" = 0 ]; then
             python3 qa/pr100/emit_cli.py "$RUNNER_TEMP/g3-container.jsonl" g3.asr_container G3 PASS true "pnpm asr:container passed"
           else
@@ -353,6 +363,14 @@ jobs:
         with:
           name: qa-results-g3-container
           path: ${{ runner.temp }}/g3-container.jsonl
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: qa-evidence-g3-container
+          if-no-files-found: ignore
+          path: |
+            ${{ runner.temp }}/asr-container.log
+            ${{ runner.temp }}/asr-build.log
 
   fail-closed:
     name: G4 fail-closed proof

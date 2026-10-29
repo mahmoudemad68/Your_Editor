@@ -81,12 +81,19 @@ if [ "$role" = "media" ]; then
     else
       mode=""
     fi
+    probe_status=1
+    sha=""
     if [ -n "$mode" ] && [ -s "$work/distinct.mp4" ]; then
       sha=$(sha256sum "$work/distinct.mp4" | awk '{print $1}')
-      ffprobe -v error -show_entries format=duration:stream=codec_name,width,height -of json "$work/distinct.mp4" >"$out/distinct-ffprobe.json"
+      if docker run --rm --network none --entrypoint ffprobe -v "$work:/out:ro" qa-media-worker:independent \
+          -v error -show_entries format=duration:stream=codec_name,width,height -of json /out/distinct.mp4 >"$out/distinct-ffprobe.json"; then
+        probe_status=0
+      fi
+    fi
+    if [ "$probe_status" = 0 ]; then
       record g1.distinct_input_transcode PASS "$mode sha256=$sha"
     else
-      record g1.distinct_input_transcode FAIL "production ffmpeg did not encode a distinct input"
+      record g1.distinct_input_transcode FAIL "production ffmpeg did not encode a distinct probed input"
     fi
     rm -rf "$work"
   else
