@@ -362,8 +362,10 @@ jobs:
           version: "0.12.20"
       - name: Pin product commit
         run: python3 qa/pr100/assert_product_pin.py
-      - name: Install workspace
-        run: pnpm install --frozen-lockfile
+      - name: Install workspace and FFmpeg
+        run: |
+          pnpm install --frozen-lockfile
+          sh tools/test/ensure-ffmpeg.sh
       - name: Non-root ASR container
         run: |
           set +e

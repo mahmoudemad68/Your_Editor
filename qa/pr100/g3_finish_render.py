@@ -16,6 +16,7 @@ from results import emit  # noqa: E402
 def main() -> int:
     results = Path(sys.argv[1])
     out = Path(sys.argv[2])
+    out.mkdir(parents=True, exist_ok=True)
     root = Path(__file__).resolve().parents[2]
     mp4 = root / ".local/graduation-demo-public/demo-export.mp4"
     report = root / ".local/graduation-demo-public/report.json"
