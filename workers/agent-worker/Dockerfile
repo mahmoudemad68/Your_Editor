@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 # Production image for the agent worker. Multi-stage, non-root, no secrets in the image.
 
-FROM node:22.23.3-trixie-slim@sha256:b26b04c123d9ff8ab646ceb18b9d75a1173acf64b9a401094b906d27b29338d4 AS base
+FROM node:26.12.1-trixie-slim@sha256:36793bcbb160a6a16cede1e62b93f84e26b78a972a8a4c0b879c1c12f22761ec AS base
 ENV PNPM_HOME="/pnpm" \
     PATH="/pnpm:$PATH" \
     CI=true \
@@ -46,7 +46,7 @@ RUN pnpm --filter @editagent/agent-worker... build \
     && pnpm --filter @editagent/agent-worker --prod deploy --legacy /out \
     && rm -f /out/node_modules/.pnpm/node_modules/@editagent/agent-worker
 
-FROM node:22.23.3-trixie-slim@sha256:b26b04c123d9ff8ab646ceb18b9d75a1173acf64b9a401094b906d27b29338d4 AS runtime
+FROM node:26.12.1-trixie-slim@sha256:36793bcbb160a6a16cede1e62b93f84e26b78a972a8a4c0b879c1c12f22761ec AS runtime
 RUN groupadd --system --gid 10001 editagent \
     && useradd --system --uid 10001 --gid 10001 --home-dir /home/editagent --create-home --shell /usr/sbin/nologin editagent
 WORKDIR /app
