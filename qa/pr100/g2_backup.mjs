@@ -28,7 +28,10 @@ const client = new S3Client({
   credentials: { accessKeyId, secretAccessKey },
 });
 
+const emitted = new Set();
 function emit(id, status, required, detail) {
+  if (emitted.has(id)) return;
+  emitted.add(id);
   appendFileSync(results, JSON.stringify({ id, gate: "G2", status, required, detail }) + "\n");
   console.log(`${status} ${id}: ${detail}`);
 }
