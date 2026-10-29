@@ -194,50 +194,7 @@ else
   record g2.host_isolation PASS true "host connection to the storage subnet was blocked"
 fi
 
-python3 - <<'PY'
-import hashlib, json, os, subprocess, tempfile, urllib.request
-from pathlib import Path
-results = os.environ["QA_RESULTS"]
-out = Path(os.environ["QA_OUT"])
-
-def emit(case_id, status, required, detail):
-    print(f"{status} {case_id}: {detail}")
-    with open(results, "a", encoding="utf-8") as handle:
-        handle.write(json.dumps({"id": case_id, "gate": "G2", "status": status, "required": required, "detail": detail}) + "\n")
-
-def curl(args):
-    return subprocess.run(["curl", *args], capture_output=True, text=True, check=False)
-
-body = b"qa-backup-restore-proof-v1"
-digest = hashlib.sha256(body).hexdigest()
-blob = out / "proof.bin"
-blob.write_bytes(body)
-common = ["--aws-sigv4", "aws:amz:us-east-1:s3", "--user", "editagent:editagent-dev-secret", "--max-time", "10"]
-put = curl([*common, "-s", "-o", str(out / "put.body"), "-w", "%{http_code}", "-X", "PUT", "--data-binary", f"@{blob}", "-H", "Content-Type: application/octet-stream", "http://127.0.0.1:9000/editagent/projects/qa-backup/proof.bin"])
-backup = Path(tempfile.mkdtemp(prefix="qa-seaweed-backup-"))
-copied = subprocess.run(["sh", "infra/seaweedfs/backup-volumes.sh", str(backup)], capture_output=True, text=True, check=False)
-deleted = curl([*common, "-s", "-o", "/dev/null", "-w", "%{http_code}", "-X", "DELETE", "http://127.0.0.1:9000/editagent/projects/qa-backup/proof.bin"])
-head = curl([*common, "-s", "-o", str(out / "deleted.bin"), "-w", "%{http_code}", "http://127.0.0.1:9000/editagent/projects/qa-backup/proof.bin"])
-restored = subprocess.run(["sh", "infra/seaweedfs/restore-volumes.sh", str(backup)], capture_output=True, text=True, check=False)
-got = curl([*common, "-s", "-D", str(out / "restored.hdr"), "-o", str(out / "restored.bin"), "-w", "%{http_code}", "http://127.0.0.1:9000/editagent/projects/qa-backup/proof.bin"])
-anon = curl(["-s", "-o", str(out / "anon.bin"), "-w", "%{http_code}", "--max-time", "10", "http://127.0.0.1:9000/editagent/projects/qa-backup/proof.bin"])
-actual = hashlib.sha256((out / "restored.bin").read_bytes()).hexdigest() if (out / "restored.bin").is_file() else ""
-ok = copied.returncode == 0 and restored.returncode == 0 and got.stdout.strip() == "200" and actual == digest and anon.stdout.strip() == "403" and head.stdout.strip() in {"404", "403"}
-emit(
-    "g2.backup_restore",
-    "PASS" if ok else "FAIL",
-    True,
-    f"put={put.stdout.strip()} delete_head={head.stdout.strip()} restored_sha256={actual} expected={digest} anonymous={anon.stdout.strip()}",
-)
-corrupt = backup / "corrupt"
-corrupt.mkdir()
-for name in ("seaweed-master.tar", "seaweed-volume.tar", "seaweed-filer.tar"):
-    (corrupt / name).write_bytes(b"not-a-tar")
-bad = subprocess.run(["sh", "infra/seaweedfs/restore-volumes.sh", str(corrupt)], capture_output=True, text=True, check=False)
-emit("g2.corrupt_backup_control", "PASS" if bad.returncode != 0 else "FAIL", True, f"corrupt restore exit={bad.returncode}")
-missing = subprocess.run(["sh", "infra/seaweedfs/restore-volumes.sh", str(out / "missing-backup")], capture_output=True, text=True, check=False)
-emit("g2.missing_backup_control", "PASS" if missing.returncode != 0 else "FAIL", True, f"missing restore exit={missing.returncode}")
-PY
+node qa/pr100/g2_backup.mjs "$results" >"$out/backup-proof.log" 2>&1 || fail=1
 
 record g2.volume_migration NOT_VERIFIED false "PRODUCTION_VOLUME_MIGRATION=NOT_VERIFIED; disposable current-version volumes do not prove production migration or rollback"
 

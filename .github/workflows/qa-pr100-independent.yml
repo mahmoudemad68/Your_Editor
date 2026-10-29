@@ -158,6 +158,13 @@ jobs:
         with:
           cache: pnpm
           node-version-file: .nvmrc
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          python-version: "3.11"
+          version: "0.12.20"
       - name: Pin product commit
         env:
           PR_HEAD_SHA: 12b09f704d32bc68f662404872586f89d26f284f
@@ -165,6 +172,7 @@ jobs:
       - name: Install workspace, FFmpeg, and Chrome
         run: |
           pnpm install --frozen-lockfile
+          pnpm build
           sh tools/test/ensure-ffmpeg.sh
           sh tools/test/ensure-chrome.sh
       - name: Real render, edit, and browser export
@@ -175,6 +183,7 @@ jobs:
           pnpm render:test --graduation-demo > "$RUNNER_TEMP/render.log" 2>&1
           code=$?
           set -e
+          tail -n 160 "$RUNNER_TEMP/render.log" || true
           if [ "$code" = 0 ]; then
             python3 qa/pr100/emit_cli.py "$RUNNER_TEMP/g3-render.jsonl" g3.render_regression G3 PASS true "pnpm render:test --graduation-demo passed"
           else
@@ -198,6 +207,7 @@ jobs:
             .local/graduation-demo-public/demo-export.mp4
             .local/graduation-demo-public/report.json
             .local/graduation-demo-public/*.png
+            ${{ runner.temp }}/render.log
 
   walking-skeleton:
     name: G3 walking skeleton
@@ -334,6 +344,13 @@ jobs:
         with:
           cache: pnpm
           node-version-file: .nvmrc
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          python-version: "3.11"
+          version: "0.12.20"
       - name: Pin product commit
         run: python3 qa/pr100/assert_product_pin.py
       - name: Install workspace
