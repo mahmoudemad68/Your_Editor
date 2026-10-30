@@ -81,9 +81,15 @@ jobs:
           signal.signal(signal.SIGXFSZ,signal.SIG_IGN)
           assert resource.getrlimit(resource.RLIMIT_FSIZE)[0]==4096
           try:
-           with open(sys.argv[1],"wb",buffering=0) as f:f.write(b"x"*16385)
+           with open(sys.argv[1],"wb",buffering=0) as f:
+            total=0
+            while total<16385:
+             n=f.write(b"x"*min(2048,16385-total))
+             if n is None or n<=0: raise RuntimeError("short write with no progress")
+             total+=n
           except OSError as e:
-           if e.errno==errno.EFBIG: print("FILE_DENIED");sys.exit(0)
+           if e.errno==errno.EFBIG and os.stat(sys.argv[1]).st_size<=4096:
+            print("FILE_DENIED");sys.exit(0)
            raise
           print("UNEXPECTED_WRITE");sys.exit(13)
           """, (oversized,), expected=lambda rc,out,err,cpu: rc==0 and "FILE_DENIED" in out)
