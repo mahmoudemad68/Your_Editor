@@ -1,0 +1,142 @@
+name: PC100 Linux resource preflight
+
+on:
+  push:
+    branches:
+      - ci/resource-preflight-pc100-20261030
+
+permissions:
+  contents: read
+
+jobs:
+  resource-admission:
+    name: Linux RLIMIT and Node24
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - name: Prepare ephemeral Linux Node24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Verify kernel limits on Linux-native scratch
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import os, sys, time, json, signal, resource, subprocess, tempfile
+          from pathlib import Path
+
+          results = []
+          with tempfile.TemporaryDirectory(prefix="pc100-linux-rlimit-", dir=os.environ["RUNNER_TEMP"]) as temp:
+              env = {"PATH": os.environ["PATH"], "LANG": "C.UTF-8", "HOME": temp}
+              print("PLATFORM", sys.platform, os.uname().release)
+              print("SCRATCH", temp)
+              print("FILESYSTEM", subprocess.check_output(
+                  ["findmnt", "-T", temp, "-no", "FSTYPE,SOURCE"], text=True).strip())
+
+              def probe(name, code, args=(), timeout=6, expected=None):
+                  before = resource.getrusage(resource.RUSAGE_CHILDREN)
+                  process = subprocess.Popen(
+                      [sys.executable, "-c", code, *args],
+                      stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                      stderr=subprocess.PIPE, text=True, env=env, start_new_session=True)
+                  timed_out = False
+                  try:
+                      out, err = process.communicate(timeout=timeout)
+                  except subprocess.TimeoutExpired:
+                      timed_out = True
+                      os.killpg(process.pid, signal.SIGKILL)
+                      out, err = process.communicate()
+                  after = resource.getrusage(resource.RUSAGE_CHILDREN)
+                  cpu = (after.ru_utime + after.ru_stime) - (before.ru_utime + before.ru_stime)
+                  ok = not timed_out and (expected(process.returncode, out, err, cpu) if expected else process.returncode == 0)
+                  results.append((name, ok))
+                  print("PROBE", json.dumps({"name": name, "pass": ok, "returncode": process.returncode,
+                      "watchdog": timed_out, "cpu_seconds": round(cpu, 3),
+                      "stdout": out[:300], "stderr": err[:300]}))
+                  return ok
+
+              probe("positive-below-limit", """
+          import resource,sys,os
+          resource.setrlimit(resource.RLIMIT_AS,(256*1024**2,256*1024**2))
+          resource.setrlimit(resource.RLIMIT_FSIZE,(4096,4096))
+          x=bytearray(1024*1024)
+          with open(sys.argv[1],"wb",buffering=0) as f:f.write(b"x"*1024)
+          assert len(x)==1024*1024
+          """, (str(Path(temp)/"positive"),))
+
+              probe("RLIMIT_AS-oversize-denied", """
+          import resource,sys
+          resource.setrlimit(resource.RLIMIT_AS,(256*1024**2,256*1024**2))
+          assert resource.getrlimit(resource.RLIMIT_AS)[0]==256*1024**2
+          try: x=bytearray(512*1024**2)
+          except MemoryError: print("ALLOC_DENIED");sys.exit(0)
+          print("UNEXPECTED_ALLOCATION");sys.exit(12)
+          """, expected=lambda rc,out,err,cpu: rc==0 and "ALLOC_DENIED" in out)
+
+              oversized = str(Path(temp)/"oversize")
+              probe("RLIMIT_FSIZE-oversize-denied", """
+          import resource,sys,signal,os,errno
+          resource.setrlimit(resource.RLIMIT_FSIZE,(4096,4096))
+          signal.signal(signal.SIGXFSZ,signal.SIG_IGN)
+          assert resource.getrlimit(resource.RLIMIT_FSIZE)[0]==4096
+          try:
+           with open(sys.argv[1],"wb",buffering=0) as f:f.write(b"x"*16385)
+          except OSError as e:
+           if e.errno==errno.EFBIG: print("FILE_DENIED");sys.exit(0)
+           raise
+          print("UNEXPECTED_WRITE");sys.exit(13)
+          """, (oversized,), expected=lambda rc,out,err,cpu: rc==0 and "FILE_DENIED" in out)
+              size = Path(oversized).stat().st_size if Path(oversized).exists() else -1
+              results.append(("RLIMIT_FSIZE-physical-size", 0 <= size <= 4096))
+              print("FILE_BYTES", size)
+
+              probe("RLIMIT_CPU-kernel-signal", """
+          import resource
+          resource.setrlimit(resource.RLIMIT_CPU,(1,2))
+          v=0
+          while True:v=(v+1)%1000003
+          """, timeout=6, expected=lambda rc,out,err,cpu:
+                  rc in (-signal.SIGXCPU,-signal.SIGKILL) and 0.7<=cpu<=3.0)
+
+              child_file = Path(temp)/"process-group-child.pid"
+              group_parent = subprocess.Popen([sys.executable, "-c", """
+          import subprocess,sys,time
+          p=subprocess.Popen([sys.executable,"-c","import time;time.sleep(30)"])
+          with open(sys.argv[1],"w") as f:f.write(str(p.pid))
+          time.sleep(30)
+          """, str(child_file)], stdin=subprocess.DEVNULL,
+                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                  env=env, start_new_session=True)
+              for _ in range(50):
+                  if child_file.exists(): break
+                  time.sleep(0.05)
+              child_pid = int(child_file.read_text()) if child_file.exists() else None
+              os.killpg(group_parent.pid, signal.SIGTERM)
+              try: group_parent.wait(timeout=3)
+              except subprocess.TimeoutExpired:
+                  os.killpg(group_parent.pid, signal.SIGKILL)
+                  group_parent.wait()
+              time.sleep(0.2)
+              def inert(pid):
+                  if pid is None: return False
+                  stat = Path("/proc")/str(pid)/"stat"
+                  return not stat.exists() or stat.read_text().split()[2] == "Z"
+              group_ok = group_parent.returncode == -signal.SIGTERM and inert(child_pid)
+              results.append(("process-group-termination", group_ok))
+              print("PROCESS_GROUP", json.dumps({"pass":group_ok,"parent_exit":group_parent.returncode,
+                  "child_terminated_or_zombie":inert(child_pid)}))
+
+              probe("Linux-Node24-under-8GiB-AS", """
+          import os,resource
+          resource.setrlimit(resource.RLIMIT_AS,(8*1024**3,8*1024**3))
+          resource.setrlimit(resource.RLIMIT_CPU,(120,120))
+          os.execvp("node",["node","--max-old-space-size=256","-e",
+                           "if(process.platform!=='linux'||!process.version.startsWith('v24.'))process.exit(7);console.log(process.version,process.platform,process.arch)"])
+          """, timeout=15, expected=lambda rc,out,err,cpu: rc==0 and "v24." in out and "linux" in out)
+
+          passed = all(ok for name,ok in results)
+          print("PC100_LINUX_RESOURCE_PREFLIGHT="+("PASS" if passed else "FAIL"))
+          print("RESULTS", json.dumps(dict(results), sort_keys=True))
+          sys.exit(0 if passed else 2)
+          PY
