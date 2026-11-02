@@ -10,7 +10,10 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { setTimeout as deadlineTimer, clearTimeout as clearDeadline } from "node:timers";
 export const REPO = "mahmoudemad68/Your_Editor",
   REPOSITORY_ID = 1395822921;
-export const BASELINE_SHA = "298abcb83b7f3a3bab68f539c038c8378ea0d3ac";
+// Historical protected-main identity for compatibility only. Authority is the
+// LIVE protected main B, never a PR-authored content snapshot.
+export const BASELINE_SHA = "5cdb1d794d347a36d869027947bb62504dddff92";
+export const SOURCE_SCOPE = "complete-tracked-repository-v1";
 export const WORKFLOW = ".github/workflows/pc100-source-verifier.yml";
 export const MODULE = "tools/test/pc100-source-verifier.mjs";
 export const INTEGRATION = ".github/workflows/pc100-artifact-integration.yml";
@@ -21,6 +24,8 @@ export const OWN_FILES = Object.freeze([
   "tools/test/pc100-artifact-integration.mjs",
   "tests/architecture/pc100-source-verifier.test.mjs",
 ]);
+// Legacy input/test-vector names, NOT an admission allowlist. sourceInventory
+// protects every tracked path; this exported list has no approval authority.
 export const BASELINE_FILES = Object.freeze([
   ".github/workflows/ci.yml",
   ".github/workflows/e2e.yml",
@@ -77,20 +82,39 @@ export function treeEntries(t) {
     t && validSHA(t.sha) && t.truncated === false && Array.isArray(t.tree),
     "POLICY_TREE_INCOMPLETE",
   );
+  need(t.tree.length <= 20000, "POLICY_TREE_RESOURCE_LIMIT");
   const result = new Map();
   for (const e of t.tree) {
-    need(typeof e.path === "string" && !result.has(e.path), "POLICY_PATH_DUPLICATE");
+    need(
+      typeof e.path === "string" &&
+        e.path.length <= 4096 &&
+        !e.path.includes("\\") &&
+        [...e.path].every((c) => c.charCodeAt(0) >= 32 && c.charCodeAt(0) !== 127) &&
+        !e.path.startsWith("/") &&
+        e.path.split("/").every((p) => p && p !== "." && p !== ".." && p !== ".git"),
+      "POLICY_PATH_UNSAFE",
+    );
+    need(!result.has(e.path), "POLICY_PATH_DUPLICATE");
+    need(validSHA(e.sha), "POLICY_OBJECT_INVALID");
+    need(
+      (e.type === "tree" && e.mode === "040000") ||
+        (e.type === "blob" && ["100644", "100755"].includes(e.mode)),
+      "POLICY_FILE_UNSAFE_OR_MISSING",
+    );
     result.set(e.path, e);
   }
   return result;
 }
-function blob(entries, p) {
-  const e = entries.get(p);
-  need(
-    e && e.type === "blob" && ["100644", "100755"].includes(e.mode) && validSHA(e.sha),
-    "POLICY_FILE_UNSAFE_OR_MISSING",
+// Compare the COMPLETE Git tree, including mode and additions/removals. This
+// closes every tracked transitive executable/config dependency, not just a
+// guessed list of entrypoints. External submodules and symlinks are unsupported.
+export function sourceInventory(t) {
+  return Object.fromEntries(
+    [...treeEntries(t)]
+      .filter(([, e]) => e.type === "blob")
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      .map(([p, e]) => [p, { blob_sha1: e.sha, mode: e.mode }]),
   );
-  return e;
 }
 export function verifySourceSnapshot(s) {
   const { pr, main, head, merge, baselineTree, headTree, trustedTree, upstream, trustedSHA } = s;
@@ -105,8 +129,8 @@ export function verifySourceSnapshot(s) {
   need(
     main?.name === "main" &&
       main.protected === true &&
-      validSHA(main.commit?.sha) &&
-      main.commit.sha === trustedSHA &&
+      validSHA(trustedSHA) &&
+      main.commit?.sha === trustedSHA &&
       pr.base.sha === trustedSHA,
     "POLICY_TRUSTED_BASE_DRIFT",
   );
@@ -122,11 +146,26 @@ export function verifySourceSnapshot(s) {
     "POLICY_MERGE_IDENTITY",
   );
   need(
-    headTree.sha === head.tree.sha &&
-      trustedTree.sha === main.commit.commit.tree.sha &&
-      baselineTree.sha === s.baseline.tree.sha &&
-      s.baseline.sha === BASELINE_SHA,
+    headTree.sha === head.tree.sha && trustedTree.sha === main.commit.commit.tree.sha,
     "POLICY_TREE_IDENTITY",
+  );
+  // A caller cannot nominate an unprotected PR commit, or its own hashes, as
+  // approved policy. No override manifest is accepted by this bootstrap.
+  need(
+    s.baseline?.sha === B &&
+      s.baseline.tree.sha === trustedTree.sha &&
+      baselineTree.sha === trustedTree.sha,
+    "UNTRUSTED_BASELINE_REJECTED",
+  );
+  const trusted = sourceInventory(trustedTree),
+    target = sourceInventory(headTree);
+  need(
+    canonical(sourceInventory(baselineTree)) === canonical(trusted),
+    "UNTRUSTED_BASELINE_REJECTED",
+  );
+  need(
+    canonical(target) === canonical(trusted) && headTree.sha === trustedTree.sha,
+    "UNTRUSTED_SOURCE_REJECTED",
   );
   need(
     upstream?.repository?.id === REPOSITORY_ID &&
@@ -140,17 +179,11 @@ export function verifySourceSnapshot(s) {
       upstream.pull_requests?.some((p) => p.number === 100 && p.head.sha === H && p.base.sha === B),
     "POLICY_PREFLIGHT_NOT_QUALIFIED",
   );
-  const base = treeEntries(baselineTree),
-    target = treeEntries(headTree),
-    trusted = treeEntries(trustedTree);
-  for (const p of BASELINE_FILES)
-    need(canonical(blob(base, p)) === canonical(blob(target, p)), "POLICY_BASELINE_TAMPERING");
-  for (const p of OWN_FILES)
-    need(canonical(blob(trusted, p)) === canonical(blob(target, p)), "POLICY_VERIFIER_TAMPERING");
   return {
-    schema: "pc100-development-policy-v1",
-    decision: "DEVELOPMENT_SOURCE_VERIFIED",
-    scope: "development-only",
+    schema: "pc100-development-integrity-v2",
+    decision: "DEVELOPMENT_SOURCE_INTEGRITY_VERIFIED",
+    scope: "development-integrity-only",
+    candidate_admission_authorized: false,
     release_authorized: false,
     repository_id: REPOSITORY_ID,
     pr: 100,
@@ -159,26 +192,56 @@ export function verifySourceSnapshot(s) {
     M,
     TH: head.tree.sha,
     TM: merge.tree.sha,
-    baseline: BASELINE_SHA,
-    trusted_workflow_sha: trustedSHA,
+    baseline: B,
+    trusted_workflow_sha: B,
+    source_scope: SOURCE_SCOPE,
+    file_count: Object.keys(trusted).length,
+    inventory_sha256: hash(canonical(trusted)),
     upstream_run: upstream.id,
     upstream_attempt: 1,
   };
 }
+const DECISION_KEYS = [
+  "schema",
+  "decision",
+  "scope",
+  "candidate_admission_authorized",
+  "release_authorized",
+  "repository_id",
+  "pr",
+  "H",
+  "B",
+  "M",
+  "TH",
+  "TM",
+  "baseline",
+  "trusted_workflow_sha",
+  "source_scope",
+  "file_count",
+  "inventory_sha256",
+  "upstream_run",
+  "upstream_attempt",
+].sort();
 export function verifyTrustedEvidence(decision, run, check, context, trustedWorkflowId) {
   need(
-    decision?.schema === "pc100-development-policy-v1" &&
-      decision.decision === "DEVELOPMENT_SOURCE_VERIFIED" &&
-      decision.scope === "development-only" &&
+    decision &&
+      canonical(Object.keys(decision).sort()) === canonical(DECISION_KEYS) &&
+      decision.schema === "pc100-development-integrity-v2" &&
+      decision.decision === "DEVELOPMENT_SOURCE_INTEGRITY_VERIFIED" &&
+      decision.scope === "development-integrity-only" &&
+      decision.candidate_admission_authorized === false &&
       decision.release_authorized === false &&
-      decision.baseline === BASELINE_SHA,
+      decision.baseline === context.B &&
+      decision.source_scope === SOURCE_SCOPE,
     "POLICY_SCOPE_REJECTED",
   );
   need(
     decision.repository_id === REPOSITORY_ID &&
       decision.pr === 100 &&
-      ["H", "B", "M", "TH", "TM"].every((k) => decision[k] === context[k]) &&
-      decision.TH === decision.TM &&
+      ["H", "B", "M", "TH", "TM"].every(
+        (k) => validSHA(context[k]) && decision[k] === context[k],
+      ) &&
+      context.TH === context.TM &&
       decision.trusted_workflow_sha === context.B &&
       decision.upstream_attempt === 1,
     "POLICY_EVIDENCE_IDENTITY",
@@ -191,12 +254,14 @@ export function verifyTrustedEvidence(decision, run, check, context, trustedWork
       run.status === "completed" &&
       run.conclusion === "success" &&
       run.repository?.id === REPOSITORY_ID &&
-      run.head_repository?.id === REPOSITORY_ID,
+      run.head_repository?.id === REPOSITORY_ID &&
+      run.head_sha === context.B,
     "POLICY_VERIFIER_RUN_REJECTED",
   );
   need(
     check?.app?.id === 15368 &&
       check.check_suite?.id === run.check_suite_id &&
+      check.head_sha === context.B &&
       check.head_sha === run.head_sha &&
       check.name === "PC100 trusted source verification" &&
       check.status === "completed" &&
@@ -204,16 +269,10 @@ export function verifyTrustedEvidence(decision, run, check, context, trustedWork
     "POLICY_VERIFIER_CHECK_REJECTED",
   );
   need(
-    decision.profile === "seaweedfs-go-s-w-production-candidate-v1" &&
-      /^[a-f0-9]{64}$/.test(decision.K ?? "") &&
-      /^[a-f0-9]{64}$/.test(decision.L ?? ""),
-    "POLICY_BUILD_CONTRACT",
-  );
-  need(
-    decision.files &&
-      Object.keys(decision.files).sort().join("\n") ===
-        [...BASELINE_FILES, ...OWN_FILES].sort().join("\n") &&
-      Object.values(decision.files).every((s) => /^[a-f0-9]{64}$/.test(s)),
+    Number.isSafeInteger(decision.file_count) &&
+      decision.file_count > 0 &&
+      decision.file_count <= 20000 &&
+      /^[a-f0-9]{64}$/.test(decision.inventory_sha256 ?? ""),
     "POLICY_FILE_MAP_REJECTED",
   );
   return {
@@ -221,6 +280,40 @@ export function verifyTrustedEvidence(decision, run, check, context, trustedWork
     evidence: { run: run.id, attempt: 1, check: check.id, workflow: trustedWorkflowId },
     record_sha256: hash(canonical(decision)),
   };
+}
+// Targeted, complete pagination. A truncated page, unstable total, duplicate ID,
+// API error or bounded resource exhaustion can never produce a trusted result.
+export async function completePages(read, route, field) {
+  const rows = [],
+    seen = new Set();
+  let total;
+  for (let page = 1; page <= 40; page++) {
+    const data = await read(`${route}${route.includes("?") ? "&" : "?"}per_page=100&page=${page}`);
+    const chunk = field ? data[field] : data;
+    need(Array.isArray(chunk) && chunk.length <= 100, "POLICY_PAGE_INCOMPLETE");
+    if (field) {
+      need(
+        Number.isSafeInteger(data.total_count) && data.total_count >= 0 && data.total_count <= 4000,
+        "POLICY_INVENTORY_RESOURCE_LIMIT",
+      );
+      if (total === undefined) total = data.total_count;
+      need(
+        data.total_count === total && chunk.length === Math.min(100, total - rows.length),
+        "POLICY_PAGE_INCOMPLETE",
+      );
+    }
+    for (const item of chunk) {
+      const key = field ? item.id : hash(canonical(item));
+      need(
+        (!field || (Number.isSafeInteger(key) && key > 0)) && !seen.has(key),
+        "POLICY_PAGE_DUPLICATE",
+      );
+      seen.add(key);
+      rows.push(item);
+    }
+    if (field ? rows.length === total : chunk.length < 100) return rows;
+  }
+  fail("POLICY_INVENTORY_RESOURCE_LIMIT");
 }
 export async function api(
   route,
@@ -266,10 +359,12 @@ export async function api(
 }
 export async function observeTrustedEvidence(context, read = api) {
   const main = await read("branches/main");
-  need(main.protected && main.commit.sha === context.B, "POLICY_TRUSTED_BASE_DRIFT");
+  need(main.protected === true && main.commit.sha === context.B, "POLICY_TRUSTED_BASE_DRIFT");
   const commit = await read(`git/commits/${context.B}`),
-    tree = treeEntries(await read(`git/trees/${commit.tree.sha}?recursive=1`));
+    rawTree = await read(`git/trees/${commit.tree.sha}?recursive=1`),
+    tree = treeEntries(rawTree);
   if (!tree.has(WORKFLOW) || !tree.has(MODULE)) fail("TRUSTED_VERIFIER_NOT_INSTALLED");
+  const trustedFiles = sourceInventory(rawTree);
   const live = await read("pulls/100");
   need(
     live.head.sha === context.H &&
@@ -280,16 +375,27 @@ export async function observeTrustedEvidence(context, read = api) {
       !live.merged,
     "POLICY_LIVE_DRIFT",
   );
-  const workflow = await read(`actions/workflows/${WORKFLOW.split("/").at(-1)}`);
-  need(workflow.path === WORKFLOW, "POLICY_WORKFLOW_REJECTED");
-  const runs = await read(`actions/workflows/${workflow.id}/runs?event=workflow_run&per_page=100`);
-  need(runs.total_count <= 100, "POLICY_RUN_INVENTORY_INCOMPLETE");
+  const workflow = await read("actions/workflows/pc100-source-verifier.yml");
+  need(workflow.path === WORKFLOW && Number.isSafeInteger(workflow.id), "POLICY_WORKFLOW_REJECTED");
+  const runs = await completePages(
+    read,
+    `actions/workflows/${workflow.id}/runs?event=workflow_run&head_sha=${context.B}`,
+    "workflow_runs",
+  );
   const found = [];
-  for (const run of runs.workflow_runs) {
+  for (const run of runs) {
+    need(
+      run.head_sha === context.B &&
+        run.workflow_id === workflow.id &&
+        run.path === WORKFLOW &&
+        run.repository?.id === REPOSITORY_ID &&
+        run.head_repository?.id === REPOSITORY_ID,
+      "POLICY_VERIFIER_RUN_REJECTED",
+    );
     if (run.status !== "completed" || run.conclusion !== "success" || run.run_attempt !== 1)
       continue;
-    const jobs = await read(`actions/runs/${run.id}/attempts/1/jobs?per_page=100`);
-    for (const job of jobs.jobs.filter(
+    const jobs = await completePages(read, `actions/runs/${run.id}/attempts/1/jobs`, "jobs");
+    for (const job of jobs.filter(
       (j) => j.name === "PC100 trusted source verification" && j.conclusion === "success",
     )) {
       need(
@@ -304,33 +410,37 @@ export async function observeTrustedEvidence(context, read = api) {
       );
       const cid = job.check_run_url.split("/").at(-1),
         check = await read(`check-runs/${cid}`),
-        annotations = await read(`check-runs/${cid}/annotations?per_page=100`);
-      need(annotations.length < 100, "POLICY_ANNOTATIONS_INCOMPLETE");
+        annotations = await completePages(read, `check-runs/${cid}/annotations`);
       const decisions = annotations.filter((a) => a.title === "PC100 development source");
       need(decisions.length === 1, "POLICY_EVIDENCE_MISSING_OR_AMBIGUOUS");
-      for (const a of decisions) {
-        let v;
-        try {
-          v = JSON.parse(a.message);
-        } catch {
-          fail("POLICY_ANNOTATION_INVALID");
-        }
-        if (v.H === context.H && v.B === context.B)
-          found.push(verifyTrustedEvidence(v, run, check, context, workflow.id));
+      let v;
+      try {
+        v = JSON.parse(decisions[0].message);
+      } catch {
+        fail("POLICY_ANNOTATION_INVALID");
+      }
+      if (v.H === context.H && v.B === context.B) {
+        const verified = verifyTrustedEvidence(v, run, check, context, workflow.id);
+        need(
+          v.inventory_sha256 === hash(canonical(trustedFiles)) &&
+            v.file_count === Object.keys(trustedFiles).length &&
+            context.TH === rawTree.sha,
+          "UNTRUSTED_SOURCE_REJECTED",
+        );
+        found.push(verified);
       }
     }
   }
   need(found.length <= 1, "POLICY_EVIDENCE_MISSING_OR_AMBIGUOUS");
   if (!found.length) {
-    const pending = await read(
-      `actions/workflows/pc100-artifact-integration.yml/runs?event=pull_request&head_sha=${context.H}&per_page=100`,
+    const pending = await completePages(
+      read,
+      `actions/workflows/pc100-artifact-integration.yml/runs?event=pull_request&head_sha=${context.H}`,
+      "workflow_runs",
     );
-    need(
-      pending.total_count <= 1 && pending.workflow_runs.length === pending.total_count,
-      "POLICY_PREFLIGHT_AMBIGUOUS",
-    );
-    if (pending.total_count) {
-      const r = pending.workflow_runs[0];
+    need(pending.length <= 1, "POLICY_PREFLIGHT_AMBIGUOUS");
+    if (pending.length) {
+      const r = pending[0];
       need(
         r.repository?.id === REPOSITORY_ID &&
           r.head_repository?.id === REPOSITORY_ID &&
@@ -340,13 +450,10 @@ export async function observeTrustedEvidence(context, read = api) {
           r.run_attempt === 1 &&
           r.pull_requests?.some(
             (p) => p.number === 100 && p.head.sha === context.H && p.base.sha === context.B,
-          ),
-        "POLICY_PREFLIGHT_NOT_QUALIFIED",
-      );
-      need(
-        ["queued", "in_progress", "requested", "waiting", "pending", "completed"].includes(
-          r.status,
-        ) &&
+          ) &&
+          ["queued", "in_progress", "requested", "waiting", "pending", "completed"].includes(
+            r.status,
+          ) &&
           (r.status !== "completed" || r.conclusion === "success"),
         "POLICY_PREFLIGHT_NOT_QUALIFIED",
       );
@@ -355,9 +462,13 @@ export async function observeTrustedEvidence(context, read = api) {
   }
   const result = found[0];
   need(Number.isSafeInteger(result.upstream_run) && result.upstream_run > 0, "POLICY_UPSTREAM_ID");
-  const upstream = await read(`actions/runs/${result.upstream_run}`);
+  const upstream = await read(`actions/runs/${result.upstream_run}`),
+    integration = await read("actions/workflows/pc100-artifact-integration.yml");
   need(
-    upstream.path === INTEGRATION &&
+    upstream.id === result.upstream_run &&
+      upstream.workflow_id === integration.id &&
+      integration.path === INTEGRATION &&
+      upstream.path === INTEGRATION &&
       upstream.event === "pull_request" &&
       upstream.head_sha === context.H &&
       upstream.run_attempt === 1 &&
@@ -426,76 +537,46 @@ export async function readTrustedEvidence(context, read = api, timing = { now: D
     controller.abort();
   }
 }
-async function main() {
-  need(process.env.GITHUB_EVENT_NAME === "workflow_run", "POLICY_DEFAULT_EVENT_REQUIRED");
-  const event = JSON.parse(await readFile(process.env.GITHUB_EVENT_PATH, "utf8"));
+export async function verifyEvent(event, trustedSHA, read = api) {
   need(
     Number.isSafeInteger(event.workflow_run?.id) && event.workflow_run.id > 0,
     "POLICY_UPSTREAM_ID",
   );
-  const trustedSHA = process.env.TRUSTED_WORKFLOW_SHA;
   need(validSHA(trustedSHA), "POLICY_TRUSTED_SOURCE_REQUIRED");
-  const [repo, pr, main, upstream, baseline, trusted] = await Promise.all([
-    api(""),
-    api("pulls/100"),
-    api("branches/main"),
-    api(`actions/runs/${Number(event.workflow_run.id)}`),
-    api(`git/commits/${BASELINE_SHA}`),
-    api(`git/commits/${trustedSHA}`),
+  const [repo, pr, main, upstream, trusted, integration] = await Promise.all([
+    read(""),
+    read("pulls/100"),
+    read("branches/main"),
+    read(`actions/runs/${event.workflow_run.id}`),
+    read(`git/commits/${trustedSHA}`),
+    read("actions/workflows/pc100-artifact-integration.yml"),
   ]);
   need(repo.id === REPOSITORY_ID && repo.default_branch === "main", "POLICY_REPOSITORY");
-  const [head, merge, baselineTree, trustedTree] = await Promise.all([
-    api(`git/commits/${pr.head.sha}`),
-    api(`git/commits/${pr.merge_commit_sha}`),
-    api(`git/trees/${baseline.tree.sha}?recursive=1`),
-    api(`git/trees/${trusted.tree.sha}?recursive=1`),
+  need(
+    upstream.id === event.workflow_run.id &&
+      upstream.workflow_id === integration.id &&
+      integration.path === INTEGRATION,
+    "POLICY_PREFLIGHT_NOT_QUALIFIED",
+  );
+  const [head, merge, trustedTree] = await Promise.all([
+    read(`git/commits/${pr.head.sha}`),
+    read(`git/commits/${pr.merge_commit_sha}`),
+    read(`git/trees/${trusted.tree.sha}?recursive=1`),
   ]);
-  const headTree = await api(`git/trees/${head.tree.sha}?recursive=1`);
+  const headTree = await read(`git/trees/${head.tree.sha}?recursive=1`);
   const decision = verifySourceSnapshot({
     pr,
     main,
-    head,
-    merge,
-    baseline,
-    baselineTree,
-    headTree,
-    trustedTree,
     upstream,
     trustedSHA,
+    head,
+    merge,
+    trustedTree,
+    headTree,
+    baseline: trusted,
+    baselineTree: trustedTree,
   });
-  const entries = treeEntries(headTree);
-  decision.files = {};
-  const cache = new Map();
-  for (const name of [...BASELINE_FILES, ...OWN_FILES]) {
-    const entry = blob(entries, name);
-    let raw = cache.get(entry.sha);
-    if (!raw) {
-      const b = await api(`git/blobs/${entry.sha}`);
-      need(b.encoding === "base64" && b.size <= 512 * 1024, "POLICY_BLOB_REJECTED");
-      raw = Buffer.from(b.content, "base64");
-      need(
-        raw.length === b.size &&
-          createHash("sha1")
-            .update(Buffer.concat([Buffer.from(`blob ${raw.length}\0`), raw]))
-            .digest("hex") === entry.sha,
-        "POLICY_BLOB_DIGEST",
-      );
-      cache.set(entry.sha, raw);
-    }
-    decision.files[name] = hash(raw);
-  }
-  const lock = JSON.parse(
-    cache.get(entries.get("infra/seaweedfs/security-build.lock.json").sha).toString("utf8"),
-  );
-  decision.profile = lock.build.output_profile;
-  decision.K = lock.build.production_contract_sha256;
-  decision.L = decision.files["infra/seaweedfs/security-build.lock.json"];
-  need(
-    decision.profile === "seaweedfs-go-s-w-production-candidate-v1" &&
-      hash(canonical(lock.build.production_contract)) === decision.K,
-    "POLICY_BUILD_CONTRACT",
-  );
-  const [end, endMain] = await Promise.all([api("pulls/100"), api("branches/main")]);
+  const [end, endMain] = await Promise.all([read("pulls/100"), read("branches/main")]);
   need(
     endMain.protected === true &&
       endMain.commit.sha === trustedSHA &&
@@ -504,19 +585,27 @@ async function main() {
       end.merge_commit_sha === decision.M,
     "POLICY_LIVE_DRIFT",
   );
+  return decision;
+}
+async function main() {
+  need(process.env.GITHUB_EVENT_NAME === "workflow_run", "POLICY_DEFAULT_EVENT_REQUIRED");
+  const event = JSON.parse(await readFile(process.env.GITHUB_EVENT_PATH, "utf8"));
+  const decision = await verifyEvent(event, process.env.TRUSTED_WORKFLOW_SHA);
   const record = canonical(decision);
+  // No candidate profile, ELF contract, seal, approval, status write or upload.
   console.log(
     "::notice title=PC100 development source::" +
       record.replaceAll("%", "%25").replaceAll("\r", "%0D").replaceAll("\n", "%0A"),
   );
   console.log(
     JSON.stringify({
-      outcome: "DEVELOPMENT_SOURCE_VERIFIED",
+      outcome: decision.decision,
       H: decision.H,
       B: decision.B,
       TH: decision.TH,
-      record_sha256: hash(record),
-      production_approval: false,
+      inventory_sha256: decision.inventory_sha256,
+      candidate_admission_authorized: false,
+      release_authorized: false,
     }),
   );
 }
