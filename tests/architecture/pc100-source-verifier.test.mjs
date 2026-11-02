@@ -12,6 +12,7 @@ import {
   verifySourceSnapshot,
   verifyTrustedEvidence,
   readTrustedEvidence,
+  observeTrustedEvidence,
 } from "../../tools/test/pc100-source-verifier.mjs";
 const H = "a".repeat(40),
   B = "b".repeat(40),
@@ -217,6 +218,105 @@ test("trusted client reads genuine check association and independently rechecks 
   const result = await readTrustedEvidence(f.x.context, f.read);
   assert.equal(result.evidence.check, 30);
   assert.equal(result.release_authorized, false);
+});
+
+function pendingFixture() {
+  const f = clientFixture();
+  f.rows["actions/workflows/80/runs?event=workflow_run&per_page=100"] = {
+    total_count: 0,
+    workflow_runs: [],
+  };
+  f.rows[
+    `actions/workflows/pc100-artifact-integration.yml/runs?event=pull_request&head_sha=${H}&per_page=100`
+  ] = { total_count: 1, workflow_runs: [f.x.f.upstream] };
+  return f;
+}
+test("same-attempt read reconciliation permits a later completed trusted verdict, never a workflow retry", async () => {
+  const f = pendingFixture();
+  let now = 0,
+    reads = 0;
+  const result = await readTrustedEvidence(f.x.context, f.read, {
+    now: () => now,
+    sleep: async (ms) => {
+      now += ms;
+      reads++;
+      f.rows["actions/workflows/80/runs?event=workflow_run&per_page=100"] = {
+        total_count: 1,
+        workflow_runs: [f.x.run],
+      };
+    },
+  });
+  assert.equal(reads, 1);
+  assert.equal(result.evidence.attempt, 1);
+});
+test("pending verifier cannot exceed the fixed same-attempt read deadline", async () => {
+  const f = pendingFixture();
+  let now = 0,
+    waits = 0;
+  await assert.rejects(
+    () =>
+      readTrustedEvidence(f.x.context, f.read, {
+        now: () => now,
+        sleep: async (ms) => {
+          now += ms;
+          waits++;
+        },
+      }),
+    /POLICY_EVIDENCE_DEADLINE/,
+  );
+  assert.equal(now, 120000);
+  assert.equal(waits, 40);
+});
+test("failed artifact preflight is terminal and never enters pending polling", async () => {
+  const f = pendingFixture();
+  f.x.f.upstream.conclusion = "failure";
+  await assert.rejects(
+    () =>
+      readTrustedEvidence(f.x.context, f.read, {
+        now: () => 0,
+        sleep: async () => assert.fail("must not wait"),
+      }),
+    /POLICY_PREFLIGHT_NOT_QUALIFIED/,
+  );
+});
+test("live HEAD drift during same-attempt polling fails closed", async () => {
+  const f = pendingFixture();
+  let now = 0;
+  await assert.rejects(
+    () =>
+      readTrustedEvidence(f.x.context, f.read, {
+        now: () => now,
+        sleep: async (ms) => {
+          now += ms;
+          f.x.f.pr.head.sha = M;
+        },
+      }),
+    /POLICY_LIVE_DRIFT/,
+  );
+});
+test("pending metadata is distinguished from ambiguous completed evidence", async () => {
+  const f = pendingFixture();
+  await assert.rejects(
+    () => observeTrustedEvidence(f.x.context, f.read),
+    /POLICY_EVIDENCE_PENDING/,
+  );
+});
+test("a successful observation finishing after the absolute deadline never admits", async () => {
+  const f = clientFixture();
+  let now = 0;
+  await assert.rejects(
+    () =>
+      readTrustedEvidence(
+        f.x.context,
+        async (route) => {
+          const value = await f.read(route);
+          if (route === "check-runs/30/annotations?per_page=100") now = 120001;
+          return value;
+        },
+        { now: () => now, sleep: async () => assert.fail("must not wait") },
+      ),
+    /POLICY_EVIDENCE_DEADLINE/,
+  );
 });
 for (const [name, edit] of [
   [

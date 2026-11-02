@@ -6,9 +6,11 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
+import { setTimeout as deadlineTimer, clearTimeout as clearDeadline } from "node:timers";
 export const REPO = "mahmoudemad68/Your_Editor",
   REPOSITORY_ID = 1395822921;
-export const BASELINE_SHA = "3be1d13ff6890885c9067726b149d40c3b064fb4";
+export const BASELINE_SHA = "298abcb83b7f3a3bab68f539c038c8378ea0d3ac";
 export const WORKFLOW = ".github/workflows/pc100-source-verifier.yml";
 export const MODULE = "tools/test/pc100-source-verifier.mjs";
 export const INTEGRATION = ".github/workflows/pc100-artifact-integration.yml";
@@ -220,7 +222,13 @@ export function verifyTrustedEvidence(decision, run, check, context, trustedWork
     record_sha256: hash(canonical(decision)),
   };
 }
-export async function api(route, token = process.env.GITHUB_TOKEN) {
+export async function api(
+  route,
+  token = process.env.PC100_METADATA_TOKEN !== undefined
+    ? process.env.PC100_METADATA_TOKEN
+    : process.env.GITHUB_TOKEN,
+  signal,
+) {
   need(
     typeof route === "string" &&
       !route.startsWith("/") &&
@@ -229,13 +237,22 @@ export async function api(route, token = process.env.GITHUB_TOKEN) {
     "POLICY_API_ROUTE",
   );
   const headers = { Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" };
-  if (token) {
-    need(/^[A-Za-z0-9_.-]{1,4096}$/.test(token), "POLICY_TOKEN_INVALID");
+  if (token !== undefined) {
+    need(
+      typeof token === "string" && /^[A-Za-z0-9_.-]{1,4096}$/.test(token),
+      "POLICY_TOKEN_INVALID",
+    );
     headers.Authorization = `Bearer ${token}`;
   }
   const response = await globalThis.fetch(
     `https://api.github.com/repos/${REPO}${route ? "/" + route : ""}`,
-    { headers, redirect: "error", signal: globalThis.AbortSignal.timeout(15000) },
+    {
+      headers,
+      redirect: "error",
+      signal: signal
+        ? globalThis.AbortSignal.any([signal, globalThis.AbortSignal.timeout(15000)])
+        : globalThis.AbortSignal.timeout(15000),
+    },
   );
   need(response.status === 200, "POLICY_API_UNAVAILABLE");
   let count = 0;
@@ -247,12 +264,22 @@ export async function api(route, token = process.env.GITHUB_TOKEN) {
   }
   return JSON.parse(Buffer.concat(chunks).toString("utf8"));
 }
-export async function readTrustedEvidence(context, read = api) {
+export async function observeTrustedEvidence(context, read = api) {
   const main = await read("branches/main");
   need(main.protected && main.commit.sha === context.B, "POLICY_TRUSTED_BASE_DRIFT");
   const commit = await read(`git/commits/${context.B}`),
     tree = treeEntries(await read(`git/trees/${commit.tree.sha}?recursive=1`));
   if (!tree.has(WORKFLOW) || !tree.has(MODULE)) fail("TRUSTED_VERIFIER_NOT_INSTALLED");
+  const live = await read("pulls/100");
+  need(
+    live.head.sha === context.H &&
+      live.base.sha === context.B &&
+      live.merge_commit_sha === context.M &&
+      live.state === "open" &&
+      live.draft === true &&
+      !live.merged,
+    "POLICY_LIVE_DRIFT",
+  );
   const workflow = await read(`actions/workflows/${WORKFLOW.split("/").at(-1)}`);
   need(workflow.path === WORKFLOW, "POLICY_WORKFLOW_REJECTED");
   const runs = await read(`actions/workflows/${workflow.id}/runs?event=workflow_run&per_page=100`);
@@ -279,7 +306,9 @@ export async function readTrustedEvidence(context, read = api) {
         check = await read(`check-runs/${cid}`),
         annotations = await read(`check-runs/${cid}/annotations?per_page=100`);
       need(annotations.length < 100, "POLICY_ANNOTATIONS_INCOMPLETE");
-      for (const a of annotations.filter((a) => a.title === "PC100 development source")) {
+      const decisions = annotations.filter((a) => a.title === "PC100 development source");
+      need(decisions.length === 1, "POLICY_EVIDENCE_MISSING_OR_AMBIGUOUS");
+      for (const a of decisions) {
         let v;
         try {
           v = JSON.parse(a.message);
@@ -291,7 +320,39 @@ export async function readTrustedEvidence(context, read = api) {
       }
     }
   }
-  need(found.length === 1, "POLICY_EVIDENCE_MISSING_OR_AMBIGUOUS");
+  need(found.length <= 1, "POLICY_EVIDENCE_MISSING_OR_AMBIGUOUS");
+  if (!found.length) {
+    const pending = await read(
+      `actions/workflows/pc100-artifact-integration.yml/runs?event=pull_request&head_sha=${context.H}&per_page=100`,
+    );
+    need(
+      pending.total_count <= 1 && pending.workflow_runs.length === pending.total_count,
+      "POLICY_PREFLIGHT_AMBIGUOUS",
+    );
+    if (pending.total_count) {
+      const r = pending.workflow_runs[0];
+      need(
+        r.repository?.id === REPOSITORY_ID &&
+          r.head_repository?.id === REPOSITORY_ID &&
+          r.path === INTEGRATION &&
+          r.event === "pull_request" &&
+          r.head_sha === context.H &&
+          r.run_attempt === 1 &&
+          r.pull_requests?.some(
+            (p) => p.number === 100 && p.head.sha === context.H && p.base.sha === context.B,
+          ),
+        "POLICY_PREFLIGHT_NOT_QUALIFIED",
+      );
+      need(
+        ["queued", "in_progress", "requested", "waiting", "pending", "completed"].includes(
+          r.status,
+        ) &&
+          (r.status !== "completed" || r.conclusion === "success"),
+        "POLICY_PREFLIGHT_NOT_QUALIFIED",
+      );
+    }
+    fail("POLICY_EVIDENCE_PENDING");
+  }
   const result = found[0];
   need(Number.isSafeInteger(result.upstream_run) && result.upstream_run > 0, "POLICY_UPSTREAM_ID");
   const upstream = await read(`actions/runs/${result.upstream_run}`);
@@ -322,6 +383,48 @@ export async function readTrustedEvidence(context, read = api) {
     "POLICY_LIVE_DRIFT",
   );
   return result;
+}
+// Read-only reconciliation inside the original admission attempt. Never retries
+// a workflow, a failed preflight, ambiguous evidence, or an ordinary test error.
+export async function readTrustedEvidence(context, read = api, timing = { now: Date.now, sleep }) {
+  const deadline = timing.now() + 120000;
+  const controller = new globalThis.AbortController();
+  const expired = new Promise((_, reject) =>
+    controller.signal.addEventListener(
+      "abort",
+      () => reject(new Error("POLICY_EVIDENCE_DEADLINE")),
+      { once: true },
+    ),
+  );
+  void expired.catch(() => {});
+  const timer = deadlineTimer(() => controller.abort(), 120000);
+  const boundedRead = async (route) => {
+    need(timing.now() < deadline, "POLICY_EVIDENCE_DEADLINE");
+    const value = await Promise.race([
+      read === api ? api(route, undefined, controller.signal) : read(route),
+      expired,
+    ]);
+    need(timing.now() < deadline, "POLICY_EVIDENCE_DEADLINE");
+    return value;
+  };
+  try {
+    for (;;) {
+      need(timing.now() < deadline, "POLICY_EVIDENCE_DEADLINE");
+      try {
+        const result = await observeTrustedEvidence(context, boundedRead);
+        need(timing.now() < deadline, "POLICY_EVIDENCE_DEADLINE");
+        return result;
+      } catch (error) {
+        if (error.message !== "POLICY_EVIDENCE_PENDING") throw error;
+        const remaining = deadline - timing.now();
+        need(remaining > 0, "POLICY_EVIDENCE_DEADLINE");
+        await Promise.race([timing.sleep(Math.min(3000, remaining)), expired]);
+      }
+    }
+  } finally {
+    clearDeadline(timer);
+    controller.abort();
+  }
 }
 async function main() {
   need(process.env.GITHUB_EVENT_NAME === "workflow_run", "POLICY_DEFAULT_EVENT_REQUIRED");

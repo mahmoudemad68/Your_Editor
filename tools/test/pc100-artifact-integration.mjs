@@ -16,6 +16,7 @@ import {
   sha256,
   REPOSITORY_ID,
 } from "./load-qualified-storage.mjs";
+import { api as trustedMetadata } from "./pc100-source-verifier.mjs";
 
 const API = "https://api.github.com/repos/mahmoudemad68/Your_Editor/";
 const cap = 128 * 1024;
@@ -46,6 +47,17 @@ if (mode === "deny") {
   }
   const token = process.env.GITHUB_TOKEN;
   delete process.env.GITHUB_TOKEN;
+  process.env.PC100_METADATA_TOKEN = token;
+  try {
+    const metadata = await request(`${API}actions/artifacts/${artifactID}`, { publicOnly: true });
+    assert.equal(metadata.id, artifactID);
+    assert.equal(metadata.workflow_run.id, id);
+    const branch = await trustedMetadata("branches/main");
+    assert.equal(branch.name, "main");
+    assert.equal(branch.protected, true);
+  } finally {
+    delete process.env.PC100_METADATA_TOKEN;
+  }
   await assert.rejects(
     () => request(`${API}actions/artifacts/${artifactID}/zip`, { bytes: true, cap }),
     /ACTIONS_READ_TOKEN_MISSING/,
@@ -66,6 +78,7 @@ if (mode === "deny") {
       missing_actions_read: permissionObservation,
       invalid_token: "PASS_REAL_401",
       absent_token: "PASS_LOCAL_REJECTION",
+      explicit_contents_only_metadata: "PASS_REAL_API",
       artifact_id: artifactID,
       run: id,
       attempt,
