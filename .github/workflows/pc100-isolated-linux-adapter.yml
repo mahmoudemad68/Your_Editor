@@ -36,7 +36,7 @@ jobs:
           test "$(git rev-parse 'HEAD^{tree}')" =
           '08b08c047952eca8f308ea9741ba493162123103'
 
-          test "$(git show -s --format=%P HEAD)" =
+          test "$(git cat-file -p HEAD | sed -n 's/^parent //p')" =
           'af4b26a64d54ef17ed4291641867e2e918b19249'
 
           test "$(node -p 'process.versions.node.split(".")[0]')" = 24
