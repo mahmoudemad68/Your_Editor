@@ -33,15 +33,39 @@ assert.match(sha ?? "", /^[a-f0-9]{40}$/);
 assert.equal(process.env.GITHUB_REPOSITORY, "mahmoudemad68/Your_Editor");
 const mode = process.argv[2] ?? "verify";
 if (mode === "deny") {
+  // Public-repository read endpoints can permit a contents-only installation
+  // token. Record that observed service policy; do not invent a 403 guarantee.
+  let permissionObservation;
+  try {
+    const raw = await request(`${API}actions/artifacts/${artifactID}/zip`, { bytes: true, cap });
+    assert.equal(`sha256:${sha256(raw)}`, `sha256:${process.env.FIXTURE_ARTIFACT_DIGEST}`);
+    permissionObservation = "OBSERVED_PUBLIC_READ_ALLOWED";
+  } catch (error) {
+    assert.equal(error.http_status, 403);
+    permissionObservation = "OBSERVED_ACTIONS_READ_DENIED_403";
+  }
+  const token = process.env.GITHUB_TOKEN;
+  delete process.env.GITHUB_TOKEN;
   await assert.rejects(
     () => request(`${API}actions/artifacts/${artifactID}/zip`, { bytes: true, cap }),
-    (e) => e.http_status === 403,
+    /ACTIONS_READ_TOKEN_MISSING/,
   );
+  process.env.GITHUB_TOKEN = "pc100-deliberately-invalid-credential";
+  try {
+    await assert.rejects(
+      () => request(`${API}actions/artifacts/${artifactID}/zip`, { bytes: true, cap }),
+      (e) => e.http_status === 401,
+    );
+  } finally {
+    process.env.GITHUB_TOKEN = token;
+  }
   console.log(
     JSON.stringify({
-      test: "real missing actions:read",
+      test: "real credential boundaries",
       result: "PASS",
-      status: 403,
+      missing_actions_read: permissionObservation,
+      invalid_token: "PASS_REAL_401",
+      absent_token: "PASS_LOCAL_REJECTION",
       artifact_id: artifactID,
       run: id,
       attempt,

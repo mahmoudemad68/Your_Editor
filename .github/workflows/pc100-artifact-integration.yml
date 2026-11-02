@@ -23,6 +23,7 @@ jobs:
       actions: read
     outputs:
       artifact: ${{ steps.upload.outputs.artifact-id }}
+      digest: ${{ steps.upload.outputs.artifact-digest }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -72,7 +73,7 @@ jobs:
           FIXTURE_ARTIFACT_DIGEST: ${{ steps.upload.outputs.artifact-digest }}
         run: env -u ACTIONS_RUNTIME_TOKEN -u ACTIONS_RESULTS_URL node tools/test/pc100-artifact-integration.mjs verify
   denied:
-    name: PC100 REST rejects missing Actions permission
+    name: PC100 REST credential boundaries
     needs: transport
     runs-on: ubuntu-24.04
     timeout-minutes: 3
@@ -86,9 +87,10 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
           node-version: "24"
-      - name: Require real REST permission rejection
+      - name: Observe public read policy and require real invalid-credential rejection
         env:
           GITHUB_TOKEN: ${{ github.token }}
           TARGET_SHA: ${{ github.event.pull_request.head.sha }}
           FIXTURE_ARTIFACT_ID: ${{ needs.transport.outputs.artifact }}
+          FIXTURE_ARTIFACT_DIGEST: ${{ needs.transport.outputs.digest }}
         run: env -u ACTIONS_RUNTIME_TOKEN -u ACTIONS_RESULTS_URL node tools/test/pc100-artifact-integration.mjs deny
