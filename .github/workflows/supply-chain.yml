@@ -161,6 +161,12 @@ jobs:
           fetch-depth: 2
           persist-credentials: false
 
+      - name: Verify independent exact-source candidate policy before build
+        if: matrix.service == 'seaweedfs'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node tools/test/load-qualified-storage.mjs prepare-producer
+
       - name: Build image
         run: |
           set -eu
@@ -223,32 +229,27 @@ jobs:
       - name: Upload qualified candidate
         id: qualified-candidate
         if: matrix.service == 'seaweedfs' && github.event_name == 'pull_request'
-        uses: actions/upload-artifact@v7
+        uses: ./.github/actions/pc100-bounded-artifact
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         with:
-          name: seaweedfs-candidate-${{ github.run_id }}-${{ github.run_attempt }}
-          path: |
-            .local/seaweedfs-transfer/bundle/image.tar.xz
-            .local/seaweedfs-transfer/bundle/candidate-manifest.json
-            .local/seaweedfs-transfer/bundle/verification.json
-            .local/seaweedfs-transfer/bundle/go-version-m.txt
-            .local/seaweedfs-transfer/bundle/full-trivy.json
-            .local/seaweedfs-transfer/bundle/sbom.spdx.json
-            .local/seaweedfs-transfer/bundle/scanner-versions.json
-          include-hidden-files: true
-          if-no-files-found: error
-          retention-days: 1
+          operation: upload
+          role: source
+          bundle: .local/seaweedfs-transfer/bundle
       - name: Seal qualified candidate upload
         if: matrix.service == 'seaweedfs' && github.event_name == 'pull_request'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: node tools/test/load-qualified-storage.mjs seal '${{ steps.qualified-candidate.outputs.artifact-id }}' '${{ steps.qualified-candidate.outputs.artifact-digest }}'
       - name: Upload candidate seal
         if: matrix.service == 'seaweedfs' && github.event_name == 'pull_request'
-        uses: actions/upload-artifact@v7
+        uses: ./.github/actions/pc100-bounded-artifact
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         with:
-          name: seaweedfs-seal-${{ github.run_id }}-${{ github.run_attempt }}
-          path: .local/seaweedfs-transfer/seal/seal.json
-          include-hidden-files: true
-          if-no-files-found: error
-          retention-days: 1
+          operation: upload
+          role: seal
+          bundle: .local/seaweedfs-transfer/seal
 
       - name: Preserve scanned production image for main publication
         if: github.event_name == 'push' && github.ref == 'refs/heads/main' && matrix.service != 'test-minio'

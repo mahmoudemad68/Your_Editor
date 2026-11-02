@@ -214,3 +214,39 @@ cross-run transfer and one permitted prerequisite-only full re-run are documente
 in `ci-security-remediation-99.md`. Walking's downstream job retains contents-only
 permissions. No operator should treat a generated REVIEW_REQUIRED inventory as
 approval or bypass an admission failure by unsetting CI security variables.
+
+## Production-candidate admission (local implementation, not qualified)
+
+The explicit `seaweedfs-go-s-w-production-candidate-v1` profile is separate from
+`seaweedfs-go-s-w-diagnostic-v1`. The latter is permanently rejected by built/live
+resolution and cannot be uploaded or promoted. Candidate profile markers alone
+are also insufficient: startup requires the authenticated exact-source producer
+admission and actual immutable image/layer/ELF verification before any secret
+preparation. Matching labels, tags, checkout locks, environment flags and copied
+JSON are not approval.
+
+The new resolver requires native admission context even outside GITHUB_ACTIONS;
+portable operator receipt authentication is still pending integration. Do not use
+this uncommitted candidate implementation as an operator release. Production
+volumes, migration and deployment remain unauthorized. Existing accepted runtime
+behavior and storage security tests must pass before any future candidate can be
+used. The MinIO product regression path must remain separate from a genuine
+candidate-SeaweedFS browser-to-export qualification.
+
+For local implementation and test details, see
+[the PC100 checkpoint](ci-security-remediation-99.md#pc100-local-production-candidate-implementation-checkpoint).
+The Ubuntu resource preflight is supporting infrastructure evidence; it does not
+prove new artifact transfers, scanner coverage, S3 behavior or product acceptance.
+
+Technical Lead #6518204248 explicitly defers off-runner operator receipt
+verification as a separate release feature. It does not block completion of
+native PR-candidate integration. The current resolver remains fail closed;
+operator distribution/activation is not authorized or claimed by this batch.
+
+The 2 November source-review correction keeps downstream Walking contents-only:
+public metadata verification is explicit and never inherits Owner/API tokens;
+the official same-run download requires runner artifact-service credentials.
+Raw ZIP, preparation receipt, source policy and producer identities are verified
+before image loading. Unavailable public metadata fails closed. This is locally
+tested software behavior; genuine hosted transfer and Linux qualification remain
+pending. See the source-review correction in the Issue #99 operations document.

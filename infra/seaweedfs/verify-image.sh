@@ -19,7 +19,15 @@ python3 - "$archive" "$work" "$root" <<'PY'
 import hashlib,json,sys,tarfile,posixpath,gzip
 from pathlib import Path
 archive,work,root=map(Path,sys.argv[1:])
-lock=json.loads((root/'infra/seaweedfs/security-build.lock.json').read_text())
+def unique(pairs):
+    out={}
+    for key,value in pairs:
+        if key in out: raise ValueError('duplicate image/provenance JSON key')
+        out[key]=value
+    return out
+def load_json(data):
+    return json.loads(data,object_pairs_hook=unique)
+lock=load_json((root/'infra/seaweedfs/security-build.lock.json').read_text())
 sha=lambda b:hashlib.sha256(b).hexdigest()
 def path(s):
     s=s.removeprefix('./').rstrip('/')
@@ -40,7 +48,7 @@ def image(file,candidate):
         if len(manifest)!=1: raise ValueError('ambiguous image manifest')
         m=manifest[0]; config_bytes=outer.extractfile(path(m['Config'])).read(1048577)
         if len(config_bytes)>1048576: raise ValueError('oversized config')
-        config=json.loads(config_bytes)
+        config=load_json(config_bytes)
         if config.get('architecture')!='amd64' or config.get('os')!='linux': raise ValueError('unsupported platform')
         if 'index.json' in names:
             # Containerd-backed Docker saves also contain OCI metadata. Validate
@@ -145,7 +153,7 @@ for name in allowed-{'usr/share/editagent-seaweedfs'}:
 wrapper=(root/'infra/seaweedfs/docker-entrypoint.sh').read_bytes().replace(b'\r\n',b'\n')
 if files['usr/local/bin/editagent-entrypoint.sh'][-1]!=sha(wrapper): raise ValueError('firewall wrapper mismatch')
 prefix='usr/share/editagent-seaweedfs/'
-if json.loads(data[prefix+'security-build.lock.json'])!=lock: raise ValueError('build lock mismatch')
+if load_json(data[prefix+'security-build.lock.json'])!=lock: raise ValueError('build lock mismatch')
 original_mod=data[prefix+'go.mod'].decode()
 for name,entry in lock['modules'].items():
     current=name+' '+entry['version']
@@ -158,7 +166,7 @@ if not new_sums.issubset(set(sum_lines)): raise ValueError('missing authenticate
 original_sum='\n'.join(line for line in sum_lines if line not in new_sums)+'\n'
 if sha(original_sum.encode())!=lock['source']['go.sum_sha256']: raise ValueError('unapproved checksum graph')
 for label in ['one','two']:
-    measurement=json.loads(data[prefix+'build-'+label+'.json'])
+    measurement=load_json(data[prefix+'build-'+label+'.json'])
     if measurement.get('elf_sha256')!=new or measurement.get('cache_initially_empty') is not True or measurement.get('wall_seconds',0)<=0: raise ValueError('build measurement mismatch')
 records=data[prefix+'elf-sha256.txt'].decode().splitlines()
 if len(records)!=2 or any(line.split()[0]!=new for line in records): raise ValueError('reproducibility evidence mismatch')
@@ -172,7 +180,7 @@ for key in ('Cmd','WorkingDir','Volumes','ExposedPorts','User','Env'):
 if cfg['config'].get('Entrypoint')!=['/usr/local/bin/editagent-entrypoint.sh']: raise ValueError('entrypoint drift')
 if cfg['config'].get('Labels',{}).get('org.opencontainers.image.version')!='4.51-editagent-sec1': raise ValueError('custom image identity missing')
 (work/'weed').write_bytes(data['usr/bin/weed'])
-(work/'verify-image.json').write_text(json.dumps({'image_id':image_id,'elf_sha256':new,'old_elf_absent':True,'runtime_preserved':True,'native_brotli':'1.2.1-r0','rust_sha256':{n:files[n][-1] for n in ['usr/bin/weed-volume','usr/bin/weed-worker']},'lock_sha256':sha((root/'infra/seaweedfs/security-build.lock.json').read_bytes()),'reproducible_elf':True,'build_measurements':{label:json.loads(data[prefix+'build-'+label+'.json']) for label in ['one','two']},'project_revision':cfg['config'].get('Labels',{}).get('org.opencontainers.image.revision'),'project_source':cfg['config'].get('Labels',{}).get('org.opencontainers.image.source')},indent=2)+'\n')
+(work/'verify-image.json').write_text(json.dumps({'image_id':image_id,'elf_sha256':new,'old_elf_absent':True,'runtime_preserved':True,'native_brotli':'1.2.1-r0','rust_sha256':{n:files[n][-1] for n in ['usr/bin/weed-volume','usr/bin/weed-worker']},'lock_sha256':sha((root/'infra/seaweedfs/security-build.lock.json').read_bytes()),'reproducible_elf':True,'build_measurements':{label:load_json(data[prefix+'build-'+label+'.json']) for label in ['one','two']},'diff_ids':cfg['rootfs']['diff_ids'],'project_revision':cfg['config'].get('Labels',{}).get('org.opencontainers.image.revision'),'project_source':cfg['config'].get('Labels',{}).get('org.opencontainers.image.source')},indent=2)+'\n')
 (work/'claimed-go-version-m.txt').write_bytes(data[prefix+'go-version-m.txt'])
 PY
 probe_name="editagent-seaweed-metadata-$$"
@@ -184,6 +192,13 @@ timeout 120 docker run --rm --name "$probe_name" --platform linux/amd64 --networ
 python3 - "$work" "$root" <<'PY'
 import json,sys
 from pathlib import Path
+def unique_pairs(pairs):
+    result={}
+    for k,v in pairs:
+        if k in result: raise ValueError('duplicate JSON key')
+        result[k]=v
+    return result
+def load_json(data): return json.loads(data,object_pairs_hook=unique_pairs)
 p,root=map(Path,sys.argv[1:]); actual=(p/'actual-go-version-m.txt').read_text(); claimed=(p/'claimed-go-version-m.txt').read_text()
 if actual.splitlines()[0].split(': ',1)[1]!=claimed.splitlines()[0].split(': ',1)[1] or actual.splitlines()[1:]!=claimed.splitlines()[1:]: raise ValueError('actual ELF metadata differs')
 if not actual.splitlines()[0].endswith('go1.26.10'): raise ValueError('compiler mismatch')
@@ -191,9 +206,10 @@ modules={}
 for line in actual.splitlines()[1:]:
     parts=line.split()
     if parts and parts[0]=='dep': modules[parts[1]]=parts[2:]
-for name,entry in json.loads((root/'infra/seaweedfs/security-build.lock.json').read_text())['modules'].items():
+for name,entry in load_json((root/'infra/seaweedfs/security-build.lock.json').read_text())['modules'].items():
     if modules.get(name)!=[entry['version'],entry['go_sum_lines'][0].split()[2]]: raise ValueError('linked module mismatch')
 for setting in ['CGO_ENABLED=0','GOARCH=amd64','GOAMD64=v1','GOOS=linux','-trimpath=true']:
     if setting not in actual: raise ValueError('native build settings missing')
 print('IMAGE_AND_ACTUAL_ELF_VERIFIED')
 PY
+node "$root/tools/test/load-qualified-storage.mjs" verify-build-profile "$work"

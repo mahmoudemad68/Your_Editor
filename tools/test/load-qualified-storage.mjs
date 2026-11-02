@@ -1,5 +1,5 @@
 /** Admission of a completed, reviewed Supply run. No candidate code executes here. */
-import { isDeepStrictEqual } from "node:util";
+import { isDeepStrictEqual, TextDecoder } from "node:util";
 import process from "node:process";
 import console from "node:console";
 import { Buffer } from "node:buffer";
@@ -8,17 +8,7 @@ import { createReadStream } from "node:fs";
 import { availableParallelism, totalmem, freemem } from "node:os";
 import { execFileSync } from "node:child_process";
 import { setTimeout } from "node:timers";
-import {
-  readFile,
-  writeFile,
-  mkdir,
-  mkdtemp,
-  stat,
-  lstat,
-  statfs,
-  realpath,
-  rm,
-} from "node:fs/promises";
+import { readFile, writeFile, mkdir, mkdtemp, lstat, statfs, realpath, rm } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, URL } from "node:url";
 
@@ -82,6 +72,8 @@ export const POLICY_FILES = Object.freeze([
   "tools/render/graduation-demo.mjs",
   "docs/operations/ci-security-remediation-99.md",
   "docs/operations/seaweedfs-object-storage.md",
+  ".github/actions/pc100-bounded-artifact/action.yml",
+  ".github/actions/pc100-bounded-artifact/index.mjs",
 ]);
 const IMAGE_CAP = 120 * 1024 * 1024;
 const REPORT_CAP = 16 * 1024 * 1024;
@@ -112,6 +104,1048 @@ export const SW_PROFILE = "seaweedfs-go-s-w-diagnostic-v1";
 export const SW_FLAGS =
   "-extldflags -static -X github.com/seaweedfs/seaweedfs/weed/util/version.COMMIT=ffa87c2+editagent-sec1 -s -w";
 export const ORIGINAL_ELF = "6b48572984287dcf64ed09a9080a720e65d4bf5c810c2282782fb4e5da8aa3c8";
+export const PRODUCTION_PROFILE = "seaweedfs-go-s-w-production-candidate-v1";
+export const CANDIDATE_SCHEMA = "seaweedfs-candidate-bundle-v2";
+export const SEAL_SCHEMA = "seaweedfs-candidate-seal-v2";
+export const RECEIPT_SCHEMA = "seaweedfs-admission-v2";
+
+/** Exact UTF-8 JSON, including duplicate keys. No reviver can detect duplicates. */
+export function strictJSON(bytes, cap = 4 * 1024 ** 2) {
+  const data = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes);
+  requireThat(data.length > 0 && data.length <= cap, "JSON_SIZE_REJECTED");
+  let s;
+  try {
+    s = new TextDecoder("utf-8", { fatal: true }).decode(data);
+  } catch {
+    throw new AdmissionError("JSON_UTF8_REJECTED");
+  }
+  let i = 0,
+    nodes = 0;
+  const space = () => {
+    while (/[\x20\t\r\n]/.test(s[i] ?? "")) i++;
+  };
+  const string = () => {
+    const start = i++;
+    while (i < s.length) {
+      if (s[i++] === '"') {
+        const value = JSON.parse(s.slice(start, i));
+        requireThat(value.isWellFormed(), "JSON_UNICODE_REJECTED");
+        return value;
+      }
+      if (s[i - 1] === "\\") i++;
+    }
+    throw new AdmissionError("JSON_STRING_REJECTED");
+  };
+  const value = (depth) => {
+    requireThat(depth <= 40 && ++nodes <= 200000, "JSON_COMPLEXITY_REJECTED");
+    space();
+    if (s[i] === '"') return string();
+    if (s[i] === "{" || s[i] === "[") {
+      const object = s[i++] === "{",
+        end = object ? "}" : "]";
+      const result = object ? {} : [],
+        keys = new Set();
+      space();
+      if (s[i] === end) {
+        i++;
+        return result;
+      }
+      while (i < s.length) {
+        space();
+        let key;
+        if (object) {
+          requireThat(s[i] === '"', "JSON_KEY_REJECTED");
+          key = string();
+          requireThat(!keys.has(key), "JSON_DUPLICATE_KEY");
+          keys.add(key);
+          space();
+          requireThat(s[i++] === ":", "JSON_COLON_REJECTED");
+        }
+        const item = value(depth + 1);
+        if (object)
+          Object.defineProperty(result, key, {
+            value: item,
+            enumerable: true,
+            writable: true,
+            configurable: true,
+          });
+        else result.push(item);
+        space();
+        const next = s[i++];
+        if (next === end) return result;
+        requireThat(next === ",", "JSON_SEPARATOR_REJECTED");
+      }
+      throw new AdmissionError("JSON_TRUNCATED");
+    }
+    const match = /^(?:null|true|false|-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?)/.exec(
+      s.slice(i),
+    );
+    requireThat(match, "JSON_VALUE_REJECTED");
+    i += match[0].length;
+    const result = JSON.parse(match[0]);
+    requireThat(typeof result !== "number" || Number.isFinite(result), "JSON_NUMBER_REJECTED");
+    return result;
+  };
+  try {
+    const result = value(0);
+    space();
+    requireThat(i === s.length, "JSON_TRAILING_DATA");
+    return result;
+  } catch (error) {
+    if (error instanceof AdmissionError) throw error;
+    throw new AdmissionError("JSON_MALFORMED");
+  }
+}
+export function canonical(value) {
+  if (Array.isArray(value)) return "[" + value.map(canonical).join(",") + "]";
+  if (value && typeof value === "object")
+    return (
+      "{" +
+      Object.keys(value)
+        .sort()
+        .map((k) => JSON.stringify(k) + ":" + canonical(value[k]))
+        .join(",") +
+      "}"
+    );
+  requireThat(
+    value === null || ["string", "boolean"].includes(typeof value) || Number.isSafeInteger(value),
+    "CANONICAL_TYPE_REJECTED",
+  );
+  return JSON.stringify(value);
+}
+function exactKeys(value, keys, code = "RECORD_SCHEMA_REJECTED") {
+  requireThat(
+    value &&
+      typeof value === "object" &&
+      !Array.isArray(value) &&
+      isDeepStrictEqual(Object.keys(value).sort(), [...keys].sort()),
+    code,
+  );
+}
+function digest(value) {
+  requireThat(typeof value === "string" && /^[a-f0-9]{64}$/.test(value), "DIGEST_REJECTED");
+  return value;
+}
+function imageDigest(value) {
+  requireThat(
+    typeof value === "string" && /^sha256:[a-f0-9]{64}$/.test(value),
+    "IMAGE_DIGEST_REJECTED",
+  );
+  return value;
+}
+export function candidateContract(lock) {
+  // No output measurements, L, Git H or run IDs enter K.
+  return {
+    schema_version: 1,
+    profile: PRODUCTION_PROFILE,
+    source: lock.source,
+    modules: lock.modules,
+    original_versions: lock.original_versions,
+    compiler: lock.toolchain,
+    runtime_donor: lock.runtime_donor,
+    flags: SW_FLAGS,
+    go_version: "go1.26.10",
+    target: "linux/amd64",
+    CGO_ENABLED: "0",
+    GOAMD64: "v1",
+    build_tags: [],
+    parallelism: 2,
+    trimpath: true,
+    buildvcs: false,
+    scanners: lock.scanners,
+    inventory: lock.build.baseline_inventory,
+    transport: "docker-save-xz6",
+    limits: lock.limits,
+  };
+}
+export function productionProfile(lock) {
+  requireThat(
+    lock?.build?.output_profile === PRODUCTION_PROFILE && lock.build.diagnostic_only === false,
+    "PRODUCTION_PROFILE_REJECTED",
+  );
+  const contract = candidateContract(lock);
+  requireThat(
+    isDeepStrictEqual(lock.build.production_contract, contract) &&
+      lock.build.production_contract_sha256 === sha256(canonical(contract)),
+    "BUILD_CONTRACT_DRIFT",
+  );
+  requireThat(
+    contract.source.commit === "ffa87c25fdf587178b1521ad87f2a4a72a02e584" &&
+      contract.source.sha256 ===
+        "d650e7a8a2cbec8a1725386f87f5eb803c95aa84417530aec58c1925fd23a2c9" &&
+      lock.build.go_version === "go1.26.10",
+    "BUILD_INPUT_DRIFT",
+  );
+  requireThat(
+    contract.modules["github.com/go-jose/go-jose/v4"].version === "v4.1.6" &&
+      contract.modules["github.com/andybalholm/brotli"].version === "v1.2.7" &&
+      isDeepStrictEqual(lock.trusted_baseline, BASELINE_POLICY),
+    "BUILD_INPUT_DRIFT",
+  );
+  return { profile: PRODUCTION_PROFILE, K: digest(lock.build.production_contract_sha256) };
+}
+export function productionMarker(lock, L, E, label) {
+  const { K } = productionProfile(lock);
+  requireThat(["one", "two"].includes(label), "BUILD_LABEL_REJECTED");
+  return {
+    schema_version: 2,
+    trust_class: "production-candidate",
+    profile: PRODUCTION_PROFILE,
+    build_contract_sha256: K,
+    lock_sha256: digest(L),
+    elf_sha256: digest(E),
+    flags_sha256: sha256(SW_FLAGS),
+    source_commit: lock.source.commit,
+    go_version: "go1.26.10",
+    cache_label: label,
+  };
+}
+export function validateProductionEvidence(verification, lock, L, actualElf, metadata) {
+  productionProfile(lock);
+  digest(L);
+  requireThat(
+    verification.lock_sha256 === L &&
+      verification.old_elf_absent === true &&
+      verification.runtime_preserved === true &&
+      verification.reproducible_elf === true &&
+      verification.native_brotli === "1.2.1-r0",
+    "PRODUCTION_IMAGE_EVIDENCE_REJECTED",
+  );
+  imageDigest(verification.image_id);
+  digest(verification.elf_sha256);
+  for (const label of ["one", "two"]) {
+    const build = verification.build_measurements?.[label];
+    requireThat(
+      build &&
+        !Object.hasOwn(build, "diagnostic_marker") &&
+        build.output_profile === PRODUCTION_PROFILE &&
+        build.label === label &&
+        build.cache_initially_empty === true &&
+        build.elf_sha256 === verification.elf_sha256 &&
+        isDeepStrictEqual(
+          build.production_candidate_marker,
+          productionMarker(lock, L, verification.elf_sha256, label),
+        ),
+      "PRODUCTION_MARKER_REJECTED",
+    );
+  }
+  if (actualElf)
+    validateELFMeasurements(verification, actualElf, metadata, PRODUCTION_PROFILE, (build, E) => {
+      requireThat(
+        isDeepStrictEqual(
+          build.production_candidate_marker,
+          productionMarker(lock, L, E, build.label),
+        ),
+        "PRODUCTION_MARKER_REJECTED",
+      );
+    });
+  return verification;
+}
+export function zipEnvelope(names) {
+  requireThat(
+    Array.isArray(names) &&
+      names.length > 0 &&
+      names.length <= 8 &&
+      new Set(names).size === names.length &&
+      names.every((n) => /^[a-z0-9.-]{1,32}$/.test(n)),
+    "ZIP_NAMES_REJECTED",
+  );
+  return 164 * names.length + 2 * names.reduce((n, s) => n + Buffer.byteLength(s), 0) + 98;
+}
+export function physicalBudget(C, R, rows, final = false) {
+  requireThat(
+    Number.isSafeInteger(C) &&
+      C > 0 &&
+      C <= IMAGE_CAP &&
+      Number.isSafeInteger(R) &&
+      R > 0 &&
+      2 * R + 65536 <= REPORT_CAP &&
+      2 * C + 2 * R + 65536 <= 256 * 1024 ** 2,
+    "TRANSFER_BUDGET_EXCEEDED",
+  );
+  const caps = {
+    source: C + R + 1482,
+    walking: C + R + 16384 + 1674,
+    seal: 8472,
+    ci: 16674,
+    "outcome-ci": 4402,
+    "outcome-walking": 4402,
+  };
+  const seen = new Set(),
+    ids = new Set();
+  let P = 0,
+    O = 0;
+  for (const row of rows) {
+    requireThat(row && Object.hasOwn(caps, row.role) && !seen.has(row.role), "WIRE_ROLE_REJECTED");
+    seen.add(row.role);
+    const aid = id(row.artifact_id);
+    requireThat(!ids.has(aid), "WIRE_ARTIFACT_DUPLICATE");
+    ids.add(aid);
+    requireThat(
+      Number.isSafeInteger(row.bytes) && row.bytes > 0 && row.bytes <= caps[row.role],
+      "PHYSICAL_WIRE_BUDGET_EXCEEDED",
+    );
+    imageDigest(row.digest);
+    id(row.run_id);
+    id(row.attempt);
+    if (row.role.startsWith("outcome-"))
+      requireThat(
+        row.attempt === 1 &&
+          ["PRODUCER_NOT_YET_CREATED", "PRODUCER_NOT_YET_COMPLETE"].includes(row.outcome),
+        "EXTRA_OUTCOME_REQUIRES_REVIEW",
+      );
+    const replica = ["source", "walking"].includes(row.role);
+    requireThat(!replica || row.bytes >= C + R, "WIRE_SIZE_REJECTED");
+    P += row.bytes;
+    O += replica ? Math.max(0, row.bytes - C - R) : row.bytes;
+  }
+  requireThat(
+    O <= 65536 && P <= 2 * C + 2 * R + 65536 && P <= 256 * 1024 ** 2,
+    "PHYSICAL_WIRE_BUDGET_EXCEEDED",
+  );
+  if (final)
+    requireThat(
+      ["source", "walking", "seal", "ci"].every((n) => seen.has(n)),
+      "WIRE_LEDGER_INCOMPLETE",
+    );
+  return {
+    C,
+    R,
+    R_total: 2 * R + 65536,
+    P,
+    O,
+    retention_days: 1,
+    fully_measured: final,
+    client_envelope_bound: 53490,
+  };
+}
+
+const WIRE_PREFIXES = [
+  "seaweedfs-candidate",
+  "seaweedfs-seal",
+  "storage-receipt",
+  "qualified-storage",
+  "admission-outcome",
+];
+const WIRE_MEMBERS = {
+  source: FILES,
+  walking: [...FILES, "admission.json"],
+  seal: ["seal.json"],
+  ci: ["admission.json"],
+  "outcome-ci": ["admission-outcome.json"],
+  "outcome-walking": ["admission-outcome.json"],
+};
+// Accounting includes EVERY observed transfer, even an unapproved extra outcome.
+// Eligibility is checked separately, so an invalid row cannot disappear from P/O.
+export function wireAccounting(C, R, rows) {
+  requireThat(
+    Number.isSafeInteger(C) && C > 0 && Number.isSafeInteger(R) && R > 0 && Array.isArray(rows),
+    "WIRE_MEASUREMENT_MISSING",
+  );
+  let P = 0,
+    O = 0;
+  for (const row of rows) {
+    requireThat(
+      Number.isSafeInteger(row.raw_bytes) && row.raw_bytes > 0,
+      "WIRE_MEASUREMENT_MISSING",
+    );
+    P += row.raw_bytes;
+    O += ["source", "walking"].includes(row.role)
+      ? Math.max(0, row.raw_bytes - C - R)
+      : row.raw_bytes;
+    requireThat(Number.isSafeInteger(P) && Number.isSafeInteger(O), "WIRE_ACCOUNTING_OVERFLOW");
+  }
+  return { C, R, R_total: 2 * R + 65536, combined: 2 * C + 2 * R + 65536, P, O };
+}
+export function validateWireRun(run, kind, context) {
+  const workflow =
+    WORKFLOWS[kind === "source" ? "Supply chain" : kind === "ci" ? "CI" : "Walking skeleton E2E"];
+  requireThat(
+    ["source", "ci", "walking"].includes(kind) &&
+      run.repository?.id === REPOSITORY_ID &&
+      run.head_repository?.id === REPOSITORY_ID &&
+      run.workflow_id === workflow.id &&
+      run.path === workflow.path &&
+      run.head_sha === context.H &&
+      run.event === "pull_request" &&
+      run.pull_requests?.some(
+        (p) => p.number === 100 && p.head.sha === context.H && p.base.sha === context.B,
+      ),
+    "WIRE_RUN_IDENTITY_DRIFT",
+  );
+  id(run.id);
+  id(run.run_attempt);
+  requireThat(run.status === "completed", "WIRE_CONSUMERS_NOT_COMPLETE");
+  requireThat(run.conclusion === "success", "WIRE_WORKFLOW_FAILED");
+  requireThat(run.run_attempt <= (kind === "source" ? 1 : 2), "WIRE_RETRY_POLICY_REJECTED");
+}
+export function classifyNonTransferArtifact(kind, artifact, run, { context, attemptJobs } = {}) {
+  requireThat(
+    context && /^[a-f0-9]{40}$/.test(context.M) && attemptJobs,
+    "WIRE_NON_TRANSFER_PROVENANCE_MISSING",
+  );
+  const name = artifact.name;
+  let rule;
+  if (kind === "source") {
+    if (name === "supply-chain-dependencies") rule = ["dependencies", "Upload dependency evidence"];
+    else if (name === "supply-chain-scan-dependencies")
+      rule = ["dependencies", "Upload dependency scan result"];
+    else
+      for (const service of SERVICES)
+        for (const [type, step] of [
+          ["sbom", "Upload SBOM"],
+          ["trivy", "Upload Trivy report"],
+          ["scan", "Upload scan result"],
+        ])
+          if (name === `supply-chain-${type}-${service}`) rule = [`image ${service}`, step];
+  } else if (kind === "ci") {
+    if (name === `agent-loop-lifecycle-${context.M}`)
+      rule = ["repository checks", "Upload bounded agent lifecycle diagnostic"];
+    else if (name === `test-summary-${context.M}`)
+      rule = ["repository checks", "Upload allowlisted test summary"];
+    else if (name === "coverage") rule = ["repository checks", "Upload coverage reports"];
+    else
+      for (const shard of [
+        "native",
+        "languages",
+        "state-single",
+        "state-multi",
+        "long-input",
+        "alignment",
+      ])
+        if (name === `asr-test-summary-${shard}-${context.M}`)
+          rule = [`real ASR (${shard})`, "Upload allowlisted test summary"];
+    for (let n = 1; n <= run.run_attempt; n++)
+      if (name === `seaweedfs-product-${run.id}-${n}`)
+        rule = [
+          "candidate SeaweedFS production journey",
+          "Preserve actual candidate media and recovery proof",
+          n,
+        ];
+  } else if (kind === "walking" && name === `walking-skeleton-e2e-${run.id}`)
+    rule = ["walking-skeleton", "Upload failure proof and diagnostics"];
+  requireThat(rule, "WIRE_UNCLASSIFIED_ARTIFACT");
+  imageDigest(artifact.digest);
+  const created = Date.parse(artifact.created_at),
+    expires = Date.parse(artifact.expires_at);
+  requireThat(
+    Number.isSafeInteger(artifact.size_in_bytes) &&
+      artifact.size_in_bytes > 0 &&
+      !artifact.expired &&
+      Number.isFinite(created) &&
+      expires > Date.now(),
+    "WIRE_NON_TRANSFER_METADATA_INVALID",
+  );
+  const matches = [];
+  for (let attempt = 1; attempt <= run.run_attempt; attempt++) {
+    const jobs = attemptJobs[`${run.id}:${attempt}`];
+    requireThat(Array.isArray(jobs), "WIRE_ATTEMPT_EVIDENCE_MISSING");
+    for (const job of jobs.filter((j) => j.name === rule[0]))
+      for (const step of job.steps ?? [])
+        if (
+          step.name === rule[1] &&
+          job.run_id === run.id &&
+          job.run_attempt === attempt &&
+          job.status === "completed" &&
+          step.status === "completed" &&
+          step.conclusion === "success" &&
+          created >= Date.parse(step.started_at) &&
+          created <= Date.parse(step.completed_at) + 1000 &&
+          (!rule[2] || rule[2] === attempt)
+        )
+          matches.push({
+            job_id: id(job.id),
+            attempt,
+            step: step.name,
+            step_number: id(step.number),
+          });
+  }
+  requireThat(matches.length === 1, "WIRE_NON_TRANSFER_PROVENANCE_INVALID");
+  return {
+    artifact_id: artifact.id,
+    name,
+    run_id: run.id,
+    api_bytes: artifact.size_in_bytes,
+    digest: artifact.digest,
+    classification: "VERIFIED_NON_TRANSFER_EVIDENCE",
+    ...matches[0],
+  };
+}
+export function wireInventory(runs, artifacts, provenance) {
+  requireThat(
+    Array.isArray(artifacts) && Object.keys(runs).sort().join(",") === "ci,source,walking",
+    "WIRE_INVENTORY_MISSING",
+  );
+  const runIds = Object.values(runs).map((r) => id(r.id));
+  requireThat(new Set(runIds).size === 3, "WIRE_RUN_DUPLICATE");
+  const seen = new Set(),
+    names = new Set(),
+    transfers = [],
+    excluded = [];
+  for (const entry of artifacts) {
+    const a = entry.artifact,
+      kind = entry.kind,
+      run = runs[kind];
+    requireThat(
+      run &&
+        a &&
+        a.workflow_run?.id === run.id &&
+        a.workflow_run?.head_repository_id === REPOSITORY_ID &&
+        a.workflow_run?.head_sha === run.head_sha,
+      "WIRE_ARTIFACT_RUN_DRIFT",
+    );
+    id(a.id);
+    requireThat(!seen.has(a.id), "WIRE_ARTIFACT_DUPLICATE");
+    seen.add(a.id);
+    requireThat(typeof a.name === "string" && a.name.length <= 256, "WIRE_ARTIFACT_NAME_REJECTED");
+    const nameKey = `${run.id}:${a.name}`;
+    requireThat(!names.has(nameKey), "WIRE_ARTIFACT_NAME_DUPLICATE");
+    names.add(nameKey);
+    const prefix = WIRE_PREFIXES.find((p) => a.name.startsWith(p));
+    if (!prefix) {
+      excluded.push(classifyNonTransferArtifact(kind, a, run, provenance));
+      continue;
+    }
+    const match =
+      /^(seaweedfs-candidate|seaweedfs-seal|storage-receipt|qualified-storage|admission-outcome)-([1-9][0-9]*)-([1-9][0-9]*)$/.exec(
+        a.name,
+      );
+    requireThat(match && id(match[2]) === run.id, "WIRE_ARTIFACT_NAME_REJECTED");
+    const attempt = id(match[3]);
+    requireThat(attempt <= run.run_attempt, "WIRE_ARTIFACT_ATTEMPT_DRIFT");
+    const role =
+      prefix === "seaweedfs-candidate"
+        ? "source"
+        : prefix === "seaweedfs-seal"
+          ? "seal"
+          : prefix === "storage-receipt"
+            ? "ci"
+            : prefix === "qualified-storage"
+              ? "walking"
+              : `outcome-${kind}`;
+    requireThat(
+      (kind === "source" && ["source", "seal"].includes(role)) ||
+        (kind === "ci" && ["ci", "outcome-ci"].includes(role)) ||
+        (kind === "walking" && ["walking", "outcome-walking"].includes(role)),
+      "WIRE_ARTIFACT_ROLE_DRIFT",
+    );
+    if (!role.startsWith("outcome-"))
+      requireThat(attempt === run.run_attempt, "WIRE_ARTIFACT_ATTEMPT_DRIFT");
+    transfers.push({ artifact: a, role, kind, attempt });
+  }
+  for (const role of ["source", "seal", "ci", "walking"])
+    requireThat(transfers.filter((t) => t.role === role).length === 1, "WIRE_LEDGER_INCOMPLETE");
+  return { transfers, excluded };
+}
+export function validateWireStepInventory(runs, inventory, attemptJobs, context) {
+  const { transfers } = wireInventory(runs, inventory, { attemptJobs, context });
+  for (const [kind, run] of Object.entries(runs))
+    for (let attempt = 1; attempt <= run.run_attempt; attempt++) {
+      const jobs = attemptJobs[`${run.id}:${attempt}`];
+      requireThat(Array.isArray(jobs), "WIRE_ATTEMPT_EVIDENCE_MISSING");
+      const matched = jobs.filter(
+        (j) => j.name === (kind === "source" ? "image seaweedfs" : "qualified storage admission"),
+      );
+      requireThat(
+        matched.length === 1 && matched[0].run_attempt === attempt,
+        "WIRE_ARTIFACT_STEP_DRIFT",
+      );
+      const required =
+        kind === "source"
+          ? [
+              ["source", "Upload qualified candidate"],
+              ["seal", "Upload candidate seal"],
+            ]
+          : [
+              [
+                kind,
+                kind === "ci"
+                  ? "Preserve verified preparation receipt"
+                  : "Promote unchanged verified image into this run",
+              ],
+              [`outcome-${kind}`, "Preserve bounded admission outcome"],
+            ];
+      for (const [role, name] of required) {
+        const steps = matched[0].steps.filter((s) => s.name === name);
+        requireThat(
+          steps.length === 1 &&
+            steps[0].status === "completed" &&
+            ["success", "skipped"].includes(steps[0].conclusion),
+          "WIRE_STEP_MEASUREMENT_UNAVAILABLE",
+        );
+        const artifacts = transfers.filter((t) => t.role === role && t.attempt === attempt);
+        requireThat(
+          artifacts.length === (steps[0].conclusion === "success" ? 1 : 0),
+          "WIRE_STEP_ARTIFACT_MISSING_OR_EXTRA",
+        );
+        if (attempt < run.run_attempt && role === `outcome-${kind}`)
+          requireThat(steps[0].conclusion === "success", "WIRE_ORIGINAL_OUTCOME_MISSING");
+        for (const t of artifacts)
+          validateArtifact(t.artifact, run, t.artifact.id, IMAGE_CAP + REPORT_CAP, steps[0]);
+      }
+    }
+}
+export function validateFinalWireLedger(
+  C,
+  R,
+  rows,
+  inventory,
+  runs,
+  context,
+  now = Date.now(),
+  attemptJobs,
+) {
+  const accounting = wireAccounting(C, R, rows);
+  const { transfers, excluded } = wireInventory(runs, inventory, { context, attemptJobs });
+  for (const kind of ["source", "ci", "walking"]) validateWireRun(runs[kind], kind, context);
+  requireThat(rows.length === transfers.length, "WIRE_MEASUREMENT_INCOMPLETE");
+  const seen = new Set();
+  for (const row of rows) {
+    requireThat(!seen.has(row.artifact_id), "WIRE_ARTIFACT_DUPLICATE");
+    seen.add(row.artifact_id);
+    const t = transfers.find((t) => t.artifact.id === row.artifact_id),
+      a = t?.artifact;
+    requireThat(
+      a && row.role === t.role && row.run_id === runs[t.kind].id && row.attempt === t.attempt,
+      "WIRE_ROW_IDENTITY_DRIFT",
+    );
+    requireThat(
+      a.size_in_bytes === row.raw_bytes &&
+        row.bytes === row.raw_bytes &&
+        a.digest === row.digest &&
+        row.raw_sha256 === a.digest,
+      "WIRE_RAW_MEASUREMENT_DRIFT",
+    );
+    imageDigest(a.digest);
+    const created = Date.parse(a.created_at),
+      expires = Date.parse(a.expires_at);
+    requireThat(
+      !a.expired &&
+        Number.isFinite(created) &&
+        Number.isFinite(expires) &&
+        expires > now &&
+        expires - created > 0 &&
+        expires - created <= 86460000,
+      "WIRE_ARTIFACT_EXPIRED_OR_RETENTION",
+    );
+  }
+  const budget = physicalBudget(C, R, rows, true);
+  requireThat(budget.P === accounting.P && budget.O === accounting.O, "WIRE_ACCOUNTING_DRIFT");
+  return {
+    schema: "pc100-final-wire-ledger-v1",
+    context,
+    runs: Object.fromEntries(
+      Object.entries(runs).map(([k, r]) => [
+        k,
+        {
+          id: r.id,
+          attempt: r.run_attempt,
+          workflow_id: r.workflow_id,
+          check_suite_id: r.check_suite_id,
+        },
+      ]),
+    ),
+    rows,
+    excluded_non_transfer_artifacts: excluded,
+    ...accounting,
+    retention_days: 1,
+    fully_measured: true,
+    qualification: "WIRE_ONLY_NOT_RELEASE_APPROVAL",
+  };
+}
+export function validateCandidateManifest(m, context, runId, attempt, lock, L) {
+  exactKeys(m, [
+    "schema",
+    "profile",
+    "K",
+    "L",
+    "context",
+    "run_id",
+    "attempt",
+    "image_id",
+    "elf_sha256",
+    "diff_ids",
+    "archive_sha256",
+    "archive_bytes",
+    "files",
+    "policy_files",
+    "policy_comment_id",
+    "policy_record_sha256",
+  ]);
+  const { K } = productionProfile(lock);
+  requireThat(
+    m.schema === CANDIDATE_SCHEMA &&
+      m.profile === PRODUCTION_PROFILE &&
+      m.K === K &&
+      m.L === L &&
+      isDeepStrictEqual(m.context, context) &&
+      m.run_id === id(runId) &&
+      m.attempt === id(attempt) &&
+      m.attempt === 1,
+    "CANDIDATE_IDENTITY_DRIFT",
+  );
+  imageDigest(m.image_id);
+  digest(m.elf_sha256);
+  digest(m.archive_sha256);
+  digest(m.policy_record_sha256);
+  id(m.policy_comment_id);
+  requireThat(
+    Array.isArray(m.diff_ids) &&
+      m.diff_ids.length === 6 &&
+      m.diff_ids.every((d) => /^sha256:[a-f0-9]{64}$/.test(d)),
+    "LAYER_IDENTITIES_REJECTED",
+  );
+  requireThat(
+    Number.isSafeInteger(m.archive_bytes) &&
+      m.archive_bytes > 0 &&
+      m.archive_bytes <= 4 * 1024 ** 3,
+    "ARCHIVE_SIZE_REJECTED",
+  );
+  exactKeys(
+    m.files,
+    FILES.filter((n) => n !== "candidate-manifest.json"),
+  );
+  Object.values(m.files).forEach(digest);
+  exactKeys(m.policy_files, POLICY_FILES);
+  Object.values(m.policy_files).forEach(digest);
+  return m;
+}
+export function validateCandidateSeal(s, context, source, lock, L) {
+  exactKeys(s, [
+    "schema",
+    "profile",
+    "K",
+    "L",
+    "context",
+    "run_id",
+    "attempt",
+    "artifact_id",
+    "artifact_digest",
+    "artifact_bytes",
+    "manifest_sha256",
+    "policy_comment_id",
+    "policy_record_sha256",
+  ]);
+  const { K } = productionProfile(lock);
+  requireThat(
+    s.schema === SEAL_SCHEMA &&
+      s.profile === PRODUCTION_PROFILE &&
+      s.K === K &&
+      s.L === L &&
+      isDeepStrictEqual(s.context, context) &&
+      s.run_id === source.id &&
+      s.attempt === source.run_attempt &&
+      s.attempt === 1,
+    "SEAL_DRIFT",
+  );
+  id(s.artifact_id);
+  imageDigest(s.artifact_digest);
+  digest(s.manifest_sha256);
+  id(s.policy_comment_id);
+  digest(s.policy_record_sha256);
+  requireThat(
+    Number.isSafeInteger(s.artifact_bytes) &&
+      s.artifact_bytes > 0 &&
+      s.artifact_bytes <= IMAGE_CAP + REPORT_CAP,
+    "SEAL_SIZE_REJECTED",
+  );
+  return s;
+}
+export function validateCandidateReceipt(r, context, runId, attempt) {
+  exactKeys(r, [
+    "version",
+    "schema",
+    "profile",
+    "K",
+    "L",
+    "context",
+    "native_run_id",
+    "native_attempt",
+    "producer_run",
+    "producer_created_at",
+    "producer_attempt",
+    "artifact_id",
+    "artifact_digest",
+    "artifact_bytes",
+    "policy_comment_id",
+    "policy_record_sha256",
+    "policy_files",
+    "seal",
+    "image_id",
+    "elf_sha256",
+    "inner_sha256",
+    "bundle",
+    "archive",
+    "C",
+    "R",
+    "diff_ids",
+    "archive_sha256",
+    "archive_bytes",
+  ]);
+  requireThat(
+    r.version === 2 &&
+      r.schema === RECEIPT_SCHEMA &&
+      r.profile === PRODUCTION_PROFILE &&
+      isDeepStrictEqual(r.context, context) &&
+      r.native_run_id === id(runId) &&
+      r.native_attempt === id(attempt) &&
+      r.producer_attempt === 1,
+    "RECEIPT_IDENTITY_DRIFT",
+  );
+  [r.K, r.L, r.policy_record_sha256, r.elf_sha256, r.inner_sha256, r.archive_sha256].forEach(
+    digest,
+  );
+  [r.producer_run, r.artifact_id, r.policy_comment_id].forEach(id);
+  imageDigest(r.artifact_digest);
+  imageDigest(r.image_id);
+  requireThat(
+    Number.isFinite(Date.parse(r.producer_created_at)) &&
+      [r.bundle, r.archive].every((s) => typeof s === "string" && s.length > 0 && s.length <= 4096),
+    "RECEIPT_FIELDS_REJECTED",
+  );
+  requireThat(
+    r.seal.artifact_id === r.artifact_id &&
+      r.seal.artifact_digest === r.artifact_digest &&
+      r.seal.artifact_bytes === r.artifact_bytes &&
+      r.seal.policy_comment_id === r.policy_comment_id &&
+      r.seal.policy_record_sha256 === r.policy_record_sha256 &&
+      r.seal.K === r.K &&
+      r.seal.L === r.L,
+    "RECEIPT_SEAL_DRIFT",
+  );
+  requireThat(
+    Array.isArray(r.diff_ids) &&
+      r.diff_ids.length === 6 &&
+      r.diff_ids.every((s) => /^sha256:[a-f0-9]{64}$/.test(s)),
+    "RECEIPT_LAYERS_REJECTED",
+  );
+  exactKeys(r.policy_files, POLICY_FILES);
+  Object.values(r.policy_files).forEach(digest);
+  physicalBudget(r.C, r.R, []);
+  return r;
+}
+export function validateCandidatePolicy(binding, lock, L) {
+  const { K } = productionProfile(lock);
+  requireThat(
+    binding.decision === "APPROVED" &&
+      binding.profile === PRODUCTION_PROFILE &&
+      binding.K === K &&
+      binding.L === L &&
+      binding.revoked === false &&
+      binding.comment_created_at === binding.comment_updated_at &&
+      Number.isFinite(Date.parse(binding.comment_created_at)),
+    "PRODUCTION_POLICY_NOT_APPROVED",
+  );
+  return binding;
+}
+async function candidateSource(producer = false) {
+  const bytes = await readFile(path.join(ROOT, "infra/seaweedfs/security-build.lock.json"));
+  const lock = strictJSON(bytes),
+    { K } = productionProfile(lock),
+    L = sha256(bytes);
+  const { context, nativeRun } = await identity();
+  const binding = validateCandidatePolicy(await policy(context), lock, L);
+  if (producer)
+    requireThat(
+      process.env.GITHUB_WORKFLOW === "Supply chain" && nativeRun.run_attempt === 1,
+      "PRODUCER_CONTEXT_REQUIRED",
+    );
+  return { lock, K, L, context, nativeRun, binding };
+}
+// Called by the bounded local Action. Inputs never confer approval: every
+// operation re-establishes the live native event and independently reviewed
+// source policy before the official SDK receives runtime credentials.
+export async function authorizeArtifactAdapter(plan) {
+  const src = await candidateSource(
+    ["source", "seal"].includes(plan.role) && plan.operation === "upload",
+  );
+  requireThat(
+    plan.run === src.nativeRun.id && plan.attempt === src.nativeRun.run_attempt,
+    "ADAPTER_NATIVE_DRIFT",
+  );
+  const sourceDir = path.join(ROOT, ".local/seaweedfs-transfer/bundle");
+  if (plan.operation === "upload") {
+    if (plan.role === "source") {
+      requireThat(plan.bundle === sourceDir, "ADAPTER_BUNDLE_PATH_REJECTED");
+      const m = await jsonFile(path.join(plan.bundle, "candidate-manifest.json"));
+      validateCandidateManifest(
+        m,
+        src.context,
+        src.nativeRun.id,
+        src.nativeRun.run_attempt,
+        src.lock,
+        src.L,
+      );
+      requireThat(
+        m.policy_record_sha256 === src.binding.policy_record_sha256 &&
+          m.policy_comment_id === src.binding.comment_id,
+        "ADAPTER_POLICY_DRIFT",
+      );
+      for (const name of FILES.filter((n) => n !== "candidate-manifest.json"))
+        requireThat(
+          (await fileDigest(path.join(plan.bundle, name))) === m.files[name],
+          "ADAPTER_SOURCE_DRIFT",
+        );
+      const C = await fileBytes(path.join(plan.bundle, "image.tar.xz"));
+      let R = 0;
+      for (const n of REPORT_FILES) R += await fileBytes(path.join(plan.bundle, n));
+      physicalBudget(C, R, []);
+      return { ...src, run_id: src.nativeRun.id, C, R };
+    }
+    if (plan.role === "seal") {
+      requireThat(
+        plan.bundle === path.join(ROOT, ".local/seaweedfs-transfer/seal"),
+        "ADAPTER_BUNDLE_PATH_REJECTED",
+      );
+      const seal = await jsonFile(path.join(plan.bundle, "seal.json"));
+      validateCandidateSeal(seal, src.context, src.nativeRun, src.lock, src.L);
+      requireThat(
+        seal.policy_record_sha256 === src.binding.policy_record_sha256,
+        "ADAPTER_POLICY_DRIFT",
+      );
+      return { ...src, run_id: src.nativeRun.id };
+    }
+    if (plan.role === "outcome") {
+      requireThat(
+        plan.attempt === 1 && plan.bundle === path.join(ROOT, ".local/issue99/outcome-bundle"),
+        "OUTCOME_PATH_REJECTED",
+      );
+      const o = await jsonFile(path.join(plan.bundle, "admission-outcome.json"));
+      requireThat(
+        ["PRODUCER_NOT_YET_CREATED", "PRODUCER_NOT_YET_COMPLETE"].includes(o.outcome),
+        "NON_RETRYABLE_OUTCOME_REJECTED",
+      );
+      try {
+        await selectProducer(src.context);
+        throw new AdmissionError("OUTCOME_PRODUCER_ALREADY_READY");
+      } catch (error) {
+        requireThat(
+          error instanceof AdmissionError && error.code === o.outcome,
+          "OUTCOME_NOT_RECONCILED",
+        );
+      }
+      return { ...src, run_id: src.nativeRun.id };
+    }
+    requireThat(["walking", "ci"].includes(plan.role), "ADAPTER_ROLE_REJECTED");
+    const receipt = await jsonFile(path.join(plan.bundle, "admission.json"));
+    await fresh(receipt);
+    requireThat(
+      (plan.role === "walking"
+        ? plan.bundle === receipt.bundle
+        : plan.bundle.startsWith(path.join(ROOT, ".local/issue99/ci-receipt-"))) &&
+        ((plan.role === "walking" && process.env.GITHUB_WORKFLOW === "Walking skeleton E2E") ||
+          (plan.role === "ci" && process.env.GITHUB_WORKFLOW === "CI")),
+      "ADAPTER_PROMOTION_PATH_REJECTED",
+    );
+    return { ...src, run_id: src.nativeRun.id, C: receipt.C, R: receipt.R, receipt };
+  }
+  if (["source", "seal"].includes(plan.role)) {
+    const artifact = await api(`actions/artifacts/${id(plan.id)}`);
+    const ownProducer =
+      process.env.GITHUB_WORKFLOW === "Supply chain" &&
+      artifact.workflow_run?.id === src.nativeRun.id;
+    const { source, jobs } = ownProducer
+      ? {
+          source: src.nativeRun,
+          jobs: await pages(
+            `actions/runs/${src.nativeRun.id}/attempts/${src.nativeRun.run_attempt}/jobs`,
+            "jobs",
+          ),
+        }
+      : await selectProducer(src.context);
+    const step = jobs
+      .find((j) => j.name === "image seaweedfs")
+      ?.steps.find(
+        (s) =>
+          s.name ===
+          (plan.role === "source" ? "Upload qualified candidate" : "Upload candidate seal"),
+      );
+    validateArtifact(artifact, source, plan.id, plan.cap, step);
+    requireThat(
+      artifact.digest === plan.digest && artifact.size_in_bytes === plan.bytes,
+      "ADAPTER_DOWNLOAD_DRIFT",
+    );
+    return { ...src, run_id: source.id };
+  }
+  // Same-run SDK reads are bound to the original run and followed by an
+  // independent receipt/source validation before load. No Actions-read token
+  // is added to the downstream Walking job.
+  requireThat(
+    (plan.role === "walking" && process.env.GITHUB_WORKFLOW === "Walking skeleton E2E") ||
+      (plan.role === "ci" && process.env.GITHUB_WORKFLOW === "CI"),
+    "ADAPTER_SAME_RUN_ROLE_REJECTED",
+  );
+  await selectProducer(src.context);
+  const promoted = await api(`actions/artifacts/${id(plan.id)}`, { publicOnly: true });
+  const jobs = await pages(
+    `actions/runs/${src.nativeRun.id}/attempts/${src.nativeRun.run_attempt}/jobs`,
+    "jobs",
+    true,
+  );
+  const prepared = jobs.filter(
+    (j) =>
+      j.name === "qualified storage admission" &&
+      j.run_attempt === src.nativeRun.run_attempt &&
+      j.status === "completed" &&
+      j.conclusion === "success",
+  );
+  requireThat(prepared.length === 1, "ADAPTER_PREPARATION_NOT_COMPLETE");
+  const stepName =
+    plan.role === "walking"
+      ? "Promote unchanged verified image into this run"
+      : "Preserve verified preparation receipt";
+  const steps = prepared[0].steps.filter(
+    (s) => s.name === stepName && s.status === "completed" && s.conclusion === "success",
+  );
+  requireThat(steps.length === 1, "ADAPTER_PREPARATION_NOT_COMPLETE");
+  validateArtifact(promoted, src.nativeRun, plan.id, plan.cap, steps[0]);
+  requireThat(
+    promoted.name === plan.name &&
+      promoted.digest === plan.digest &&
+      promoted.size_in_bytes === plan.bytes,
+    "ADAPTER_SAME_RUN_ARTIFACT_DRIFT",
+  );
+  return { ...src, run_id: src.nativeRun.id };
+}
+export async function verifyAdapterUpload(plan, actual, admission) {
+  const artifact = await api(`actions/artifacts/${id(actual["artifact-id"])}`);
+  requireThat(
+    artifact.name === plan.name &&
+      artifact.workflow_run?.id === plan.run &&
+      artifact.workflow_run?.head_sha === admission.nativeRun.head_sha &&
+      artifact.workflow_run?.head_repository_id === REPOSITORY_ID &&
+      !artifact.expired &&
+      artifact.size_in_bytes <= plan.cap &&
+      artifact.size_in_bytes > 0 &&
+      artifact.digest === `sha256:${actual["artifact-digest"]}`,
+    "ADAPTER_UPLOADED_ARTIFACT_DRIFT",
+  );
+  const created = Date.parse(artifact.created_at),
+    expires = Date.parse(artifact.expires_at);
+  requireThat(
+    created >= Date.parse(admission.nativeRun.run_started_at) &&
+      expires > Date.now() &&
+      expires - created <= 86460000,
+    "ADAPTER_ARTIFACT_RETENTION_OR_ATTEMPT_DRIFT",
+  );
+  if (plan.role === "source" || plan.role === "walking")
+    physicalBudget(admission.C, admission.R, [
+      {
+        role: plan.role,
+        artifact_id: artifact.id,
+        run_id: plan.run,
+        attempt: plan.attempt,
+        bytes: artifact.size_in_bytes,
+        digest: artifact.digest,
+      },
+    ]);
+  await candidateSource(["source", "seal"].includes(plan.role));
+  return {
+    "artifact-id": artifact.id,
+    "artifact-digest": artifact.digest,
+    "artifact-bytes": artifact.size_in_bytes,
+  };
+}
 export function validateDiagnosticMarker(build, elfHash) {
   requireThat(
     build &&
@@ -143,8 +1177,16 @@ export function diagnosticProfile(lock) {
   return true;
 }
 export function diagnosticCommandGuard(lock, mode) {
+  if (lock?.build?.output_profile === PRODUCTION_PROFILE) {
+    productionProfile(lock);
+    return;
+  }
+  requireThat(lock?.build?.output_profile === SW_PROFILE, "BUILD_PROFILE_REQUIRED");
   if (diagnosticProfile(lock))
-    requireThat(["policy-inventory", "produce"].includes(mode), "S_W_PROMOTION_FORBIDDEN");
+    requireThat(
+      ["policy-inventory", "produce", "verify-build-profile"].includes(mode),
+      "S_W_PROMOTION_FORBIDDEN",
+    );
 }
 export function terminateDiagnostic(report) {
   // A feasible measurement is deliberately a FAILED required check. This
@@ -212,6 +1254,10 @@ function requireThat(condition, code = "INTEGRITY_REJECTED") {
   if (!condition) throw new AdmissionError(code);
 }
 function id(value) {
+  requireThat(
+    typeof value === "number" || (typeof value === "string" && /^[1-9][0-9]{0,15}$/.test(value)),
+    "INVALID_IDENTITY",
+  );
   const number = Number(value);
   requireThat(Number.isSafeInteger(number) && number > 0, "INVALID_IDENTITY");
   return number;
@@ -226,7 +1272,7 @@ function run(command, args, options = {}) {
   });
 }
 async function jsonFile(file) {
-  return JSON.parse(await readFile(file, "utf8"));
+  return strictJSON(await readFile(file));
 }
 async function dispose(directory) {
   const base = await realpath(path.join(ROOT, ".local/issue99"));
@@ -236,7 +1282,9 @@ async function dispose(directory) {
     "UNSAFE_CLEANUP_PATH",
   );
   requireThat(
-    /^(producer|admission|recheck|promoted)-/.test(path.relative(base, target).split(path.sep)[0]),
+    /^(producer|admission|recheck|source-recheck|promoted)-/.test(
+      path.relative(base, target).split(path.sep)[0],
+    ),
     "UNSAFE_CLEANUP_PATH",
   );
   await rm(target, { recursive: true, force: true });
@@ -595,7 +1643,44 @@ export function validateCheck(check, context, suiteId, name, completed = true) {
     );
 }
 
-async function request(
+export function apiReadHeaders(
+  url,
+  { publicOnly = false, bytes = false, apiVersion = "2026-03-10", refresh = false } = {},
+  env = process.env,
+) {
+  const target = new URL(url),
+    prefix = `/repos/${REPOSITORY}/`;
+  requireThat(
+    target.origin === "https://api.github.com" &&
+      !target.username &&
+      !target.password &&
+      !target.hash &&
+      target.pathname.startsWith(prefix),
+    "API_ORIGIN_REJECTED",
+  );
+  const headers = { Accept: "application/vnd.github+json", "X-GitHub-Api-Version": apiVersion };
+  if (refresh) headers["Cache-Control"] = "no-cache";
+  if (publicOnly) {
+    const suffix = target.pathname.slice(prefix.length);
+    requireThat(
+      !bytes &&
+        /^(?:pulls\/100|issues\/100\/comments|check-(?:suites|runs)\/[1-9][0-9]*|git\/commits\/[a-f0-9]{40}|actions\/(?:runs\/[1-9][0-9]*(?:\/attempts\/[1-9][0-9]*\/jobs)?|workflows\/(?:370458734|377653530|374068707)\/runs|artifacts\/[1-9][0-9]*))$/.test(
+          suffix,
+        ),
+      "PUBLIC_METADATA_ROUTE_REJECTED",
+    );
+    // Explicit public GETs never inherit an ambient installation/Owner token.
+    // A private/unavailable resource fails at HTTP; there is no auth fallback.
+  } else {
+    requireThat(
+      typeof env.GITHUB_TOKEN === "string" && env.GITHUB_TOKEN.length > 0,
+      "ACTIONS_READ_TOKEN_MISSING",
+    );
+    headers.Authorization = `Bearer ${env.GITHUB_TOKEN}`;
+  }
+  return headers;
+}
+export async function request(
   url,
   {
     publicOnly = false,
@@ -611,13 +1696,8 @@ async function request(
     url.startsWith("https://api.github.com/repos/mahmoudemad68/Your_Editor/"),
     "API_ORIGIN_REJECTED",
   );
-  const headers = { Accept: "application/vnd.github+json", "X-GitHub-Api-Version": apiVersion };
-  if (refresh) headers["Cache-Control"] = "no-cache";
+  const headers = apiReadHeaders(url, { publicOnly, bytes, apiVersion, refresh });
   const started = new Date().toISOString();
-  const actionMetadata = url.includes("/actions/");
-  if (process.env.GITHUB_TOKEN && (!publicOnly || actionMetadata)) {
-    headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
-  } else requireThat(publicOnly, "ACTIONS_READ_TOKEN_MISSING");
   let response = await globalThis.fetch(url, {
     headers,
     redirect: "manual",
@@ -782,12 +1862,20 @@ export function reviewedBinding(comments, context) {
     if (!match) continue;
     let binding;
     try {
-      binding = JSON.parse(match[1]);
+      binding = strictJSON(Buffer.from(match[1]));
     } catch {
       continue;
     }
+    if (binding.decision === "REVOKED" && binding.H === context.H && binding.B === context.B)
+      throw new AdmissionError("POLICY_REVOKED");
     if (binding.decision === "APPROVED" && binding.H === context.H && binding.B === context.B)
-      approved.push({ ...binding, comment_id: c.id });
+      approved.push({
+        ...binding,
+        comment_id: c.id,
+        comment_created_at: c.created_at ?? null,
+        comment_updated_at: c.updated_at ?? null,
+        policy_record_sha256: sha256(canonical(binding)),
+      });
   }
   requireThat(approved.length === 1, "REVIEWED_POLICY_BINDING_MISSING_OR_AMBIGUOUS");
   const binding = approved[0];
@@ -805,15 +1893,19 @@ export function reviewedBinding(comments, context) {
   );
   return binding;
 }
-async function policy(context) {
+async function policy(context, readOnlyProductCheckout = false) {
   const comments = await pages("issues/100/comments", null, true);
   const binding = reviewedBinding(comments, context);
   // Local Git blobs are content-addressed by the original M; its entire tree
   // equals H and is checked through GitHub above. Do not trust working files or
   // spend dozens of unauthenticated API requests on each repeated inspection.
-  requireThat(run("git", ["rev-parse", "HEAD"]).trim() === context.M, "CHECKOUT_COMMIT_DRIFT");
+  const checkout = run("git", ["rev-parse", "HEAD"]).trim();
+  requireThat(
+    checkout === context.M || (readOnlyProductCheckout && checkout === context.H),
+    "CHECKOUT_COMMIT_DRIFT",
+  );
   for (const name of POLICY_FILES) {
-    const hash = sha256(run("git", ["show", `${context.M}:${name}`], { encoding: "buffer" }));
+    const hash = sha256(run("git", ["show", `${checkout}:${name}`], { encoding: "buffer" }));
     requireThat(
       hash === binding.files[name] && sha256(await readFile(path.join(ROOT, name))) === hash,
       "POLICY_HASH_DRIFT",
@@ -827,8 +1919,36 @@ async function policy(context) {
   return binding;
 }
 async function unpackZip(artifact, destination, allowed, cap) {
-  const data = await api(`actions/artifacts/${id(artifact.id)}/zip`, { bytes: true, cap });
-  return unpackVerifiedZip(data, artifact.digest, destination, allowed, cap);
+  const { downloadRawArtifact } =
+    await import("../../.github/actions/pc100-bounded-artifact/index.mjs");
+  const role = allowed.length === 1 && allowed[0] === "seal.json" ? "seal" : "source";
+  const raw = await downloadRawArtifact(artifact, role, path.join(ROOT, ".local/issue99"));
+  try {
+    requireThat(
+      (await fileBytes(raw)) === artifact.size_in_bytes && artifact.size_in_bytes <= cap,
+      "RAW_ARCHIVE_SIZE_DRIFT",
+    );
+    await unpackVerifiedZip(
+      await readFile(raw),
+      artifact.digest,
+      destination,
+      allowed,
+      cap,
+      "python3",
+      true,
+    );
+  } finally {
+    // The adapter returned a fresh private transfer directory, never a caller path.
+    const transfer = path.dirname(path.dirname(raw));
+    requireThat(
+      path.dirname(transfer) === path.join(ROOT, ".local/pc100-artifacts") &&
+        /^transfer-[A-Za-z0-9]+$/.test(path.basename(transfer)) &&
+        (await realpath(transfer)) === transfer &&
+        (await realpath(path.dirname(transfer))) === path.dirname(transfer),
+      "ADAPTER_CLEANUP_PATH_REJECTED",
+    );
+    await rm(transfer, { recursive: true, force: true });
+  }
 }
 export async function unpackVerifiedZip(
   data,
@@ -837,6 +1957,7 @@ export async function unpackVerifiedZip(
   allowed,
   cap,
   python = "python3",
+  storeOnly = false,
 ) {
   requireThat(data.length <= cap, "ARTIFACT_SIZE_REJECTED");
   requireThat(`sha256:${sha256(data)}` === expectedDigest, "GITHUB_ARCHIVE_DIGEST_MISMATCH");
@@ -846,13 +1967,42 @@ export async function unpackVerifiedZip(
   run(python, [
     "-c",
     `
-import zipfile,sys,json,stat,os
+import zipfile,sys,json,stat,os,struct
 from pathlib import Path
-p=Path(sys.argv[1]); allowed=set(json.loads(sys.argv[2])); cap=int(sys.argv[3])
+p=Path(sys.argv[1]); allowed=set(json.loads(sys.argv[2])); cap=int(sys.argv[3]); store_only=sys.argv[4]=='true'
+b=(p/'download.zip').read_bytes()
+if len(b)<22 or b[-22:-18]!=b'PK\x05\x06': raise ValueError('ZIP EOCD/trailing bytes rejected')
+e=struct.unpack_from('<4s4H2LH',b,len(b)-22)
+if e[1] or e[2] or e[3]!=e[4] or e[4]!=len(allowed) or e[7] or e[5]+e[6]!=len(b)-22: raise ValueError('ZIP directory rejected')
 with zipfile.ZipFile(p/'download.zip') as z:
  entries=z.infolist(); names=[e.filename for e in entries]
  if len(names)!=len(set(names)) or set(names)!=allowed: raise ValueError('unexpected/duplicate artifact paths')
  if sum(e.file_size for e in entries)>cap: raise ValueError('artifact expansion limit')
+ if z.start_dir!=e[6]: raise ValueError('ZIP directory offset rejected')
+ cd=e[6]
+ for member in entries:
+  if cd+46>len(b)-22: raise ValueError('truncated central header')
+  c=struct.unpack_from('<4s6H3L5H2L',b,cd)
+  if c[0]!=b'PK\x01\x02' or c[11] or c[12] or c[13] or c[2]>20: raise ValueError('unsupported central metadata')
+  if cd+46+c[10]>len(b)-22 or b[cd+46:cd+46+c[10]]!=member.filename.encode('ascii'): raise ValueError('central filename rejected')
+  cd+=46+c[10]
+ if cd!=len(b)-22: raise ValueError('central directory size mismatch')
+ cursor=0
+ for member in sorted(entries,key=lambda x:x.header_offset):
+  if member.header_offset!=cursor or cursor+30>z.start_dir: raise ValueError('overlap or gap in ZIP')
+  h=struct.unpack_from('<4s5H3L2H',b,cursor)
+  if h[0]!=b'PK\x03\x04' or h[1]>20 or h[2]&~0x808 or h[2]!=member.flag_bits or h[3]!=member.compress_type or h[10]: raise ValueError('unsafe local header')
+  name=b[cursor+30:cursor+30+h[9]]
+  if name!=member.filename.encode('ascii'): raise ValueError('local filename mismatch')
+  cursor+=30+h[9]+member.compress_size
+  if cursor>z.start_dir: raise ValueError('ZIP data overrun')
+  if h[2]&8:
+   if cursor+16>z.start_dir or struct.unpack_from('<4s3L',b,cursor)!=(b'PK\x07\x08',member.CRC,member.compress_size,member.file_size): raise ValueError('invalid data descriptor')
+   if h[6] not in (0,member.CRC) or h[7] not in (0,member.compress_size) or h[8] not in (0,member.file_size): raise ValueError('local descriptor mismatch')
+   cursor+=16
+  elif (h[6],h[7],h[8])!=(member.CRC,member.compress_size,member.file_size): raise ValueError('local size/CRC mismatch')
+  if store_only and (member.compress_type!=0 or member.compress_size!=member.file_size): raise ValueError('STORE profile required')
+ if cursor!=z.start_dir: raise ValueError('ZIP trailing data rejected')
  for e in entries:
   mode=e.external_attr>>16
   if '/' in e.filename or '\\\\' in e.filename or e.filename in ('.','..') or stat.S_IFMT(mode) not in (0,stat.S_IFREG) or e.flag_bits&1 or e.compress_type not in (0,8): raise ValueError('unsafe artifact member')
@@ -867,6 +2017,7 @@ with zipfile.ZipFile(p/'download.zip') as z:
     destination,
     JSON.stringify(allowed),
     String(cap),
+    String(storeOnly),
   ]);
   await rm(zip);
 }
@@ -909,10 +2060,9 @@ async function selectProducer(context) {
   return { source, jobs };
 }
 async function qualified(output) {
-  const { context, nativeRun } = await identity();
+  const { context, nativeRun, binding, lock, K, L } = await candidateSource();
   // These two and ONLY these outcomes are eligible for the single ordered re-run.
   const { source, jobs } = await selectProducer(context);
-  const binding = await policy(context);
   const artifacts = await pages(`actions/runs/${source.id}/artifacts`, "artifacts");
   const sealMatches = artifacts.filter(
     (a) => a.name === `seaweedfs-seal-${source.id}-${source.run_attempt}`,
@@ -924,16 +2074,25 @@ async function qualified(output) {
   validateArtifact(sealMatches[0], source, sealMatches[0].id, 65536, sealStep);
   await unpackZip(sealMatches[0], path.join(output, "seal"), ["seal.json"], 65536);
   const seal = await jsonFile(path.join(output, "seal/seal.json"));
+  validateCandidateSeal(seal, context, source, lock, L);
   requireThat(
-    seal.run_id === source.id && seal.attempt === source.run_attempt && seal.H === context.H,
-    "SEAL_DRIFT",
+    seal.policy_comment_id === binding.comment_id &&
+      seal.policy_record_sha256 === binding.policy_record_sha256,
+    "SEAL_POLICY_DRIFT",
   );
   const artifact = artifacts.find((a) => a.id === seal.artifact_id);
   requireThat(artifact, "ARTIFACT_MISSING");
   validateArtifact(artifact, source, seal.artifact_id, IMAGE_CAP + REPORT_CAP, uploadStep);
-  requireThat(artifact.digest === seal.artifact_digest, "SEAL_DIGEST_DRIFT");
+  requireThat(
+    artifact.digest === seal.artifact_digest && artifact.size_in_bytes === seal.artifact_bytes,
+    "SEAL_DIGEST_DRIFT",
+  );
   const receipt = {
-    version: 1,
+    version: 2,
+    schema: RECEIPT_SCHEMA,
+    profile: PRODUCTION_PROFILE,
+    K,
+    L,
     context,
     native_run_id: nativeRun.id,
     native_attempt: nativeRun.run_attempt,
@@ -942,85 +2101,129 @@ async function qualified(output) {
     producer_attempt: source.run_attempt,
     artifact_id: artifact.id,
     artifact_digest: artifact.digest,
+    artifact_bytes: artifact.size_in_bytes,
+    policy_record_sha256: binding.policy_record_sha256,
     policy_comment_id: binding.comment_id,
     policy_files: binding.files,
     seal,
   };
   return { receipt, artifact, source };
 }
-async function materialize(artifact, output, receipt) {
-  const bundle = path.join(output, "bundle");
-  await unpackZip(artifact, bundle, FILES, IMAGE_CAP + REPORT_CAP);
-  const manifest = await jsonFile(path.join(bundle, "candidate-manifest.json"));
+async function verifyCandidateDirectory(bundle, m, src, work) {
+  validateCandidateManifest(m, src.context, src.source.id, src.source.run_attempt, src.lock, src.L);
   requireThat(
-    sha256(await readFile(path.join(bundle, "candidate-manifest.json"))) ===
-      receipt.seal.manifest_sha256,
-    "MANIFEST_DIGEST_DRIFT",
-  );
-  requireThat(isDeepStrictEqual(manifest.context, receipt.context), "MANIFEST_SOURCE_DRIFT");
-  requireThat(
-    manifest.run_id === receipt.producer_run && manifest.attempt === receipt.producer_attempt,
-    "MANIFEST_ATTEMPT_DRIFT",
-  );
-  for (const name of FILES.filter((f) => f !== "candidate-manifest.json")) {
-    requireThat(
-      sha256(await readFile(path.join(bundle, name))) === manifest.files[name],
-      "INNER_ARTIFACT_DIGEST_MISMATCH",
-    );
-  }
-  requireThat(
-    isDeepStrictEqual(manifest.policy_files, receipt.policy_files),
+    isDeepStrictEqual(m.policy_files, src.binding.files) &&
+      m.policy_comment_id === src.binding.comment_id &&
+      m.policy_record_sha256 === src.binding.policy_record_sha256,
     "MANIFEST_POLICY_DRIFT",
   );
-  validateScans(
-    await jsonFile(path.join(bundle, "full-trivy.json")),
-    await jsonFile(path.join(bundle, "sbom.spdx.json")),
-  );
+  for (const name of FILES.filter((n) => n !== "candidate-manifest.json"))
+    requireThat(
+      (await fileDigest(path.join(bundle, name))) === m.files[name],
+      "INNER_ARTIFACT_DIGEST_MISMATCH",
+    );
+  const C = await fileBytes(path.join(bundle, "image.tar.xz"));
+  let R = 0;
+  for (const name of REPORT_FILES) R += await fileBytes(path.join(bundle, name));
+  physicalBudget(C, R, []);
   const scanner = await jsonFile(path.join(bundle, "scanner-versions.json"));
   requireThat(
     scanner.trivy?.Version === "0.75.0" &&
       scanner.syft?.version === "1.54.0" &&
-      Date.parse(scanner.trivy.VulnerabilityDB?.DownloadedAt) >=
-        Date.parse(receipt.producer_created_at),
+      Date.parse(scanner.trivy.VulnerabilityDB?.DownloadedAt) >= Date.parse(src.source.created_at),
     "SCANNER_PROVENANCE_DRIFT",
   );
+  const archive = path.join(work, "image.tar");
+  await decompress(path.join(bundle, "image.tar.xz"), archive);
   requireThat(
-    (await jsonFile(path.join(bundle, "full-trivy.json"))).Metadata?.ImageID === manifest.image_id,
-    "SCAN_IMAGE_IDENTITY_DRIFT",
+    (await fileBytes(archive)) === m.archive_bytes &&
+      (await fileDigest(archive)) === m.archive_sha256,
+    "ARCHIVE_IDENTITY_DRIFT",
   );
-  const C = (await stat(path.join(bundle, "image.tar.xz"))).size;
-  let R = 0;
-  for (const name of FILES.filter((f) => f !== "image.tar.xz"))
-    R += (await stat(path.join(bundle, name))).size;
+  const inspection = path.join(work, "inspection");
+  run("sh", ["infra/seaweedfs/verify-image.sh", archive, inspection], { stdio: "inherit" });
+  const v = await jsonFile(path.join(inspection, "verify-image.json"));
   requireThat(
-    C <= IMAGE_CAP && R * 2 + 65536 <= REPORT_CAP && 2 * C + 2 * R + 65536 <= 256 * 1024 * 1024,
-    "TRANSFER_BUDGET_EXCEEDED",
-  );
-  await decompress(path.join(bundle, "image.tar.xz"), path.join(output, "image.tar"));
-  run(
-    "sh",
-    [
-      "infra/seaweedfs/verify-image.sh",
-      path.join(output, "image.tar"),
-      path.join(output, "inspection"),
-    ],
-    { stdio: "inherit" },
-  );
-  const verification = await jsonFile(path.join(output, "inspection/verify-image.json"));
-  requireThat(
-    verification.image_id === manifest.image_id && verification.elf_sha256 === manifest.elf_sha256,
+    v.image_id === m.image_id &&
+      v.elf_sha256 === m.elf_sha256 &&
+      isDeepStrictEqual(v.diff_ids, m.diff_ids) &&
+      v.project_revision === m.context.M &&
+      v.project_source === `https://github.com/${REPOSITORY}`,
     "IMAGE_OR_ELF_DRIFT",
   );
-  await dispose(path.join(output, "inspection"));
+  requireThat(
+    isDeepStrictEqual(v, await jsonFile(path.join(bundle, "verification.json"))),
+    "VERIFICATION_RECORD_DRIFT",
+  );
+  const metadata = await readFile(path.join(inspection, "actual-go-version-m.txt"), "utf8");
+  const claimed = await readFile(path.join(bundle, "go-version-m.txt"), "utf8");
+  requireThat(
+    metadata.split("\n").slice(1).join("\n") === claimed.split("\n").slice(1).join("\n") &&
+      metadata.split("\n")[0].endsWith("go1.26.10") &&
+      claimed.split("\n")[0].endsWith("go1.26.10"),
+    "GO_METADATA_DRIFT",
+  );
+  validateProductionEvidence(
+    v,
+    src.lock,
+    src.L,
+    inspectSWELF(path.join(inspection, "weed")),
+    metadata,
+  );
+  const trivy = await jsonFile(path.join(bundle, "full-trivy.json"));
+  requireThat(trivy.Metadata?.ImageID === m.image_id, "SCAN_IMAGE_IDENTITY_DRIFT");
+  validateSWInventories(
+    trivy,
+    await jsonFile(path.join(bundle, "sbom.spdx.json")),
+    v.build_measurements.one.elf.go_build_info,
+    src.lock.build.baseline_inventory,
+  );
+  await dispose(inspection);
+  return { C, R, archive };
+}
+async function materialize(artifact, output, receipt) {
+  const bundle = path.join(output, "bundle");
+  await unpackZip(artifact, bundle, FILES, IMAGE_CAP + REPORT_CAP);
+  const m = await jsonFile(path.join(bundle, "candidate-manifest.json"));
+  requireThat(
+    (await fileDigest(path.join(bundle, "candidate-manifest.json"))) ===
+      receipt.seal.manifest_sha256,
+    "MANIFEST_DIGEST_DRIFT",
+  );
+  const src = await candidateSource();
+  const measured = await verifyCandidateDirectory(
+    bundle,
+    m,
+    {
+      ...src,
+      source: {
+        id: receipt.producer_run,
+        run_attempt: receipt.producer_attempt,
+        created_at: receipt.producer_created_at,
+      },
+    },
+    output,
+  );
+  physicalBudget(measured.C, measured.R, [
+    {
+      role: "source",
+      artifact_id: artifact.id,
+      run_id: receipt.producer_run,
+      attempt: receipt.producer_attempt,
+      bytes: artifact.size_in_bytes,
+      digest: artifact.digest,
+    },
+  ]);
   return {
     ...receipt,
-    image_id: manifest.image_id,
-    elf_sha256: manifest.elf_sha256,
-    inner_sha256: manifest.files["image.tar.xz"],
+    ...measured,
     bundle,
-    archive: path.join(output, "image.tar"),
-    C,
-    R,
+    image_id: m.image_id,
+    elf_sha256: m.elf_sha256,
+    inner_sha256: m.files["image.tar.xz"],
+    diff_ids: m.diff_ids,
+    archive_sha256: m.archive_sha256,
+    archive_bytes: m.archive_bytes,
   };
 }
 export async function decompress(
@@ -1072,14 +2275,10 @@ print(json.dumps({'elapsed_seconds':time.perf_counter()-started,'uncompressed_by
     ]),
   );
 }
-async function fresh(receipt) {
-  const { context } = await identity();
-  requireThat(
-    receipt.native_run_id === id(process.env.GITHUB_RUN_ID) &&
-      receipt.native_attempt === id(process.env.GITHUB_RUN_ATTEMPT),
-    "RECEIPT_ATTEMPT_DRIFT",
-  );
-  requireThat(isDeepStrictEqual(context, receipt.context), "LIVE_IDENTITY_DRIFT");
+export async function fresh(receipt) {
+  const { context, nativeRun, binding, lock, K, L } = await candidateSource();
+  validateCandidateReceipt(receipt, context, nativeRun.id, nativeRun.run_attempt);
+  requireThat(receipt.K === K && receipt.L === L, "RECEIPT_CONTRACT_DRIFT");
   const { source, jobs } = await selectProducer(context);
   requireThat(
     source.id === receipt.producer_run && source.run_attempt === receipt.producer_attempt,
@@ -1095,13 +2294,414 @@ async function fresh(receipt) {
       .find((j) => j.name === "image seaweedfs")
       .steps.find((s) => s.name === "Upload qualified candidate"),
   );
-  requireThat(artifact.digest === receipt.artifact_digest, "ARTIFACT_DIGEST_DRIFT");
-  const binding = await policy(context);
   requireThat(
-    binding.comment_id === receipt.policy_comment_id &&
+    artifact.digest === receipt.artifact_digest &&
+      artifact.size_in_bytes === receipt.artifact_bytes,
+    "ARTIFACT_DIGEST_DRIFT",
+  );
+  validateCandidateSeal(receipt.seal, context, source, lock, L);
+  requireThat(
+    binding.policy_record_sha256 === receipt.policy_record_sha256 &&
+      binding.comment_id === receipt.policy_comment_id &&
       isDeepStrictEqual(binding.files, receipt.policy_files),
     "POLICY_BINDING_DRIFT",
   );
+}
+// Read-only post-completion reconciliation. This never loads an image, invokes
+// a candidate, uploads an artifact or manufactures a consumer admission receipt.
+export async function reconcileWireArtifacts(input, readRaw, work, python = "python3") {
+  const { context, runs, inventory, lock, L, binding, attemptJobs } = input;
+  const { transfers } = wireInventory(runs, inventory, { context, attemptJobs });
+  for (const kind of ["source", "ci", "walking"]) validateWireRun(runs[kind], kind, context);
+  validateCandidatePolicy(binding, lock, L);
+  const order = { source: 0, seal: 1, ci: 2, walking: 3, "outcome-ci": 4, "outcome-walking": 5 };
+  const rows = [];
+  let source, seal, C, R;
+  try {
+    for (const t of [...transfers].sort(
+      (a, b) => order[a.role] - order[b.role] || a.artifact.id - b.artifact.id,
+    )) {
+      const a = t.artifact,
+        raw = await readRaw(t);
+      requireThat(
+        Buffer.isBuffer(raw) && raw.length === a.size_in_bytes,
+        "WIRE_RAW_MEASUREMENT_DRIFT",
+      );
+      const measured = `sha256:${sha256(raw)}`;
+      requireThat(measured === a.digest, "GITHUB_ARCHIVE_DIGEST_MISMATCH");
+      const cap = ["source", "walking"].includes(t.role)
+        ? IMAGE_CAP + REPORT_CAP
+        : t.role === "seal"
+          ? 8472
+          : t.role === "ci"
+            ? 16674
+            : 4402;
+      const dir = path.join(work, String(id(a.id)));
+      await unpackVerifiedZip(raw, a.digest, dir, WIRE_MEMBERS[t.role], cap, python, true);
+      const row = {
+        role: t.role,
+        artifact_id: a.id,
+        run_id: runs[t.kind].id,
+        attempt: t.attempt,
+        bytes: raw.length,
+        raw_bytes: raw.length,
+        digest: a.digest,
+        raw_sha256: measured,
+      };
+      rows.push(row);
+      if (t.role === "source") {
+        const m = await jsonFile(path.join(dir, "candidate-manifest.json"));
+        validateCandidateManifest(m, context, runs.source.id, runs.source.run_attempt, lock, L);
+        requireThat(
+          m.policy_comment_id === binding.comment_id &&
+            m.policy_record_sha256 === binding.policy_record_sha256 &&
+            isDeepStrictEqual(m.policy_files, binding.files),
+          "WIRE_SOURCE_POLICY_DRIFT",
+        );
+        const files = {};
+        let reports = 0;
+        for (const name of FILES) {
+          const file = path.join(dir, name);
+          files[name] = { bytes: await fileBytes(file), sha256: await fileDigest(file) };
+          if (name !== "candidate-manifest.json")
+            requireThat(files[name].sha256 === m.files[name], "INNER_ARTIFACT_DIGEST_MISMATCH");
+          if (name !== "image.tar.xz") reports += files[name].bytes;
+        }
+        C = files["image.tar.xz"].bytes;
+        R = reports;
+        source = { manifest: m, files };
+        // Keep only hashes after measurement; no second full bundle remains on
+        // disk while independently reading the Walking copy.
+      } else if (t.role === "seal") {
+        seal = await jsonFile(path.join(dir, "seal.json"));
+        validateCandidateSeal(seal, context, runs.source, lock, L);
+        const sourceArtifact = transfers.find((x) => x.role === "source").artifact;
+        requireThat(
+          seal.artifact_id === sourceArtifact.id &&
+            seal.artifact_digest === sourceArtifact.digest &&
+            seal.artifact_bytes === sourceArtifact.size_in_bytes &&
+            seal.manifest_sha256 === source.files["candidate-manifest.json"].sha256 &&
+            seal.policy_comment_id === binding.comment_id &&
+            seal.policy_record_sha256 === binding.policy_record_sha256,
+          "WIRE_SEAL_SOURCE_DRIFT",
+        );
+      } else if (["ci", "walking"].includes(t.role)) {
+        const r = await jsonFile(path.join(dir, "admission.json"));
+        validateCandidateReceipt(r, context, runs[t.kind].id, runs[t.kind].run_attempt);
+        const m = source.manifest;
+        requireThat(
+          r.K === m.K &&
+            r.L === L &&
+            r.C === C &&
+            r.R === R &&
+            r.producer_run === runs.source.id &&
+            r.producer_created_at === runs.source.created_at &&
+            r.producer_attempt === 1 &&
+            isDeepStrictEqual(r.seal, seal) &&
+            r.image_id === m.image_id &&
+            r.elf_sha256 === m.elf_sha256 &&
+            isDeepStrictEqual(r.diff_ids, m.diff_ids) &&
+            r.archive_sha256 === m.archive_sha256 &&
+            r.archive_bytes === m.archive_bytes &&
+            r.inner_sha256 === m.files["image.tar.xz"] &&
+            isDeepStrictEqual(r.policy_files, binding.files),
+          "WIRE_RECEIPT_SOURCE_DRIFT",
+        );
+        row.receipt_sha256 = await fileDigest(path.join(dir, "admission.json"));
+        if (t.role === "walking")
+          for (const name of FILES)
+            requireThat(
+              (await fileBytes(path.join(dir, name))) === source.files[name].bytes &&
+                (await fileDigest(path.join(dir, name))) === source.files[name].sha256,
+              "WIRE_PROMOTION_SOURCE_DRIFT",
+            );
+      } else {
+        const o = await jsonFile(path.join(dir, "admission-outcome.json"));
+        exactKeys(o, ["outcome", "run_id", "attempt"]);
+        requireThat(
+          o.run_id === row.run_id && o.attempt === row.attempt,
+          "WIRE_OUTCOME_IDENTITY_DRIFT",
+        );
+        row.outcome = o.outcome;
+      }
+      await rm(dir, { recursive: true, force: true });
+    }
+    return {
+      ...validateFinalWireLedger(C, R, rows, inventory, runs, context, Date.now(), attemptJobs),
+      source_binding: {
+        K: source.manifest.K,
+        L,
+        manifest_sha256: source.files["candidate-manifest.json"].sha256,
+        image_id: source.manifest.image_id,
+        elf_sha256: source.manifest.elf_sha256,
+        diff_ids: source.manifest.diff_ids,
+        policy_comment_id: binding.comment_id,
+        policy_record_sha256: binding.policy_record_sha256,
+      },
+      measured_source_files: source.files,
+    };
+  } catch (error) {
+    // Partial observations are diagnostic only; absent rows are NEVER zero.
+    error.wire_evidence = {
+      fully_measured: false,
+      observed_rows: rows,
+      accounting: C && R ? wireAccounting(C, R, rows) : null,
+    };
+    throw error;
+  }
+}
+async function finalWireCheckpoint(ciId, walkingId, destination) {
+  const lockBytes = await readFile(path.join(ROOT, "infra/seaweedfs/security-build.lock.json"));
+  const lock = strictJSON(lockBytes),
+    L = sha256(lockBytes);
+  productionProfile(lock);
+  const pr = await readIdentityPr();
+  requireThat(
+    pr.number === 100 &&
+      pr.state === "open" &&
+      pr.draft === true &&
+      !pr.merged &&
+      pr.head.repo.id === REPOSITORY_ID &&
+      pr.base.repo.id === REPOSITORY_ID &&
+      pr.base.sha === BASE,
+    "WIRE_LIVE_PR_DRIFT",
+  );
+  const H = pr.head.sha,
+    B = pr.base.sha,
+    M = pr.merge_commit_sha;
+  requireThat(
+    [H, B, M].every((s) => /^[a-f0-9]{40}$/.test(s)),
+    "WIRE_LIVE_PR_DRIFT",
+  );
+  const head = await api(`git/commits/${H}`, { publicOnly: true }),
+    merge = await api(`git/commits/${M}`, { publicOnly: true });
+  const context = { H, B, M, TH: head.tree.sha, TM: merge.tree.sha };
+  requireThat(
+    head.sha === H &&
+      merge.sha === M &&
+      context.TH === context.TM &&
+      isDeepStrictEqual(
+        merge.parents.map((p) => p.sha),
+        [B, H],
+      ),
+    "WIRE_MERGE_TREE_DRIFT",
+  );
+  const binding = validateCandidatePolicy(await policy(context, true), lock, L);
+  const { source, jobs: sourceJobs } = await selectProducer(context);
+  const runs = {
+    source,
+    ci: await api(`actions/runs/${id(ciId)}`),
+    walking: await api(`actions/runs/${id(walkingId)}`),
+  };
+  const verifiedChecks = [];
+  const recordCheck = async (job, run, name) => {
+    requireThat(
+      new RegExp(`^https://api\\.github\\.com/repos/${REPOSITORY}/check-runs/[0-9]+$`).test(
+        job.check_run_url,
+      ),
+      "CHECK_URL_REJECTED",
+    );
+    const check = await request(job.check_run_url);
+    validateCheck(check, context, run.check_suite_id, name);
+    verifiedChecks.push({
+      id: check.id,
+      name,
+      app_id: check.app.id,
+      head_sha: check.head_sha,
+      check_suite_id: check.check_suite.id,
+      run_id: run.id,
+      attempt: run.run_attempt,
+      conclusion: check.conclusion,
+    });
+  };
+  await recordCheck(
+    sourceJobs.find((j) => j.name === "supply-chain-security"),
+    source,
+    "supply-chain-security",
+  );
+  for (const kind of ["ci", "walking"]) {
+    validateWireRun(runs[kind], kind, context);
+    const wf = WORKFLOWS[kind === "ci" ? "CI" : "Walking skeleton E2E"];
+    const matches = (
+      await pages(
+        `actions/workflows/${wf.id}/runs?event=pull_request&head_sha=${H}`,
+        "workflow_runs",
+      )
+    ).filter((r) => r.head_sha === H && r.pull_requests.some((p) => p.number === 100));
+    requireThat(
+      matches.length === 1 && matches[0].id === runs[kind].id,
+      "WIRE_NATIVE_RUN_AMBIGUOUS",
+    );
+    const jobs = await pages(
+      `actions/runs/${runs[kind].id}/attempts/${runs[kind].run_attempt}/jobs`,
+      "jobs",
+    );
+    const name = kind === "ci" ? "ci" : "walking-skeleton",
+      checkJob = jobs.filter((j) => j.name === name);
+    requireThat(
+      checkJob.length === 1 &&
+        checkJob[0].conclusion === "success" &&
+        checkJob[0].run_attempt === runs[kind].run_attempt,
+      "WIRE_REQUIRED_CHECK_MISSING",
+    );
+    requireThat(
+      new RegExp(`^https://api\\.github\\.com/repos/${REPOSITORY}/check-runs/[0-9]+$`).test(
+        checkJob[0].check_run_url,
+      ),
+      "CHECK_URL_REJECTED",
+    );
+    await recordCheck(checkJob[0], runs[kind], name);
+  }
+  const snapshot = async () => {
+    const all = [];
+    for (const [kind, r] of Object.entries(runs))
+      for (const artifact of await pages(`actions/runs/${r.id}/artifacts`, "artifacts"))
+        all.push({ kind, artifact });
+    return all.sort((a, b) => a.artifact.id - b.artifact.id);
+  };
+  const inventory = await snapshot();
+  const attempts = {};
+  for (const r of Object.values(runs))
+    for (let attempt = 1; attempt <= r.run_attempt; attempt++)
+      attempts[`${r.id}:${attempt}`] = await pages(
+        `actions/runs/${r.id}/attempts/${attempt}/jobs`,
+        "jobs",
+      );
+  const { transfers } = wireInventory(runs, inventory, { context, attemptJobs: attempts });
+  validateWireStepInventory(runs, inventory, attempts, context);
+  for (const t of transfers) {
+    const key = `${runs[t.kind].id}:${t.attempt}`;
+    const job = attempts[key].filter(
+      (j) => j.name === (t.kind === "source" ? "image seaweedfs" : "qualified storage admission"),
+    );
+    const stepName =
+      t.role === "source"
+        ? "Upload qualified candidate"
+        : t.role === "seal"
+          ? "Upload candidate seal"
+          : t.role === "ci"
+            ? "Preserve verified preparation receipt"
+            : t.role === "walking"
+              ? "Promote unchanged verified image into this run"
+              : "Preserve bounded admission outcome";
+    const steps = job[0]?.steps.filter((s) => s.name === stepName) ?? [];
+    requireThat(
+      job.length === 1 &&
+        job[0].run_attempt === t.attempt &&
+        steps.length === 1 &&
+        steps[0].status === "completed" &&
+        steps[0].conclusion === "success",
+      "WIRE_ARTIFACT_STEP_DRIFT",
+    );
+    validateArtifact(t.artifact, runs[t.kind], t.artifact.id, IMAGE_CAP + REPORT_CAP, steps[0]);
+  }
+  const work = await mkdtemp(path.join(ROOT, ".local/issue99/wire-"));
+  try {
+    const ledger = await reconcileWireArtifacts(
+      { context, runs, inventory, lock, L, binding, attemptJobs: attempts },
+      (t) =>
+        api(`actions/artifacts/${t.artifact.id}/zip`, {
+          bytes: true,
+          cap: ["source", "walking"].includes(t.role)
+            ? IMAGE_CAP + REPORT_CAP
+            : t.role === "seal"
+              ? 8472
+              : t.role === "ci"
+                ? 16674
+                : 4402,
+        }),
+      work,
+      process.env.TEST_PYTHON ?? "python3",
+    );
+    const end = await readIdentityPr();
+    requireThat(
+      end.state === "open" &&
+        end.draft &&
+        !end.merged &&
+        end.head.sha === H &&
+        end.base.sha === B &&
+        end.merge_commit_sha === M,
+      "WIRE_LIVE_PR_DRIFT",
+    );
+    requireThat(isDeepStrictEqual(inventory, await snapshot()), "WIRE_INVENTORY_CHANGED");
+    for (const [kind, r] of Object.entries(runs)) {
+      const final = await api(`actions/runs/${r.id}`);
+      validateWireRun(final, kind, context);
+      requireThat(final.run_attempt === r.run_attempt, "WIRE_ATTEMPT_CHANGED");
+    }
+    const finalPolicy = validateCandidatePolicy(await policy(context, true), lock, L);
+    requireThat(
+      finalPolicy.policy_record_sha256 === binding.policy_record_sha256 &&
+        finalPolicy.comment_id === binding.comment_id,
+      "WIRE_POLICY_CHANGED",
+    );
+    const target = path.resolve(
+      destination ?? path.join(ROOT, ".local/issue99/final-wire-ledger.json"),
+    );
+    requireThat(
+      path.dirname(target) === (await realpath(path.join(ROOT, ".local/issue99"))),
+      "WIRE_OUTPUT_PATH_REJECTED",
+    );
+    await writeFile(
+      target,
+      JSON.stringify(
+        { ...ledger, required_checks: verifiedChecks, measured_at: new Date().toISOString() },
+        null,
+        2,
+      ) + "\n",
+      { flag: "wx", mode: 0o600 },
+    );
+    console.log(
+      JSON.stringify({
+        outcome: "FINAL_WIRE_LEDGER_MEASURED",
+        file: target,
+        sha256: await fileDigest(target),
+        P: ledger.P,
+        O: ledger.O,
+        fully_measured: true,
+      }),
+    );
+  } finally {
+    await rm(work, { recursive: true, force: true });
+  }
+}
+export async function verifyPromotedContents(
+  dir,
+  expectedReceiptHash,
+  receiptOnly = false,
+  env = process.env,
+) {
+  requireThat(
+    sha256(await readFile(path.join(dir, "admission.json"))) === expectedReceiptHash,
+    "PROMOTED_RECEIPT_DRIFT",
+  );
+  const receipt = await jsonFile(path.join(dir, "admission.json"));
+  requireThat(
+    receipt.native_run_id === id(env.GITHUB_RUN_ID) &&
+      receipt.native_attempt === id(env.GITHUB_RUN_ATTEMPT),
+    "PROMOTED_ATTEMPT_DRIFT",
+  );
+  await fresh(receipt);
+  if (receiptOnly) return receipt;
+  const manifest = await jsonFile(path.join(dir, "candidate-manifest.json"));
+  requireThat(
+    (await fileDigest(path.join(dir, "candidate-manifest.json"))) === receipt.seal.manifest_sha256,
+    "PROMOTED_MANIFEST_DRIFT",
+  );
+  const source = await candidateSource();
+  validateCandidateManifest(
+    manifest,
+    source.context,
+    receipt.producer_run,
+    receipt.producer_attempt,
+    source.lock,
+    source.L,
+  );
+  requireThat(
+    sha256(await readFile(path.join(dir, "image.tar.xz"))) === receipt.inner_sha256,
+    "PROMOTED_DIGEST_DRIFT",
+  );
+  return receipt;
 }
 async function output(name, value) {
   requireThat(process.env.GITHUB_OUTPUT, "JOB_OUTPUT_MISSING");
@@ -1113,6 +2713,14 @@ async function cli(mode, arg, extra) {
     await jsonFile(path.join(ROOT, "infra/seaweedfs/security-build.lock.json")),
     mode,
   );
+  if (mode === "wire-ledger") {
+    requireThat(
+      typeof arg === "string" && /^[1-9][0-9]*:[1-9][0-9]*$/.test(arg),
+      "WIRE_RUN_ARGUMENT_REQUIRED",
+    );
+    const [ci, walking] = arg.split(":").map(id);
+    return finalWireCheckpoint(ci, walking, extra);
+  }
   if (mode === "policy-inventory") {
     const H = run("git", ["rev-parse", "HEAD"]).trim();
     const TH = run("git", ["rev-parse", "HEAD^{tree}"]).trim();
@@ -1136,25 +2744,105 @@ async function cli(mode, arg, extra) {
     );
     return;
   }
+  if (mode === "prepare-producer") {
+    await candidateSource(true);
+    console.log("EXACT_SOURCE_POLICY_VERIFIED");
+    return;
+  }
+  if (mode === "verify-build-profile") {
+    const v = await jsonFile(path.join(arg, "verify-image.json"));
+    const elf = inspectSWELF(path.join(arg, "weed"));
+    const metadata = await readFile(path.join(arg, "actual-go-version-m.txt"), "utf8");
+    const lockFile = await readFile(path.join(ROOT, "infra/seaweedfs/security-build.lock.json"));
+    const lock = strictJSON(lockFile);
+    if (lock.build.output_profile === PRODUCTION_PROFILE)
+      validateProductionEvidence(v, lock, sha256(lockFile), elf, metadata);
+    else validateSWEvidence(v, elf, metadata);
+    console.log("IMAGE_BUILD_PROFILE_VERIFIED");
+    return;
+  }
   if (mode === "produce") return produce(arg, extra);
   if (mode === "seal") {
+    const src = await candidateSource(true);
     const bundle = path.join(ROOT, ".local/seaweedfs-transfer/bundle");
     const m = await jsonFile(path.join(bundle, "candidate-manifest.json"));
-    const destination = path.join(ROOT, ".local/seaweedfs-transfer/seal");
-    await mkdir(destination, { recursive: true, mode: 0o700 });
-    const digest = /^[a-f0-9]{64}$/.test(extra) ? `sha256:${extra}` : extra;
-    requireThat(/^sha256:[a-f0-9]{64}$/.test(digest), "UPLOAD_DIGEST_MISSING");
-    await writeFile(
-      path.join(destination, "seal.json"),
-      JSON.stringify({
-        run_id: m.run_id,
-        attempt: m.attempt,
-        H: m.context.H,
-        artifact_id: id(arg),
-        artifact_digest: digest,
-        manifest_sha256: sha256(await readFile(path.join(bundle, "candidate-manifest.json"))),
-      }) + "\n",
+    validateCandidateManifest(
+      m,
+      src.context,
+      src.nativeRun.id,
+      src.nativeRun.run_attempt,
+      src.lock,
+      src.L,
     );
+    const actual = await api(`actions/artifacts/${id(arg)}`);
+    const digest = /^[a-f0-9]{64}$/.test(extra) ? `sha256:${extra}` : extra;
+    const jobs = await pages(
+      `actions/runs/${src.nativeRun.id}/attempts/${src.nativeRun.run_attempt}/jobs`,
+      "jobs",
+    );
+    const step = jobs
+      .find((j) => j.name === "image seaweedfs")
+      ?.steps.find((x) => x.name === "Upload qualified candidate");
+    requireThat(
+      step?.status === "completed" && step.conclusion === "success",
+      "UPLOAD_STEP_NOT_COMPLETE",
+    );
+    validateArtifact(actual, src.nativeRun, id(arg), IMAGE_CAP + REPORT_CAP, step);
+    requireThat(
+      actual.digest === digest &&
+        actual.name === `seaweedfs-candidate-${src.nativeRun.id}-${src.nativeRun.run_attempt}`,
+      "UPLOAD_ARTIFACT_DRIFT",
+    );
+    const work = await mkdtemp(path.join(ROOT, ".local/issue99/source-recheck-"));
+    try {
+      const downloaded = path.join(work, "source");
+      await unpackZip(actual, downloaded, FILES, IMAGE_CAP + REPORT_CAP);
+      requireThat(
+        (await fileDigest(path.join(downloaded, "candidate-manifest.json"))) ===
+          (await fileDigest(path.join(bundle, "candidate-manifest.json"))),
+        "UPLOADED_MANIFEST_DRIFT",
+      );
+      const measured = await verifyCandidateDirectory(
+        downloaded,
+        m,
+        { ...src, source: src.nativeRun },
+        work,
+      );
+      physicalBudget(measured.C, measured.R, [
+        {
+          role: "source",
+          artifact_id: actual.id,
+          run_id: src.nativeRun.id,
+          attempt: src.nativeRun.run_attempt,
+          bytes: actual.size_in_bytes,
+          digest: actual.digest,
+        },
+      ]);
+      const seal = {
+        schema: SEAL_SCHEMA,
+        profile: PRODUCTION_PROFILE,
+        K: src.K,
+        L: src.L,
+        context: src.context,
+        run_id: src.nativeRun.id,
+        attempt: src.nativeRun.run_attempt,
+        artifact_id: actual.id,
+        artifact_digest: actual.digest,
+        artifact_bytes: actual.size_in_bytes,
+        manifest_sha256: await fileDigest(path.join(downloaded, "candidate-manifest.json")),
+        policy_comment_id: src.binding.comment_id,
+        policy_record_sha256: src.binding.policy_record_sha256,
+      };
+      validateCandidateSeal(seal, src.context, src.nativeRun, src.lock, src.L);
+      const dest = path.join(ROOT, ".local/seaweedfs-transfer/seal");
+      await mkdir(dest, { recursive: true, mode: 0o700 });
+      await writeFile(path.join(dest, "seal.json"), JSON.stringify(seal) + "\n", {
+        flag: "wx",
+        mode: 0o600,
+      });
+    } finally {
+      await dispose(work);
+    }
     return;
   }
   if (mode === "verify-local") {
@@ -1172,23 +2860,33 @@ async function cli(mode, arg, extra) {
     }
     return;
   }
-  if (mode === "promoted") {
-    const dir = path.resolve(arg);
-    requireThat(
-      sha256(await readFile(path.join(dir, "admission.json"))) === extra,
-      "PROMOTED_RECEIPT_DRIFT",
+  if (mode === "promoted" || mode === "receipt-zip") {
+    // The official Action deliberately leaves a raw ZIP. Require the exact
+    // independently admitted digest/size before parsing a single member.
+    const { verifyRawOutput } =
+      await import("../../.github/actions/pc100-bounded-artifact/index.mjs");
+    const raw = path.resolve(arg);
+    const bytes = id(process.env.PC100_RAW_ZIP_BYTES);
+    const rawFile = await verifyRawOutput(raw, {
+      bytes,
+      cap: mode === "promoted" ? IMAGE_CAP + REPORT_CAP : 16674,
+      digest: process.env.PC100_RAW_ZIP_DIGEST,
+    });
+    const dir = await mkdtemp(path.join(ROOT, ".local/issue99/unpacked-"));
+    await unpackVerifiedZip(
+      await readFile(rawFile),
+      process.env.PC100_RAW_ZIP_DIGEST,
+      dir,
+      mode === "promoted" ? [...FILES, "admission.json"] : ["admission.json"],
+      mode === "promoted" ? IMAGE_CAP + REPORT_CAP : 16674,
+      "python3",
+      true,
     );
-    const receipt = await jsonFile(path.join(dir, "admission.json"));
-    requireThat(
-      receipt.native_run_id === id(process.env.GITHUB_RUN_ID) &&
-        receipt.native_attempt === id(process.env.GITHUB_RUN_ATTEMPT),
-      "PROMOTED_ATTEMPT_DRIFT",
-    );
-    await fresh(receipt);
-    requireThat(
-      sha256(await readFile(path.join(dir, "image.tar.xz"))) === receipt.inner_sha256,
-      "PROMOTED_DIGEST_DRIFT",
-    );
+    const receipt = await verifyPromotedContents(dir, extra, mode === "receipt-zip");
+    if (mode === "receipt-zip") {
+      await output("receipt", path.join(dir, "admission.json"));
+      return;
+    }
     const work = await mkdtemp(path.join(ROOT, ".local/issue99/promoted-"));
     await decompress(path.join(dir, "image.tar.xz"), path.join(work, "image.tar"));
     run(
@@ -1220,6 +2918,12 @@ async function cli(mode, arg, extra) {
     if (extra) requireThat(sha256(await readFile(arg)) === extra, "FINAL_RECEIPT_DRIFT");
     await fresh(await jsonFile(arg));
     console.log("FINAL_ADMISSION_IDENTITY_VERIFIED");
+    console.log(
+      JSON.stringify({
+        global_wire_ledger: "POST_COMPLETION_RECONCILIATION_REQUIRED",
+        qualification: "NOT_ESTABLISHED_BY_THIS_IDENTITY_CHECK",
+      }),
+    );
     return;
   }
   const work = await mkdtemp(path.join(ROOT, ".local/issue99/admission-"));
@@ -1241,10 +2945,18 @@ async function cli(mode, arg, extra) {
   }
   await rm(receipt.archive);
   const file = path.join(work, "admission.json");
-  await writeFile(file, JSON.stringify(receipt, null, 2) + "\n", { mode: 0o600 });
+  await writeFile(file, JSON.stringify(receipt) + "\n", { mode: 0o600 });
   const promotedReceipt = JSON.stringify(receipt) + "\n";
   await writeFile(path.join(receipt.bundle, "admission.json"), promotedReceipt, { mode: 0o600 });
   await output("receipt", file);
+  if (process.env.GITHUB_WORKFLOW === "CI") {
+    const ciBundle = await mkdtemp(path.join(ROOT, ".local/issue99/ci-receipt-"));
+    await writeFile(path.join(ciBundle, "admission.json"), promotedReceipt, {
+      flag: "wx",
+      mode: 0o600,
+    });
+    await output("ci_bundle", ciBundle);
+  }
   await output("bundle", receipt.bundle);
   await output("producer", receipt.producer_run);
   await output("producer_attempt", receipt.producer_attempt);
@@ -2268,7 +3980,7 @@ export async function runBoundedOCIExperiment(expected, attempt, emit) {
     return "OCI_REPRESENTATION_FEASIBILITY=NOT_MET";
   }
 }
-async function losslessCompressionProbe(report, work, verification, context) {
+async function _losslessCompressionProbe(report, work, verification, context) {
   const emit = async (r) => console.log(JSON.stringify(r));
   try {
     requireThat(process.platform === "linux", "OCI_LINUX_REQUIRED");
@@ -2705,6 +4417,9 @@ print(json.dumps({'sha256':h,'file_bytes':size,'entry':entry,'type':typ,'machine
 }
 
 export function validateSWEvidence(verification, elf, metadata) {
+  return validateELFMeasurements(verification, elf, metadata, SW_PROFILE, validateDiagnosticMarker);
+}
+function validateELFMeasurements(verification, elf, metadata, expectedProfile, marker) {
   requireThat(
     verification.old_elf_absent === true &&
       verification.runtime_preserved === true &&
@@ -2719,11 +4434,11 @@ export function validateSWEvidence(verification, elf, metadata) {
   );
   for (const label of ["one", "two"]) {
     const b = verification.build_measurements?.[label];
-    validateDiagnosticMarker(b, elf.sha256);
+    marker(b, elf.sha256);
     requireThat(
       b?.cache_initially_empty === true &&
         b.elf_sha256 === elf.sha256 &&
-        b.output_profile === SW_PROFILE &&
+        b.output_profile === expectedProfile &&
         b.elf?.linker_flags === SW_FLAGS &&
         b.elf.file_bytes === elf.file_bytes &&
         b.wall_seconds > 0 &&
@@ -3278,10 +4993,11 @@ async function produceSWDiagnostic(image, destination) {
 
 async function produce(image, destination) {
   if (
-    diagnosticProfile(await jsonFile(path.join(ROOT, "infra/seaweedfs/security-build.lock.json")))
+    (await jsonFile(path.join(ROOT, "infra/seaweedfs/security-build.lock.json"))).build
+      ?.output_profile === SW_PROFILE
   )
     return produceSWDiagnostic(image, destination);
-  const { context } = await identity();
+  const { context, lock, L, K, binding } = await candidateSource(true);
   const folder = path.resolve(destination);
   requireThat(
     folder === path.join(ROOT, ".local/seaweedfs-transfer/bundle"),
@@ -3297,6 +5013,13 @@ async function produce(image, destination) {
       verification.project_revision === context.M &&
       verification.project_source === `https://github.com/${REPOSITORY}`,
     "PRODUCER_IMAGE_IDENTITY_DRIFT",
+  );
+  validateProductionEvidence(
+    verification,
+    lock,
+    L,
+    inspectSWELF(path.join(work, "weed")),
+    await readFile(path.join(work, "actual-go-version-m.txt"), "utf8"),
   );
   await writeFile(path.join(folder, "verification.json"), JSON.stringify(verification) + "\n");
   await writeFile(
@@ -3330,10 +5053,39 @@ async function produce(image, destination) {
     "0",
     imageId,
   ]);
-  validateScans(
+  validateSWInventories(
     await jsonFile(path.join(folder, "full-trivy.json")),
     await jsonFile(path.join(folder, "sbom.spdx.json")),
+    verification.build_measurements.one.elf.go_build_info,
+    lock.build.baseline_inventory,
   );
+  const positive = path.join(work, "positive-control.json");
+  run("trivy", [
+    "--config=",
+    "--cache-dir",
+    trivyCache,
+    "image",
+    "--ignorefile=",
+    "--ignore-unfixed=false",
+    "--severity",
+    "UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL",
+    "--format",
+    "json",
+    "--output",
+    positive,
+    "--exit-code",
+    "0",
+    lock.runtime_donor.image,
+  ]);
+  requireThat(
+    (await jsonFile(positive)).Results.some((r) =>
+      (r.Vulnerabilities ?? []).some(
+        (v) => v.PkgName === "github.com/go-jose/go-jose/v4" && v.Severity === "HIGH",
+      ),
+    ),
+    "SCANNER_POSITIVE_CONTROL_FAILED",
+  );
+  await diagnosticCryptoControls();
   const freshVersion = trivyVersion();
   requireThat(
     freshVersion.Version === "0.75.0" &&
@@ -3371,6 +5123,29 @@ async function produce(image, destination) {
     compression.uncompressed_bytes === originalArchiveBytes,
     "TRANSFER_MEASUREMENT_INVALID",
   );
+  const roundtrip = path.join(work, "roundtrip.tar");
+  const decoder = await decompress(
+    path.join(folder, "image.tar.xz"),
+    roundtrip,
+    "python3",
+    4 * 1024 ** 3,
+    true,
+  );
+  validateSWResources(compression, decoder);
+  requireThat(
+    (await fileDigest(roundtrip)) === (await fileDigest(path.join(work, "candidate.tar"))),
+    "PRODUCTION_ROUNDTRIP_DRIFT",
+  );
+  run("sh", ["infra/seaweedfs/verify-image.sh", roundtrip, path.join(work, "roundtrip-inspect")], {
+    stdio: "inherit",
+  });
+  requireThat(
+    isDeepStrictEqual(
+      verification,
+      await jsonFile(path.join(work, "roundtrip-inspect/verify-image.json")),
+    ),
+    "PRODUCTION_IMAGE_ROUNDTRIP_DRIFT",
+  );
   const files = {};
   const reportFileBytes = {};
   for (const name of FILES.filter((n) => n !== "candidate-manifest.json")) {
@@ -3383,6 +5158,15 @@ async function produce(image, destination) {
       run("git", ["show", `${context.M}:${name}`], { encoding: "buffer" }),
     );
   const manifest = {
+    schema: CANDIDATE_SCHEMA,
+    profile: PRODUCTION_PROFILE,
+    K,
+    L,
+    diff_ids: verification.diff_ids,
+    archive_sha256: await fileDigest(path.join(work, "candidate.tar")),
+    archive_bytes: originalArchiveBytes,
+    policy_comment_id: binding.comment_id,
+    policy_record_sha256: binding.policy_record_sha256,
     context,
     run_id: id(process.env.GITHUB_RUN_ID),
     attempt: id(process.env.GITHUB_RUN_ATTEMPT),
@@ -3413,9 +5197,14 @@ async function produce(image, destination) {
         }),
       );
     },
-    (report) => losslessCompressionProbe(report, work, verification, context),
+    undefined,
   );
   const R = budget.R;
+  validateCandidateManifest(manifest, context, id(process.env.GITHUB_RUN_ID), 1, lock, L);
+  requireThat(
+    isDeepStrictEqual((await candidateSource(true)).context, context),
+    "FINAL_SOURCE_DRIFT",
+  );
   await writeFile(path.join(folder, "candidate-manifest.json"), text);
   await dispose(work);
   console.log(
@@ -3428,15 +5217,34 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     const outcome = error instanceof AdmissionError ? error.code : "ADMISSION_INTERNAL_ERROR";
     const result = {
       outcome,
-      retryable_prerequisite: ["PRODUCER_NOT_YET_CREATED", "PRODUCER_NOT_YET_COMPLETE"].includes(
-        outcome,
-      ),
+      retryable_prerequisite:
+        process.argv[2] !== "wire-ledger" &&
+        ["PRODUCER_NOT_YET_CREATED", "PRODUCER_NOT_YET_COMPLETE"].includes(outcome),
       run_id: process.env.GITHUB_RUN_ID,
       attempt: process.env.GITHUB_RUN_ATTEMPT,
       identity_evidence: lastIdentityEvidence,
       identity_observations: identityObservations,
+      ...(process.argv[2] === "wire-ledger"
+        ? {
+            wire_evidence: error.wire_evidence ?? {
+              fully_measured: false,
+              observed_rows: [],
+              accounting: null,
+            },
+          }
+        : {}),
     };
     console.error(JSON.stringify(result));
+    if (process.argv[2] === "wire-ledger") {
+      await mkdir(path.join(ROOT, ".local/issue99"), { recursive: true, mode: 0o700 });
+      await writeFile(
+        path.join(ROOT, `.local/issue99/wire-failure-${Date.now()}-${process.pid}.json`),
+        JSON.stringify(result) + "\n",
+        { flag: "wx", mode: 0o600 },
+      );
+      process.exitCode = 1;
+      return;
+    }
     if (process.env.GITHUB_OUTPUT) await output("outcome", outcome);
     await mkdir(path.join(ROOT, ".local/issue99"), { recursive: true, mode: 0o700 });
     await writeFile(
@@ -3444,6 +5252,14 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       JSON.stringify(result) + "\n",
       { mode: 0o600 },
     );
+    if (result.retryable_prerequisite && process.env.GITHUB_RUN_ATTEMPT === "1") {
+      const dest = path.join(ROOT, ".local/issue99/outcome-bundle");
+      await mkdir(dest, { recursive: true, mode: 0o700 });
+      const bounded = { outcome, run_id: id(process.env.GITHUB_RUN_ID), attempt: 1 };
+      await writeFile(path.join(dest, "admission-outcome.json"), JSON.stringify(bounded) + "\n", {
+        mode: 0o600,
+      });
+    }
     process.exitCode = 1;
   });
 }

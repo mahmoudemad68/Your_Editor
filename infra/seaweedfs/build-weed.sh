@@ -19,15 +19,16 @@ bootstrap)
 package main
 import("encoding/json";"crypto/sha256";"fmt";"os";"io";"strings";"os/exec";"syscall";"time";"debug/elf";"debug/buildinfo")
 type Module struct { Path,Version,Sum,GoModSum,Zip,GoMod string; Replace *Module }
-type Input struct { Source map[string]interface{}; Modules map[string]struct{Version,Zip_sha256,Mod_sha256 string; Go_sum_lines []string}; Original_versions map[string]string; Build struct{Output_profile string; Diagnostic_only bool} }
+type Input struct { Source map[string]interface{}; Modules map[string]struct{Version,Zip_sha256,Mod_sha256 string; Go_sum_lines []string}; Original_versions map[string]string; Build struct{Output_profile string; Diagnostic_only *bool; Production_contract map[string]interface{}; Production_contract_sha256 string} }
 func must(e error){if e!=nil{panic(e)}}
 func file(p string)[]byte{b,e:=os.ReadFile(p);must(e);return b}
 func hash(p string)string{return fmt.Sprintf("%x",sha256.Sum256(file(p)))}
 func modules(p string)map[string]Module {f,e:=os.Open(p);must(e);defer f.Close();d:=json.NewDecoder(f);r:=map[string]Module{};for{var m Module;e=d.Decode(&m);if e==io.EOF{break};must(e);if _,ok:=r[m.Path];ok{panic("duplicate module")};r[m.Path]=m};return r}
 func sameReplace(a,b *Module)bool{if a==nil||b==nil{return a==nil&&b==nil};return a.Path==b.Path&&a.Version==b.Version&&sameReplace(a.Replace,b.Replace)}
 const swProfile="seaweedfs-go-s-w-diagnostic-v1"
+const pcProfile="seaweedfs-go-s-w-production-candidate-v1"
 const originalLinkerFlags="-extldflags -static -X github.com/seaweedfs/seaweedfs/weed/util/version.COMMIT=ffa87c2+editagent-sec1"
-func linkerFlags(profile string)string{switch profile{case "":return originalLinkerFlags;case swProfile:return originalLinkerFlags+" -s -w";default:panic("unapproved linker profile")}}
+func linkerFlags(profile string)string{switch profile{case "":return originalLinkerFlags;case swProfile,pcProfile:return originalLinkerFlags+" -s -w";default:panic("unapproved linker profile")}}
 func elfEvidence(output,flags string)map[string]interface{}{
  f,e:=elf.Open(output);must(e);defer f.Close();info,e:=os.Stat(output);must(e)
  bi,e:=buildinfo.ReadFile(output);must(e);if bi.GoVersion!="go1.26.10"{panic("ELF compiler drift")}
@@ -41,13 +42,19 @@ func elfEvidence(output,flags string)map[string]interface{}{
  return map[string]interface{}{"file_bytes":info.Size(),"class":f.Class.String(),"data":f.Data.String(),"type":f.Type.String(),"machine":f.Machine.String(),"entry":f.Entry,"sections":sections,"program_headers":programs,"go_build_info":bi,"linker_flags":flags,"embedded_ldflags":"Go omits -ldflags with -trimpath; exact invocation is separately recorded","baseline_sections":"UNKNOWN"}
 }
 func build(l Input,label,output string){
- flags:=linkerFlags(l.Build.Output_profile);if l.Build.Output_profile!=swProfile||!l.Build.Diagnostic_only||os.Getenv("GOFLAGS")!=""||os.Getenv("GOEXPERIMENT")!=""{panic("fixed diagnostic profile required")}
+ flags:=linkerFlags(l.Build.Output_profile)
+ diagnostic:=l.Build.Output_profile==swProfile
+ production:=l.Build.Output_profile==pcProfile
+ if (!diagnostic&&!production)||l.Build.Diagnostic_only==nil||(diagnostic&&!*l.Build.Diagnostic_only)||(production&&*l.Build.Diagnostic_only)||os.Getenv("GOFLAGS")!=""||os.Getenv("GOEXPERIMENT")!=""{panic("fixed build profile required")}
+ if production{contract,e:=json.Marshal(l.Build.Production_contract);must(e);if l.Build.Production_contract["profile"]!=pcProfile||fmt.Sprintf("%x",sha256.Sum256(contract))!=l.Build.Production_contract_sha256{panic("production contract drift")}}
+
 
  entries,e:=os.ReadDir(os.Getenv("GOCACHE"));must(e);if len(entries)!=0{panic("compile cache is not empty")}
  started:=time.Now();cmd:=exec.Command("timeout","1500","go","build","-mod=readonly","-p=2","-trimpath","-buildvcs=false","-ldflags",flags,"-o",output,"./weed");cmd.Stdout=os.Stdout;cmd.Stderr=os.Stderr;must(cmd.Run())
  usage:=cmd.ProcessState.SysUsage().(*syscall.Rusage);visible:=map[string]string{}
  for _,name:=range []string{"cpu.max","cpu.stat","memory.max","memory.peak","pids.max"}{b,e:=os.ReadFile("/sys/fs/cgroup/"+name);if e==nil{visible[name]=string(b)}else{visible[name]="UNAVAILABLE"}}
  report:=map[string]interface{}{"label":label,"wall_seconds":time.Since(started).Seconds(),"max_rss_kib":usage.Maxrss,"user_seconds":float64(usage.Utime.Sec)+float64(usage.Utime.Usec)/1e6,"system_seconds":float64(usage.Stime.Sec)+float64(usage.Stime.Usec)/1e6,"cache_initially_empty":true,"elf_sha256":hash(output),"visible_cgroup_only":visible,"output_profile":l.Build.Output_profile,"diagnostic_marker":map[string]interface{}{"schema_version":1,"profile":swProfile,"diagnostic_only":true,"elf_sha256":hash(output),"flags_sha256":fmt.Sprintf("%x",sha256.Sum256([]byte(flags))),"source_commit":"ffa87c25fdf587178b1521ad87f2a4a72a02e584","go_version":"go1.26.10"},"elf":elfEvidence(output,flags)}
+ if production{delete(report,"diagnostic_marker");report["production_candidate_marker"]=map[string]interface{}{"schema_version":2,"trust_class":"production-candidate","profile":pcProfile,"build_contract_sha256":l.Build.Production_contract_sha256,"lock_sha256":hash("/build/security-build.lock.json"),"elf_sha256":hash(output),"flags_sha256":fmt.Sprintf("%x",sha256.Sum256([]byte(flags))),"source_commit":"ffa87c25fdf587178b1521ad87f2a4a72a02e584","go_version":"go1.26.10","cache_label":label}}
  b,e:=json.MarshalIndent(report,"","  ");must(e);must(os.WriteFile("/out/provenance/build-"+label+".json",append(b,'\n'),0644));fmt.Println("S_W_ELF_EVIDENCE",string(b))
 }
 func downloads(l Input,ms map[string]Module){if len(ms)!=2{panic("target count")};for p,w:=range l.Modules{m,ok:=ms[p];if !ok||m.Version!=w.Version||m.Replace!=nil||hash(m.Zip)!=w.Zip_sha256||hash(m.GoMod)!=w.Mod_sha256{panic("module archive mismatch: "+p)};if m.Sum!=strings.Fields(w.Go_sum_lines[0])[2]||m.GoModSum!=strings.Fields(w.Go_sum_lines[1])[2]{panic("sumdb mismatch: "+p)}}}

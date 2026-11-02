@@ -1,0 +1,29 @@
+name: PC100 bounded artifact
+description: Fixed official artifact Actions with exact-source admission and Linux resource limits
+inputs:
+  operation:
+    description: upload or download
+    required: true
+  role:
+    description: source, seal, walking, ci or outcome
+    required: true
+  bundle:
+    description: Verified local bundle directory (upload only)
+  artifact-id:
+    description: Independently admitted exact artifact ID (download only)
+  artifact-digest:
+    description: Independently admitted raw ZIP SHA-256 (download only)
+  artifact-bytes:
+    description: Independently admitted physical ZIP bytes (download only)
+outputs:
+  artifact-id:
+    description: Actual immutable artifact ID
+  artifact-digest:
+    description: Actual physical ZIP digest
+  artifact-bytes:
+    description: Actual physical ZIP bytes
+  download-path:
+    description: Verified raw ZIP, never automatically extracted
+runs:
+  using: node24
+  main: index.mjs

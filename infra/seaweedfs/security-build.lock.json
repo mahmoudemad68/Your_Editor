@@ -89,8 +89,8 @@
     "goproxy": "https://proxy.golang.org",
     "gosumdb": "sum.golang.org",
     "reproducibility": "two independent clean compile caches; byte-identical ELF required",
-    "output_profile": "seaweedfs-go-s-w-diagnostic-v1",
-    "diagnostic_only": true,
+    "output_profile": "seaweedfs-go-s-w-production-candidate-v1",
+    "diagnostic_only": false,
     "baseline_inventory": {
       "source_head": "6a780965f2b490859a213470b9a2995e5e156d5e",
       "elf_sha256": "6b48572984287dcf64ed09a9080a720e65d4bf5c810c2282782fb4e5da8aa3c8",
@@ -100,7 +100,112 @@
       "go_sha256": "bda2300142db14926ad613d2c7721dba0cd14965777b2d6c8f416a775f33370a",
       "native_count": 29,
       "native_sha256": "d9f3b105800b832029011c462dcc6be8ba735c1c132967e88fd00922b65e02f9"
-    }
+    },
+    "production_contract": {
+      "schema_version": 1,
+      "profile": "seaweedfs-go-s-w-production-candidate-v1",
+      "source": {
+        "commit": "ffa87c25fdf587178b1521ad87f2a4a72a02e584",
+        "url": "https://codeload.github.com/seaweedfs/seaweedfs/tar.gz/ffa87c25fdf587178b1521ad87f2a4a72a02e584",
+        "sha256": "d650e7a8a2cbec8a1725386f87f5eb803c95aa84417530aec58c1925fd23a2c9",
+        "bytes": 81881370,
+        "go.mod_sha256": "4980945b680fa12c0457f0aa909926401860d66e816eccc6f8508c71a5290ee8",
+        "go.sum_sha256": "78c8b44110c4633c5721e0f7dad0fe99308116ebb7bdd5dafb160dc378f31d89",
+        "docker/entrypoint.sh_sha256": "426b7be2ef4bbab486ee4964678f5d69cb0ffe92bbfce09af0935886254b9729",
+        "docker/filer.toml_sha256": "0e2d61bce0f91e5fc5c7fa17c8289ae80b8c15ae923ed92f3b6b00f4f413693b"
+      },
+      "modules": {
+        "github.com/go-jose/go-jose/v4": {
+          "version": "v4.1.6",
+          "info": {
+            "Version": "v4.1.6",
+            "Time": "2026-10-14T22:46:21Z",
+            "Origin": {
+              "VCS": "git",
+              "URL": "https://github.com/go-jose/go-jose",
+              "Hash": "a0111f82742fa92bceec9ede40845e73319e6230",
+              "Ref": "refs/tags/v4.1.6"
+            }
+          },
+          "mod_sha256": "e069e6002d29495b8c2dc6cf0d3b56a075ec5be7abb6c2eb1a1c0845cb66b8b3",
+          "zip_sha256": "62506f3369fc124682356bbe8eb442f982422401dda99ace200694efc962da76",
+          "zip_bytes": 397543,
+          "go_sum_lines": [
+            "github.com/go-jose/go-jose/v4 v4.1.6 h1:sNRkftxFJxwsILiQukqp5z83QBSmntVwmgRY7AqBDO4=",
+            "github.com/go-jose/go-jose/v4 v4.1.6/go.mod h1:x4oUasVrzR7071A4TnHLGSPpNOm2a21K9Kf04k1rs08="
+          ]
+        },
+        "github.com/andybalholm/brotli": {
+          "version": "v1.2.7",
+          "info": {
+            "Version": "v1.2.7",
+            "Time": "2026-10-23T17:03:27Z",
+            "Origin": {
+              "VCS": "git",
+              "URL": "https://github.com/andybalholm/brotli",
+              "Hash": "33c2a9884269798192b5ecf171288f98939dbe42",
+              "Ref": "refs/tags/v1.2.7"
+            }
+          },
+          "mod_sha256": "9836ed7059e6b6be9d42e666c866deea8646d5815216fcf6216966074744cb1f",
+          "zip_sha256": "e7b105fd7ca3cc32bee46a23133e9fc2d81b324fec2440c698eb7cc8f03bfc13",
+          "zip_bytes": 1952671,
+          "go_sum_lines": [
+            "github.com/andybalholm/brotli v1.2.7 h1:UgafRPGMam5ySHfRkhthMqOFA6IFoeF3D7mWIDLjG5A=",
+            "github.com/andybalholm/brotli v1.2.7/go.mod h1:rzTDkvFWvIrjDXZHkuS16NPggd91W3kUSvPlQ1pLaKY="
+          ]
+        }
+      },
+      "original_versions": {
+        "github.com/go-jose/go-jose/v4": "v4.1.5",
+        "github.com/andybalholm/brotli": "v1.2.6"
+      },
+      "compiler": {
+        "repository": "library/golang",
+        "tag": "1.26.10-alpine3.24",
+        "index_digest": "sha256:a2012b4a1d1f9f7e9f44e0d39b805a901e856b1dd80b4e6ee4338db547050308",
+        "amd64_digest": "sha256:d1f3216ef30257c850cc136ba42a359ccd9d3e75f19b2c276e520c0b4ef327ce",
+        "config_digest": "sha256:51ff61e0d9a205d4435c3a1725d76c639a3a555274bd31a98e9e9bde5ebe278a",
+        "created": "2026-10-21T22:58:13.645427587Z",
+        "labels": null
+      },
+      "runtime_donor": {
+        "image": "chrislusf/seaweedfs@sha256:f7a49e3f3972ebed5be2ed4befa4a0c68eb7bdddba6e692d42729ceb545134b8",
+        "amd64_manifest": "sha256:3a522c379599e163433a636e75022630848b63a74f08ea37bf06f8d776e9a707"
+      },
+      "flags": "-extldflags -static -X github.com/seaweedfs/seaweedfs/weed/util/version.COMMIT=ffa87c2+editagent-sec1 -s -w",
+      "go_version": "go1.26.10",
+      "target": "linux/amd64",
+      "CGO_ENABLED": "0",
+      "GOAMD64": "v1",
+      "build_tags": [],
+      "parallelism": 2,
+      "trimpath": true,
+      "buildvcs": false,
+      "scanners": {
+        "trivy": "0.75.0",
+        "syft": "1.54.0",
+        "gitleaks": "8.30.1"
+      },
+      "inventory": {
+        "source_head": "6a780965f2b490859a213470b9a2995e5e156d5e",
+        "elf_sha256": "6b48572984287dcf64ed09a9080a720e65d4bf5c810c2282782fb4e5da8aa3c8",
+        "trivy_report_sha256": "abeb34aed4173344ecaab9306a6858839c948ca77d2fe547837acea1fe230eb1",
+        "syft_report_sha256": "ddccdeb3e6092c4191ee0c883f20ffdba479bb9ec95a6d823094b96cec1ddc8f",
+        "go_count": 244,
+        "go_sha256": "bda2300142db14926ad613d2c7721dba0cd14965777b2d6c8f416a775f33370a",
+        "native_count": 29,
+        "native_sha256": "d9f3b105800b832029011c462dcc6be8ba735c1c132967e88fd00922b65e02f9"
+      },
+      "transport": "docker-save-xz6",
+      "limits": {
+        "candidate_bytes": 125829120,
+        "provenance_bytes": 16777216,
+        "total_transfer_bytes": 268435456,
+        "retention_days": 1
+      }
+    },
+    "production_contract_sha256": "7987ade77c0c9d93c911c0937e2498f7fbe0d6641cc0ebef9b7fd18a8b125805"
   },
   "schema_version": "1.0.0",
   "baseline_replace": {

@@ -28,6 +28,7 @@ jobs:
       receipt_sha256: ${{ steps.admit.outputs.receipt_sha256 }}
       promoted_id: ${{ steps.promote.outputs.artifact-id }}
       promoted_digest: ${{ steps.promote.outputs.artifact-digest }}
+      promoted_bytes: ${{ steps.promote.outputs.artifact-bytes }}
       outcome: ${{ steps.admit.outputs.outcome }}
     steps:
       - uses: actions/checkout@v7
@@ -46,23 +47,23 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: node tools/test/load-qualified-storage.mjs admit
       - name: Preserve bounded admission outcome
-        if: failure()
-        uses: actions/upload-artifact@v7
+        if: failure() && (steps.admit.outputs.outcome == 'PRODUCER_NOT_YET_COMPLETE' || steps.admit.outputs.outcome == 'PRODUCER_NOT_YET_CREATED') && github.run_attempt == 1
+        uses: ./.github/actions/pc100-bounded-artifact
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         with:
-          name: admission-outcome-${{ github.run_id }}-${{ github.run_attempt }}
-          path: .local/issue99/admission-outcome.json
-          include-hidden-files: true
-          if-no-files-found: error
-          retention-days: 1
+          operation: upload
+          role: outcome
+          bundle: .local/issue99/outcome-bundle
       - name: Preserve verified preparation receipt
         id: promote
-        uses: actions/upload-artifact@v7
+        uses: ./.github/actions/pc100-bounded-artifact
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         with:
-          name: storage-receipt-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ steps.admit.outputs.bundle }}/admission.json
-          include-hidden-files: true
-          if-no-files-found: error
-          retention-days: 1
+          operation: upload
+          role: ci
+          bundle: ${{ steps.admit.outputs.ci_bundle }}
 
   repository:
     needs: storage-admission
@@ -518,11 +519,26 @@ jobs:
         with:
           node-version-file: .nvmrc
       - name: Retrieve exact preparation receipt
-        uses: actions/download-artifact@v7
+        id: receipt-download
+        uses: ./.github/actions/pc100-bounded-artifact
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         with:
-          artifact-ids: ${{ needs.storage-admission.outputs.promoted_id }}
-          path: .local/ci-final-admission
+          operation: download
+          role: ci
+          artifact-id: ${{ needs.storage-admission.outputs.promoted_id }}
+          artifact-digest: ${{ needs.storage-admission.outputs.promoted_digest }}
+          artifact-bytes: ${{ needs.storage-admission.outputs.promoted_bytes }}
+      - name: Validate raw preparation receipt ZIP
+        id: receipt-zip
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PC100_RAW_ZIP_DIGEST: ${{ steps.receipt-download.outputs.artifact-digest }}
+          PC100_RAW_ZIP_BYTES: ${{ steps.receipt-download.outputs.artifact-bytes }}
+          PC100_RAW_ZIP: ${{ steps.receipt-download.outputs.download-path }}
+          PC100_RECEIPT_SHA: ${{ needs.storage-admission.outputs.receipt_sha256 }}
+        run: node tools/test/load-qualified-storage.mjs receipt-zip "$(dirname "$PC100_RAW_ZIP")" "$PC100_RECEIPT_SHA"
       - name: Verify genuine final identity and producer
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: node tools/test/load-qualified-storage.mjs final .local/ci-final-admission/admission.json '${{ needs.storage-admission.outputs.receipt_sha256 }}'
+        run: node tools/test/load-qualified-storage.mjs final '${{ steps.receipt-zip.outputs.receipt }}' '${{ needs.storage-admission.outputs.receipt_sha256 }}'

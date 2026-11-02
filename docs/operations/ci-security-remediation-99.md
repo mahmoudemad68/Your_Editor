@@ -378,3 +378,205 @@ All six finalized provenance streams, including final diagnostic verdict/budget 
 The loader never writes the workflow's candidate upload directory in diagnostic mode. A terminal non-retryable `S_W_DIAGNOSTIC_NON_PROMOTABLE` exception is raised even when the reported verdict is `S_W_BUILD_FEASIBILITY=MET_DIAGNOSTIC_ONLY`. Seal/admit/load/promoted/final/verify-local commands are blocked for this profile. Tests prove synthetic capacity/scanner PASS cannot reach promotion, including forged approval fields. Required aggregates remain genuinely failed; no synthetic success, candidate archive/seal upload or consumer admission is authorized. Normal scanner/evidence artifacts retain their unchanged workflow behavior.
 
 Machine-readable diagnostic observations are emitted in bounded `S_W_DIAGNOSTIC_PART` frames with index/count and full-report SHA-256. Reassembly requires every index exactly once and the matching digest; missing/truncated frames are insufficient evidence. There is no executable/media payload in these frames. The final exact-H policy inventory remains `REVIEW_REQUIRED_NOT_APPROVED`; no self-approval is generated. Publish one native-attempt checkpoint with actual measurements, gaps and run identities, then stop. RELEASE_HOLD remains ACTIVE; SAFE_TO_MERGE and READY_FOR_INDEPENDENT_RE_QA remain NO.
+
+## PC100 local production-candidate implementation checkpoint
+
+This working-tree implementation adds the distinct
+`seaweedfs-go-s-w-production-candidate-v1` profile. It is **not a qualified
+production image**. The historical `seaweedfs-go-s-w-diagnostic-v1` path remains
+non-promotable. No new ELF, image, artifact, seal, workflow result or exact-source
+approval is implied by local tests.
+
+The build keeps the fixed `-s -w` invocation, Go 1.26.10, authenticated module
+archives, independent empty caches and offline compilation. The new immutable
+build contract K excludes Git/run/output measurements and the exact lock hash L,
+which avoids a circular hash. Each production build marker instead binds K, L,
+actual ELF digest, source/compiler, fixed flags and cache label. Archive
+verification authenticates all layers and reads actual Go metadata before the
+marker is used. The corrected SHT_NOBITS inspector and scanner inventory
+comparison are shared with the diagnostic path.
+
+The versioned bundle, seal and admission validators bind the exact H/B/M/TH/TM,
+original producer run/attempt, policy comment/record hash, K/L, actual image/ELF,
+six ordered DiffIDs, inner archive and each report. Duplicate JSON keys, invalid
+UTF-8, unknown fields, missing measurements and edited/ambiguous/revoked approvals
+fail closed. The scope authorization is never parsed as an exact-source approval.
+The native producer checks independent policy before building the candidate.
+
+The bounded adapter is a local Node24 Action delegating to the reviewed immutable
+upload/download implementations. It verifies the compiled entry, package metadata
+and Action metadata hashes before execution; no npm install or alternative SDK is
+used. Closed roles fix artifact names, seven/eight-file bundles, retention=1,
+archive=true, STORE compression=0, exact artifact IDs, skip-decompress=true and
+digest-mismatch=error. Raw output must be one regular file with the expected
+physical byte count and SHA-256. The parser then checks local/central ZIP headers,
+CRC, offsets, duplicates, link types, expansion and closed member sets before
+extracting. Interrupted or failed official Actions do not return usable outputs.
+SDK output is private and bounded; inherited preload/proxy/caller-token inputs
+are removed. Cross-run reads use the already scoped read credential; same-run
+Walking reads retain the contents-only model and use runner artifact credentials.
+
+Linux child execution fixes address space=8 GiB, CPU=120 s, wall=180 s,
+old-space=256 MiB, per-file limits, scratch observation/rejection and process-group
+cleanup. These are implementation limits, **not new hosted compatibility claims**.
+The previously passing isolated Ubuntu resource preflight establishes the kernel
+primitives; it does not qualify this new adapter. Node22 repository scripts require
+an existing root-owned Node24 toolcache executable for delegated downloads; absence
+or untrustworthy ownership fails closed without installation. The actual hosted
+runner's toolcache layout and SDK behavior still need isolated verification.
+
+The byte predicates remain C<=125829120, R_total=2*R+65536<=16777216 and
+2*C+R_total<=268435456. `physicalBudget` additionally validates measured ZIP rows,
+closed roles, unique artifact IDs, individual envelope caps, cumulative P/O and a
+complete final ledger. The 53490-byte client model is not a GitHub measurement.
+Automatic post-completion collection of the entire multi-workflow wire ledger is
+now implemented below. Actual hosted wire bytes remain unmeasured; per-artifact
+checks must not be presented as final global proof.
+
+Operator built/live resolution authenticates the actual image and requires
+production admission regardless of GITHUB_ACTIONS. Startup rejects missing
+admission before build/secret preparation. The current verifier requires the
+native authenticated admission context; portable non-runner operator receipt
+acceptance still needs integration and tests. A copied JSON receipt alone cannot
+activate the image.
+
+Local tests deliberately separate genuine shell/parser execution from instrumented
+Docker I/O. They establish software rejection behavior, not actual S3/mTLS, native
+ASR, security scan, browser/export or GitHub Artifact qualification. No candidate
+services or workflows are started in this phase. The focused Linux command is:
+
+```sh
+# Existing genuine Node24 on an authorized GitHub-hosted Ubuntu executor.
+node --version
+node --test --test-name-pattern='PC100 Linux bounded' tests/architecture/seaweedfs-security-build.test.mjs
+```
+
+Next steps are independent source review and isolated execution of the actual
+bounded delegation/raw ZIP contracts. Off-runner operator authentication is a
+separate deferred release feature, not a PR-candidate blocker. Real candidate/MinIO journeys, all six ASR shards, fresh
+scans, whole-Supply completion and exact-head CI/Walking remain later qualification
+work. Local source inventory is REVIEW_REQUIRED_NOT_APPROVED. Code remains
+uncommitted; RELEASE_HOLD=ACTIVE, SAFE_TO_MERGE=NO and
+READY_FOR_INDEPENDENT_RE_QA=NO.
+
+## PC100 final wire reconciliation — local implementation
+
+The automatic reconciler is implemented in the existing loader. It is a
+**read-only post-completion checkpoint**, not a new workflow/controller or a
+CI↔Walking dependency. Native `final` steps establish identity and explicitly
+report that global wire measurement is still required. Neither consumer waits
+for the other. No final wire/QA qualification may be claimed from identity-only
+steps or the earlier diagnostic size measurement.
+
+After BOTH genuine consumer workflows have completed successfully, from the
+reviewed immutable product/merge checkout and an already authorized read-only
+GitHub environment, run:
+
+```sh
+node tools/test/load-qualified-storage.mjs wire-ledger CI_RUN_ID:WALKING_RUN_ID
+```
+
+Replace the two numeric run IDs. This command does not rerun them. The default
+output is `.local/issue99/final-wire-ledger.json`; it refuses to overwrite prior
+evidence. An optional output filename must remain directly under
+`.local/issue99/`. It creates no receipt, artifact, image, Git ref or service.
+The reconciler has no standalone operator authorization path.
+
+It re-establishes live PR H/B/M/TH/TM, exact merge parents and equal trees,
+independent source-policy hashes/K/L, whole-Supply success, both completed native
+consumer runs and genuine aggregate check associations. It enumerates all
+retained artifacts from the original source and both consumer runs, including
+all attempts' outcome artifacts. Every attempted upload is reconciled with its
+actual job/step record: a completed upload with a missing API artifact is a
+failure, while a verified skipped upload is explicit absence evidence. Unknown,
+duplicate, wrong-attempt, expired, partially measured or inconsistent artifacts
+fail closed. Extra outcomes are enumerated/accounted even when current retry
+policy rejects them; they cannot be hidden from P/O.
+
+Every retained transfer ZIP is independently downloaded read-only with bounded
+HTTP size/time, matched to API ID/digest/physical bytes, then parsed through the
+strict STORE ZIP verifier. C/R come from measured source bundle files; all seven
+Walking source files must be byte-identical. Seal, separate CI/Walking receipts,
+source manifest and outcome identities must agree. Large bundle files are
+removed after hashing before the next bundle is downloaded, keeping a single
+raw ZIP/extracted bundle in scratch. Scanner/product artifacts are enumerated
+as non-transfer inventory rather than silently included or silently hidden.
+
+Final accounting uses actual bytes: `P=Zs+Zw+Zseal+Zci+Zother` and
+`O=max(0,Zs-C-R)+max(0,Zw-C-R)+Zseal+Zci+Zother`. All original C/R/P/O predicates
+and retention remain unchanged. The API inventory, live PR, policy and run
+attempts are reread before writing a successful ledger. Any incomplete read
+produces failure evidence with `fully_measured=false`, observed rows and partial
+accounting (or null); missing bytes are never replaced with zero. The output is
+wire evidence only, not release approval or an Independent QA verdict.
+
+**Standalone operator authentication is deferred**, as directed by Technical
+Lead #6518204248. Current native-context receipt requirements and fail-before-
+secrets behavior remain intact; this release feature is not a PR-candidate
+implementation blocker.
+
+The existing test file also prepares credential-free tests of the actual new
+adapter supervisor: bounded Node24 startup/file-size rejection, measured CPU
+termination, child-group timeout/cleanup and genuine nonzero exit propagation.
+Run on genuine Linux Node24 with:
+
+```sh
+node --test --test-name-pattern='PC100 Linux' tests/architecture/seaweedfs-security-build.test.mjs
+```
+
+These tests use actual child processes with stricter test-only CPU/wall bounds;
+production defaults remain 120/180 seconds. Test bounds cannot exceed them and
+are not Action inputs or environment overrides. Windows reports explicit skips.
+No isolated workflow, test commit or Linux result is created by this local
+implementation. Technical Lead must inspect the frozen full patch first and
+execute the tests on an independently published immutable isolated test commit.
+The old generic Ubuntu preflight does not qualify the new adapter, SDK transfers,
+actual ZIP overhead, candidate image or browser-to-export path.
+
+## Independent source-review corrections — 2 November 2026
+
+Technical Lead disposition #6568961298 requested two local corrections. The
+original 1 November source package, patch and inventories are preserved unchanged.
+No production source publication or new policy approval is implied.
+
+**Walking authentication:** public provenance reads now use an explicit,
+closed metadata-only REST mode. It never inherits an ambient GITHUB_TOKEN or
+GH_TOKEN; a private, missing, denied or rate-limited response fails closed without
+credential fallback. Protected API reads and raw cross-run artifact downloads
+still require the existing authorized GITHUB_TOKEN. Anonymous mode cannot read a
+ZIP or an arbitrary REST route. This fixes the ambiguous authentication-class
+coupling without adding Actions-read to the contents-only downstream Walking job.
+
+The same-run adapter additionally checks the promoted artifact's real API
+ID/name/digest/bytes/run/attempt and the completed preparation upload step before
+SDK delegation. The official SDK requires runner-issued runtime credentials and
+an approved GitHub results-service origin; same-run inputs cannot inherit an
+Owner token or switch to another run. The subsequent promoted ZIP path retains
+live identity/policy/producer checks and verifies the exact preparation receipt,
+manifest and compressed bytes before any image operation. No copied JSON flag
+replaces these checks. The shared pre-load verifier is exercised directly by the
+new deterministic path test.
+
+**Ledger classification:** unfamiliar artifact names are now rejected. A retained
+artifact can be excluded only through a closed evidence-name/workflow mapping
+AND actual completed job/upload-step provenance for the correct run/attempt and
+creation window. The evidence classes cover the current dependency/scan/SBOM,
+CI summary/coverage/ASR/product and Walking diagnostic uploads. Missing, ambiguous,
+wrong-job, wrong-attempt, duplicate-name or unclassified evidence fails closed.
+The final collector supplies real attempt/job records; a caller manifest's
+classification claim is insufficient. Transfer C/R/R_total/P/O ceilings and all
+retained-outcome accounting are unchanged.
+
+The Windows tests instrument only external Git/HTTP inputs, exercise actual
+admission/header/ZIP/pre-load checks and explicitly use synthetic identities.
+They issue no real approval and execute no official SDK transfer or candidate.
+Actual anonymous metadata availability/rate limits, official Artifact roundtrips,
+ZIP envelopes and the new adapter's Linux resource behavior remain subject to
+isolated hosted execution and later native qualification. The three existing
+Linux adapter tests are prepared, not executed on Windows. Public API failure
+must stop the path, never grant extra permissions or silently accept stale data.
+
+The new complete review package has its own explicit inventory and SHA-256s;
+the original package remains the immutable historical review input. PR #100
+remains Draft, all code local/uncommitted, POLICY_APPROVAL=NOT_GRANTED,
+RELEASE_HOLD=ACTIVE and SAFE_TO_MERGE=NO.

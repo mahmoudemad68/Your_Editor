@@ -37,6 +37,7 @@ jobs:
       receipt_sha256: ${{ steps.admit.outputs.receipt_sha256 }}
       promoted_id: ${{ steps.promote.outputs.artifact-id }}
       promoted_digest: ${{ steps.promote.outputs.artifact-digest }}
+      promoted_bytes: ${{ steps.promote.outputs.artifact-bytes }}
       outcome: ${{ steps.admit.outputs.outcome }}
     steps:
       - uses: actions/checkout@v7
@@ -55,31 +56,23 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: node tools/test/load-qualified-storage.mjs admit
       - name: Preserve bounded admission outcome
-        if: failure()
-        uses: actions/upload-artifact@v7
+        if: failure() && (steps.admit.outputs.outcome == 'PRODUCER_NOT_YET_COMPLETE' || steps.admit.outputs.outcome == 'PRODUCER_NOT_YET_CREATED') && github.run_attempt == 1
+        uses: ./.github/actions/pc100-bounded-artifact
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         with:
-          name: admission-outcome-${{ github.run_id }}-${{ github.run_attempt }}
-          path: .local/issue99/admission-outcome.json
-          include-hidden-files: true
-          if-no-files-found: error
-          retention-days: 1
+          operation: upload
+          role: outcome
+          bundle: .local/issue99/outcome-bundle
       - name: Promote unchanged verified image into this run
         id: promote
-        uses: actions/upload-artifact@v7
+        uses: ./.github/actions/pc100-bounded-artifact
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         with:
-          name: qualified-storage-${{ github.run_id }}-${{ github.run_attempt }}
-          path: |
-            ${{ steps.admit.outputs.bundle }}/image.tar.xz
-            ${{ steps.admit.outputs.bundle }}/candidate-manifest.json
-            ${{ steps.admit.outputs.bundle }}/verification.json
-            ${{ steps.admit.outputs.bundle }}/go-version-m.txt
-            ${{ steps.admit.outputs.bundle }}/full-trivy.json
-            ${{ steps.admit.outputs.bundle }}/sbom.spdx.json
-            ${{ steps.admit.outputs.bundle }}/scanner-versions.json
-            ${{ steps.admit.outputs.bundle }}/admission.json
-          include-hidden-files: true
-          if-no-files-found: error
-          retention-days: 1
+          operation: upload
+          role: walking
+          bundle: ${{ steps.admit.outputs.bundle }}
 
   walking-skeleton:
     needs: storage-admission
@@ -101,13 +94,24 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
       - name: Retrieve exact same-run promoted artifact
-        uses: actions/download-artifact@v7
+        # No Actions-read token is inherited: public metadata GETs remain live,
+        # and the same-run SDK authenticates with runner artifact credentials.
+        id: promoted-download
+        uses: ./.github/actions/pc100-bounded-artifact
         with:
-          artifact-ids: ${{ needs.storage-admission.outputs.promoted_id }}
-          path: .local/walking-qualified
+          operation: download
+          role: walking
+          artifact-id: ${{ needs.storage-admission.outputs.promoted_id }}
+          artifact-digest: ${{ needs.storage-admission.outputs.promoted_digest }}
+          artifact-bytes: ${{ needs.storage-admission.outputs.promoted_bytes }}
       - name: Revalidate promoted bytes before loading
         id: storage-load
-        run: node tools/test/load-qualified-storage.mjs promoted .local/walking-qualified '${{ needs.storage-admission.outputs.receipt_sha256 }}'
+        env:
+          PC100_RAW_ZIP_DIGEST: ${{ steps.promoted-download.outputs.artifact-digest }}
+          PC100_RAW_ZIP_BYTES: ${{ steps.promoted-download.outputs.artifact-bytes }}
+          PC100_RAW_ZIP: ${{ steps.promoted-download.outputs.download-path }}
+          PC100_RECEIPT_SHA: ${{ needs.storage-admission.outputs.receipt_sha256 }}
+        run: node tools/test/load-qualified-storage.mjs promoted "$(dirname "$PC100_RAW_ZIP")" "$PC100_RECEIPT_SHA"
       - name: Bind revalidated evidence
         run: echo 'SEAWEED_QUALIFIED_RECEIPT=${{ steps.storage-load.outputs.receipt }}' >> "$GITHUB_ENV"
       - name: Install workspace
