@@ -87,6 +87,7 @@ import {
   execute as executeArtifact,
 } from "../../.github/actions/pc100-bounded-artifact/index.mjs";
 
+import { BASELINE_SHA as TRUSTED_SOURCE_BASELINE } from "../../tools/test/pc100-source-verifier.mjs";
 const root = path.resolve(import.meta.dirname, "../..");
 const H = "a".repeat(40),
   M = "b".repeat(40),
@@ -173,9 +174,18 @@ function producer() {
     head_repository: { id: REPOSITORY_ID },
     pull_requests: [{ number: 100, head: { sha: H }, base: { sha: BASE } }],
   };
-  const jobs = ["dependencies", "supply-chain-security", ...SERVICES.map((s) => `image ${s}`)].map(
-    (name) => ({ name, run_attempt: 1, status: "completed", conclusion: "success", steps: [] }),
-  );
+  const jobs = [
+    "source policy",
+    "dependencies",
+    "supply-chain-security",
+    ...SERVICES.map((s) => `image ${s}`),
+  ].map((name) => ({
+    name,
+    run_attempt: 1,
+    status: "completed",
+    conclusion: "success",
+    steps: [],
+  }));
   jobs.find((j) => j.name === "image seaweedfs").steps = [
     "Fixed module reproducibility and zero HIGH gate",
     "Bounded RSA JWK and Brotli controls",
@@ -2244,18 +2254,21 @@ const E = "e".repeat(64),
 const clone = (v) => globalThis.structuredClone(v);
 function pcBinding() {
   return {
-    decision: "APPROVED",
+    decision: "DEVELOPMENT_SOURCE_VERIFIED",
     profile: PRODUCTION_PROFILE,
     K: productionProfile(candidateLock).K,
     L: lockDigest,
     revoked: false,
-    comment_created_at: "2026-10-30T01:00:00Z",
-    comment_updated_at: "2026-10-30T01:00:00Z",
+    scope: "development-only",
+    release_authorized: false,
+    evidence_run_attempt: 1,
+    evidence_run_id: 123,
   };
 }
+
 function pcManifest() {
   return {
-    schema: "seaweedfs-candidate-bundle-v2",
+    schema: "seaweedfs-candidate-bundle-v3",
     profile: PRODUCTION_PROFILE,
     K: productionProfile(candidateLock).K,
     L: lockDigest,
@@ -2278,13 +2291,13 @@ function pcManifest() {
       ].map((n) => [n, E]),
     ),
     policy_files: Object.fromEntries(POLICY_FILES.map((n) => [n, E])),
-    policy_comment_id: 123,
+    policy_evidence_run_id: 123,
     policy_record_sha256: E,
   };
 }
 function pcSeal() {
   return {
-    schema: "seaweedfs-candidate-seal-v2",
+    schema: "seaweedfs-candidate-seal-v3",
     profile: PRODUCTION_PROFILE,
     K: productionProfile(candidateLock).K,
     L: lockDigest,
@@ -2295,14 +2308,14 @@ function pcSeal() {
     artifact_digest: Q,
     artifact_bytes: 1100,
     manifest_sha256: E,
-    policy_comment_id: 123,
+    policy_evidence_run_id: 123,
     policy_record_sha256: E,
   };
 }
 function pcReceipt() {
   return {
-    version: 2,
-    schema: "seaweedfs-admission-v2",
+    version: 3,
+    schema: "seaweedfs-admission-v3",
     profile: PRODUCTION_PROFILE,
     K: productionProfile(candidateLock).K,
     L: lockDigest,
@@ -2315,7 +2328,7 @@ function pcReceipt() {
     artifact_id: 11,
     artifact_digest: Q,
     artifact_bytes: 1100,
-    policy_comment_id: 123,
+    policy_evidence_run_id: 123,
     policy_record_sha256: E,
     policy_files: pcManifest().policy_files,
     seal: pcSeal(),
@@ -2361,10 +2374,17 @@ for (const bytes of [
   test(`PC100 strict JSON rejects ${String(bytes).slice(0, 35)}`, () =>
     assert.throws(() => strictJSON(Buffer.from(bytes))));
 test("PC100 strict JSON accepts escaped keys and UTF-8 without normalization", () => {
-  assert.deepEqual(strictJSON(Buffer.from('{"\\u0061":"Ã˜Â¹Ã˜Â±Ã˜Â¨Ã™Å ","b":[1,true,null]}')), {
-    a: "Ã˜Â¹Ã˜Â±Ã˜Â¨Ã™Å ",
-    b: [1, true, null],
-  });
+  assert.deepEqual(
+    strictJSON(
+      Buffer.from(
+        '{"\\u0061":"ÃƒÆ’Ã†â€™Ãƒâ€¹Ã…â€œÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¹ÃƒÆ’Ã†â€™Ãƒâ€¹Ã…â€œÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â±ÃƒÆ’Ã†â€™Ãƒâ€¹Ã…â€œÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¨ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â ","b":[1,true,null]}',
+      ),
+    ),
+    {
+      a: "ÃƒÆ’Ã†â€™Ãƒâ€¹Ã…â€œÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¹ÃƒÆ’Ã†â€™Ãƒâ€¹Ã…â€œÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â±ÃƒÆ’Ã†â€™Ãƒâ€¹Ã…â€œÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¨ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â ",
+      b: [1, true, null],
+    },
+  );
   assert.throws(() => strictJSON(Buffer.from('{"a":1,"\\u0061":2}')));
 });
 test("PC100 production evidence rejects diagnostic/profile/receipt confusion", () => {
@@ -2402,7 +2422,7 @@ test("PC100 production evidence rejects diagnostic/profile/receipt confusion", (
 test("PC100 exact-source policy never accepts scope authorization, edited or diagnostic approval", () => {
   assert.equal(
     validateCandidatePolicy(pcBinding(), candidateLock, lockDigest).decision,
-    "APPROVED",
+    "DEVELOPMENT_SOURCE_VERIFIED",
   );
   for (const edit of [
     (b) => (b.decision = "IMPLEMENTATION_AUTHORIZED"),
@@ -2410,8 +2430,8 @@ test("PC100 exact-source policy never accepts scope authorization, edited or dia
     (b) => (b.K = "0".repeat(64)),
     (b) => (b.L = "0".repeat(64)),
     (b) => (b.revoked = true),
-    (b) => (b.comment_updated_at = "2026-10-30T01:00:01Z"),
-    (b) => delete b.comment_created_at,
+    (b) => (b.evidence_run_attempt = 2),
+    (b) => delete b.evidence_run_id,
   ]) {
     const b = pcBinding();
     edit(b);
@@ -3022,7 +3042,7 @@ function wireArchiveFixture() {
   const f = finalWireFixture(),
     m = pcManifest(),
     b = pcBinding();
-  b.comment_id = m.policy_comment_id;
+  b.evidence_run_id = m.policy_evidence_run_id;
   b.policy_record_sha256 = m.policy_record_sha256;
   b.files = m.policy_files;
   const files = {
@@ -3582,16 +3602,24 @@ test("PC100 P1 full Walking admission and raw ZIP verification works without GIT
     const files = {};
     for (const name of POLICY_FILES) files[name] = sha256(await readFile(path.join(dir, name)));
     const policyRecord = {
-      decision: "APPROVED",
+      schema: "pc100-development-policy-v1",
+      decision: "DEVELOPMENT_SOURCE_VERIFIED",
+      scope: "development-only",
+      release_authorized: false,
       repository_id: REPOSITORY_ID,
       pr: 100,
       H,
       B: BASE,
+      M,
       TH: T,
+      TM: T,
+      baseline: TRUSTED_SOURCE_BASELINE,
+      trusted_workflow_sha: BASE,
+      upstream_run: 130,
+      upstream_attempt: 1,
       profile: PRODUCTION_PROFILE,
       K: productionProfile(candidateLock).K,
       L: lockDigest,
-      revoked: false,
       files,
     };
     const policyHash = sha256(canonical(policyRecord));
@@ -3678,16 +3706,67 @@ test("PC100 P1 full Walking admission and raw ZIP verification works without GIT
         status: "completed",
         conclusion: "success",
       },
-      comments: [
-        {
-          id: 123,
-          user: { login: "mahmoudemad68" },
-          author_association: "OWNER",
-          created_at: "2026-10-30T01:00:00Z",
-          updated_at: "2026-10-30T01:00:00Z",
-          body: "```seaweedfs-policy-v1\n" + JSON.stringify(policyRecord) + "\n```",
+      comments: [],
+      extra: {
+        "branches/main": { name: "main", protected: true, commit: { sha: BASE } },
+        [`git/commits/${BASE}`]: { sha: BASE, tree: { sha: T } },
+        [`git/trees/${T}`]: {
+          sha: T,
+          truncated: false,
+          tree: POLICY_FILES.map((p) => ({ path: p, type: "blob", mode: "100644", sha: H })),
         },
-      ],
+        "actions/workflows/pc100-source-verifier.yml": {
+          id: 80,
+          path: ".github/workflows/pc100-source-verifier.yml",
+        },
+        "actions/workflows/80/runs": {
+          total_count: 1,
+          workflow_runs: [
+            {
+              id: 123,
+              workflow_id: 80,
+              path: ".github/workflows/pc100-source-verifier.yml",
+              event: "workflow_run",
+              run_attempt: 1,
+              status: "completed",
+              conclusion: "success",
+              repository: { id: REPOSITORY_ID },
+              head_repository: { id: REPOSITORY_ID },
+              head_sha: BASE,
+              check_suite_id: 125,
+            },
+          ],
+        },
+        "actions/runs/123/attempts/1/jobs": {
+          jobs: [
+            {
+              name: "PC100 trusted source verification",
+              run_id: 123,
+              run_attempt: 1,
+              status: "completed",
+              conclusion: "success",
+              check_run_url: publicRepoAPI + "check-runs/124",
+            },
+          ],
+        },
+        "check-runs/124": {
+          id: 124,
+          name: "PC100 trusted source verification",
+          app: { id: 15368 },
+          check_suite: { id: 125 },
+          head_sha: BASE,
+          status: "completed",
+          conclusion: "success",
+        },
+        "check-runs/124/annotations": [
+          { title: "PC100 development source", message: JSON.stringify(policyRecord) },
+        ],
+        "actions/runs/130": {
+          ...prod.source,
+          id: 130,
+          path: ".github/workflows/pc100-artifact-integration.yml",
+        },
+      },
       sourceArtifact,
       promotedArtifact,
       prepared: [
@@ -3723,7 +3802,7 @@ test("PC100 P1 full Walking admission and raw ZIP verification works without GIT
  delete process.env.GITHUB_TOKEN;delete process.env.GH_TOKEN;
  Object.assign(process.env,{GITHUB_ACTIONS:'true',GITHUB_WORKFLOW:'Walking skeleton E2E',GITHUB_EVENT_NAME:'pull_request',GITHUB_EVENT_PATH:path.resolve('event.json'),GITHUB_RUN_ID:'30',GITHUB_RUN_ATTEMPT:'1',GITHUB_SHA:${JSON.stringify(M)},GITHUB_REF:'refs/pull/100/merge',GITHUB_REPOSITORY:'mahmoudemad68/Your_Editor'});
  globalThis.fetch=async(url,opts)=>{assert.equal(opts.headers.Authorization,undefined);const p=new URL(url).pathname.split('/Your_Editor/')[1];calls.push(p);let data;
- if(p==='actions/runs/30')data=f.native;else if(p==='check-suites/77')data=f.suite;else if(p==='pulls/100')data=f.pr;else if(p==='issues/100/comments')data=f.comments;else if(p==='actions/workflows/374068707/runs')data={workflow_runs:[f.source]};else if(p==='actions/runs/10')data=f.source;else if(p==='actions/runs/10/attempts/1/jobs')data={jobs:f.jobs};else if(p==='check-runs/99')data=f.check;else if(p==='actions/artifacts/11')data=f.sourceArtifact;else if(p==='actions/artifacts/31')data=f.promotedArtifact;else if(p==='actions/runs/30/attempts/1/jobs')data={jobs:f.prepared};else return new Response('{}',{status:404});
+ if(Object.hasOwn(f.extra,p))data=f.extra[p];else if(p==='actions/runs/30')data=f.native;else if(p==='check-suites/77')data=f.suite;else if(p==='pulls/100')data=f.pr;else if(p==='issues/100/comments')data=f.comments;else if(p==='actions/workflows/374068707/runs')data={workflow_runs:[f.source]};else if(p==='actions/runs/10')data=f.source;else if(p==='actions/runs/10/attempts/1/jobs')data={jobs:f.jobs};else if(p==='check-runs/99')data=f.check;else if(p==='actions/artifacts/11')data=f.sourceArtifact;else if(p==='actions/artifacts/31')data=f.promotedArtifact;else if(p==='actions/runs/30/attempts/1/jobs')data={jobs:f.prepared};else return new Response('{}',{status:404});
  return new Response(JSON.stringify(data),{status:200,headers:{'x-github-api-version-selected':opts.headers['X-GitHub-Api-Version']}});};
  const loader=await import('./tools/test/load-qualified-storage.mjs'),adapter=await import(pathToFileURL(${JSON.stringify(adapterFile)}));
  const plan=adapter.artifactPlan({operation:'download',role:'walking','artifact-id':'31','artifact-digest':f.promotedArtifact.digest,'artifact-bytes':String(f.promotedArtifact.size_in_bytes)},process.env);
@@ -3735,7 +3814,7 @@ test("PC100 P1 full Walking admission and raw ZIP verification works without GIT
  await assert.rejects(()=>loader.authorizeArtifactAdapter({...plan,id:999}),/GITHUB_EVIDENCE_UNAVAILABLE/);
  await assert.rejects(()=>loader.verifyPromotedContents(out,'0'.repeat(64)),/PROMOTED_RECEIPT_DRIFT/);
  const r=JSON.parse(fs.readFileSync(path.join(out,'admission.json')));r.native_run_id=20;const changed=JSON.stringify(r);fs.writeFileSync(path.join(out,'admission.json'),changed);await assert.rejects(()=>loader.verifyPromotedContents(out,loader.sha256(changed)),/PROMOTED_ATTEMPT_DRIFT/);
- const good=f.comments;f.comments=[];await assert.rejects(()=>loader.authorizeArtifactAdapter(plan),/REVIEWED_POLICY_BINDING_MISSING_OR_AMBIGUOUS/);f.comments=good;
+ const key='check-runs/124/annotations',good=f.extra[key];f.extra[key]=[];await assert.rejects(()=>loader.authorizeArtifactAdapter(plan),/POLICY_EVIDENCE_MISSING_OR_AMBIGUOUS/);f.extra[key]=good;
  await assert.rejects(()=>loader.request('https://api.github.com/repos/mahmoudemad68/Your_Editor/actions/artifacts/31/zip',{bytes:true}),/ACTIONS_READ_TOKEN_MISSING/);
  assert.ok(calls.includes('actions/runs/30/attempts/1/jobs'));fs.writeFileSync('result.json',JSON.stringify({result:'PASS',metadata_calls:calls.length,authorization_headers:0,github_token_present:Object.hasOwn(process.env,'GITHUB_TOKEN'),real_sdk_or_transfer_executed:false}));
  `,

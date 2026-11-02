@@ -580,3 +580,29 @@ The new complete review package has its own explicit inventory and SHA-256s;
 the original package remains the immutable historical review input. PR #100
 remains Draft, all code local/uncommitted, POLICY_APPROVAL=NOT_GRANTED,
 RELEASE_HOLD=ACTIVE and SAFE_TO_MERGE=NO.
+
+## Automated development source verification
+
+Development admission now consumes a genuine successful GitHub check from
+`pc100-source-verifier.yml`, executed from protected `main` after the isolated
+artifact integration workflow completes. It never checks out or executes PR
+code, writes statuses, issues Owner approvals or grants release authority.
+It compares the 31 security-relevant Git blobs with a fixed immutable baseline,
+and the five verifier/integration files with protected-default source. It checks
+live PR/head/base/merge/tree identities, upstream run/attempt, complete Git trees
+and actual blob hashes. Consumers independently verify the workflow, run, check
+association, annotation, source hashes and live identities. Version-3 manifests,
+seals and receipts bind the actual verifier run instead of a human comment ID.
+
+The verifier must first be installed on protected `main` through the repository's
+normal protected review process. Its presence in this PR provides no independent
+trust. Until installation and genuine successful verification, admission fails
+with `TRUSTED_VERIFIER_NOT_INSTALLED`; the Supply aggregate fails before image
+builds. This bootstrap dependency cannot be satisfied by a PR-authored manifest.
+Existing scanner pins, vulnerability policies, artifact budgets, release hold,
+diagnostic rejection and production authorization remain unchanged.
+
+The isolated `PC100 artifact integration` workflow uses a disposable 64-KiB
+fixture, official pinned upload Action and the actual shell REST download path.
+It performs no image build or service startup. Its pass is transport evidence,
+not full Supply/CI/Walking or production qualification.
