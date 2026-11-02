@@ -7,7 +7,7 @@ import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { availableParallelism, totalmem, freemem } from "node:os";
 import { execFileSync } from "node:child_process";
-import { setTimeout } from "node:timers";
+import { setTimeout, clearTimeout } from "node:timers";
 import { readFile, writeFile, mkdir, mkdtemp, lstat, statfs, realpath, rm } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, URL } from "node:url";
@@ -1676,9 +1676,35 @@ export function apiReadHeaders(
       typeof env.GITHUB_TOKEN === "string" && env.GITHUB_TOKEN.length > 0,
       "ACTIONS_READ_TOKEN_MISSING",
     );
+    requireThat(/^[A-Za-z0-9_.-]{1,4096}$/.test(env.GITHUB_TOKEN), "ACTIONS_READ_TOKEN_INVALID");
     headers.Authorization = `Bearer ${env.GITHUB_TOKEN}`;
   }
   return headers;
+}
+export function artifactRedirect(location) {
+  requireThat(
+    typeof location === "string" && location.length <= 8192,
+    "ARTIFACT_REDIRECT_REJECTED",
+  );
+  let next;
+  try {
+    next = new URL(location);
+  } catch {
+    throw new AdmissionError("ARTIFACT_REDIRECT_REJECTED");
+  }
+  requireThat(
+    next.protocol === "https:" &&
+      !next.username &&
+      !next.password &&
+      !next.port &&
+      !next.hash &&
+      (/^productionresults[a-z0-9]{1,7}\.blob\.core\.windows\.net$/.test(next.hostname) ||
+        /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+actions\.githubusercontent\.com$/.test(
+          next.hostname,
+        )),
+    "ARTIFACT_REDIRECT_REJECTED",
+  );
+  return next;
 }
 export async function request(
   url,
@@ -1688,59 +1714,115 @@ export async function request(
     cap = 4 * 1024 * 1024,
     correlate,
     refresh = false,
-    timeout = 30000,
+    timeout = bytes ? 120000 : 30000,
     apiVersion = "2026-03-10",
   } = {},
 ) {
   requireThat(
-    url.startsWith("https://api.github.com/repos/mahmoudemad68/Your_Editor/"),
-    "API_ORIGIN_REJECTED",
+    Number.isSafeInteger(cap) && cap > 0 && cap <= IMAGE_CAP + REPORT_CAP,
+    "HTTP_LIMIT_INVALID",
+  );
+  requireThat(
+    Number.isSafeInteger(timeout) && timeout > 0 && timeout <= 120000,
+    "HTTP_LIMIT_INVALID",
   );
   const headers = apiReadHeaders(url, { publicOnly, bytes, apiVersion, refresh });
-  const started = new Date().toISOString();
-  let response = await globalThis.fetch(url, {
-    headers,
-    redirect: "manual",
-    signal: globalThis.AbortSignal.timeout(timeout),
-  });
-  if (correlate)
-    correlate({
-      request_started_at: started,
-      received_at: new Date().toISOString(),
-      status: response.status,
-      request_id: response.headers.get("x-github-request-id"),
-      date: response.headers.get("date"),
-      age: response.headers.get("age"),
-      refresh,
-      api_version_requested: apiVersion,
-      api_version_selected: response.headers.get("x-github-api-version-selected"),
-    });
-  if (correlate) validateIdentityApiVersion(response.headers.get("x-github-api-version-selected"));
-  if (bytes && response.status === 302) {
-    const next = new URL(response.headers.get("location"));
+  const target = new URL(url);
+  if (bytes)
     requireThat(
-      next.protocol === "https:" &&
-        /(?:\.blob\.core\.windows\.net|\.actions\.githubusercontent\.com|\.actions\.github\.com|\.githubusercontent\.com)$/.test(
-          next.hostname,
-        ),
-      "ARTIFACT_REDIRECT_REJECTED",
+      new RegExp(`^/repos/${REPOSITORY}/actions/artifacts/[1-9][0-9]*/zip$`).test(
+        target.pathname,
+      ) && !target.search,
+      "ARTIFACT_ROUTE_REJECTED",
     );
-    response = await globalThis.fetch(next, {
-      redirect: "error",
-      signal: globalThis.AbortSignal.timeout(120000),
+  if (bytes) headers["Accept-Encoding"] = "identity";
+  const controller = new globalThis.AbortController(),
+    signal = controller.signal;
+  const timer = setTimeout(() => controller.abort(new AdmissionError("HTTP_TIMEOUT")), timeout);
+  // Enforce the deadline even if a stalled reader never delivers another chunk.
+  const bounded = (promise) =>
+    new Promise((resolve, reject) => {
+      const aborted = () => reject(signal.reason);
+      signal.addEventListener("abort", aborted, { once: true });
+      Promise.resolve(promise)
+        .then(resolve, reject)
+        .finally(() => signal.removeEventListener("abort", aborted));
+      if (signal.aborted) aborted();
     });
+  const started = new Date().toISOString();
+  let response;
+  try {
+    response = await bounded(
+      globalThis.fetch(url, { headers, redirect: "manual", credentials: "omit", signal }),
+    );
+    if (correlate)
+      correlate({
+        request_started_at: started,
+        received_at: new Date().toISOString(),
+        status: response.status,
+        request_id: response.headers.get("x-github-request-id"),
+        date: response.headers.get("date"),
+        age: response.headers.get("age"),
+        refresh,
+        api_version_requested: apiVersion,
+        api_version_selected: response.headers.get("x-github-api-version-selected"),
+      });
+    if (correlate)
+      validateIdentityApiVersion(response.headers.get("x-github-api-version-selected"));
+    if (bytes && response.status === 302) {
+      const next = artifactRedirect(response.headers.get("location"));
+      void response.body?.cancel().catch(() => {});
+      // Never forward Bearer authentication, cookies or referrers to the CDN.
+      response = await bounded(
+        globalThis.fetch(next, {
+          headers: { "Accept-Encoding": "identity" },
+          redirect: "manual",
+          credentials: "omit",
+          referrerPolicy: "no-referrer",
+          signal,
+        }),
+      );
+    }
+    if (response.redirected || response.status !== 200) {
+      const error = new AdmissionError(
+        bytes ? `GITHUB_HTTP_${response.status}` : "GITHUB_EVIDENCE_UNAVAILABLE",
+      );
+      error.http_status = response.status;
+      throw error;
+    }
+    const declared = response.headers.get("content-length");
+    const encoding = (response.headers.get("content-encoding") ?? "identity").trim().toLowerCase();
+    if (bytes) requireThat(encoding === "identity", "HTTP_ENCODING_REJECTED");
+    requireThat(declared === null || /^(?:0|[1-9][0-9]*)$/.test(declared), "HTTP_LENGTH_INVALID");
+    requireThat(declared === null || Number(declared) <= cap, "HTTP_SIZE_REJECTED");
+    requireThat(response.body, "HTTP_BODY_MISSING");
+    const reader = response.body.getReader(),
+      chunks = [];
+    let size = 0;
+    try {
+      while (true) {
+        const { done, value } = await bounded(reader.read());
+        if (done) break;
+        size += value.byteLength;
+        requireThat(size <= cap, "HTTP_SIZE_REJECTED");
+        chunks.push(Buffer.from(value));
+      }
+    } finally {
+      void reader.cancel().catch(() => {});
+    }
+    // fetch decodes gzip JSON, whose Content-Length describes encoded bytes.
+    // Artifact ZIPs require identity encoding and an exact physical length.
+    requireThat(
+      declared === null || (!bytes && encoding !== "identity") || size === Number(declared),
+      "HTTP_LENGTH_MISMATCH",
+    );
+    const result = Buffer.concat(chunks);
+    return bytes ? result : strictJSON(result, cap);
+  } finally {
+    clearTimeout(timer);
+    controller.abort();
+    if (response?.body && !response.body.locked) void response.body.cancel().catch(() => {});
   }
-  requireThat(response.ok, "GITHUB_EVIDENCE_UNAVAILABLE");
-  requireThat(Number(response.headers.get("content-length") ?? 0) <= cap, "HTTP_SIZE_REJECTED");
-  const chunks = [];
-  let size = 0;
-  for await (const chunk of response.body) {
-    size += chunk.length;
-    requireThat(size <= cap, "HTTP_SIZE_REJECTED");
-    chunks.push(chunk);
-  }
-  const result = Buffer.concat(chunks);
-  return bytes ? result : JSON.parse(result.toString("utf8"));
 }
 const api = (suffix, options) =>
   request(`https://api.github.com/repos/${REPOSITORY}/${suffix}`, options);
@@ -1918,37 +2000,59 @@ async function policy(context, readOnlyProductCheckout = false) {
   }
   return binding;
 }
-async function unpackZip(artifact, destination, allowed, cap) {
-  const { downloadRawArtifact } =
-    await import("../../.github/actions/pc100-bounded-artifact/index.mjs");
-  const role = allowed.length === 1 && allowed[0] === "seal.json" ? "seal" : "source";
-  const raw = await downloadRawArtifact(artifact, role, path.join(ROOT, ".local/issue99"));
-  try {
+export async function downloadArtifactArchive(artifact, source, step, cap) {
+  // Shell steps have a job-scoped API token, not JS-Action runtime credentials.
+  // The caller already admitted the producer (or is sealing its own upload).
+  // Re-read both identities before and after downloading the exact ZIP ID.
+  const role = /^(seaweedfs-candidate|seaweedfs-seal)-/.exec(artifact.name)?.[1];
+  requireThat(
+    role && artifact.name === `${role}-${id(source.id)}-${id(source.run_attempt)}`,
+    "ARTIFACT_ATTEMPT_DRIFT",
+  );
+  requireThat(
+    step?.status === "completed" && step.conclusion === "success",
+    "ARTIFACT_UPLOAD_NOT_COMPLETE",
+  );
+  validateArtifact(artifact, source, artifact.id, cap, step);
+  const expected = (a) => ({
+    id: a.id,
+    name: a.name,
+    size: a.size_in_bytes,
+    digest: a.digest,
+    created: a.created_at,
+    expires: a.expires_at,
+    workflow_run: a.workflow_run,
+  });
+  const check = async () => {
+    const liveRun = await api(`actions/runs/${id(source.id)}`);
     requireThat(
-      (await fileBytes(raw)) === artifact.size_in_bytes && artifact.size_in_bytes <= cap,
-      "RAW_ARCHIVE_SIZE_DRIFT",
+      liveRun.id === source.id &&
+        liveRun.run_attempt === source.run_attempt &&
+        liveRun.workflow_id === 374068707 &&
+        liveRun.path === WORKFLOWS["Supply chain"].path &&
+        liveRun.event === "pull_request" &&
+        liveRun.head_sha === source.head_sha &&
+        liveRun.repository?.id === REPOSITORY_ID &&
+        liveRun.head_repository?.id === REPOSITORY_ID &&
+        isDeepStrictEqual(liveRun.pull_requests, source.pull_requests) &&
+        (source.status !== "completed" ||
+          (liveRun.status === "completed" && liveRun.conclusion === "success")),
+      "ARTIFACT_PRODUCER_DRIFT",
     );
-    await unpackVerifiedZip(
-      await readFile(raw),
-      artifact.digest,
-      destination,
-      allowed,
-      cap,
-      "python3",
-      true,
-    );
-  } finally {
-    // The adapter returned a fresh private transfer directory, never a caller path.
-    const transfer = path.dirname(path.dirname(raw));
-    requireThat(
-      path.dirname(transfer) === path.join(ROOT, ".local/pc100-artifacts") &&
-        /^transfer-[A-Za-z0-9]+$/.test(path.basename(transfer)) &&
-        (await realpath(transfer)) === transfer &&
-        (await realpath(path.dirname(transfer))) === path.dirname(transfer),
-      "ADAPTER_CLEANUP_PATH_REJECTED",
-    );
-    await rm(transfer, { recursive: true, force: true });
-  }
+    const live = await api(`actions/artifacts/${id(artifact.id)}`);
+    validateArtifact(live, liveRun, artifact.id, cap, step);
+    requireThat(isDeepStrictEqual(expected(live), expected(artifact)), "ARTIFACT_METADATA_DRIFT");
+  };
+  await check();
+  const bytes = await api(`actions/artifacts/${id(artifact.id)}/zip`, { bytes: true, cap });
+  requireThat(bytes.length === artifact.size_in_bytes, "RAW_ARCHIVE_SIZE_DRIFT");
+  requireThat(`sha256:${sha256(bytes)}` === artifact.digest, "GITHUB_ARCHIVE_DIGEST_MISMATCH");
+  await check();
+  return bytes;
+}
+async function unpackZip(artifact, destination, allowed, cap, source, step) {
+  const bytes = await downloadArtifactArchive(artifact, source, step, cap);
+  await unpackVerifiedZip(bytes, artifact.digest, destination, allowed, cap, "python3", true);
 }
 export async function unpackVerifiedZip(
   data,
@@ -2072,7 +2176,14 @@ async function qualified(output) {
   const sealStep = candidateJob.steps.find((s) => s.name === "Upload candidate seal");
   const uploadStep = candidateJob.steps.find((s) => s.name === "Upload qualified candidate");
   validateArtifact(sealMatches[0], source, sealMatches[0].id, 65536, sealStep);
-  await unpackZip(sealMatches[0], path.join(output, "seal"), ["seal.json"], 65536);
+  await unpackZip(
+    sealMatches[0],
+    path.join(output, "seal"),
+    ["seal.json"],
+    65536,
+    source,
+    sealStep,
+  );
   const seal = await jsonFile(path.join(output, "seal/seal.json"));
   validateCandidateSeal(seal, context, source, lock, L);
   requireThat(
@@ -2107,7 +2218,7 @@ async function qualified(output) {
     policy_files: binding.files,
     seal,
   };
-  return { receipt, artifact, source };
+  return { receipt, artifact, source, step: uploadStep };
 }
 async function verifyCandidateDirectory(bundle, m, src, work) {
   validateCandidateManifest(m, src.context, src.source.id, src.source.run_attempt, src.lock, src.L);
@@ -2181,9 +2292,9 @@ async function verifyCandidateDirectory(bundle, m, src, work) {
   await dispose(inspection);
   return { C, R, archive };
 }
-async function materialize(artifact, output, receipt) {
+async function materialize(artifact, output, receipt, source, step) {
   const bundle = path.join(output, "bundle");
-  await unpackZip(artifact, bundle, FILES, IMAGE_CAP + REPORT_CAP);
+  await unpackZip(artifact, bundle, FILES, IMAGE_CAP + REPORT_CAP, source, step);
   const m = await jsonFile(path.join(bundle, "candidate-manifest.json"));
   requireThat(
     (await fileDigest(path.join(bundle, "candidate-manifest.json"))) ===
@@ -2796,7 +2907,7 @@ async function cli(mode, arg, extra) {
     const work = await mkdtemp(path.join(ROOT, ".local/issue99/source-recheck-"));
     try {
       const downloaded = path.join(work, "source");
-      await unpackZip(actual, downloaded, FILES, IMAGE_CAP + REPORT_CAP);
+      await unpackZip(actual, downloaded, FILES, IMAGE_CAP + REPORT_CAP, src.nativeRun, step);
       requireThat(
         (await fileDigest(path.join(downloaded, "candidate-manifest.json"))) ===
           (await fileDigest(path.join(bundle, "candidate-manifest.json"))),
@@ -2928,7 +3039,13 @@ async function cli(mode, arg, extra) {
   }
   const work = await mkdtemp(path.join(ROOT, ".local/issue99/admission-"));
   const admitted = await qualified(work);
-  let receipt = await materialize(admitted.artifact, work, admitted.receipt);
+  let receipt = await materialize(
+    admitted.artifact,
+    work,
+    admitted.receipt,
+    admitted.source,
+    admitted.step,
+  );
   await fresh(receipt);
   if (mode === "load") {
     if (arg) {

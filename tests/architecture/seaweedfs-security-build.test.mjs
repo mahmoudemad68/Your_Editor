@@ -67,6 +67,9 @@ import {
   wireInventory,
   classifyNonTransferArtifact,
   apiReadHeaders,
+  request,
+  artifactRedirect,
+  downloadArtifactArchive,
   validateWireStepInventory,
   validateFinalWireLedger,
   reconcileWireArtifacts,
@@ -2358,8 +2361,8 @@ for (const bytes of [
   test(`PC100 strict JSON rejects ${String(bytes).slice(0, 35)}`, () =>
     assert.throws(() => strictJSON(Buffer.from(bytes))));
 test("PC100 strict JSON accepts escaped keys and UTF-8 without normalization", () => {
-  assert.deepEqual(strictJSON(Buffer.from('{"\\u0061":"عربي","b":[1,true,null]}')), {
-    a: "عربي",
+  assert.deepEqual(strictJSON(Buffer.from('{"\\u0061":"Ã˜Â¹Ã˜Â±Ã˜Â¨Ã™Å ","b":[1,true,null]}')), {
+    a: "Ã˜Â¹Ã˜Â±Ã˜Â¨Ã™Å ",
     b: [1, true, null],
   });
   assert.throws(() => strictJSON(Buffer.from('{"a":1,"\\u0061":2}')));
@@ -3794,4 +3797,371 @@ test("PC100 P1 downstream Walking preserves contents-only access and the complet
   );
   assert.match(downstream, /load-qualified-storage\.mjs promoted/);
   assert.match(downstream, /load-qualified-storage\.mjs final/);
+});
+
+// Hermetic HTTP controls exercise the real REST reader. They do NOT qualify
+// GitHub's artifact service, runner credentials, images or producer admission.
+const restAPI = "https://api.github.com/repos/mahmoudemad68/Your_Editor/";
+function restFixture() {
+  const raw = execFileSync(python, [
+    "-c",
+    "import io,zipfile,sys; b=io.BytesIO(); z=zipfile.ZipFile(b,'w',compression=zipfile.ZIP_STORED); z.writestr('seal.json','{}'); z.close(); sys.stdout.buffer.write(b.getvalue())",
+  ]);
+  const now = Date.now();
+  const source = producer().source;
+  const step = {
+    status: "completed",
+    conclusion: "success",
+    started_at: new Date(now - 10000).toISOString(),
+    completed_at: new Date(now - 8000).toISOString(),
+  };
+  const artifact = {
+    id: 41,
+    name: "seaweedfs-seal-10-1",
+    expired: false,
+    size_in_bytes: raw.length,
+    digest: `sha256:${sha256(raw)}`,
+    created_at: new Date(now - 9000).toISOString(),
+    expires_at: new Date(now - 9000 + 86400000).toISOString(),
+    workflow_run: { id: 10, head_sha: H, head_repository_id: REPOSITORY_ID },
+  };
+  return {
+    source,
+    step,
+    artifact,
+    liveSource: globalThis.structuredClone(source),
+    liveArtifact: globalThis.structuredClone(artifact),
+    raw,
+    calls: [],
+    redirect: "https://productionresultstest.blob.core.windows.net/fixture/archive.zip?sig=fixture",
+  };
+}
+async function withREST(f, body) {
+  const fetch = globalThis.fetch;
+  const keys = ["GITHUB_TOKEN", "ACTIONS_RUNTIME_TOKEN", "ACTIONS_RESULTS_URL"];
+  const saved = keys.map((k) => [k, process.env[k]]);
+  process.env.GITHUB_TOKEN = "fixture-read-token";
+  delete process.env.ACTIONS_RUNTIME_TOKEN;
+  delete process.env.ACTIONS_RESULTS_URL;
+  globalThis.fetch = async (url, options) => {
+    const u = String(url);
+    f.calls.push({ url: u, options });
+    if (u.startsWith(restAPI)) {
+      assert.equal(options.headers.Authorization, "Bearer fixture-read-token");
+      assert.equal(options.redirect, "manual");
+      assert.equal(options.credentials, "omit");
+      const route = u.slice(restAPI.length);
+      if (f.apiResponse) {
+        const override = f.apiResponse(route, options);
+        if (override) return override;
+      }
+      if (route === "actions/runs/10") return new Response(JSON.stringify(f.liveSource));
+      if (route === "actions/artifacts/41") return new Response(JSON.stringify(f.liveArtifact));
+      if (route === "actions/artifacts/41/zip")
+        return new Response(null, {
+          status: 302,
+          headers: f.redirect === null ? {} : { location: f.redirect },
+        });
+      throw new Error("Unexpected synthetic API route");
+    }
+    assert.equal(u, f.redirect);
+    assert.deepEqual(options.headers, { "Accept-Encoding": "identity" });
+    assert.equal(options.credentials, "omit");
+    assert.equal(options.referrerPolicy, "no-referrer");
+    assert.equal(options.redirect, "manual");
+    if (f.afterArchive) f.afterArchive();
+    return (
+      f.cdnResponse?.() ??
+      new Response(f.raw, {
+        headers: { "content-length": String(f.raw.length) },
+      })
+    );
+  };
+  try {
+    return await body();
+  } finally {
+    globalThis.fetch = fetch;
+    for (const [k, v] of saved)
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+  }
+}
+test("PC100 shell REST downloads and extracts exact bytes without JS runtime credentials", async () =>
+  temporary(async (dir) => {
+    const f = restFixture();
+    await withREST(f, async () => {
+      const raw = await downloadArtifactArchive(f.artifact, f.source, f.step, 65536);
+      assert.deepEqual(raw, f.raw);
+      await unpackVerifiedZip(raw, f.artifact.digest, dir, ["seal.json"], 65536, python, true);
+      assert.equal(await readFile(path.join(dir, "seal.json"), "utf8"), "{}");
+      assert.equal(f.calls.filter((c) => c.url === restAPI + "actions/runs/10").length, 2);
+      assert.equal(f.calls.filter((c) => c.url === restAPI + "actions/artifacts/41").length, 2);
+      assert.equal(process.env.ACTIONS_RUNTIME_TOKEN, undefined);
+      assert.equal(process.env.ACTIONS_RESULTS_URL, undefined);
+    });
+  }));
+for (const status of [401, 403, 404, 410])
+  test(`PC100 shell REST fails closed on artifact HTTP ${status}`, async () => {
+    const f = restFixture();
+    f.apiResponse = (route) =>
+      route === "actions/artifacts/41" ? new Response("private fixture detail", { status }) : null;
+    await withREST(f, () =>
+      assert.rejects(
+        () => downloadArtifactArchive(f.artifact, f.source, f.step, 65536),
+        (e) => e.http_status === status && !e.message.includes("private fixture"),
+      ),
+    );
+    assert.equal(
+      f.calls.some((c) => !c.url.startsWith(restAPI)),
+      false,
+    );
+  });
+for (const [label, mutate] of [
+  ["wrong ID", (f) => f.liveArtifact.id++],
+  ["wrong run", (f) => f.liveArtifact.workflow_run.id++],
+  ["wrong repository", (f) => f.liveArtifact.workflow_run.head_repository_id++],
+  ["wrong HEAD", (f) => (f.liveArtifact.workflow_run.head_sha = M)],
+  ["wrong name", (f) => (f.liveArtifact.name = "seaweedfs-seal-10-2")],
+  ["wrong producer attempt", (f) => f.liveSource.run_attempt++],
+  ["wrong workflow", (f) => f.liveSource.workflow_id++],
+  ["failed producer", (f) => (f.liveSource.conclusion = "failure")],
+  ["expired", (f) => (f.liveArtifact.expired = true)],
+  ["expired timestamp", (f) => (f.liveArtifact.expires_at = new Date(0).toISOString())],
+  [
+    "long retention",
+    (f) => (f.liveArtifact.expires_at = new Date(Date.now() + 172800000).toISOString()),
+  ],
+  ["metadata digest drift", (f) => (f.liveArtifact.digest = `sha256:${"0".repeat(64)}`)],
+  ["metadata size drift", (f) => f.liveArtifact.size_in_bytes++],
+])
+  test(`PC100 shell REST rejects ${label} before archive download`, async () => {
+    const f = restFixture();
+    mutate(f);
+    await withREST(f, () =>
+      assert.rejects(() => downloadArtifactArchive(f.artifact, f.source, f.step, 65536)),
+    );
+    assert.equal(
+      f.calls.some((c) => c.url.endsWith("/zip")),
+      false,
+    );
+  });
+for (const location of [
+  null,
+  "/relative",
+  "http://productionresultstest.blob.core.windows.net/archive.zip",
+  "https://evil.example/archive.zip",
+  "https://evil.github.com/archive.zip",
+  "https://productionresultstest.blob.core.windows.net.evil.example/archive.zip",
+  "https://user:password@productionresultstest.blob.core.windows.net/archive.zip",
+  "https://productionresultstest.blob.core.windows.net:444/archive.zip",
+  "https://productionresultstest.blob.core.windows.net/archive.zip#fragment",
+  "https://raw.githubusercontent.com/archive.zip",
+  "https://evil.blob.core.windows.net/archive.zip",
+])
+  test(`PC100 shell REST rejects unsafe redirect ${String(location).replace(/user:password/, "userinfo")}`, async () => {
+    const f = restFixture();
+    f.redirect = location;
+    await withREST(f, () =>
+      assert.rejects(
+        () => downloadArtifactArchive(f.artifact, f.source, f.step, 65536),
+        /ARTIFACT_REDIRECT_REJECTED/,
+      ),
+    );
+    assert.equal(
+      f.calls.every((c) => c.url.startsWith(restAPI)),
+      true,
+    );
+  });
+test("PC100 shell REST does not follow a second redirect or forward API credentials", async () => {
+  const f = restFixture();
+  f.cdnResponse = () =>
+    new Response(null, { status: 302, headers: { location: "https://evil.example/" } });
+  await withREST(f, () =>
+    assert.rejects(
+      () => downloadArtifactArchive(f.artifact, f.source, f.step, 65536),
+      /GITHUB_HTTP_302/,
+    ),
+  );
+  assert.equal(f.calls.filter((c) => !c.url.startsWith(restAPI)).length, 1);
+});
+for (const token of [undefined, "", "invalid\nheader", "has spaces", "x".repeat(4097)])
+  test(`PC100 shell REST rejects ${token === undefined ? "missing" : "invalid"} API credential ${token?.length ?? 0}`, async () => {
+    const f = restFixture();
+    await withREST(f, async () => {
+      if (token === undefined) delete process.env.GITHUB_TOKEN;
+      else process.env.GITHUB_TOKEN = token;
+      await assert.rejects(
+        () => request(restAPI + "actions/artifacts/41/zip", { bytes: true }),
+        /ACTIONS_READ_TOKEN_(MISSING|INVALID)/,
+      );
+      assert.equal(f.calls.length, 0);
+    });
+  });
+for (const [label, mutate, code] of [
+  [
+    "wrong archive digest",
+    (f) => {
+      f.artifact.digest = f.liveArtifact.digest = `sha256:${"1".repeat(64)}`;
+    },
+    "GITHUB_ARCHIVE_DIGEST_MISMATCH",
+  ],
+  [
+    "wrong physical size",
+    (f) => {
+      f.artifact.size_in_bytes++;
+      f.liveArtifact.size_in_bytes++;
+    },
+    "RAW_ARCHIVE_SIZE_DRIFT",
+  ],
+  [
+    "truncated HTTP body",
+    (f) =>
+      (f.cdnResponse = () =>
+        new Response(f.raw, { headers: { "content-length": String(f.raw.length + 1) } })),
+    "HTTP_LENGTH_MISMATCH",
+  ],
+  [
+    "stale after download",
+    (f) => (f.afterArchive = () => f.liveSource.run_attempt++),
+    "ARTIFACT_PRODUCER_DRIFT",
+  ],
+  [
+    "metadata changed after download",
+    (f) => (f.afterArchive = () => (f.liveArtifact.digest = `sha256:${"0".repeat(64)}`)),
+    "ARTIFACT_METADATA_DRIFT",
+  ],
+])
+  test(`PC100 shell REST rejects ${label}`, async () => {
+    const f = restFixture();
+    mutate(f);
+    await withREST(f, () =>
+      assert.rejects(
+        () => downloadArtifactArchive(f.artifact, f.source, f.step, 65536),
+        new RegExp(code),
+      ),
+    );
+  });
+test("PC100 shell REST rejects a correctly hashed corrupted ZIP", async () =>
+  temporary(async (dir) => {
+    const f = restFixture();
+    const payload = 30 + f.raw.readUInt16LE(26) + f.raw.readUInt16LE(28);
+    f.raw[payload] ^= 1;
+    f.artifact.digest = f.liveArtifact.digest = `sha256:${sha256(f.raw)}`;
+    await withREST(f, async () => {
+      const raw = await downloadArtifactArchive(f.artifact, f.source, f.step, 65536);
+      await assert.rejects(() =>
+        unpackVerifiedZip(raw, f.artifact.digest, dir, ["seal.json"], 65536, python, true),
+      );
+    });
+  }));
+for (const [label, response] of [
+  ["declared over cap", () => new Response("a", { headers: { "content-length": "5" } })],
+  [
+    "stream over cap",
+    () =>
+      new Response(
+        new globalThis.ReadableStream({
+          start(c) {
+            c.enqueue(new Uint8Array(5));
+            c.close();
+          },
+        }),
+      ),
+  ],
+  ["malformed length", () => new Response("a", { headers: { "content-length": "NaN" } })],
+])
+  test(`PC100 shell REST bounds ${label}`, async () => {
+    const f = restFixture();
+    f.cdnResponse = response;
+    await withREST(f, () =>
+      assert.rejects(
+        () => request(restAPI + "actions/artifacts/41/zip", { bytes: true, cap: 4 }),
+        /HTTP_(SIZE_REJECTED|LENGTH_INVALID)/,
+      ),
+    );
+  });
+for (const stage of ["fetch", "body"])
+  test(`PC100 shell REST deadline terminates stalled ${stage}`, async () => {
+    const f = restFixture();
+    if (stage === "fetch") f.apiResponse = () => new Promise(() => {});
+    else f.cdnResponse = () => new Response(new globalThis.ReadableStream({ start() {} }));
+    await withREST(f, () =>
+      assert.rejects(
+        () => request(restAPI + "actions/artifacts/41/zip", { bytes: true, timeout: 20 }),
+        /HTTP_TIMEOUT/,
+      ),
+    );
+    assert.equal(
+      f.calls.every((c) => c.options.signal.aborted),
+      true,
+    );
+  });
+test("PC100 shell seal admit and load use REST while same-run JS SDK remains separate", async () => {
+  const loader = await readFile(path.join(root, "tools/test/load-qualified-storage.mjs"), "utf8");
+  const body = loader.slice(
+    loader.indexOf("async function unpackZip("),
+    loader.indexOf("export async function unpackVerifiedZip("),
+  );
+  assert.match(body, /downloadArtifactArchive\(artifact, source, step, cap\)/);
+  assert.doesNotMatch(body, /downloadRawArtifact|ACTIONS_RUNTIME_TOKEN|ACTIONS_RESULTS_URL/);
+  assert.match(loader, /if \(mode === "seal"\)/);
+  assert.match(loader, /\["admit", "load", "final"\]/);
+  assert.match(
+    await readFile(path.join(root, ".github/workflows/e2e.yml"), "utf8"),
+    /Retrieve exact same-run promoted artifact/,
+  );
+  assert.equal(
+    artifactRedirect("https://results-receiver.actions.githubusercontent.com/fixture").protocol,
+    "https:",
+  );
+});
+for (const kind of ["traversal", "symlink", "duplicate"])
+  test(`PC100 shell REST rejects authenticated ${kind} ZIP payload`, async () =>
+    temporary(async (dir) => {
+      const f = restFixture();
+      f.raw = execFileSync(python, [
+        "-c",
+        `import io,zipfile,stat,sys
+b=io.BytesIO()
+with zipfile.ZipFile(b,'w',compression=zipfile.ZIP_STORED) as z:
+ k=sys.argv[1]
+ if k=='symlink':
+  e=zipfile.ZipInfo('seal.json');e.create_system=3;e.external_attr=(stat.S_IFLNK|0o777)<<16;z.writestr(e,'../../outside')
+ elif k=='traversal':z.writestr('../seal.json','{}')
+ else:z.writestr('seal.json','{}');z.writestr('seal.json','{}')
+sys.stdout.buffer.write(b.getvalue())`,
+        kind,
+      ]);
+      f.artifact.size_in_bytes = f.liveArtifact.size_in_bytes = f.raw.length;
+      f.artifact.digest = f.liveArtifact.digest = `sha256:${sha256(f.raw)}`;
+      await withREST(f, async () => {
+        const raw = await downloadArtifactArchive(f.artifact, f.source, f.step, 65536);
+        await assert.rejects(() =>
+          unpackVerifiedZip(raw, f.artifact.digest, dir, ["seal.json"], 65536, python, true),
+        );
+      });
+    }));
+test("PC100 shell REST metadata accepts decoded gzip JSON without comparing encoded length", async () => {
+  const f = restFixture();
+  f.apiResponse = (route) =>
+    route === "actions/artifacts/41"
+      ? new Response(JSON.stringify(f.liveArtifact), {
+          headers: { "content-encoding": "gzip", "content-length": "8" },
+        })
+      : null;
+  await withREST(f, async () =>
+    assert.deepEqual(await downloadArtifactArchive(f.artifact, f.source, f.step, 65536), f.raw),
+  );
+});
+test("PC100 shell REST demands identity encoding for physical ZIP byte accounting", async () => {
+  const f = restFixture();
+  f.cdnResponse = () => new Response(f.raw, { headers: { "content-encoding": "gzip" } });
+  await withREST(f, () =>
+    assert.rejects(
+      () => downloadArtifactArchive(f.artifact, f.source, f.step, 65536),
+      /HTTP_ENCODING_REJECTED/,
+    ),
+  );
+  const request = f.calls.find((c) => c.url.endsWith("/zip"));
+  assert.equal(request.options.headers["Accept-Encoding"], "identity");
 });
