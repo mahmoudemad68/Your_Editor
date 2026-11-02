@@ -1678,6 +1678,16 @@ export function apiReadHeaders(
         ),
       "PUBLIC_METADATA_ROUTE_REJECTED",
     );
+    // Explicit contents-only metadata credential. Never use it for artifact
+    // archives, and never fall back to ambient Owner/Actions-read credentials.
+    if (env.PC100_METADATA_TOKEN !== undefined) {
+      requireThat(
+        typeof env.PC100_METADATA_TOKEN === "string" &&
+          /^[A-Za-z0-9_.-]{1,4096}$/.test(env.PC100_METADATA_TOKEN),
+        "METADATA_TOKEN_INVALID",
+      );
+      headers.Authorization = `Bearer ${env.PC100_METADATA_TOKEN}`;
+    }
     // Explicit public GETs never inherit an ambient installation/Owner token.
     // A private/unavailable resource fails at HTTP; there is no auth fallback.
   } else {

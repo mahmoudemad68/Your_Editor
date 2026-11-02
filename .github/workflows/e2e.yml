@@ -79,6 +79,8 @@ jobs:
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      PC100_METADATA_TOKEN: ${{ github.token }}
     steps:
       - name: Explicitly reject failed admission
         env:
@@ -94,8 +96,8 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
       - name: Retrieve exact same-run promoted artifact
-        # No Actions-read token is inherited: public metadata GETs remain live,
-        # and the same-run SDK authenticates with runner artifact credentials.
+        # Contents-only metadata reads use a separate explicit credential; the
+        # same-run SDK child receives only its runner artifact credentials.
         id: promoted-download
         uses: ./.github/actions/pc100-bounded-artifact
         with:

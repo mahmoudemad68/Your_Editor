@@ -596,7 +596,12 @@ seals and receipts bind the actual verifier run instead of a human comment ID.
 
 The verifier must first be installed on protected `main` through the repository's
 normal protected review process. Its presence in this PR provides no independent
-trust. Until installation and genuine successful verification, admission fails
+trust. That installation must also enforce the genuine GitHub Actions
+`PC100 trusted source verification` required check through protected repository
+controls. A PR-controlled consumer cannot be the enforcement root for its own
+code: a modified client must still be rejected by the protected-default checker
+and its required-check binding. Neither installation nor repository settings are
+changed by this PR. Until installation and genuine successful verification, admission fails
 with `TRUSTED_VERIFIER_NOT_INSTALLED`; the Supply aggregate fails before image
 builds. This bootstrap dependency cannot be satisfied by a PR-authored manifest.
 Existing scanner pins, vulnerability policies, artifact budgets, release hold,
@@ -606,3 +611,11 @@ The isolated `PC100 artifact integration` workflow uses a disposable 64-KiB
 fixture, official pinned upload Action and the actual shell REST download path.
 It performs no image build or service startup. Its pass is transport evidence,
 not full Supply/CI/Walking or production qualification.
+
+Source-verdict readiness is reconciled through bounded read-only observations
+within the original admission attempt (maximum 120 seconds). Failed preflights,
+ambiguous completed verdicts, identity drift and deadline expiry are terminal;
+no workflow is retried. Downstream Walking retains contents-only permissions and
+uses an explicit separate metadata credential for closed public GETs, avoiding
+the unauthenticated API quota. This credential is never used for archive REST
+downloads or inherited by the official same-run Artifact SDK child.

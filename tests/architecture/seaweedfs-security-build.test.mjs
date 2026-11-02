@@ -65,6 +65,7 @@ import {
   zipEnvelope,
   wireAccounting,
   wireInventory,
+  validateWireRun,
   classifyNonTransferArtifact,
   apiReadHeaders,
   request,
@@ -2902,6 +2903,48 @@ function finalWireFixture() {
   };
   return { context, runs, inventory, rows, C: 10000, R: 1000, now, attemptJobs };
 }
+test("PC100 at most one full consumer rerun is accepted and producer reruns remain rejected", () => {
+  const f = finalWireFixture();
+  for (const kind of ["ci", "walking"]) {
+    f.runs[kind].run_attempt = 2;
+    assert.doesNotThrow(() => validateWireRun(f.runs[kind], kind, context));
+    f.runs[kind].run_attempt = 3;
+    assert.throws(() => validateWireRun(f.runs[kind], kind, context), /WIRE_RETRY_POLICY_REJECTED/);
+  }
+  f.runs.source.run_attempt = 2;
+  assert.throws(
+    () => validateWireRun(f.runs.source, "source", context),
+    /WIRE_RETRY_POLICY_REJECTED/,
+  );
+});
+test("PC100 full rerun accounting accepts only first-attempt genuine producer prerequisites", () => {
+  const f = finalWireFixture();
+  const row = {
+    role: "outcome-ci",
+    artifact_id: 40,
+    run_id: 20,
+    attempt: 1,
+    bytes: 4000,
+    digest: Q,
+    outcome: "PRODUCER_NOT_YET_COMPLETE",
+  };
+  assert.doesNotThrow(() => physicalBudget(f.C, f.R, [row]));
+  for (const outcome of [
+    "PRODUCER_FAILED",
+    "POLICY_EVIDENCE_DEADLINE",
+    "TRUSTED_VERIFIER_NOT_INSTALLED",
+    "HIGH_OR_CRITICAL_FOUND",
+    "TEST_FAILURE",
+  ])
+    assert.throws(
+      () => physicalBudget(f.C, f.R, [{ ...row, outcome }]),
+      /EXTRA_OUTCOME_REQUIRES_REVIEW/,
+    );
+  assert.throws(
+    () => physicalBudget(f.C, f.R, [{ ...row, attempt: 2 }]),
+    /EXTRA_OUTCOME_REQUIRES_REVIEW/,
+  );
+});
 test("PC100 final wire ledger requires all four independently measured raw artifacts", () => {
   const f = finalWireFixture();
   validateWireStepInventory(f.runs, f.inventory, f.attemptJobs);
@@ -3294,6 +3337,53 @@ test("PC100 actual wire CLI failure cannot overwrite historical admission outcom
 // Independent-review corrections: hermetic protocol controls, not hosted service
 // qualification, real Owner approval, real image or Linux execution evidence.
 const publicRepoAPI = "https://api.github.com/repos/mahmoudemad68/Your_Editor/";
+test("PC100 explicit contents-only metadata token is route-bounded and never delegated to the SDK", () => {
+  const env = {
+    GITHUB_TOKEN: "ambient-owner-not-selected",
+    GH_TOKEN: "ambient-owner-not-selected",
+    PC100_METADATA_TOKEN: "synthetic-contents-only",
+    ACTIONS_RUNTIME_TOKEN: "synthetic-runtime",
+    ACTIONS_RESULTS_URL: "https://results-receiver.actions.githubusercontent.com/",
+  };
+  const headers = apiReadHeaders(
+    "https://api.github.com/repos/mahmoudemad68/Your_Editor/pulls/100",
+    { publicOnly: true },
+    env,
+  );
+  assert.equal(headers.Authorization, "Bearer synthetic-contents-only");
+  assert.throws(
+    () =>
+      apiReadHeaders(
+        "https://api.github.com/repos/mahmoudemad68/Your_Editor/actions/artifacts/31/zip",
+        { publicOnly: true, bytes: true },
+        env,
+      ),
+    /PUBLIC_METADATA_ROUTE_REJECTED/,
+  );
+  assert.throws(
+    () =>
+      apiReadHeaders(
+        "https://api.github.com/repos/mahmoudemad68/Your_Editor/actions/artifacts/31/zip",
+        { bytes: true },
+        { PC100_METADATA_TOKEN: "synthetic-contents-only" },
+      ),
+    /ACTIONS_READ_TOKEN_MISSING/,
+  );
+  for (const token of ["", null, "bad\ncredential"])
+    assert.throws(
+      () =>
+        apiReadHeaders(
+          "https://api.github.com/repos/mahmoudemad68/Your_Editor/pulls/100",
+          { publicOnly: true },
+          { PC100_METADATA_TOKEN: token },
+        ),
+      /METADATA_TOKEN_INVALID/,
+    );
+  const child = boundedEnvironment(env, "/scratch");
+  assert.equal(child.PC100_METADATA_TOKEN, undefined);
+  assert.equal(child.GITHUB_TOKEN, undefined);
+  assert.equal(child.GH_TOKEN, undefined);
+});
 test("PC100 P1 explicit public metadata needs no token and inherits no ambient Owner credential", () => {
   for (const route of [
     "actions/runs/30",
