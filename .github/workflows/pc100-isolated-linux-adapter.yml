@@ -1,0 +1,153 @@
+name: PC100 isolated Linux adapter (one-time)
+on:
+  push:
+    branches:
+      - codex/pc100-linux-adapter-test-only-6a4f45b6
+    paths:
+      - .github/workflows/pc100-isolated-linux-adapter.yml
+permissions:
+  contents: read
+jobs:
+  adapter:
+    name: PC100 Linux adapter exact review SHA
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout immutable reviewed source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 6a4f45b674e4b1757cfb742bac2ca2d9ee13fba1
+          fetch-depth: 1
+          persist-credentials: false
+          lfs: false
+          submodules: false
+      - name: Set up Node.js 24
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: "24"
+      - name: Verify exact source and Linux environment
+        shell: bash
+        run: >
+          set -euo pipefail
+
+          test "$(git rev-parse HEAD)" =
+          '6a4f45b674e4b1757cfb742bac2ca2d9ee13fba1'
+
+          test "$(git rev-parse 'HEAD^{tree}')" =
+          '08b08c047952eca8f308ea9741ba493162123103'
+
+          test "$(git show -s --format=%P HEAD)" =
+          'af4b26a64d54ef17ed4291641867e2e918b19249'
+
+          test "$(node -p 'process.versions.node.split(".")[0]')" = 24
+
+          . /etc/os-release
+
+          test "$ID" = ubuntu
+
+          test "$VERSION_ID" = 24.04
+
+          printf 'SOURCE_HEAD=%s\nSOURCE_TREE=%s\n' "$(git rev-parse HEAD)"
+          "$(git rev-parse 'HEAD^{tree}')"
+
+          uname -a
+
+          cat /etc/os-release
+
+          node -v
+
+          python3 --version
+
+          /usr/bin/time --version | head -n 1
+
+          findmnt -T "$RUNNER_TEMP" -no FSTYPE,SOURCE
+
+          df -B1 "$RUNNER_TEMP"
+
+          for f in cpu.max memory.max pids.max; do
+            if test -r "/sys/fs/cgroup/$f"; then printf 'CGROUP_%s=' "$f"; cat "/sys/fs/cgroup/$f"; fi
+          done
+
+          git diff --exit-code
+      - name: Run exactly three adapter cases with bounded observations
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os,sys,time,json,signal,subprocess,resource,re,hashlib,shlex
+          from pathlib import Path
+          out=Path(os.environ['RUNNER_TEMP'])/'pc100-isolated-test';out.mkdir(exist_ok=False)
+          log=out/'test.log';usage=out/'time.txt'
+          cmd=['node','--test','--test-name-pattern=PC100 Linux','tests/architecture/seaweedfs-security-build.test.mjs']
+          names=['PC100 Linux bounded Node24 child startup, file limit and genuine failure propagation','PC100 Linux actual adapter CPU termination uses measured child evidence','PC100 Linux actual adapter timeout kills the child process group']
+          env={k:os.environ[k] for k in ('PATH','HOME','LANG','TMPDIR','RUNNER_TEMP') if k in os.environ}
+          env.update(LANG='C.UTF-8',NO_COLOR='1',TEST_PYTHON='/usr/bin/python3')
+          hz=os.sysconf('SC_CLK_TCK');page=os.sysconf('SC_PAGE_SIZE');tracked={};clock=time.monotonic();reason=None
+          before=resource.getrusage(resource.RUSAGE_CHILDREN)
+          def snapshot():
+              rows={}
+              for f in Path('/proc').glob('[0-9]*/stat'):
+                  try:
+                      raw=f.read_text();v=raw[raw.rfind(')')+2:].split();pid=int(f.parent.name)
+                      rows[pid]={'pid':pid,'state':v[0],'ppid':int(v[1]),'pgid':int(v[2]),'start':int(v[19]),'cpu':(int(v[11])+int(v[12]))/hz,'rss':int(v[21])*page,'exit_status':int(v[49]) if len(v)>49 else None}
+                  except (OSError,ValueError,IndexError):pass
+              return rows
+          with log.open('wb') as stdout:
+              p=subprocess.Popen(['/usr/bin/time','-v','-o',str(usage),*cmd],stdout=stdout,stderr=subprocess.STDOUT,env=env,start_new_session=True)
+              while True:
+                  rows=snapshot();selected={p.pid}|{pid for pid,r in tracked.items() if pid in rows and rows[pid]['start']==r['start']}
+                  for _ in range(12):
+                      more={pid for pid,v in rows.items() if v['ppid'] in selected}
+                      if more<=selected:break
+                      selected|=more
+                  for pid in selected:
+                      if pid not in rows:continue
+                      v=rows[pid];r=tracked.setdefault(pid,{'pid':pid,'start':v['start'],'pgid':v['pgid'],'peak_sampled_rss_bytes':0,'sampled_cpu_seconds':0,'states':[]})
+                      if r['start']!=v['start']:continue
+                      r['peak_sampled_rss_bytes']=max(r['peak_sampled_rss_bytes'],v['rss']);r['sampled_cpu_seconds']=max(r['sampled_cpu_seconds'],v['cpu'])
+                      if v['state'] not in r['states']:r['states'].append(v['state'])
+                      if v['state'] in ('Z','X'):r['observed_kernel_exit_status']=v['exit_status']
+                      if 'limits' not in r:
+                          try:r['limits']=[x.strip() for x in (Path('/proc')/str(pid)/'limits').read_text().splitlines() if x.startswith(('Max cpu time','Max file size','Max address space','Max core file size'))]
+                          except OSError:pass
+                  if time.monotonic()-clock>90:reason='TEST_WALL_LIMIT'
+                  if log.stat().st_size>8*1024*1024:reason='LOG_SIZE_LIMIT'
+                  if len(tracked)>64:reason='PROCESS_MEASUREMENT_LIMIT'
+                  if reason or p.poll() is not None:break
+                  time.sleep(.02)
+              if reason:
+                  for pg in {p.pid}|{v['pgid'] for v in tracked.values()}:
+                      if pg>1 and pg!=os.getpgrp():
+                          try:os.killpg(pg,signal.SIGKILL)
+                          except ProcessLookupError:pass
+              try:rc=p.wait(timeout=5)
+              except subprocess.TimeoutExpired:
+                  os.killpg(p.pid,signal.SIGKILL);rc=p.wait();reason='WRAPPER_CLEANUP_TIMEOUT'
+          time.sleep(.2);rows=snapshot();live=[pid for pid,r in tracked.items() if pid in rows and rows[pid]['start']==r['start'] and rows[pid]['state'] not in ('Z','X')]
+          if live:
+              reason=reason or 'LIVE_DESCENDANT_AFTER_TEST'
+              for pid in live:
+                  try:os.kill(pid,signal.SIGKILL)
+                  except ProcessLookupError:pass
+          text=log.read_text(errors='replace');print('COMMAND='+shlex.join(cmd));print(text)
+          records={};filtered=0
+          for raw in text.splitlines():
+              line=re.sub(r'\x1b\[[0-9;]*m','',raw).strip()
+              if 'test name does not match pattern' in line:filtered+=1;continue
+              for name in names:
+                  if name not in line:continue
+                  if line.startswith('not ok ') or line.startswith('✖ '):records[name]='FAIL'
+                  elif line.startswith('﹣ ') or (line.startswith('ok ') and '# SKIP' in line):records[name]='SKIP'
+                  elif line.startswith('ok ') or line.startswith('✔ '):records[name]='PASS'
+          for name in names:records.setdefault(name,'NOT_RUN')
+          counts={k:list(records.values()).count(k) for k in ('PASS','FAIL','SKIP','NOT_RUN')}
+          after=resource.getrusage(resource.RUSAGE_CHILDREN)
+          summary={'schema':'pc100-isolated-linux-adapter-result-v1','command':cmd,'exit_code':rc,'failure_reason':reason,'unique_selected':len(names),'counts':counts,'pattern_filtered_exclusions':filtered,'tests':records,'wall_seconds':time.monotonic()-clock,'aggregate_child_cpu_seconds':after.ru_utime+after.ru_stime-before.ru_utime-before.ru_stime,'aggregate_child_peak_rss_bytes':after.ru_maxrss*1024,'process_samples':list(tracked.values()),'sample_interval_seconds':.02,'sampling_note':'Per-process CPU/RSS are sampled observations, not final wait4 measurements. Unmodified tests assert supervisor CPU, signals and process-group cleanup.','live_sampled_descendants':live,'test_log_sha256':hashlib.sha256(log.read_bytes()).hexdigest()}
+          print('GNU_TIME_BEGIN');print(usage.read_text() if usage.exists() else 'MISSING');print('GNU_TIME_END')
+          print('PC100_RESULT='+json.dumps(summary,sort_keys=True))
+          result=out/'result.json';result.write_text(json.dumps(summary,indent=2)+'\n');print('RESULT_SHA256='+hashlib.sha256(result.read_bytes()).hexdigest())
+          subprocess.run(['git','diff','--exit-code'],check=True)
+          assert subprocess.check_output(['git','rev-parse','HEAD']).decode().strip()=='6a4f45b674e4b1757cfb742bac2ca2d9ee13fba1'
+          assert subprocess.check_output(['git','rev-parse','HEAD^{tree}']).decode().strip()=='08b08c047952eca8f308ea9741ba493162123103'
+          sys.exit(0 if rc==0 and reason is None and counts=={'PASS':3,'FAIL':0,'SKIP':0,'NOT_RUN':0} and usage.exists() else 1)
+          PY
