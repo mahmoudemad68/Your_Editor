@@ -45,6 +45,14 @@ export function walkingApplicationStart(backend, services) {
     ...services,
   ];
 }
+export function walkingBrowserContext(backend) {
+  if (!["minio-regression", "seaweedfs-qualified"].includes(backend))
+    throw Error("REGRESSION_BROWSER_CONTEXT_REJECTED");
+  return {
+    COMPOSE_PROJECT_NAME: "walking-skeleton",
+    WALKING_SKELETON_STORAGE_BACKEND: backend,
+  };
+}
 function docker(args) {
   return execFileSync("docker", args, {
     cwd: root,

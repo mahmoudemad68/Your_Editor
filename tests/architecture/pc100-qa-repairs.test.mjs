@@ -3,11 +3,13 @@ import assert from "node:assert/strict";
 import {
   walkingStorageBackend,
   walkingApplicationStart,
+  walkingBrowserContext,
   minioRegressionPlan,
 } from "../../tools/test/pc100-minio-regression.mjs";
 import { test } from "node:test";
 import { readFile, mkdtemp, mkdir, rm } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
+import { runInNewContext } from "node:vm";
 import path from "node:path";
 import process from "node:process";
 import {
@@ -241,4 +243,50 @@ test("B-1 every MinIO application restart avoids SeaweedFS dependencies", () => 
     false,
   );
   assert.throws(() => walkingApplicationStart("minio-regression", ["seaweed-s3"]));
+});
+
+test("B-1 browser restart inherits only a closed backend and fixed Compose project", async () => {
+  for (const backend of ["minio-regression", "seaweedfs-qualified"]) {
+    const context = walkingBrowserContext(backend);
+    assert.deepEqual(context, {
+      COMPOSE_PROJECT_NAME: "walking-skeleton",
+      WALKING_SKELETON_STORAGE_BACKEND: backend,
+    });
+    assert.equal(
+      walkingApplicationStart(context.WALKING_SKELETON_STORAGE_BACKEND, ["media-worker"]).includes(
+        "--no-deps",
+      ),
+      backend === "minio-regression",
+    );
+  }
+  for (const value of [undefined, "", "minio", "production", { COMPOSE_FILE: "/tmp/evil.yml" }])
+    assert.throws(() => walkingBrowserContext(value), /REGRESSION_BROWSER_CONTEXT_REJECTED/);
+  const runner = await read("tools/test/run-walking-skeleton.mjs"),
+    spec = await read("apps/web/walking-skeleton/media-library.spec.ts");
+  assert.match(runner, /\.\.\.walkingBrowserContext\(backend\)/);
+  assert.match(spec, /\["compose", "--project-name", "walking-skeleton", \.\.\.args\]/);
+  const restart = spec.split("function restartWorker() {")[1]?.split("\n}\n")[0];
+  assert.ok(restart, "actual Playwright restart implementation is present");
+  for (const backend of ["minio-regression", "seaweedfs-qualified", undefined, "forged"]) {
+    const calls = [],
+      execute = () =>
+        runInNewContext(
+          `function restartWorker() {${restart}\n}\nrestartWorker();`,
+          {
+            process: { env: { WALKING_SKELETON_STORAGE_BACKEND: backend } },
+            compose: (args) => calls.push(Array.from(args)),
+          },
+          { timeout: 1000 },
+        );
+    if (backend === undefined || backend === "forged") {
+      assert.throws(execute, /REGRESSION_BROWSER_CONTEXT_REJECTED/);
+      assert.equal(calls.length, 0);
+    } else {
+      execute();
+      assert.equal(calls.length, 1);
+      assert.equal(calls[0].includes("--no-deps"), backend === "minio-regression");
+      assert.equal(calls[0].at(-1), "media-worker");
+    }
+  }
+  assert.match(spec, /if \(workerStopped\) restartWorker\(\);/);
 });

@@ -1,6 +1,7 @@
 import {
   walkingStorageBackend,
   walkingApplicationStart,
+  walkingBrowserContext,
   startMinioRegression,
 } from "./pc100-minio-regression.mjs";
 import { withoutQualificationCredentials } from "./pc100-candidate-policy.mjs";
@@ -48,6 +49,7 @@ function browser(scenario) {
       timeout: 240000,
       env: {
         ...withoutQualificationCredentials(env),
+        ...walkingBrowserContext(backend),
         WALKING_SKELETON_SCENARIO: scenario,
         ...(scenario === "negative" ? { WALKING_SKELETON_METADATA_TIMEOUT_MS: "8000" } : {}),
       },
