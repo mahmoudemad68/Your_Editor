@@ -1,9 +1,9 @@
 /** Synthetic metadata tests, never a real policy approval or service result. */
 import assert from "node:assert/strict";
+import { Buffer } from "node:buffer";
 import { test } from "node:test";
 import { readFile } from "node:fs/promises";
 import {
-  BASELINE_SHA,
   BASELINE_FILES,
   OWN_FILES,
   WORKFLOW,
@@ -13,12 +13,17 @@ import {
   verifyTrustedEvidence,
   readTrustedEvidence,
   observeTrustedEvidence,
+  sourceInventory,
+  hash,
+  canonical,
+  completePages,
+  verifyEvent,
 } from "../../tools/test/pc100-source-verifier.mjs";
 const H = "a".repeat(40),
   B = "b".repeat(40),
   M = "c".repeat(40),
   TH = "d".repeat(40),
-  TB = "e".repeat(40),
+  TB = TH,
   T0 = "f".repeat(40);
 function fixture() {
   const entry = (path, sha) => ({ path, sha, type: "blob", mode: "100644" });
@@ -38,12 +43,13 @@ function fixture() {
     main: { name: "main", protected: true, commit: { sha: B, commit: { tree: { sha: TB } } } },
     head: { sha: H, tree: { sha: TH } },
     merge: { sha: M, tree: { sha: TH }, parents: [{ sha: B }, { sha: H }] },
-    baseline: { sha: BASELINE_SHA, tree: { sha: T0 } },
-    baselineTree: { sha: T0, truncated: false, tree: old },
+    baseline: { sha: B, tree: { sha: TB } },
+    baselineTree: { sha: TB, truncated: false, tree: globalThis.structuredClone([...old, ...own]) },
     headTree: { sha: TH, truncated: false, tree: globalThis.structuredClone([...old, ...own]) },
-    trustedTree: { sha: TB, truncated: false, tree: own },
+    trustedTree: { sha: TB, truncated: false, tree: globalThis.structuredClone([...old, ...own]) },
     upstream: {
       id: 10,
+      workflow_id: 99,
       repository: { id: REPOSITORY_ID },
       head_repository: { id: REPOSITORY_ID },
       event: "pull_request",
@@ -61,13 +67,7 @@ function evidence() {
   return {
     f,
     context: { H, B, M, TH, TM: TH },
-    decision: {
-      ...verifySourceSnapshot(f),
-      files: Object.fromEntries([...BASELINE_FILES, ...OWN_FILES].map((p) => [p, "4".repeat(64)])),
-      profile: "seaweedfs-go-s-w-production-candidate-v1",
-      K: "5".repeat(64),
-      L: "6".repeat(64),
-    },
+    decision: verifySourceSnapshot(f),
     run: {
       id: 20,
       workflow_id: 80,
@@ -95,7 +95,7 @@ function evidence() {
 test("trusted verifier independently compares frozen baseline and protected-default source", () => {
   const f = fixture(),
     v = verifySourceSnapshot(f);
-  assert.equal(v.decision, "DEVELOPMENT_SOURCE_VERIFIED");
+  assert.equal(v.decision, "DEVELOPMENT_SOURCE_INTEGRITY_VERIFIED");
   assert.equal(v.release_authorized, false);
   assert.equal(v.H, H);
   assert.equal(v.B, B);
@@ -111,7 +111,7 @@ for (const [name, edit] of [
   ["wrong head", (f) => (f.head.sha = M)],
   ["wrong merge", (f) => (f.merge.sha = H)],
   ["wrong parents", (f) => f.merge.parents.reverse()],
-  ["unequal trees", (f) => (f.merge.tree.sha = TB)],
+  ["unequal trees", (f) => (f.merge.tree.sha = T0)],
   ["truncated source", (f) => (f.headTree.truncated = true)],
   ["duplicate paths", (f) => f.headTree.tree.push(f.headTree.tree[0])],
   ["baseline tampering", (f) => (f.headTree.tree[0].sha = "3".repeat(40))],
@@ -143,7 +143,7 @@ for (const [name, edit] of [
   ["forged approval", (x) => (x.decision.decision = "APPROVED")],
   ["cross-head", (x) => (x.decision.H = M)],
   ["cross-base", (x) => (x.decision.B = H)],
-  ["wrong tree", (x) => (x.decision.TH = TB)],
+  ["wrong tree", (x) => (x.decision.TH = T0)],
   ["untrusted workflow source", (x) => (x.decision.trusted_workflow_sha = H)],
   ["PR-controlled workflow", (x) => (x.run.event = "pull_request")],
   ["wrong workflow ID", (x) => x.run.workflow_id++],
@@ -152,8 +152,8 @@ for (const [name, edit] of [
   ["wrong check app", (x) => x.check.app.id++],
   ["wrong check suite", (x) => x.check.check_suite.id++],
   ["skipped check", (x) => (x.check.conclusion = "skipped")],
-  ["missing file hash", (x) => delete x.decision.files[BASELINE_FILES[0]]],
-  ["extra file hash", (x) => (x.decision.files["private"] = "4".repeat(64))],
+  ["missing file hash", (x) => delete x.decision.inventory_sha256],
+  ["extra file hash", (x) => (x.decision.file_count = 20001)],
 ])
   test(`trusted evidence rejects ${name}`, () => {
     const x = evidence();
@@ -174,6 +174,7 @@ test("a verifier present only in a PR cannot authorize its own installation", as
   );
 });
 
+const runsKey = `actions/workflows/80/runs?event=workflow_run&head_sha=${B}&per_page=100&page=1`;
 function clientFixture() {
   const x = evidence();
   const rows = {
@@ -181,13 +182,15 @@ function clientFixture() {
     [`git/commits/${B}`]: { tree: { sha: TB } },
     [`git/trees/${TB}?recursive=1`]: x.f.trustedTree,
     "actions/workflows/pc100-source-verifier.yml": { id: 80, path: WORKFLOW },
-    "actions/workflows/80/runs?event=workflow_run&per_page=100": {
+    [runsKey]: {
       total_count: 1,
       workflow_runs: [x.run],
     },
-    "actions/runs/20/attempts/1/jobs?per_page=100": {
+    "actions/runs/20/attempts/1/jobs?per_page=100&page=1": {
+      total_count: 1,
       jobs: [
         {
+          id: 21,
           name: x.check.name,
           conclusion: "success",
           status: "completed",
@@ -198,10 +201,11 @@ function clientFixture() {
       ],
     },
     "check-runs/30": x.check,
-    "check-runs/30/annotations?per_page=100": [
+    "check-runs/30/annotations?per_page=100&page=1": [
       { title: "PC100 development source", message: JSON.stringify(x.decision) },
     ],
     "actions/runs/10": x.f.upstream,
+    "actions/workflows/pc100-artifact-integration.yml": { id: 99, path: INTEGRATION },
     "pulls/100": x.f.pr,
   };
   return {
@@ -222,12 +226,12 @@ test("trusted client reads genuine check association and independently rechecks 
 
 function pendingFixture() {
   const f = clientFixture();
-  f.rows["actions/workflows/80/runs?event=workflow_run&per_page=100"] = {
+  f.rows[runsKey] = {
     total_count: 0,
     workflow_runs: [],
   };
   f.rows[
-    `actions/workflows/pc100-artifact-integration.yml/runs?event=pull_request&head_sha=${H}&per_page=100`
+    `actions/workflows/pc100-artifact-integration.yml/runs?event=pull_request&head_sha=${H}&per_page=100&page=1`
   ] = { total_count: 1, workflow_runs: [f.x.f.upstream] };
   return f;
 }
@@ -240,7 +244,7 @@ test("same-attempt read reconciliation permits a later completed trusted verdict
     sleep: async (ms) => {
       now += ms;
       reads++;
-      f.rows["actions/workflows/80/runs?event=workflow_run&per_page=100"] = {
+      f.rows[runsKey] = {
         total_count: 1,
         workflow_runs: [f.x.run],
       };
@@ -310,7 +314,7 @@ test("a successful observation finishing after the absolute deadline never admit
         f.x.context,
         async (route) => {
           const value = await f.read(route);
-          if (route === "check-runs/30/annotations?per_page=100") now = 120001;
+          if (route === "check-runs/30/annotations?per_page=100&page=1") now = 120001;
           return value;
         },
         { now: () => now, sleep: async () => assert.fail("must not wait") },
@@ -322,28 +326,25 @@ for (const [name, edit] of [
   [
     "ambiguous annotations",
     (f) =>
-      f.rows["check-runs/30/annotations?per_page=100"].push(
-        f.rows["check-runs/30/annotations?per_page=100"][0],
+      f.rows["check-runs/30/annotations?per_page=100&page=1"].push(
+        f.rows["check-runs/30/annotations?per_page=100&page=1"][0],
       ),
   ],
   ["forged check app", (f) => f.x.check.app.id++],
   [
     "foreign check URL",
     (f) =>
-      (f.rows["actions/runs/20/attempts/1/jobs?per_page=100"].jobs[0].check_run_url =
+      (f.rows["actions/runs/20/attempts/1/jobs?per_page=100&page=1"].jobs[0].check_run_url =
         "https://attacker.example/check-runs/30"),
   ],
   [
     "wrong job attempt",
-    (f) => (f.rows["actions/runs/20/attempts/1/jobs?per_page=100"].jobs[0].run_attempt = 2),
+    (f) => (f.rows["actions/runs/20/attempts/1/jobs?per_page=100&page=1"].jobs[0].run_attempt = 2),
   ],
   ["ordinary failed preflight", (f) => (f.x.f.upstream.conclusion = "failure")],
   ["live HEAD drift", (f) => (f.x.f.pr.head.sha = M)],
-  [
-    "incomplete run inventory",
-    (f) => (f.rows["actions/workflows/80/runs?event=workflow_run&per_page=100"].total_count = 101),
-  ],
-  ["no annotations", (f) => (f.rows["check-runs/30/annotations?per_page=100"] = [])],
+  ["incomplete run inventory", (f) => (f.rows[runsKey].total_count = 101)],
+  ["no annotations", (f) => (f.rows["check-runs/30/annotations?per_page=100&page=1"] = [])],
 ])
   test(`trusted client rejects ${name}`, async () => {
     const f = clientFixture();
@@ -361,4 +362,175 @@ test("trusted workflow never checks out a PR, executes its files, or requests wr
     w,
     /pull_request_target|contents: write|actions: write|issues: write|upload-artifact|head.sha|download-artifact/,
   );
+});
+
+test("B1 matching PR-authored hash inventory cannot replace protected-main policy", () => {
+  const f = fixture();
+  f.headTree.tree[0].sha = "9".repeat(40);
+  f.baselineTree.tree[0].sha = "9".repeat(40);
+  assert.throws(() => verifySourceSnapshot(f), /UNTRUSTED_BASELINE_REJECTED/);
+});
+test("N1 both run and check at the same wrong base remain rejected", () => {
+  const x = evidence();
+  x.run.head_sha = x.check.head_sha = H;
+  assert.throws(
+    () => verifyTrustedEvidence(x.decision, x.run, x.check, x.context, 80),
+    /POLICY_VERIFIER_RUN_REJECTED/,
+  );
+});
+test("N2 complete trusted evidence is found after the first hundred runs", async () => {
+  const f = clientFixture();
+  const older = Array.from({ length: 100 }, (_, i) => ({
+    ...f.x.run,
+    id: 1000 + i,
+    conclusion: "failure",
+  }));
+  f.rows[runsKey] = { total_count: 101, workflow_runs: older };
+  f.rows[runsKey.replace("&page=1", "&page=2")] = { total_count: 101, workflow_runs: [f.x.run] };
+  const result = await readTrustedEvidence(f.x.context, f.read);
+  assert.equal(result.evidence.run, 20);
+});
+for (const [name, edit] of [
+  [
+    "missing final page",
+    (f) =>
+      (f.rows[runsKey.replace("&page=1", "&page=2")] = { total_count: 101, workflow_runs: [] }),
+  ],
+  [
+    "duplicate run on another page",
+    (f) =>
+      (f.rows[runsKey.replace("&page=1", "&page=2")].workflow_runs[0] =
+        f.rows[runsKey].workflow_runs[0]),
+  ],
+  ["unstable total", (f) => (f.rows[runsKey.replace("&page=1", "&page=2")].total_count = 102)],
+  ["wrong HEAD association", (f) => (f.rows[runsKey].workflow_runs[0].head_sha = H)],
+])
+  test(`N2 rejects ${name}`, async () => {
+    const f = clientFixture();
+    f.rows[runsKey] = {
+      total_count: 101,
+      workflow_runs: Array.from({ length: 100 }, (_, i) => ({
+        ...f.x.run,
+        id: 1000 + i,
+        conclusion: "failure",
+      })),
+    };
+    f.rows[runsKey.replace("&page=1", "&page=2")] = { total_count: 101, workflow_runs: [f.x.run] };
+    edit(f);
+    await assert.rejects(() => readTrustedEvidence(f.x.context, f.read));
+  });
+test("N2 matching decisions from two genuine runs are ambiguous, never first-match accepted", async () => {
+  const f = clientFixture(),
+    second = { ...f.x.run, id: 21, check_suite_id: 41 };
+  f.rows[runsKey] = { total_count: 2, workflow_runs: [f.x.run, second] };
+  f.rows["actions/runs/21/attempts/1/jobs?per_page=100&page=1"] = {
+    total_count: 1,
+    jobs: [
+      {
+        ...f.rows["actions/runs/20/attempts/1/jobs?per_page=100&page=1"].jobs[0],
+        id: 22,
+        run_id: 21,
+        check_run_url: "https://api.github.com/repos/mahmoudemad68/Your_Editor/check-runs/31",
+      },
+    ],
+  };
+  f.rows["check-runs/31"] = { ...f.x.check, id: 31, check_suite: { id: 41 } };
+  f.rows["check-runs/31/annotations?per_page=100&page=1"] =
+    f.rows["check-runs/30/annotations?per_page=100&page=1"];
+  await assert.rejects(
+    () => readTrustedEvidence(f.x.context, f.read),
+    /POLICY_EVIDENCE_MISSING_OR_AMBIGUOUS/,
+  );
+});
+test("complete pagination rejects API errors without returning a partial inventory", async () => {
+  let calls = 0;
+  await assert.rejects(
+    () =>
+      completePages(
+        async () => {
+          if (calls++) throw Error("API fixture failure");
+          return {
+            total_count: 101,
+            workflow_runs: Array.from({ length: 100 }, (_, i) => ({ id: i + 1 })),
+          };
+        },
+        "runs",
+        "workflow_runs",
+      ),
+    /API fixture failure/,
+  );
+});
+test("development evidence cannot acquire candidate profile or approval fields", () => {
+  const x = evidence();
+  x.decision.profile = "seaweedfs-go-s-w-production-candidate-v1";
+  assert.throws(
+    () => verifyTrustedEvidence(x.decision, x.run, x.check, x.context, 80),
+    /POLICY_SCOPE_REJECTED/,
+  );
+});
+test("complete source inventory and SHA256 are stable and preserve executable modes", () => {
+  const f = fixture(),
+    a = sourceInventory(f.trustedTree);
+  f.trustedTree.tree.reverse();
+  assert.equal(hash(canonical(a)), hash(canonical(sourceInventory(f.trustedTree))));
+  f.trustedTree.tree[0].mode = "100755";
+  assert.notEqual(hash(canonical(a)), hash(canonical(sourceInventory(f.trustedTree))));
+});
+test("bootstrap workflow runs independent tests without importing PR100-only tools", async () => {
+  const w = await readFile(
+    new URL("../../.github/workflows/pc100-verifier-tests.yml", import.meta.url),
+    "utf8",
+  );
+  assert.match(w, /pull_request:/);
+  assert.match(w, /ubuntu-24.04/);
+  assert.match(w, /windows-2022/);
+  assert.match(w, /pc100-source-verifier-adversarial\.test\.mjs/);
+  assert.doesNotMatch(
+    w,
+    /load-qualified-storage|seaweedfs-security-build|actions: write|contents: write|workflow_run|pull_request_target/,
+  );
+});
+
+test("N3 actual bootstrap entry logic uses only available trusted module and GitHub metadata", async () => {
+  const f = fixture(),
+    calls = [];
+  const rows = {
+    "": { id: REPOSITORY_ID, default_branch: "main" },
+    "pulls/100": f.pr,
+    "branches/main": f.main,
+    "actions/runs/10": f.upstream,
+    "actions/workflows/pc100-artifact-integration.yml": { id: 99, path: INTEGRATION },
+    [`git/commits/${B}`]: f.baseline,
+    [`git/commits/${H}`]: f.head,
+    [`git/commits/${M}`]: f.merge,
+    [`git/trees/${TH}?recursive=1`]: f.trustedTree,
+  };
+  const result = await verifyEvent({ workflow_run: { id: 10 } }, B, async (route) => {
+    calls.push(route);
+    assert.ok(Object.hasOwn(rows, route), route);
+    return rows[route];
+  });
+  assert.equal(result.candidate_admission_authorized, false);
+  assert.equal(result.baseline, B);
+  assert.ok(
+    calls.every(
+      (route) =>
+        !route.includes("/zip") &&
+        !route.includes("load-qualified-storage") &&
+        !route.includes("security-build.lock"),
+    ),
+  );
+});
+test("complete natural repository inventories do not overflow GitHub annotation records", () => {
+  const f = fixture();
+  const additional = Array.from({ length: 2000 }, (_, i) => ({
+    path: `fixtures/input-${i}.json`,
+    type: "blob",
+    mode: "100644",
+    sha: "1".repeat(40),
+  }));
+  for (const t of [f.headTree, f.baselineTree, f.trustedTree]) t.tree.push(...additional);
+  const record = verifySourceSnapshot(f);
+  assert.equal(record.file_count, Object.keys(sourceInventory(f.headTree)).length);
+  assert.ok(Buffer.byteLength(canonical(record)) < 8192);
 });

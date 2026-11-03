@@ -11,6 +11,12 @@ import { setTimeout, clearTimeout } from "node:timers";
 import { readFile, writeFile, mkdir, mkdtemp, lstat, statfs, realpath, rm } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, URL } from "node:url";
+import {
+  readCandidateAdmission,
+  validateSourceInventory,
+  CANDIDATE_SCHEMA as POLICY_SCHEMA,
+  CANDIDATE_DECISION,
+} from "./pc100-candidate-policy.mjs";
 
 const ROOT = path.resolve(import.meta.dirname, "../..");
 export const REPOSITORY = "mahmoudemad68/Your_Editor";
@@ -44,6 +50,8 @@ export const SERVICES = Object.freeze([
   "redis",
   "test-minio",
 ]);
+// Bounded transport projection only. The protected policy validates the COMPLETE
+// repository inventory, including modes; its digest is bound in every artifact.
 export const POLICY_FILES = Object.freeze([
   ...Object.values(WORKFLOWS).map((v) => v.path),
   ".github/workflows/pc100-artifact-integration.yml",
@@ -110,9 +118,9 @@ export const SW_FLAGS =
   "-extldflags -static -X github.com/seaweedfs/seaweedfs/weed/util/version.COMMIT=ffa87c2+editagent-sec1 -s -w";
 export const ORIGINAL_ELF = "6b48572984287dcf64ed09a9080a720e65d4bf5c810c2282782fb4e5da8aa3c8";
 export const PRODUCTION_PROFILE = "seaweedfs-go-s-w-production-candidate-v1";
-export const CANDIDATE_SCHEMA = "seaweedfs-candidate-bundle-v3";
-export const SEAL_SCHEMA = "seaweedfs-candidate-seal-v3";
-export const RECEIPT_SCHEMA = "seaweedfs-admission-v3";
+export const CANDIDATE_SCHEMA = "seaweedfs-candidate-bundle-v4";
+export const SEAL_SCHEMA = "seaweedfs-candidate-seal-v4";
+export const RECEIPT_SCHEMA = "seaweedfs-admission-v4";
 
 /** Exact UTF-8 JSON, including duplicate keys. No reviver can detect duplicates. */
 export function strictJSON(bytes, cap = 4 * 1024 ** 2) {
@@ -776,6 +784,10 @@ export function validateCandidateManifest(m, context, runId, attempt, lock, L) {
     "policy_files",
     "policy_evidence_run_id",
     "policy_record_sha256",
+    "candidate_policy_sha256",
+    "policy_inventory_sha256",
+    "policy_evidence_check_id",
+    "policy_evidence_attempt",
   ]);
   const { K } = productionProfile(lock);
   requireThat(
@@ -793,6 +805,7 @@ export function validateCandidateManifest(m, context, runId, attempt, lock, L) {
   digest(m.elf_sha256);
   digest(m.archive_sha256);
   digest(m.policy_record_sha256);
+  validatePolicyLink(m);
   id(m.policy_evidence_run_id);
   requireThat(
     Array.isArray(m.diff_ids) &&
@@ -830,6 +843,10 @@ export function validateCandidateSeal(s, context, source, lock, L) {
     "manifest_sha256",
     "policy_evidence_run_id",
     "policy_record_sha256",
+    "candidate_policy_sha256",
+    "policy_inventory_sha256",
+    "policy_evidence_check_id",
+    "policy_evidence_attempt",
   ]);
   const { K } = productionProfile(lock);
   requireThat(
@@ -848,6 +865,7 @@ export function validateCandidateSeal(s, context, source, lock, L) {
   digest(s.manifest_sha256);
   id(s.policy_evidence_run_id);
   digest(s.policy_record_sha256);
+  validatePolicyLink(s);
   requireThat(
     Number.isSafeInteger(s.artifact_bytes) &&
       s.artifact_bytes > 0 &&
@@ -874,6 +892,10 @@ export function validateCandidateReceipt(r, context, runId, attempt) {
     "artifact_bytes",
     "policy_evidence_run_id",
     "policy_record_sha256",
+    "candidate_policy_sha256",
+    "policy_inventory_sha256",
+    "policy_evidence_check_id",
+    "policy_evidence_attempt",
     "policy_files",
     "seal",
     "image_id",
@@ -888,7 +910,7 @@ export function validateCandidateReceipt(r, context, runId, attempt) {
     "archive_bytes",
   ]);
   requireThat(
-    r.version === 3 &&
+    r.version === 4 &&
       r.schema === RECEIPT_SCHEMA &&
       r.profile === PRODUCTION_PROFILE &&
       isDeepStrictEqual(r.context, context) &&
@@ -901,6 +923,14 @@ export function validateCandidateReceipt(r, context, runId, attempt) {
     digest,
   );
   [r.producer_run, r.artifact_id, r.policy_evidence_run_id].forEach(id);
+  validatePolicyLink(r);
+  requireThat(
+    samePolicyLink(r.seal, r) &&
+      isDeepStrictEqual(r.seal.context, r.context) &&
+      r.seal.run_id === r.producer_run &&
+      r.seal.attempt === r.producer_attempt,
+    "RECEIPT_SEAL_DRIFT",
+  );
   imageDigest(r.artifact_digest);
   imageDigest(r.image_id);
   requireThat(
@@ -929,21 +959,85 @@ export function validateCandidateReceipt(r, context, runId, attempt) {
   physicalBudget(r.C, r.R, []);
   return r;
 }
-export function validateCandidatePolicy(binding, lock, L) {
+export function candidatePolicyLink(binding) {
+  return {
+    policy_evidence_run_id: binding.evidence_run_id,
+    policy_record_sha256: binding.policy_record_sha256,
+    candidate_policy_sha256: binding.policy_sha256,
+    policy_inventory_sha256: binding.inventory_sha256,
+    policy_evidence_check_id: binding.evidence_check_id,
+    policy_evidence_attempt: binding.evidence_run_attempt,
+  };
+}
+export function validatePolicyLink(link) {
+  [link.policy_record_sha256, link.candidate_policy_sha256, link.policy_inventory_sha256].forEach(
+    digest,
+  );
+  [link.policy_evidence_run_id, link.policy_evidence_check_id].forEach(id);
+  requireThat(link.policy_evidence_attempt === 1, "POLICY_EVIDENCE_ATTEMPT_DRIFT");
+}
+export function samePolicyLink(a, b) {
+  return [
+    "policy_evidence_run_id",
+    "policy_record_sha256",
+    "candidate_policy_sha256",
+    "policy_inventory_sha256",
+    "policy_evidence_check_id",
+    "policy_evidence_attempt",
+  ].every((k) => a?.[k] === b?.[k] && a?.[k] !== undefined);
+}
+export function assertCandidatePolicyLink(link, binding, code = "CANDIDATE_POLICY_LINK_DRIFT") {
+  validatePolicyLink(link);
+  requireThat(samePolicyLink(link, candidatePolicyLink(binding)), code);
+}
+export function assertSameCandidateAdmission(finalPolicy, binding) {
+  requireThat(
+    samePolicyLink(candidatePolicyLink(finalPolicy), candidatePolicyLink(binding)) &&
+      finalPolicy.K === binding.K &&
+      finalPolicy.L === binding.L &&
+      isDeepStrictEqual(
+        [finalPolicy.H, finalPolicy.B, finalPolicy.M, finalPolicy.TH, finalPolicy.TM],
+        [binding.H, binding.B, binding.M, binding.TH, binding.TM],
+      ),
+    "WIRE_POLICY_CHANGED",
+  );
+}
+export function validateCandidatePolicy(binding, lock, L, context) {
   const { K } = productionProfile(lock);
   requireThat(
-    binding.decision === "DEVELOPMENT_SOURCE_VERIFIED" &&
+    binding.schema === POLICY_SCHEMA &&
+      binding.decision === CANDIDATE_DECISION &&
+      binding.candidate_admission_authorized === true &&
       binding.profile === PRODUCTION_PROFILE &&
       binding.K === K &&
       binding.L === L &&
       binding.revoked === false &&
-      binding.scope === "development-only" &&
+      binding.scope === "candidate-qualification-only" &&
       binding.release_authorized === false &&
       binding.evidence_run_attempt === 1 &&
       Number.isSafeInteger(binding.evidence_run_id) &&
-      binding.evidence_run_id > 0,
+      binding.evidence_run_id > 0 &&
+      Number.isSafeInteger(binding.evidence_check_id) &&
+      binding.evidence_check_id > 0 &&
+      context &&
+      ["H", "B", "M", "TH", "TM"].every((k) => binding[k] === context[k]),
     "PRODUCTION_POLICY_NOT_APPROVED",
   );
+  try {
+    validateSourceInventory(binding.file_inventory);
+  } catch {
+    throw new AdmissionError("PRODUCTION_POLICY_NOT_APPROVED");
+  }
+  requireThat(
+    sha256(canonical(binding.file_inventory)) === binding.inventory_sha256 &&
+      Object.keys(binding.file_inventory).length === binding.file_count,
+    "POLICY_INVENTORY_DRIFT",
+  );
+  exactKeys(binding.files, POLICY_FILES);
+  for (const p of POLICY_FILES)
+    requireThat(binding.files[p] === binding.file_inventory[p]?.sha256, "POLICY_FILE_SET_DRIFT");
+  validatePolicyLink(candidatePolicyLink(binding));
+  digest(binding.registry_sha256);
   return binding;
 }
 async function candidateSource(producer = false) {
@@ -952,7 +1046,7 @@ async function candidateSource(producer = false) {
     { K } = productionProfile(lock),
     L = sha256(bytes);
   const { context, nativeRun } = await identity();
-  const binding = validateCandidatePolicy(await policy(context), lock, L);
+  const binding = validateCandidatePolicy(await policy(context), lock, L, context);
   if (producer)
     requireThat(
       process.env.GITHUB_WORKFLOW === "Supply chain" && nativeRun.run_attempt === 1,
@@ -984,6 +1078,7 @@ export async function authorizeArtifactAdapter(plan) {
         src.lock,
         src.L,
       );
+      assertCandidatePolicyLink(m, src.binding, "ADAPTER_POLICY_DRIFT");
       requireThat(
         m.policy_record_sha256 === src.binding.policy_record_sha256 &&
           m.policy_evidence_run_id === src.binding.evidence_run_id,
@@ -1007,6 +1102,7 @@ export async function authorizeArtifactAdapter(plan) {
       );
       const seal = await jsonFile(path.join(plan.bundle, "seal.json"));
       validateCandidateSeal(seal, src.context, src.nativeRun, src.lock, src.L);
+      assertCandidatePolicyLink(seal, src.binding, "ADAPTER_POLICY_DRIFT");
       requireThat(
         seal.policy_record_sha256 === src.binding.policy_record_sha256,
         "ADAPTER_POLICY_DRIFT",
@@ -1995,22 +2091,19 @@ export function reviewedBinding(comments, context) {
   return binding;
 }
 async function policy(context, readOnlyProductCheckout = false) {
-  const { readTrustedEvidence } = await import("./pc100-source-verifier.mjs");
   let verified;
   try {
-    verified = await readTrustedEvidence(context);
+    verified = await readCandidateAdmission(context);
   } catch (error) {
     throw new AdmissionError(
-      /^(TRUSTED_VERIFIER_NOT_INSTALLED|POLICY_[A-Z_]+)$/.test(error.message)
+      /^(CANDIDATE_|POLICY_)[A-Z_]+$/.test(error.message)
         ? error.message
-        : "POLICY_EVIDENCE_UNAVAILABLE",
+        : "CANDIDATE_EVIDENCE_UNAVAILABLE",
     );
   }
   const binding = {
     ...verified,
-    evidence_run_id: verified.evidence.run,
-    evidence_run_attempt: verified.evidence.attempt,
-    policy_record_sha256: verified.record_sha256,
+    files: Object.fromEntries(POLICY_FILES.map((p) => [p, verified.file_inventory[p]?.sha256])),
     revoked: false,
   };
   const checkout = run("git", ["rev-parse", "HEAD"]).trim();
@@ -2018,16 +2111,63 @@ async function policy(context, readOnlyProductCheckout = false) {
     checkout === context.M || (readOnlyProductCheckout && checkout === context.H),
     "CHECKOUT_COMMIT_DRIFT",
   );
+  const raw = run("git", ["ls-tree", "-r", "-z", checkout], { encoding: "buffer" }).toString(
+    "utf8",
+  );
+  const entries = Object.fromEntries(
+    raw
+      .split("\0")
+      .filter(Boolean)
+      .map((line) => {
+        const at = line.indexOf("\t"),
+          [mode, type, git_blob_sha1] = line.slice(0, at).split(" ");
+        requireThat(
+          type === "blob" && ["100644", "100755"].includes(mode),
+          "POLICY_WORKTREE_TYPE_DRIFT",
+        );
+        return [line.slice(at + 1), { mode, git_blob_sha1 }];
+      }),
+  );
   requireThat(
-    isDeepStrictEqual(Object.keys(binding.files).sort(), [...POLICY_FILES].sort()),
+    isDeepStrictEqual(Object.keys(entries).sort(), Object.keys(binding.file_inventory).sort()),
     "POLICY_FILE_SET_DRIFT",
   );
-  for (const name of POLICY_FILES) {
-    const actual = sha256(run("git", ["show", `${checkout}:${name}`], { encoding: "buffer" }));
+  for (const [name, expected] of Object.entries(binding.file_inventory)) {
     requireThat(
-      actual === binding.files[name] && sha256(await readFile(path.join(ROOT, name))) === actual,
+      entries[name].mode === expected.mode &&
+        entries[name].git_blob_sha1 === expected.git_blob_sha1,
       "POLICY_HASH_DRIFT",
     );
+    const file = path.join(ROOT, name),
+      s = await lstat(file);
+    requireThat(
+      s.isFile() && !s.isSymbolicLink() && (await realpath(file)) === file,
+      "POLICY_WORKTREE_TYPE_DRIFT",
+    );
+    if (process.platform !== "win32")
+      requireThat(
+        Boolean(s.mode & 0o111) === (expected.mode === "100755"),
+        "POLICY_WORKTREE_MODE_DRIFT",
+      );
+    requireThat(s.size <= 512 * 1024 ** 2, "POLICY_WORKTREE_SIZE_DRIFT");
+    const actual = await fileDigest(file);
+    if (actual === expected.sha256)
+      requireThat(s.size === expected.bytes, "POLICY_WORKTREE_SIZE_DRIFT");
+    if (actual !== expected.sha256) {
+      // Git LFS working bytes differ from the immutable pointer. Verify the
+      // exact approved pointer AND its content address; never normalize media.
+      requireThat(expected.bytes <= 1024, "POLICY_HASH_DRIFT");
+      const pointer = run("git", ["show", `${checkout}:${name}`], { encoding: "buffer" });
+      requireThat(
+        sha256(pointer) === expected.sha256 && pointer.length <= 1024,
+        "POLICY_HASH_DRIFT",
+      );
+      const match =
+        /^version https:\/\/git-lfs.github.com\/spec\/v1\noid sha256:([a-f0-9]{64})\nsize ([0-9]+)\n$/.exec(
+          pointer.toString("utf8"),
+        );
+      requireThat(match && actual === match[1] && s.size === Number(match[2]), "POLICY_HASH_DRIFT");
+    }
   }
   const lock = await jsonFile(path.join(ROOT, "infra/seaweedfs/security-build.lock.json"));
   requireThat(isDeepStrictEqual(lock.trusted_baseline, BASELINE_POLICY), "BASELINE_POLICY_DRIFT");
@@ -2222,6 +2362,7 @@ async function qualified(output) {
   );
   const seal = await jsonFile(path.join(output, "seal/seal.json"));
   validateCandidateSeal(seal, context, source, lock, L);
+  assertCandidatePolicyLink(seal, binding, "SEAL_POLICY_DRIFT");
   requireThat(
     seal.policy_evidence_run_id === binding.evidence_run_id &&
       seal.policy_record_sha256 === binding.policy_record_sha256,
@@ -2235,7 +2376,7 @@ async function qualified(output) {
     "SEAL_DIGEST_DRIFT",
   );
   const receipt = {
-    version: 3,
+    version: 4,
     schema: RECEIPT_SCHEMA,
     profile: PRODUCTION_PROFILE,
     K,
@@ -2249,8 +2390,7 @@ async function qualified(output) {
     artifact_id: artifact.id,
     artifact_digest: artifact.digest,
     artifact_bytes: artifact.size_in_bytes,
-    policy_record_sha256: binding.policy_record_sha256,
-    policy_evidence_run_id: binding.evidence_run_id,
+    ...candidatePolicyLink(binding),
     policy_files: binding.files,
     seal,
   };
@@ -2258,6 +2398,7 @@ async function qualified(output) {
 }
 async function verifyCandidateDirectory(bundle, m, src, work) {
   validateCandidateManifest(m, src.context, src.source.id, src.source.run_attempt, src.lock, src.L);
+  assertCandidatePolicyLink(m, src.binding);
   requireThat(
     isDeepStrictEqual(m.policy_files, src.binding.files) &&
       m.policy_evidence_run_id === src.binding.evidence_run_id &&
@@ -2425,6 +2566,7 @@ print(json.dumps({'elapsed_seconds':time.perf_counter()-started,'uncompressed_by
 export async function fresh(receipt) {
   const { context, nativeRun, binding, lock, K, L } = await candidateSource();
   validateCandidateReceipt(receipt, context, nativeRun.id, nativeRun.run_attempt);
+  assertCandidatePolicyLink(receipt, binding);
   requireThat(receipt.K === K && receipt.L === L, "RECEIPT_CONTRACT_DRIFT");
   const { source, jobs } = await selectProducer(context);
   requireThat(
@@ -2447,6 +2589,7 @@ export async function fresh(receipt) {
     "ARTIFACT_DIGEST_DRIFT",
   );
   validateCandidateSeal(receipt.seal, context, source, lock, L);
+  assertCandidatePolicyLink(receipt.seal, binding, "SEAL_POLICY_DRIFT");
   requireThat(
     binding.policy_record_sha256 === receipt.policy_record_sha256 &&
       binding.evidence_run_id === receipt.policy_evidence_run_id &&
@@ -2460,7 +2603,7 @@ export async function reconcileWireArtifacts(input, readRaw, work, python = "pyt
   const { context, runs, inventory, lock, L, binding, attemptJobs } = input;
   const { transfers } = wireInventory(runs, inventory, { context, attemptJobs });
   for (const kind of ["source", "ci", "walking"]) validateWireRun(runs[kind], kind, context);
-  validateCandidatePolicy(binding, lock, L);
+  validateCandidatePolicy(binding, lock, L, context);
   const order = { source: 0, seal: 1, ci: 2, walking: 3, "outcome-ci": 4, "outcome-walking": 5 };
   const rows = [];
   let source, seal, C, R;
@@ -2499,6 +2642,7 @@ export async function reconcileWireArtifacts(input, readRaw, work, python = "pyt
       if (t.role === "source") {
         const m = await jsonFile(path.join(dir, "candidate-manifest.json"));
         validateCandidateManifest(m, context, runs.source.id, runs.source.run_attempt, lock, L);
+        assertCandidatePolicyLink(m, binding);
         requireThat(
           m.policy_evidence_run_id === binding.evidence_run_id &&
             m.policy_record_sha256 === binding.policy_record_sha256 &&
@@ -2522,6 +2666,7 @@ export async function reconcileWireArtifacts(input, readRaw, work, python = "pyt
       } else if (t.role === "seal") {
         seal = await jsonFile(path.join(dir, "seal.json"));
         validateCandidateSeal(seal, context, runs.source, lock, L);
+        assertCandidatePolicyLink(seal, binding);
         const sourceArtifact = transfers.find((x) => x.role === "source").artifact;
         requireThat(
           seal.artifact_id === sourceArtifact.id &&
@@ -2535,6 +2680,7 @@ export async function reconcileWireArtifacts(input, readRaw, work, python = "pyt
       } else if (["ci", "walking"].includes(t.role)) {
         const r = await jsonFile(path.join(dir, "admission.json"));
         validateCandidateReceipt(r, context, runs[t.kind].id, runs[t.kind].run_attempt);
+        assertCandidatePolicyLink(r, binding);
         const m = source.manifest;
         requireThat(
           r.K === m.K &&
@@ -2582,8 +2728,7 @@ export async function reconcileWireArtifacts(input, readRaw, work, python = "pyt
         image_id: source.manifest.image_id,
         elf_sha256: source.manifest.elf_sha256,
         diff_ids: source.manifest.diff_ids,
-        policy_evidence_run_id: binding.evidence_run_id,
-        policy_record_sha256: binding.policy_record_sha256,
+        ...candidatePolicyLink(binding),
       },
       measured_source_files: source.files,
     };
@@ -2633,7 +2778,7 @@ async function finalWireCheckpoint(ciId, walkingId, destination) {
       ),
     "WIRE_MERGE_TREE_DRIFT",
   );
-  const binding = validateCandidatePolicy(await policy(context, true), lock, L);
+  const binding = validateCandidatePolicy(await policy(context, true), lock, L, context);
   const { source, jobs: sourceJobs } = await selectProducer(context);
   const runs = {
     source,
@@ -2776,12 +2921,8 @@ async function finalWireCheckpoint(ciId, walkingId, destination) {
       validateWireRun(final, kind, context);
       requireThat(final.run_attempt === r.run_attempt, "WIRE_ATTEMPT_CHANGED");
     }
-    const finalPolicy = validateCandidatePolicy(await policy(context, true), lock, L);
-    requireThat(
-      finalPolicy.policy_record_sha256 === binding.policy_record_sha256 &&
-        finalPolicy.comment_id === binding.evidence_run_id,
-      "WIRE_POLICY_CHANGED",
-    );
+    const finalPolicy = validateCandidatePolicy(await policy(context, true), lock, L, context);
+    assertSameCandidateAdmission(finalPolicy, binding);
     const target = path.resolve(
       destination ?? path.join(ROOT, ".local/issue99/final-wire-ledger.json"),
     );
@@ -2977,8 +3118,7 @@ async function cli(mode, arg, extra) {
         artifact_digest: actual.digest,
         artifact_bytes: actual.size_in_bytes,
         manifest_sha256: await fileDigest(path.join(downloaded, "candidate-manifest.json")),
-        policy_evidence_run_id: src.binding.evidence_run_id,
-        policy_record_sha256: src.binding.policy_record_sha256,
+        ...candidatePolicyLink(src.binding),
       };
       validateCandidateSeal(seal, src.context, src.nativeRun, src.lock, src.L);
       const dest = path.join(ROOT, ".local/seaweedfs-transfer/seal");
@@ -5318,8 +5458,7 @@ async function produce(image, destination) {
     diff_ids: verification.diff_ids,
     archive_sha256: await fileDigest(path.join(work, "candidate.tar")),
     archive_bytes: originalArchiveBytes,
-    policy_evidence_run_id: binding.evidence_run_id,
-    policy_record_sha256: binding.policy_record_sha256,
+    ...candidatePolicyLink(binding),
     context,
     run_id: id(process.env.GITHUB_RUN_ID),
     attempt: id(process.env.GITHUB_RUN_ATTEMPT),

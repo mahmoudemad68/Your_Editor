@@ -61,6 +61,9 @@ import {
   validateCandidateSeal,
   validateCandidateReceipt,
   validateCandidatePolicy,
+  candidatePolicyLink,
+  assertCandidatePolicyLink,
+  assertSameCandidateAdmission,
   physicalBudget,
   zipEnvelope,
   wireAccounting,
@@ -88,7 +91,13 @@ import {
   execute as executeArtifact,
 } from "../../.github/actions/pc100-bounded-artifact/index.mjs";
 
-import { BASELINE_SHA as TRUSTED_SOURCE_BASELINE } from "../../tools/test/pc100-source-verifier.mjs";
+import { candidateFixture } from "./support/candidate-policy-fixture.mjs";
+import {
+  observeCandidateAdmission,
+  REGISTRY,
+  ENGINE,
+  CANDIDATE_WORKFLOW,
+} from "../../tools/test/pc100-candidate-policy.mjs";
 const root = path.resolve(import.meta.dirname, "../..");
 const H = "a".repeat(40),
   M = "b".repeat(40),
@@ -1759,6 +1768,8 @@ async function resolverShellFixture(dir, fixture) {
     "infra/seaweedfs/image-reference.sh",
     "infra/seaweedfs/start-storage.sh",
     "tools/test/load-qualified-storage.mjs",
+    "tools/test/pc100-candidate-policy.mjs",
+    "tools/test/pc100-source-verifier.mjs",
   ])
     await writeFile(
       path.join(dir, file),
@@ -2254,22 +2265,43 @@ const E = "e".repeat(64),
   Q = `sha256:${"f".repeat(64)}`;
 const clone = (v) => globalThis.structuredClone(v);
 function pcBinding() {
+  const file_inventory = Object.fromEntries(
+    POLICY_FILES.map((p) => [
+      p,
+      {
+        sha256: p === "infra/seaweedfs/security-build.lock.json" ? lockDigest : E,
+        git_blob_sha1: H,
+        mode: "100644",
+        bytes: 0,
+      },
+    ]),
+  );
   return {
-    decision: "DEVELOPMENT_SOURCE_VERIFIED",
+    schema: "pc100-security-candidate-admission-v1",
+    decision: "SECURITY_CANDIDATE_ADMISSION_AUTHORIZED",
+    candidate_admission_authorized: true,
     profile: PRODUCTION_PROFILE,
     K: productionProfile(candidateLock).K,
     L: lockDigest,
     revoked: false,
-    scope: "development-only",
+    scope: "candidate-qualification-only",
     release_authorized: false,
+    ...context,
     evidence_run_attempt: 1,
     evidence_run_id: 123,
+    evidence_check_id: 124,
+    policy_record_sha256: E,
+    policy_sha256: E,
+    registry_sha256: E,
+    inventory_sha256: sha256(canonical(file_inventory)),
+    file_count: Object.keys(file_inventory).length,
+    file_inventory,
+    files: Object.fromEntries(Object.entries(file_inventory).map(([p, e]) => [p, e.sha256])),
   };
 }
-
 function pcManifest() {
   return {
-    schema: "seaweedfs-candidate-bundle-v3",
+    schema: "seaweedfs-candidate-bundle-v4",
     profile: PRODUCTION_PROFILE,
     K: productionProfile(candidateLock).K,
     L: lockDigest,
@@ -2291,14 +2323,13 @@ function pcManifest() {
         "scanner-versions.json",
       ].map((n) => [n, E]),
     ),
-    policy_files: Object.fromEntries(POLICY_FILES.map((n) => [n, E])),
-    policy_evidence_run_id: 123,
-    policy_record_sha256: E,
+    policy_files: pcBinding().files,
+    ...candidatePolicyLink(pcBinding()),
   };
 }
 function pcSeal() {
   return {
-    schema: "seaweedfs-candidate-seal-v3",
+    schema: "seaweedfs-candidate-seal-v4",
     profile: PRODUCTION_PROFILE,
     K: productionProfile(candidateLock).K,
     L: lockDigest,
@@ -2309,14 +2340,13 @@ function pcSeal() {
     artifact_digest: Q,
     artifact_bytes: 1100,
     manifest_sha256: E,
-    policy_evidence_run_id: 123,
-    policy_record_sha256: E,
+    ...candidatePolicyLink(pcBinding()),
   };
 }
 function pcReceipt() {
   return {
-    version: 3,
-    schema: "seaweedfs-admission-v3",
+    version: 4,
+    schema: "seaweedfs-admission-v4",
     profile: PRODUCTION_PROFILE,
     K: productionProfile(candidateLock).K,
     L: lockDigest,
@@ -2329,8 +2359,7 @@ function pcReceipt() {
     artifact_id: 11,
     artifact_digest: Q,
     artifact_bytes: 1100,
-    policy_evidence_run_id: 123,
-    policy_record_sha256: E,
+    ...candidatePolicyLink(pcBinding()),
     policy_files: pcManifest().policy_files,
     seal: pcSeal(),
     image_id: Q,
@@ -2422,8 +2451,8 @@ test("PC100 production evidence rejects diagnostic/profile/receipt confusion", (
 });
 test("PC100 exact-source policy never accepts scope authorization, edited or diagnostic approval", () => {
   assert.equal(
-    validateCandidatePolicy(pcBinding(), candidateLock, lockDigest).decision,
-    "DEVELOPMENT_SOURCE_VERIFIED",
+    validateCandidatePolicy(pcBinding(), candidateLock, lockDigest, context).decision,
+    "SECURITY_CANDIDATE_ADMISSION_AUTHORIZED",
   );
   for (const edit of [
     (b) => (b.decision = "IMPLEMENTATION_AUTHORIZED"),
@@ -2437,7 +2466,7 @@ test("PC100 exact-source policy never accepts scope authorization, edited or dia
     const b = pcBinding();
     edit(b);
     assert.throws(
-      () => validateCandidatePolicy(b, candidateLock, lockDigest),
+      () => validateCandidatePolicy(b, candidateLock, lockDigest, context),
       /PRODUCTION_POLICY_NOT_APPROVED/,
     );
   }
@@ -2494,6 +2523,57 @@ test("PC100 typed receipt rejects incomplete, forged and cross-attempt claims", 
     edit(bad);
     assert.throws(() => validateCandidateReceipt(bad, context, 20, 1));
   }
+});
+
+test("PC100 final wire binds evidence_run_id, never the obsolete comment_id", () => {
+  const original = pcBinding(),
+    same = clone(original);
+  assert.doesNotThrow(() => assertSameCandidateAdmission(same, original));
+  same.evidence_run_id++;
+  same.comment_id = original.evidence_run_id;
+  assert.throws(() => assertSameCandidateAdmission(same, original), /WIRE_POLICY_CHANGED/);
+});
+for (const field of [
+  "evidence_run_attempt",
+  "evidence_check_id",
+  "policy_record_sha256",
+  "policy_sha256",
+  "inventory_sha256",
+])
+  test(`PC100 final wire rejects changed immutable candidate ${field}`, () => {
+    const original = pcBinding(),
+      changed = clone(original);
+    changed[field] = typeof changed[field] === "number" ? changed[field] + 1 : "1".repeat(64);
+    assert.throws(() => assertSameCandidateAdmission(changed, original), /WIRE_POLICY_CHANGED/);
+  });
+test("PC100 development integrity and legacy developer verdicts never admit candidates", () => {
+  for (const decision of ["DEVELOPMENT_SOURCE_VERIFIED", "DEVELOPMENT_SOURCE_INTEGRITY_VERIFIED"]) {
+    const b = pcBinding();
+    b.decision = decision;
+    assert.throws(
+      () => validateCandidatePolicy(b, candidateLock, lockDigest, context),
+      /PRODUCTION_POLICY_NOT_APPROVED/,
+    );
+  }
+});
+test("PC100 manifest, seal and receipt retain the same actual candidate policy proof", () => {
+  const binding = pcBinding();
+  for (const link of [pcManifest(), pcSeal(), pcReceipt()]) {
+    assert.doesNotThrow(() => assertCandidatePolicyLink(link, binding));
+    for (const field of [
+      "candidate_policy_sha256",
+      "policy_inventory_sha256",
+      "policy_record_sha256",
+      "policy_evidence_run_id",
+      "policy_evidence_attempt",
+      "policy_evidence_check_id",
+    ]) {
+      const bad = clone(link);
+      bad[field] = typeof bad[field] === "number" ? bad[field] + 1 : "1".repeat(64);
+      assert.throws(() => assertCandidatePolicyLink(bad, binding));
+    }
+  }
+  assert.ok(Buffer.byteLength(JSON.stringify(pcReceipt())) < 16384);
 });
 const wireRow = (role, bytes, id = 11) => ({
   role,
@@ -3659,7 +3739,8 @@ test("PC100 P2 wrong workflow or merge-SHA evidence aliases fail closed", () => 
 // approval/receipt is issued, no SDK transfer or candidate code executes.
 test("PC100 P1 full Walking admission and raw ZIP verification works without GITHUB_TOKEN", async () =>
   temporary(async (dir) => {
-    for (const name of POLICY_FILES) {
+    const allPaths = [...new Set([...POLICY_FILES, REGISTRY, ENGINE, CANDIDATE_WORKFLOW])];
+    for (const name of allPaths) {
       const target = path.join(dir, name);
       await mkdir(path.dirname(target), { recursive: true });
       const original = await readFile(path.join(root, name));
@@ -3682,6 +3763,7 @@ test("PC100 P1 full Walking admission and raw ZIP verification works without GIT
  const h=${JSON.stringify(H)},m=${JSON.stringify(M)},b=${JSON.stringify(BASE)},t=${JSON.stringify(T)};
  if(args[0]==="--no-replace-objects"&&args[1]==="show"){const ref=args.at(-1);if(ref!==h&&ref!==m&&ref!=="HEAD")throw Error("UNEXPECTED_TEST_GIT_REF");return (ref===h?h:m)+"\\n"+t+"\\n"+(ref===h?"":b+" "+h)+"\\n";}
  if(args[0]==="rev-parse"&&args[1]==="HEAD")return m+"\\n";
+ if(args[0]==="ls-tree"&&args[1]==="-r")return JSON.parse(__testRead(path.join(ROOT,"fixture.json"))).gitTree;
  if(args[0]==="show"&&args[1].startsWith(m+":")){const name=args[1].slice(m.length+1);if(!POLICY_FILES.includes(name))throw Error("UNEXPECTED_TEST_BLOB");return __testRead(path.join(ROOT,name));}
  throw Error("UNEXPECTED_TEST_GIT_CALL");
 }
@@ -3689,33 +3771,21 @@ test("PC100 P1 full Walking admission and raw ZIP verification works without GIT
       code.slice(end);
     code = 'import {readFileSync as __testRead} from "node:fs";\n' + code;
     await writeFile(file, code);
-    const files = {};
-    for (const name of POLICY_FILES) files[name] = sha256(await readFile(path.join(dir, name)));
-    const policyRecord = {
-      schema: "pc100-development-policy-v1",
-      decision: "DEVELOPMENT_SOURCE_VERIFIED",
-      scope: "development-only",
-      release_authorized: false,
-      repository_id: REPOSITORY_ID,
-      pr: 100,
-      H,
-      B: BASE,
-      M,
-      TH: T,
-      TM: T,
-      baseline: TRUSTED_SOURCE_BASELINE,
-      trusted_workflow_sha: BASE,
-      upstream_run: 130,
-      upstream_attempt: 1,
-      profile: PRODUCTION_PROFILE,
-      K: productionProfile(candidateLock).K,
-      L: lockDigest,
-      files,
+    const fileBytes = Object.fromEntries(
+      await Promise.all(allPaths.map(async (p) => [p, await readFile(path.join(dir, p))])),
+    );
+    const admission = candidateFixture({ context, lock: candidateLock, fileBytes });
+    await writeFile(path.join(dir, REGISTRY), admission.registryBytes);
+    const admitted = await observeCandidateAdmission(context, admission.read);
+    const binding = {
+      ...admitted,
+      files: Object.fromEntries(POLICY_FILES.map((p) => [p, admitted.files[p]])),
+      revoked: false,
     };
-    const policyHash = sha256(canonical(policyRecord));
+    const files = binding.files;
     const f = finalWireFixture(),
       m = pcManifest();
-    Object.assign(m, { policy_files: files, policy_record_sha256: policyHash });
+    Object.assign(m, { policy_files: files, ...candidatePolicyLink(binding) });
     const body = {
       "image.tar.xz": "synthetic NOT executable image",
       "verification.json": "{}",
@@ -3736,7 +3806,7 @@ test("PC100 P1 full Walking admission and raw ZIP verification works without GIT
       artifact_digest: `sha256:${sha256(sourceRaw)}`,
       artifact_bytes: sourceRaw.length,
       manifest_sha256: sha256(body["candidate-manifest.json"]),
-      policy_record_sha256: policyHash,
+      ...candidatePolicyLink(binding),
     });
     const receipt = pcReceipt();
     Object.assign(receipt, {
@@ -3749,7 +3819,7 @@ test("PC100 P1 full Walking admission and raw ZIP verification works without GIT
       artifact_bytes: seal.artifact_bytes,
       inner_sha256: m.files["image.tar.xz"],
       policy_files: files,
-      policy_record_sha256: policyHash,
+      ...candidatePolicyLink(binding),
     });
     const receiptBytes = JSON.stringify(receipt) + "\n",
       promotedRaw = storedZip({ ...body, "admission.json": receiptBytes }),
@@ -3797,66 +3867,12 @@ test("PC100 P1 full Walking admission and raw ZIP verification works without GIT
         conclusion: "success",
       },
       comments: [],
-      extra: {
-        "branches/main": { name: "main", protected: true, commit: { sha: BASE } },
-        [`git/commits/${BASE}`]: { sha: BASE, tree: { sha: T } },
-        [`git/trees/${T}`]: {
-          sha: T,
-          truncated: false,
-          tree: POLICY_FILES.map((p) => ({ path: p, type: "blob", mode: "100644", sha: H })),
-        },
-        "actions/workflows/pc100-source-verifier.yml": {
-          id: 80,
-          path: ".github/workflows/pc100-source-verifier.yml",
-        },
-        "actions/workflows/80/runs": {
-          total_count: 1,
-          workflow_runs: [
-            {
-              id: 123,
-              workflow_id: 80,
-              path: ".github/workflows/pc100-source-verifier.yml",
-              event: "workflow_run",
-              run_attempt: 1,
-              status: "completed",
-              conclusion: "success",
-              repository: { id: REPOSITORY_ID },
-              head_repository: { id: REPOSITORY_ID },
-              head_sha: BASE,
-              check_suite_id: 125,
-            },
-          ],
-        },
-        "actions/runs/123/attempts/1/jobs": {
-          jobs: [
-            {
-              name: "PC100 trusted source verification",
-              run_id: 123,
-              run_attempt: 1,
-              status: "completed",
-              conclusion: "success",
-              check_run_url: publicRepoAPI + "check-runs/124",
-            },
-          ],
-        },
-        "check-runs/124": {
-          id: 124,
-          name: "PC100 trusted source verification",
-          app: { id: 15368 },
-          check_suite: { id: 125 },
-          head_sha: BASE,
-          status: "completed",
-          conclusion: "success",
-        },
-        "check-runs/124/annotations": [
-          { title: "PC100 development source", message: JSON.stringify(policyRecord) },
-        ],
-        "actions/runs/130": {
-          ...prod.source,
-          id: 130,
-          path: ".github/workflows/pc100-artifact-integration.yml",
-        },
-      },
+      gitTree: Object.entries(admitted.file_inventory)
+        .map(([p, e]) => `${e.mode} blob ${e.git_blob_sha1}\t${p}\0`)
+        .join(""),
+      extra: Object.fromEntries(
+        Object.entries(admission.rows).map(([p, v]) => [p.split("?")[0], v]),
+      ),
       sourceArtifact,
       promotedArtifact,
       prepared: [
@@ -3904,7 +3920,7 @@ test("PC100 P1 full Walking admission and raw ZIP verification works without GIT
  await assert.rejects(()=>loader.authorizeArtifactAdapter({...plan,id:999}),/GITHUB_EVIDENCE_UNAVAILABLE/);
  await assert.rejects(()=>loader.verifyPromotedContents(out,'0'.repeat(64)),/PROMOTED_RECEIPT_DRIFT/);
  const r=JSON.parse(fs.readFileSync(path.join(out,'admission.json')));r.native_run_id=20;const changed=JSON.stringify(r);fs.writeFileSync(path.join(out,'admission.json'),changed);await assert.rejects(()=>loader.verifyPromotedContents(out,loader.sha256(changed)),/PROMOTED_ATTEMPT_DRIFT/);
- const key='check-runs/124/annotations',good=f.extra[key];f.extra[key]=[];await assert.rejects(()=>loader.authorizeArtifactAdapter(plan),/POLICY_EVIDENCE_MISSING_OR_AMBIGUOUS/);f.extra[key]=good;
+ const key='check-runs/124/annotations',good=f.extra[key];f.extra[key]=[];await assert.rejects(()=>loader.authorizeArtifactAdapter(plan),/CANDIDATE_EVIDENCE_MISSING_OR_AMBIGUOUS/);f.extra[key]=good;
  await assert.rejects(()=>loader.request('https://api.github.com/repos/mahmoudemad68/Your_Editor/actions/artifacts/31/zip',{bytes:true}),/ACTIONS_READ_TOKEN_MISSING/);
  assert.ok(calls.includes('actions/runs/30/attempts/1/jobs'));fs.writeFileSync('result.json',JSON.stringify({result:'PASS',metadata_calls:calls.length,authorization_headers:0,github_token_present:Object.hasOwn(process.env,'GITHUB_TOKEN'),real_sdk_or_transfer_executed:false}));
  `,
