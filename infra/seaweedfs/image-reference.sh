@@ -48,7 +48,7 @@ try:
     require(len(raw)<=4*1024**2 and len(lock_bytes)<=1024**2)
     v=json.loads(raw,object_pairs_hook=unique);lock=json.loads(lock_bytes,object_pairs_hook=unique)
     require(v['image_id']==sys.argv[3] and v['lock_sha256']==hashlib.sha256(lock_bytes).hexdigest())
-    require(all(v.get(k) is True for k in ('old_elf_absent','runtime_preserved','reproducible_elf')))
+    require(all(v.get(k) is True for k in ('old_elf_absent','runtime_preserved','build_records_match_final_elf')))
     builds=[v['build_measurements'][name] for name in ('one','two')]
     require(all(b['elf_sha256']==v['elf_sha256'] and b['cache_initially_empty'] is True for b in builds))
     profile='seaweedfs-go-s-w-diagnostic-v1'

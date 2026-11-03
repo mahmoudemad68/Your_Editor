@@ -6,6 +6,10 @@ on:
       - tools/test/load-qualified-storage.mjs
       - tools/test/pc100-artifact-integration.mjs
       - tests/architecture/seaweedfs-security-build.test.mjs
+      - tests/architecture/pc100-qa-repairs.test.mjs
+      - workers/media-worker/build-ffmpeg.sh
+      - infra/seaweedfs/verify-image.sh
+      - .github/actions/**
       - tests/architecture/pc100-source-verifier.test.mjs
       - tools/test/pc100-source-verifier.mjs
       - .github/workflows/pc100-artifact-integration.yml
@@ -43,7 +47,7 @@ jobs:
           cat /etc/os-release
           node -v
           python3 --version
-          /usr/bin/time -v node --test --test-reporter=tap tests/architecture/seaweedfs-security-build.test.mjs tests/architecture/seaweedfs-object-storage.test.mjs tests/architecture/pc100-source-verifier.test.mjs tests/architecture/pc100-source-verifier-adversarial.test.mjs tests/architecture/pc100-candidate-policy.test.mjs
+          /usr/bin/time -v node --test --test-reporter=tap tests/architecture/seaweedfs-security-build.test.mjs tests/architecture/seaweedfs-object-storage.test.mjs tests/architecture/pc100-source-verifier.test.mjs tests/architecture/pc100-source-verifier-adversarial.test.mjs tests/architecture/pc100-candidate-policy.test.mjs tests/architecture/pc100-qa-repairs.test.mjs tests/architecture/ffmpeg-download.test.mjs
       - name: Prepare bounded disposable fixture
         env:
           TARGET_SHA: ${{ github.event.pull_request.head.sha }}

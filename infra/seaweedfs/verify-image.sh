@@ -39,11 +39,12 @@ def image(file,candidate):
     with tarfile.open(file,'r:') as outer:
         members=outer.getmembers(); names=[path(m.name) for m in members]
         if len(names)!=len(set(names)) or len(names)>20000: raise ValueError('duplicate/excess outer paths')
+        if any(set(m.pax_headers)-{'mtime','atime','ctime'} for m in members): raise ValueError('unsupported outer PAX metadata')
         if any(m.issym() or m.islnk() or not(m.isfile() or m.isdir()) for m in members): raise ValueError('unsafe outer member')
         def metadata(name):
             info=outer.getmember(name)
             if info.size>1048576: raise ValueError('oversized image metadata')
-            return json.load(outer.extractfile(info))
+            return load_json(outer.extractfile(info).read(1048577))
         manifest=metadata('manifest.json')
         if len(manifest)!=1: raise ValueError('ambiguous image manifest')
         m=manifest[0]; config_bytes=outer.extractfile(path(m['Config'])).read(1048577)
@@ -103,6 +104,7 @@ def image(file,candidate):
             with tarfile.open(fileobj=layer_stream(),mode='r|') as inner:
                 seen=set()
                 for entry in inner:
+                    if set(entry.pax_headers)-{'mtime','atime','ctime'}: raise ValueError('unsupported layer PAX metadata')
                     name=path(entry.name)
                     if not name: continue
                     count+=1; total+=entry.size
@@ -120,6 +122,7 @@ def image(file,candidate):
                         target=posixpath.normpath(posixpath.join(parent,entry.linkname)) if entry.issym() else posixpath.normpath(entry.linkname)
                         if target.startswith('../') or (candidate and name.startswith('usr/share/editagent-seaweedfs/')): raise ValueError('unsafe link')
                     if candidate and (name=='usr/local/go' or name.startswith('usr/local/go/') or name.startswith('root/go/') or name.startswith('build/')): raise ValueError('compiler/source/cache in runtime')
+                    content.pop(name,None)
                     digest=None
                     if entry.isfile():
                         f=inner.extractfile(entry); h=hashlib.sha256(); saved=bytearray(); first=b''
@@ -134,9 +137,14 @@ def image(file,candidate):
                             elf_hashes.add(digest)
                         if capture: content[name]=bytes(saved)
                     files[name]=(entry.type.decode('latin1'),entry.mode,entry.uid,entry.gid,entry.linkname,digest)
+        if candidate:
+            for required in ['usr/bin/weed','usr/local/bin/editagent-entrypoint.sh']:
+                if files.get(required,('',))[0] not in ('0','\x00'): raise ValueError('required executable is not a final regular file')
         return files,content,config,'sha256:'+sha(config_bytes),elf_hashes
 base,bc,basecfg,_,_=image(work/'donor.tar',False)
 files,data,cfg,image_id,elfs=image(archive,True)
+for name in ['usr/bin/weed','usr/local/bin/editagent-entrypoint.sh']:
+    if files.get(name,('',))[0] not in ('0','\x00'): raise ValueError('required executable is not a final regular file')
 old=sha(bc['usr/bin/weed']); new=sha(data['usr/bin/weed'])
 if old==new or old in elfs: raise ValueError('old vulnerable ELF retained')
 for name in ['usr/bin/weed','usr/local/bin/editagent-entrypoint.sh']:
@@ -180,7 +188,7 @@ for key in ('Cmd','WorkingDir','Volumes','ExposedPorts','User','Env'):
 if cfg['config'].get('Entrypoint')!=['/usr/local/bin/editagent-entrypoint.sh']: raise ValueError('entrypoint drift')
 if cfg['config'].get('Labels',{}).get('org.opencontainers.image.version')!='4.51-editagent-sec1': raise ValueError('custom image identity missing')
 (work/'weed').write_bytes(data['usr/bin/weed'])
-(work/'verify-image.json').write_text(json.dumps({'image_id':image_id,'elf_sha256':new,'old_elf_absent':True,'runtime_preserved':True,'native_brotli':'1.2.1-r0','rust_sha256':{n:files[n][-1] for n in ['usr/bin/weed-volume','usr/bin/weed-worker']},'lock_sha256':sha((root/'infra/seaweedfs/security-build.lock.json').read_bytes()),'reproducible_elf':True,'build_measurements':{label:load_json(data[prefix+'build-'+label+'.json']) for label in ['one','two']},'diff_ids':cfg['rootfs']['diff_ids'],'project_revision':cfg['config'].get('Labels',{}).get('org.opencontainers.image.revision'),'project_source':cfg['config'].get('Labels',{}).get('org.opencontainers.image.source')},indent=2)+'\n')
+(work/'verify-image.json').write_text(json.dumps({'image_id':image_id,'elf_sha256':new,'old_elf_absent':True,'runtime_preserved':True,'native_brotli':'1.2.1-r0','rust_sha256':{n:files[n][-1] for n in ['usr/bin/weed-volume','usr/bin/weed-worker']},'lock_sha256':sha((root/'infra/seaweedfs/security-build.lock.json').read_bytes()),'build_records_match_final_elf':all(load_json(data[prefix+'build-'+label+'.json'])['elf_sha256']==new for label in ['one','two']),'reproducibility_scope':'two-record-consistency-only; native-independent-builds-required','build_measurements':{label:load_json(data[prefix+'build-'+label+'.json']) for label in ['one','two']},'diff_ids':cfg['rootfs']['diff_ids'],'project_revision':cfg['config'].get('Labels',{}).get('org.opencontainers.image.revision'),'project_source':cfg['config'].get('Labels',{}).get('org.opencontainers.image.source')},indent=2)+'\n')
 (work/'claimed-go-version-m.txt').write_bytes(data[prefix+'go-version-m.txt'])
 PY
 probe_name="editagent-seaweed-metadata-$$"

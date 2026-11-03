@@ -16,6 +16,7 @@ on:
       - "tsconfig*"
       - ".gitattributes"
       - ".github/workflows/e2e.yml"
+      - ".github/actions/**"
   workflow_dispatch:
 permissions:
   contents: read
@@ -24,6 +25,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   storage-admission:
+    if: github.event_name == 'pull_request' && github.event.pull_request.number == 100
     name: qualified storage admission
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -82,8 +84,6 @@ jobs:
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    env:
-      PC100_METADATA_TOKEN: ${{ github.token }}
     steps:
       - name: Explicitly reject failed admission
         env:
@@ -91,6 +91,7 @@ jobs:
         run: test "$ADMISSION_RESULT" = success
       - uses: actions/checkout@v7
         with:
+          persist-credentials: false
           lfs: true
           fetch-depth: 2
       - uses: pnpm/action-setup@v6
@@ -103,6 +104,8 @@ jobs:
         # same-run SDK child receives only its runner artifact credentials.
         id: promoted-download
         uses: ./.github/actions/pc100-bounded-artifact
+        env:
+          PC100_METADATA_TOKEN: ${{ github.token }}
         with:
           operation: download
           role: walking
@@ -112,6 +115,7 @@ jobs:
       - name: Revalidate promoted bytes before loading
         id: storage-load
         env:
+          PC100_METADATA_TOKEN: ${{ github.token }}
           PC100_RAW_ZIP_DIGEST: ${{ steps.promoted-download.outputs.artifact-digest }}
           PC100_RAW_ZIP_BYTES: ${{ steps.promoted-download.outputs.artifact-bytes }}
           PC100_RAW_ZIP: ${{ steps.promoted-download.outputs.download-path }}
@@ -132,8 +136,12 @@ jobs:
           pnpm test:fixtures
           ./infra/scripts/validate-compose.sh
       - name: Real Compose upload and broken-worker failure proof
+        env:
+          PC100_METADATA_TOKEN: ${{ github.token }}
         run: pnpm test:walking-skeleton --verify-failure
       - name: Verify final producer and PR identity
+        env:
+          PC100_METADATA_TOKEN: ${{ github.token }}
         run: node tools/test/load-qualified-storage.mjs final '${{ steps.storage-load.outputs.receipt }}'
       - name: Collect and sanitize runtime diagnostics
         id: diagnostics

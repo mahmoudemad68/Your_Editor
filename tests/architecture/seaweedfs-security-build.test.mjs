@@ -99,6 +99,7 @@ import {
   REGISTRY,
   ENGINE,
   CANDIDATE_WORKFLOW,
+  REQUIRED_WORKFLOW,
 } from "../../tools/test/pc100-candidate-policy.mjs";
 const root = path.resolve(import.meta.dirname, "../..");
 const H = "a".repeat(40),
@@ -120,8 +121,8 @@ function identity() {
       draft: true,
       merged: false,
       merge_commit_sha: M,
-      head: { sha: H, repo: { id: REPOSITORY_ID } },
-      base: { sha: BASE, repo: { id: REPOSITORY_ID } },
+      head: { sha: H, ref: "fix/ci-ffmpeg-seaweedfs-security", repo: { id: REPOSITORY_ID } },
+      base: { sha: BASE, ref: "main", repo: { id: REPOSITORY_ID } },
     },
     head: { sha: H, tree: { sha: T } },
     merge: { sha: M, tree: { sha: T }, parents: [{ sha: BASE }, { sha: H }] },
@@ -191,7 +192,8 @@ function producer() {
     "dependencies",
     "supply-chain-security",
     ...SERVICES.map((s) => `image ${s}`),
-  ].map((name) => ({
+  ].map((name, index) => ({
+    id: 100 + index,
     name,
     run_attempt: 1,
     status: "completed",
@@ -1709,7 +1711,7 @@ function swFixture(diagnostic = true) {
       elf_sha256: elf,
       old_elf_absent: true,
       runtime_preserved: true,
-      reproducible_elf: true,
+      build_records_match_final_elf: true,
       native_brotli: "1.2.1-r0",
       build_measurements: {
         one: globalThis.structuredClone(build),
@@ -2282,6 +2284,7 @@ function pcBinding() {
     schema: "pc100-security-candidate-admission-v1",
     decision: "SECURITY_CANDIDATE_ADMISSION_AUTHORIZED",
     candidate_admission_authorized: true,
+    expected_elf_sha256: E,
     profile: PRODUCTION_PROFILE,
     K: productionProfile(candidateLock).K,
     L: lockDigest,
@@ -2303,7 +2306,7 @@ function pcBinding() {
 }
 function pcManifest() {
   return {
-    schema: "seaweedfs-candidate-bundle-v4",
+    schema: "seaweedfs-candidate-bundle-v5",
     profile: PRODUCTION_PROFILE,
     K: productionProfile(candidateLock).K,
     L: lockDigest,
@@ -2324,6 +2327,16 @@ function pcManifest() {
         "sbom.spdx.json",
         "scanner-versions.json",
       ].map((n) => [n, E]),
+    ),
+    file_bytes: Object.fromEntries(
+      [
+        "image.tar.xz",
+        "verification.json",
+        "go-version-m.txt",
+        "full-trivy.json",
+        "sbom.spdx.json",
+        "scanner-versions.json",
+      ].map((n) => [n, n === "image.tar.xz" ? 1000 : 2]),
     ),
     policy_files: pcBinding().files,
     ...candidatePolicyLink(pcBinding()),
@@ -2380,7 +2393,9 @@ function pcReceipt() {
     bundle: "private/bundle",
     archive: "private/image.tar",
     C: 1000,
-    R: 100,
+    R: Object.entries(pcManifest().file_bytes)
+      .filter(([p]) => p !== "image.tar.xz")
+      .reduce((n, [, b]) => n + b, Buffer.byteLength(JSON.stringify(pcManifest()) + "\n")),
     diff_ids: Array(6).fill(Q),
     archive_sha256: E,
     archive_bytes: 1000,
@@ -2436,7 +2451,7 @@ test("PC100 production evidence rejects diagnostic/profile/receipt confusion", (
     elf_sha256: E,
     old_elf_absent: true,
     runtime_preserved: true,
-    reproducible_elf: true,
+    build_records_match_final_elf: true,
     native_brotli: "1.2.1-r0",
     build_measurements: {},
   };
@@ -2530,6 +2545,8 @@ test("PC100 typed receipt rejects incomplete, forged and cross-attempt claims", 
     (x) => (x.seal.policy_record_sha256 = "0".repeat(64)),
     (x) => (x.profile = SW_PROFILE),
     (x) => (x.C = 125829121),
+    (x) => x.C--,
+    (x) => x.R--,
   ]) {
     const bad = clone(r);
     edit(bad);
@@ -3188,7 +3205,10 @@ function wireArchiveFixture() {
     "sbom.spdx.json": "{}",
     "scanner-versions.json": "{}",
   };
-  for (const [n, v] of Object.entries(files)) m.files[n] = sha256(v);
+  for (const [n, v] of Object.entries(files)) {
+    m.files[n] = sha256(v);
+    m.file_bytes[n] = Buffer.byteLength(v);
+  }
   files["candidate-manifest.json"] = JSON.stringify(m) + "\n";
   const C = Buffer.byteLength(files["image.tar.xz"]),
     R = Object.entries(files)
@@ -3758,7 +3778,9 @@ test("PC100 P2 wrong workflow or merge-SHA evidence aliases fail closed", () => 
 // approval/receipt is issued, no SDK transfer or candidate code executes.
 test("PC100 P1 full Walking admission and raw ZIP verification works without GITHUB_TOKEN", async () =>
   temporary(async (dir) => {
-    const allPaths = [...new Set([...POLICY_FILES, REGISTRY, ENGINE, CANDIDATE_WORKFLOW])];
+    const allPaths = [
+      ...new Set([...POLICY_FILES, REGISTRY, ENGINE, CANDIDATE_WORKFLOW, REQUIRED_WORKFLOW]),
+    ];
     for (const name of allPaths) {
       const target = path.join(dir, name);
       await mkdir(path.dirname(target), { recursive: true });
@@ -3813,7 +3835,10 @@ test("PC100 P1 full Walking admission and raw ZIP verification works without GIT
       "sbom.spdx.json": "{}",
       "scanner-versions.json": "{}",
     };
-    for (const [name, bytes] of Object.entries(body)) m.files[name] = sha256(bytes);
+    for (const [name, bytes] of Object.entries(body)) {
+      m.files[name] = sha256(bytes);
+      m.file_bytes[name] = Buffer.byteLength(bytes);
+    }
     body["candidate-manifest.json"] = JSON.stringify(m) + "\n";
     const C = Buffer.byteLength(body["image.tar.xz"]),
       R = Object.entries(body)
@@ -3830,6 +3855,8 @@ test("PC100 P1 full Walking admission and raw ZIP verification works without GIT
     const receipt = pcReceipt();
     Object.assign(receipt, {
       native_run_id: 30,
+      bundle: path.join(dir, ".local/issue99/admission-fixture/bundle"),
+      archive: path.join(dir, ".local/issue99/admission-fixture/image.tar"),
       producer_created_at: f.runs.source.created_at,
       C,
       R,
@@ -3903,6 +3930,7 @@ test("PC100 P1 full Walking admission and raw ZIP verification works without GIT
       promotedArtifact,
       prepared: [
         {
+          id: 400,
           name: "qualified storage admission",
           run_attempt: 1,
           status: "completed",
@@ -3934,7 +3962,7 @@ test("PC100 P1 full Walking admission and raw ZIP verification works without GIT
  delete process.env.GITHUB_TOKEN;delete process.env.GH_TOKEN;
  Object.assign(process.env,{GITHUB_ACTIONS:'true',GITHUB_WORKFLOW:'Walking skeleton E2E',GITHUB_EVENT_NAME:'pull_request',GITHUB_EVENT_PATH:path.resolve('event.json'),GITHUB_RUN_ID:'30',GITHUB_RUN_ATTEMPT:'1',GITHUB_SHA:${JSON.stringify(M)},GITHUB_REF:'refs/pull/100/merge',GITHUB_REPOSITORY:'mahmoudemad68/Your_Editor'});
  globalThis.fetch=async(url,opts)=>{assert.equal(opts.headers.Authorization,undefined);const p=new URL(url).pathname.split('/Your_Editor/')[1];calls.push(p);let data;
- if(Object.hasOwn(f.extra,p))data=f.extra[p];else if(p==='actions/runs/30')data=f.native;else if(p==='check-suites/77')data=f.suite;else if(p==='pulls/100')data=f.pr;else if(p==='issues/100/comments')data=f.comments;else if(p==='actions/workflows/374068707/runs')data={workflow_runs:[f.source]};else if(p==='actions/runs/10')data=f.source;else if(p==='actions/runs/10/attempts/1/jobs')data={jobs:f.jobs};else if(p==='check-runs/99')data=f.check;else if(p==='actions/artifacts/11')data=f.sourceArtifact;else if(p==='actions/artifacts/12')data=f.sealArtifact;else if(p==='actions/artifacts/31')data=f.promotedArtifact;else if(p==='actions/runs/30/attempts/1/jobs')data={jobs:f.prepared};else return new Response('{}',{status:404});
+ if(Object.hasOwn(f.extra,p))data=f.extra[p];else if(p==='actions/runs/30')data=f.native;else if(p==='check-suites/77')data=f.suite;else if(p==='pulls/100')data=f.pr;else if(p==='issues/100/comments')data=f.comments;else if(p==='actions/workflows/374068707/runs')data={total_count:1,workflow_runs:[f.source]};else if(p==='actions/runs/10')data=f.source;else if(p==='actions/runs/10/attempts/1/jobs')data={total_count:f.jobs.length,jobs:f.jobs};else if(p==='check-runs/99')data=f.check;else if(p==='actions/artifacts/11')data=f.sourceArtifact;else if(p==='actions/artifacts/12')data=f.sealArtifact;else if(p==='actions/artifacts/31')data=f.promotedArtifact;else if(p==='actions/runs/30/attempts/1/jobs')data={total_count:f.prepared.length,jobs:f.prepared};else return new Response('{}',{status:404});
  return new Response(JSON.stringify(data),{status:200,headers:{'x-github-api-version-selected':opts.headers['X-GitHub-Api-Version']}});};
  const loader=await import('./tools/test/load-qualified-storage.mjs'),adapter=await import(pathToFileURL(${JSON.stringify(adapterFile)}));
  const plan=adapter.artifactPlan({operation:'download',role:'walking','artifact-id':'31','artifact-digest':f.promotedArtifact.digest,'artifact-bytes':String(f.promotedArtifact.size_in_bytes)},process.env);
@@ -3954,6 +3982,7 @@ test("PC100 P1 full Walking admission and raw ZIP verification works without GIT
   changed.seal.manifest_sha256=loader.sha256(JSON.stringify(m)+'\\n');
   await assert.rejects(()=>loader.fresh(changed,process.env.TEST_PYTHON),/RECEIPT_SEAL_AUTHENTICITY_DRIFT/);
  }
+ for(const edit of [r=>r.producer_created_at='2020-01-01T00:00:00Z',r=>r.bundle=path.resolve('outside'),r=>r.archive=path.resolve('outside.tar')]){const r=structuredClone(originalReceipt);edit(r);await assert.rejects(()=>loader.fresh(r,process.env.TEST_PYTHON),/PRODUCER_TIME_DRIFT|RECEIPT_PATH_REJECTED/);}
  const goodName=f.promotedArtifact.name;f.promotedArtifact.name='qualified-storage-30-2';await assert.rejects(()=>loader.authorizeArtifactAdapter(plan),/ADAPTER_SAME_RUN_ARTIFACT_DRIFT/);f.promotedArtifact.name=goodName;
  await assert.rejects(()=>loader.authorizeArtifactAdapter({...plan,id:999}),/GITHUB_EVIDENCE_UNAVAILABLE/);
  await assert.rejects(()=>loader.verifyPromotedContents(out,'0'.repeat(64)),/PROMOTED_RECEIPT_DRIFT/);

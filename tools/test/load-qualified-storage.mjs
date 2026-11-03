@@ -9,6 +9,7 @@ import { availableParallelism, totalmem, freemem } from "node:os";
 import { execFileSync } from "node:child_process";
 import { setTimeout, clearTimeout } from "node:timers";
 import { readFile, writeFile, mkdir, mkdtemp, lstat, statfs, realpath, rm } from "node:fs/promises";
+import { completePages } from "./pc100-source-verifier.mjs";
 import path from "node:path";
 import { fileURLToPath, URL } from "node:url";
 import {
@@ -118,7 +119,7 @@ export const SW_FLAGS =
   "-extldflags -static -X github.com/seaweedfs/seaweedfs/weed/util/version.COMMIT=ffa87c2+editagent-sec1 -s -w";
 export const ORIGINAL_ELF = "6b48572984287dcf64ed09a9080a720e65d4bf5c810c2282782fb4e5da8aa3c8";
 export const PRODUCTION_PROFILE = "seaweedfs-go-s-w-production-candidate-v1";
-export const CANDIDATE_SCHEMA = "seaweedfs-candidate-bundle-v4";
+export const CANDIDATE_SCHEMA = "seaweedfs-candidate-bundle-v5";
 export const SEAL_SCHEMA = "seaweedfs-candidate-seal-v4";
 export const RECEIPT_SCHEMA = "seaweedfs-admission-v5";
 
@@ -313,6 +314,11 @@ export function productionMarker(lock, L, E, label) {
     cache_label: label,
   };
 }
+export function verifyApprovedELF(actual, binding) {
+  digest(actual);
+  digest(binding.expected_elf_sha256);
+  requireThat(actual === binding.expected_elf_sha256, "PROTECTED_ELF_IDENTITY_DRIFT");
+}
 export function validateProductionEvidence(verification, lock, L, actualElf, metadata) {
   productionProfile(lock);
   digest(L);
@@ -320,7 +326,7 @@ export function validateProductionEvidence(verification, lock, L, actualElf, met
     verification.lock_sha256 === L &&
       verification.old_elf_absent === true &&
       verification.runtime_preserved === true &&
-      verification.reproducible_elf === true &&
+      verification.build_records_match_final_elf === true &&
       verification.native_brotli === "1.2.1-r0",
     "PRODUCTION_IMAGE_EVIDENCE_REJECTED",
   );
@@ -781,6 +787,7 @@ export function validateCandidateManifest(m, context, runId, attempt, lock, L) {
     "archive_sha256",
     "archive_bytes",
     "files",
+    "file_bytes",
     "policy_files",
     "policy_evidence_run_id",
     "policy_record_sha256",
@@ -824,6 +831,11 @@ export function validateCandidateManifest(m, context, runId, attempt, lock, L) {
     FILES.filter((n) => n !== "candidate-manifest.json"),
   );
   Object.values(m.files).forEach(digest);
+  exactKeys(m.file_bytes, Object.keys(m.files));
+  requireThat(
+    Object.values(m.file_bytes).every((n) => Number.isSafeInteger(n) && n > 0 && n <= IMAGE_CAP),
+    "MANIFEST_FILE_SIZE_REJECTED",
+  );
   exactKeys(m.policy_files, POLICY_FILES);
   Object.values(m.policy_files).forEach(digest);
   return m;
@@ -1038,6 +1050,7 @@ export function validateCandidatePolicy(binding, lock, L, context) {
     requireThat(binding.files[p] === binding.file_inventory[p]?.sha256, "POLICY_FILE_SET_DRIFT");
   validatePolicyLink(candidatePolicyLink(binding));
   digest(binding.registry_sha256);
+  digest(binding.expected_elf_sha256);
   return binding;
 }
 async function candidateSource(producer = false) {
@@ -1086,7 +1099,8 @@ export async function authorizeArtifactAdapter(plan) {
       );
       for (const name of FILES.filter((n) => n !== "candidate-manifest.json"))
         requireThat(
-          (await fileDigest(path.join(plan.bundle, name))) === m.files[name],
+          (await fileDigest(path.join(plan.bundle, name))) === m.files[name] &&
+            (await fileBytes(path.join(plan.bundle, name))) === m.file_bytes[name],
           "ADAPTER_SOURCE_DRIFT",
         );
       const C = await fileBytes(path.join(plan.bundle, "image.tar.xz"));
@@ -1950,19 +1964,12 @@ export async function readIdentityPr(correlate) {
     correlate,
   });
 }
-async function pages(suffix, field, publicOnly = false) {
-  const out = [];
-  for (let page = 1; page <= 20; page++) {
-    const data = await api(
-      `${suffix}${suffix.includes("?") ? "&" : "?"}per_page=100&page=${page}`,
-      { publicOnly },
-    );
-    const batch = field ? data[field] : data;
-    requireThat(Array.isArray(batch), "INVALID_API_PAGE");
-    out.push(...batch);
-    if (batch.length < 100) return out;
+export async function pages(suffix, field, publicOnly = false) {
+  try {
+    return await completePages((route) => api(route, { publicOnly }), suffix, field);
+  } catch (error) {
+    throw new AdmissionError(/^[A-Z_]+$/.test(error.message) ? error.message : "INVALID_API_PAGE");
   }
-  throw new AdmissionError("API_PAGE_LIMIT");
 }
 export function parseCommitMetadata(text) {
   // A fetched depth-2 merge has its H/B parents as shallow boundaries. H's
@@ -2414,7 +2421,8 @@ async function verifyCandidateDirectory(bundle, m, src, work) {
   );
   for (const name of FILES.filter((n) => n !== "candidate-manifest.json"))
     requireThat(
-      (await fileDigest(path.join(bundle, name))) === m.files[name],
+      (await fileDigest(path.join(bundle, name))) === m.files[name] &&
+        (await fileBytes(path.join(bundle, name))) === m.file_bytes[name],
       "INNER_ARTIFACT_DIGEST_MISMATCH",
     );
   const C = await fileBytes(path.join(bundle, "image.tar.xz"));
@@ -2428,6 +2436,7 @@ async function verifyCandidateDirectory(bundle, m, src, work) {
       Date.parse(scanner.trivy.VulnerabilityDB?.DownloadedAt) >= Date.parse(src.source.created_at),
     "SCANNER_PROVENANCE_DRIFT",
   );
+  verifyApprovedELF(m.elf_sha256, src.binding);
   const archive = path.join(work, "image.tar");
   await decompress(path.join(bundle, "image.tar.xz"), archive);
   requireThat(
@@ -2574,6 +2583,18 @@ print(json.dumps({'elapsed_seconds':time.perf_counter()-started,'uncompressed_by
 // Output identities are authenticated by the actual producer seal ZIP, not by
 // agreement between caller-controlled receipt fields. Only the small seal is
 // embedded; the full candidate archive is never downloaded a second time.
+export function validateReceiptPaths(r, root = ROOT) {
+  const base = path.join(root, ".local/issue99");
+  requireThat(
+    path.isAbsolute(r.bundle) &&
+      path.isAbsolute(r.archive) &&
+      path.basename(r.archive) === "image.tar" &&
+      r.bundle === path.join(path.dirname(r.archive), "bundle") &&
+      path.dirname(path.dirname(r.archive)) === base &&
+      /^admission-[A-Za-z0-9_-]+$/.test(path.basename(path.dirname(r.archive))),
+    "RECEIPT_PATH_REJECTED",
+  );
+}
 export function validateReceiptOutputs(r) {
   const m = r.source_manifest;
   requireThat(m && typeof m === "object", "RECEIPT_SOURCE_MANIFEST_MISSING");
@@ -2582,7 +2603,7 @@ export function validateReceiptOutputs(r) {
     "RECEIPT_MANIFEST_DIGEST_DRIFT",
   );
   requireThat(
-    m.schema === "seaweedfs-candidate-bundle-v4" &&
+    m.schema === "seaweedfs-candidate-bundle-v5" &&
       m.profile === r.profile &&
       m.K === r.K &&
       m.L === r.L &&
@@ -2612,6 +2633,20 @@ export function validateReceiptOutputs(r) {
     "RECEIPT_SEAL_PROOF_REJECTED",
   );
   const raw = Buffer.from(p.raw_zip_base64, "base64");
+  requireThat(m.file_bytes && typeof m.file_bytes === "object", "MANIFEST_FILE_SIZE_REJECTED");
+  const bytes = Object.entries(m.file_bytes);
+  requireThat(
+    bytes.length === 6 && bytes.every(([, n]) => Number.isSafeInteger(n) && n > 0),
+    "MANIFEST_FILE_SIZE_REJECTED",
+  );
+  requireThat(
+    r.C === m.file_bytes["image.tar.xz"] &&
+      r.R ===
+        bytes
+          .filter(([p]) => p !== "image.tar.xz")
+          .reduce((n, [, b]) => n + b, Buffer.byteLength(JSON.stringify(m) + "\n")),
+    "RECEIPT_MEASUREMENT_DRIFT",
+  );
   requireThat(
     raw.length === p.bytes && `sha256:${sha256(raw)}` === p.digest,
     "RECEIPT_SEAL_PROOF_DIGEST_DRIFT",
@@ -2643,6 +2678,7 @@ export async function authenticateReceiptSeal(receipt, artifact, source, step, p
 export async function fresh(receipt, python = "python3") {
   const { context, nativeRun, binding, lock, K, L } = await candidateSource();
   validateCandidateReceipt(receipt, context, nativeRun.id, nativeRun.run_attempt);
+  validateReceiptPaths(receipt);
   assertCandidatePolicyLink(receipt, binding);
   requireThat(receipt.K === K && receipt.L === L, "RECEIPT_CONTRACT_DRIFT");
   const { source, jobs } = await selectProducer(context);
@@ -2685,6 +2721,8 @@ export async function fresh(receipt, python = "python3") {
     lock,
     L,
   );
+  requireThat(receipt.producer_created_at === source.created_at, "PRODUCER_TIME_DRIFT");
+  verifyApprovedELF(receipt.elf_sha256, binding);
   validateCandidateSeal(receipt.seal, context, source, lock, L);
   assertCandidatePolicyLink(receipt.seal, binding, "SEAL_POLICY_DRIFT");
   requireThat(
@@ -2752,7 +2790,10 @@ export async function reconcileWireArtifacts(input, readRaw, work, python = "pyt
           const file = path.join(dir, name);
           files[name] = { bytes: await fileBytes(file), sha256: await fileDigest(file) };
           if (name !== "candidate-manifest.json")
-            requireThat(files[name].sha256 === m.files[name], "INNER_ARTIFACT_DIGEST_MISMATCH");
+            requireThat(
+              files[name].sha256 === m.files[name] && files[name].bytes === m.file_bytes[name],
+              "INNER_ARTIFACT_DIGEST_MISMATCH",
+            );
           if (name !== "image.tar.xz") reports += files[name].bytes;
         }
         C = files["image.tar.xz"].bytes;
@@ -4822,7 +4863,7 @@ function validateELFMeasurements(verification, elf, metadata, expectedProfile, m
   requireThat(
     verification.old_elf_absent === true &&
       verification.runtime_preserved === true &&
-      verification.reproducible_elf === true &&
+      verification.build_records_match_final_elf === true &&
       verification.native_brotli === "1.2.1-r0",
     "S_W_IMAGE_EVIDENCE_MISSING",
   );
@@ -5546,9 +5587,11 @@ async function produce(image, destination) {
     "PRODUCTION_IMAGE_ROUNDTRIP_DRIFT",
   );
   const files = {};
+  const memberBytes = {};
   const reportFileBytes = {};
   for (const name of FILES.filter((n) => n !== "candidate-manifest.json")) {
     files[name] = sha256(await readFile(path.join(folder, name)));
+    memberBytes[name] = await fileBytes(path.join(folder, name));
     if (name !== "image.tar.xz") reportFileBytes[name] = await fileBytes(path.join(folder, name));
   }
   const policyFiles = {};
@@ -5571,8 +5614,10 @@ async function produce(image, destination) {
     image_id: imageId,
     elf_sha256: verification.elf_sha256,
     files,
+    file_bytes: memberBytes,
     policy_files: policyFiles,
   };
+  verifyApprovedELF(manifest.elf_sha256, binding);
   const text = JSON.stringify(manifest) + "\n";
   reportFileBytes["candidate-manifest.json"] = Buffer.byteLength(text);
   const C = await fileBytes(path.join(folder, "image.tar.xz"));

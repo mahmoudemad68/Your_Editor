@@ -31,8 +31,8 @@ function fixture() {
       state: "open",
       draft: true,
       merged: false,
-      head: { sha: H, repo: { id: v.REPOSITORY_ID } },
-      base: { sha: B, repo: { id: v.REPOSITORY_ID } },
+      head: { sha: H, ref: "fix/ci-ffmpeg-seaweedfs-security", repo: { id: v.REPOSITORY_ID } },
+      base: { sha: B, ref: "main", repo: { id: v.REPOSITORY_ID } },
       merge_commit_sha: M,
     },
     main: { name: "main", protected: true, commit: { sha: B, commit: { tree: { sha: T } } } },
@@ -47,12 +47,19 @@ function fixture() {
       repository: { id: v.REPOSITORY_ID },
       head_repository: { id: v.REPOSITORY_ID },
       event: "pull_request",
+      head_branch: "fix/ci-ffmpeg-seaweedfs-security",
       path: v.INTEGRATION,
       head_sha: H,
       run_attempt: 1,
       status: "completed",
       conclusion: "success",
-      pull_requests: [{ number: 100, head: { sha: H }, base: { sha: B } }],
+      pull_requests: [
+        {
+          number: 100,
+          head: { sha: H, ref: "fix/ci-ffmpeg-seaweedfs-security" },
+          base: { sha: B, ref: "main" },
+        },
+      ],
     },
   };
 }

@@ -10,11 +10,12 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  actions: write
+  actions: read
   contents: read
 
 jobs:
   storage-admission:
+    if: github.event_name == 'pull_request' && github.event.pull_request.number == 100
     name: qualified storage admission
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -70,6 +71,7 @@ jobs:
 
   repository:
     needs: storage-admission
+    if: ${{ always() && !cancelled() && (github.event.pull_request.number != 100 || needs.storage-admission.result == 'success') }}
     name: repository checks
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -110,6 +112,7 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v7
         with:
+          persist-credentials: false
           lfs: true
           fetch-depth: 2
 
@@ -118,12 +121,14 @@ jobs:
         with:
           node-version-file: .nvmrc
       - name: Independently load qualified source image
+        if: github.event_name == 'pull_request' && github.event.pull_request.number == 100
         id: storage-load
         env:
           GITHUB_TOKEN: ${{ github.token }}
           PC100_METADATA_TOKEN: ${{ github.token }}
         run: node tools/test/load-qualified-storage.mjs load '${{ needs.storage-admission.outputs.producer }}:${{ needs.storage-admission.outputs.producer_attempt }}:${{ needs.storage-admission.outputs.artifact }}'
       - name: Bind loaded image evidence
+        if: github.event_name == 'pull_request' && github.event.pull_request.number == 100
         run: echo 'SEAWEED_QUALIFIED_RECEIPT=${{ steps.storage-load.outputs.receipt }}' >> "$GITHUB_ENV"
       - name: Start SeaweedFS
         env:
@@ -348,7 +353,6 @@ jobs:
             workers/ai-worker/coverage.xml
 
   real-asr:
-    needs: storage-admission
     name: real ASR (${{ matrix.shard }})
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -366,6 +370,7 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v7
         with:
+          persist-credentials: false
           lfs: true
           # Offline base/head inference A/B reads the pinned published source from Git.
           fetch-depth: 0
@@ -416,6 +421,7 @@ jobs:
             .local/asr-public/test-summary.json
 
   seaweedfs-product:
+    if: github.event_name == 'pull_request' && github.event.pull_request.number == 100
     name: candidate SeaweedFS production journey
     needs: storage-admission
     runs-on: ubuntu-latest
@@ -512,13 +518,16 @@ jobs:
     steps:
       - name: Require repository checks and every real-inference shard
         env:
+          CANDIDATE_EVENT: ${{ github.event_name == 'pull_request' && github.event.pull_request.number == 100 }}
           ADMISSION_RESULT: ${{ needs.storage-admission.result }}
           SEAWEEDFS_RESULT: ${{ needs.seaweedfs-product.result }}
           REPOSITORY_RESULT: ${{ needs.repository.result }}
           REAL_ASR_RESULT: ${{ needs['real-asr'].result }}
         run: |
-          test "$ADMISSION_RESULT" = success
-          test "$SEAWEEDFS_RESULT" = success
+          if [ "$CANDIDATE_EVENT" = true ]; then
+            test "$ADMISSION_RESULT" = success
+            test "$SEAWEEDFS_RESULT" = success
+          fi
           test "$REPOSITORY_RESULT" = success
           test "$REAL_ASR_RESULT" = success
       - uses: actions/checkout@v7
@@ -529,6 +538,7 @@ jobs:
         with:
           node-version-file: .nvmrc
       - name: Retrieve exact preparation receipt
+        if: github.event_name == 'pull_request' && github.event.pull_request.number == 100
         id: receipt-download
         uses: ./.github/actions/pc100-bounded-artifact
         env:
@@ -541,6 +551,7 @@ jobs:
           artifact-digest: ${{ needs.storage-admission.outputs.promoted_digest }}
           artifact-bytes: ${{ needs.storage-admission.outputs.promoted_bytes }}
       - name: Validate raw preparation receipt ZIP
+        if: github.event_name == 'pull_request' && github.event.pull_request.number == 100
         id: receipt-zip
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -551,6 +562,7 @@ jobs:
           PC100_RECEIPT_SHA: ${{ needs.storage-admission.outputs.receipt_sha256 }}
         run: node tools/test/load-qualified-storage.mjs receipt-zip "$(dirname "$PC100_RAW_ZIP")" "$PC100_RECEIPT_SHA"
       - name: Verify genuine final identity and producer
+        if: github.event_name == 'pull_request' && github.event.pull_request.number == 100
         env:
           GITHUB_TOKEN: ${{ github.token }}
           PC100_METADATA_TOKEN: ${{ github.token }}

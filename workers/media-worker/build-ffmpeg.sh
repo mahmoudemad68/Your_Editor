@@ -17,7 +17,10 @@ cd /src
 # idempotent, checksum-pinned GET. Both fixed HTTPS origins must supply the same
 # bytes. Each has at most four attempts and a 120s retry window plus a final 90s
 # transfer (at most 420s across both). Never extract partial/unverified archives.
-trap 'rm -f "${archive}.part"' EXIT HUP INT TERM
+trap 'rm -f "${archive}.part"' EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 download() {
   curl -fsSL --proto '=https' --proto-redir '=https' \
     --retry 3 --retry-all-errors --retry-delay 2 --retry-max-time 120 \
