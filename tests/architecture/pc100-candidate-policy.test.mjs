@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { spawnSync, execFileSync } from "node:child_process";
 import process from "node:process";
 import path from "node:path";
 import os from "node:os";
@@ -10,6 +10,7 @@ import { readFile, writeFile, mkdtemp, rm } from "node:fs/promises";
 import { candidateFixture, blobSHA } from "./support/candidate-policy-fixture.mjs";
 import {
   evaluateCandidatePolicy,
+  readGitSourceBytes,
   verifyCandidateRecord,
   observeCandidateAdmission,
   readCandidateAdmission,
@@ -584,4 +585,123 @@ test("A-7/B-4 actual child cannot poison Actions command files through inherited
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+function requiredEnvironment(f) {
+  return {
+    GITHUB_EVENT_NAME: "pull_request",
+    GITHUB_REPOSITORY: "mahmoudemad68/Your_Editor",
+    GITHUB_WORKFLOW_SHA: f.context.B,
+    GITHUB_RUN_ID: "140",
+    GITHUB_RUN_ATTEMPT: "1",
+    GITHUB_SHA: f.context.M,
+  };
+}
+test("A-6 actual required entry waits for concurrent preflight completion in the same attempt", async () => {
+  const f = candidateFixture();
+  f.upstream.status = "in_progress";
+  f.upstream.conclusion = null;
+  let now = 0,
+    sleeps = 0;
+  const result = await verifyRequiredAdmission(
+    { pull_request: f.snapshot.pr },
+    f.context.B,
+    requiredEnvironment(f),
+    f.read,
+    {
+      now: () => now,
+      sleep: async (ms) => {
+        now += ms;
+        sleeps++;
+        f.upstream.status = "completed";
+        f.upstream.conclusion = "success";
+      },
+    },
+  );
+  assert.equal(sleeps, 1);
+  assert.equal(result.upstream_run, 130);
+  assert.equal(result.release_authorized, false);
+});
+test("A-6 actual required entry bounds concurrent preflight waiting", async () => {
+  const f = candidateFixture();
+  f.upstream.status = "in_progress";
+  f.upstream.conclusion = null;
+  let now = 0;
+  await assert.rejects(
+    () =>
+      verifyRequiredAdmission(
+        { pull_request: f.snapshot.pr },
+        f.context.B,
+        requiredEnvironment(f),
+        f.read,
+        {
+          now: () => now,
+          sleep: async (ms) => {
+            now += ms;
+          },
+        },
+      ),
+    /CANDIDATE_PREFLIGHT_DEADLINE/,
+  );
+  assert.equal(now, 120000);
+});
+for (const conclusion of ["failure", "cancelled", "timed_out"])
+  test(`A-6 actual required entry never retries ordinary ${conclusion}`, async () => {
+    const f = candidateFixture();
+    f.upstream.conclusion = conclusion;
+    let sleeps = 0;
+    await assert.rejects(
+      () =>
+        verifyRequiredAdmission(
+          { pull_request: f.snapshot.pr },
+          f.context.B,
+          requiredEnvironment(f),
+          f.read,
+          {
+            now: () => 0,
+            sleep: async () => {
+              sleeps++;
+            },
+          },
+        ),
+      /CANDIDATE_PREFLIGHT_REJECTED/,
+    );
+    assert.equal(sleeps, 0);
+  });
+
+test("A-2 actual complete Git-object batch authenticates every file without per-blob REST calls", () => {
+  const git = (args, input) =>
+    execFileSync("git", ["--no-replace-objects", ...args], {
+      cwd: path.resolve(import.meta.dirname, "../.."),
+      input,
+      maxBuffer: 132 * 1024 ** 2,
+    });
+  const H = git(["rev-parse", "HEAD"]).toString().trim();
+  const rows = git(["ls-tree", "-r", "-z", H])
+    .toString()
+    .split("\0")
+    .filter(Boolean)
+    .map((line) => {
+      const at = line.indexOf("\t"),
+        [mode, type, id] = line.slice(0, at).split(" ");
+      assert.equal(type, "blob");
+      return { mode, id, p: line.slice(at + 1) };
+    });
+  const raw = git(["cat-file", "--batch"], rows.map((e) => e.id).join("\n") + "\n"),
+    files = {};
+  let at = 0;
+  for (const row of rows) {
+    const end = raw.indexOf(10, at),
+      n = Number(raw.subarray(at, end).toString().split(" ")[2]),
+      bytes = raw.subarray(end + 1, end + 1 + n);
+    files[row.p] = { mode: row.mode, git_blob_sha1: row.id, bytes: n, sha256: hash(bytes) };
+    at = end + 2 + n;
+  }
+  const result = readGitSourceBytes(H, files);
+  assert.equal(Object.keys(result).length, rows.length);
+  assert.ok(rows.length > 1000);
+  for (const [p, e] of Object.entries(files)) assert.equal(hash(result[p]), e.sha256);
+  const first = Object.keys(files)[0];
+  files[first].sha256 = "0".repeat(64);
+  assert.throws(() => readGitSourceBytes(H, files), /CANDIDATE_SOURCE_SHA256_MISMATCH/);
 });
