@@ -202,6 +202,7 @@ test("B-1 normal fixture plans cannot select arbitrary networks or production ro
   assert.deepEqual(minioRegressionPlan("repository").corsOrigins, [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
+    "http://127.0.0.1:3030",
   ]);
   assert.deepEqual(minioRegressionPlan("walking", "walking-skeleton_render_control").corsOrigins, [
     "http://localhost:3000",
