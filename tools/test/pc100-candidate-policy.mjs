@@ -672,3 +672,16 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     process.exitCode = 1;
   }
 }
+
+// Qualification credentials belong only to the trusted storage controller.
+// Never forward them into API/web/browser child environments.
+export function withoutQualificationCredentials(env) {
+  return Object.fromEntries(
+    Object.entries(env).filter(
+      ([key]) =>
+        !/^(GITHUB_TOKEN|GH_TOKEN|PC100_METADATA_TOKEN|ACTIONS_.*|INPUT_GITHUB[-_]TOKEN)$/i.test(
+          key,
+        ),
+    ),
+  );
+}
