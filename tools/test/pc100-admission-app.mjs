@@ -140,7 +140,10 @@ export async function installationClient(config, key, request = appRequest) {
 }
 function samePR(p, expected) {
   need(
-    p.number === 100 &&
+    [expected.H, expected.B, expected.M].every(
+      (v) => typeof v === "string" && /^[a-f0-9]{40}$/.test(v),
+    ) &&
+      p.number === 100 &&
       p.state === "open" &&
       p.draft &&
       !p.merged &&

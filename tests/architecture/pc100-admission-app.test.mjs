@@ -156,6 +156,15 @@ test("head race during App write immediately invalidates success", async () => {
   await assert.rejects(() => reconcileAppCheck(c.read, config), /APP_LIVE_DRIFT/);
   assert.equal(c.writes.at(-1).body.conclusion, "failure");
 });
+test("malformed live identity is rejected before any check write", async () => {
+  for (const value of [null, "", "x".repeat(40)]) {
+    const f = candidateFixture();
+    f.snapshot.pr.head.sha = value;
+    const c = client(f);
+    await assert.rejects(() => reconcileAppCheck(c.read, config), /APP_LIVE_DRIFT/);
+    assert.equal(c.writes.length, 0);
+  }
+});
 test("PR omitting its own workflow cannot remove independently required App check", async () => {
   const f = candidateFixture();
   delete f.rows["actions/workflows/pc100-required-admission.yml"];
