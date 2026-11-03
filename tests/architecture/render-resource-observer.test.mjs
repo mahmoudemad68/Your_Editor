@@ -9,7 +9,10 @@ import {
   parseCgroup,
 } from "../../tools/render/resource-observer.mjs";
 test("137 alone cannot establish OOM; absent evidence is never zero", () => {
-  assert.equal(classifyTermination(null,null,137,false,true).cause,"CONTAINER_OOM_KILL_OBSERVED");
+  assert.equal(
+    classifyTermination(null, null, 137, false, true).cause,
+    "CONTAINER_OOM_KILL_OBSERVED",
+  );
   assert.equal(classifyTermination(null, null, 137, false).cause, "RESOURCE_EVIDENCE_UNAVAILABLE");
   assert.equal(
     classifyTermination(
@@ -64,11 +67,15 @@ test("resource observation captures only owned processes, kernel counters and fi
       return "PID PPID COMMAND RSS\n1 0 node 12\n";
     };
     const observer = startResourceObserver(["render-executor-0123456789ab"], file, execute);
+    await observer.ready;
+    await assert.rejects(observer.phase("arbitrary secret / path"), /RESOURCE_PHASE_REJECTED/);
+    await observer.phase("proof-0");
     await observer.stop({ exit_code: 137 });
     const text = await readFile(file, "utf8"),
       r = JSON.parse(text);
     assert.ok(r.samples.length >= 2);
     assert.equal(r.samples[0].containers[0].limits.memory, 128);
+    assert.equal(r.samples.at(-1).phase, "proof-0");
     assert.doesNotMatch(text, /SECRET|never-publish/);
     assert.ok(calls.every((a) => a[1] === "render-executor-0123456789ab"));
     assert.ok(calls.some((a) => a.join(" ").endsWith("pid,ppid,comm,rss")));

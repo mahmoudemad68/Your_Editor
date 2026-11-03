@@ -285,7 +285,7 @@ export function assertExternalKeyPath(file, checkout = root) {
     "APP_KEY_INSIDE_REPOSITORY",
   );
 }
-async function privateKey(file) {
+export async function readExternalKeyFile(file) {
   assertExternalKeyPath(file);
   const s = await lstat(file);
   need(
@@ -314,7 +314,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       "APP_ARGUMENTS_REJECTED",
     );
     const config = await trustedHostSource(),
-      key = await privateKey(process.argv[3]);
+      key = await readExternalKeyFile(process.argv[3]);
     do {
       const client = await installationClient(config, key);
       // Revalidate the installed source/base before every operation, not just startup.

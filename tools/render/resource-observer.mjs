@@ -5,6 +5,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { setInterval, clearInterval } from "node:timers";
 import { withoutQualificationCredentials } from "../test/pc100-candidate-policy.mjs";
 import process from "node:process";
+import console from "node:console";
 const fields = [
   "memory.events",
   "memory.events.local",
@@ -71,6 +72,7 @@ export function startResourceObserver(containers, destination, execute) {
         })
       ).stdout);
   const frames = [];
+  let phase = "startup";
   let inFlight = false,
     stopped = false;
   async function sample() {
@@ -120,7 +122,15 @@ export function startResourceObserver(containers, destination, execute) {
         } catch {
           host[name] = null;
         }
-      frames.push({ at: new Date().toISOString(), host, containers: rows });
+      const frame = { at: new Date().toISOString(), phase, host, containers: rows };
+      const previous = frames.at(-1);
+      for (const row of rows) {
+        const before = previous?.containers.find((r) => r.container === row.container);
+        const event = classifyTermination(before?.cgroup, row.cgroup, null, false);
+        if (event.oom_kill_delta > 0)
+          console.error("RENDER_OOM_TRANSITION", JSON.stringify({ previous, current: frame }));
+      }
+      frames.push(frame);
       if (frames.length > 64) frames.splice(1, 1); // preserve initial baseline and latest 63 observations
     } finally {
       inFlight = false;
@@ -133,6 +143,12 @@ export function startResourceObserver(containers, destination, execute) {
   return {
     ready: first,
     sample,
+    async phase(name) {
+      if (!/^[a-z0-9-]{1,64}$/.test(name)) throw Error("RESOURCE_PHASE_REJECTED");
+      phase = name;
+      while (inFlight) await new Promise((r) => globalThis.setTimeout(r, 10));
+      await sample();
+    },
     async stop(outcome = {}) {
       stopped = true;
       clearInterval(timer);

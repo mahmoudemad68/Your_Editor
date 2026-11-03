@@ -387,7 +387,7 @@ try {
   );
   const script = await readFile(new URL("./proof.cjs", import.meta.url), "utf8");
   async function runProof(script) {
-    await resources.sample();
+    await resources.phase("proof-" + proofOutcomes.length);
     return await new Promise((resolve, reject) => {
       const child = spawn("docker", ["exec", "-i", coordinator, "node"], {
         stdio: ["pipe", "pipe", "inherit"],
@@ -458,6 +458,7 @@ try {
       (await readFile(new URL("./audio-cut-proof.cjs", import.meta.url), "utf8")),
   );
   const audioReport = parseEvidence(audioOutput, "AUDIO_EVIDENCE");
+  await resources.phase("verify-audio-artifacts");
   assert.equal(
     new Set(audioReport.artifacts.map((a) => a.label)).size,
     audioReport.artifacts.length,
@@ -552,6 +553,7 @@ try {
       `const fs=require('node:fs');const identities=${JSON.stringify([])};console.log(JSON.stringify({temp:fs.readdirSync('/tmp').filter(n=>n.startsWith('render-'))}));`,
     ]),
   );
+  await resources.phase("verify-processes-and-frames");
   assert.deepEqual(
     processCheck.temp,
     [],

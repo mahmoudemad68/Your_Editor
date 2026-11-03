@@ -411,8 +411,12 @@ test("offline build, clean runtime and native PR failure propagation remain expl
     walking = await read(".github/workflows/e2e.yml");
   assert.match(ci, /pull_request:/);
   assert.match(walking, /pull_request:/);
-  assert.match(ci, /needs: \[storage-admission, repository, real-asr, seaweedfs-product\]/);
+  assert.match(
+    ci,
+    /needs: \[storage-admission, repository, real-asr, seaweedfs-product, render-isolated\]/,
+  );
   assert.match(ci, /test "\$ADMISSION_RESULT" = success/);
+  assert.match(ci, /test "\$ISOLATED_RENDER_RESULT" = success/);
   assert.match(walking, /run: test "\$ADMISSION_RESULT" = success/);
   assert.equal(/workflow_run:|pull_request_target:/.test(ci + walking), false);
   assert.equal(walking.split("  walking-skeleton:")[1].includes("actions: read"), false);
