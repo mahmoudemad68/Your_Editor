@@ -1,10 +1,12 @@
 import { spawnSync } from "node:child_process";
 import process from "node:process";
+import path from "node:path";
+import os from "node:os";
 /** Hermetic software controls. Synthetic records confer no real approval. */
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Buffer } from "node:buffer";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile, mkdtemp, rm } from "node:fs/promises";
 import { candidateFixture, blobSHA } from "./support/candidate-policy-fixture.mjs";
 import {
   evaluateCandidatePolicy,
@@ -21,7 +23,7 @@ import {
   verifyRequiredAdmission,
   withoutQualificationCredentials,
 } from "../../tools/test/pc100-candidate-policy.mjs";
-import { canonical, hash } from "../../tools/test/pc100-source-verifier.mjs";
+import { selectUpstreamRun, canonical, hash } from "../../tools/test/pc100-source-verifier.mjs";
 
 test("candidate admission is distinct from development integrity and production release", async () => {
   const f = candidateFixture(),
@@ -543,4 +545,43 @@ test("A-7 strict child allowlist excludes credentials and Actions/shell control 
   assert.equal(env.API_BASE_URL, "http://localhost");
   assert.equal(env.DATABASE_URL, "app-db");
   assert.equal(env.PATH, "runtime");
+});
+
+test("A-5 unrelated same-named sibling runs cannot poison a valid native selection", async () => {
+  const f = candidateFixture(),
+    key = `actions/workflows/pc100-artifact-integration.yml/runs?event=pull_request&head_sha=${f.context.H}&per_page=100&page=1`;
+  f.rows[key] = {
+    total_count: 2,
+    workflow_runs: [{ ...f.upstream, id: 999, head_branch: "attacker-sibling" }, f.upstream],
+  };
+  assert.equal((await selectUpstreamRun(f.read, f.snapshot.pr)).id, 130);
+});
+
+test("A-7/B-4 actual child cannot poison Actions command files through inherited environment", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "pc100-env-isolation-")),
+    paths = {};
+  try {
+    for (const key of ["GITHUB_ENV", "GITHUB_PATH", "GITHUB_OUTPUT"]) {
+      paths[key] = path.join(dir, key);
+      await writeFile(paths[key], "unchanged");
+    }
+    const env = withoutQualificationCredentials({
+      ...process.env,
+      ...paths,
+      BASH_ENV: path.join(dir, "hook"),
+      NPM_TOKEN: "private-fixture",
+    });
+    const r = spawnSync(
+      process.execPath,
+      [
+        "-e",
+        `const fs=require('node:fs');for(const k of ['GITHUB_ENV','GITHUB_PATH','GITHUB_OUTPUT'])if(process.env[k])fs.appendFileSync(process.env[k],'POISON=1');if(process.env.NPM_TOKEN||process.env.BASH_ENV)process.exit(1);`,
+      ],
+      { env, encoding: "utf8", timeout: 5000 },
+    );
+    assert.equal(r.status, 0, r.stderr);
+    for (const p of Object.values(paths)) assert.equal(await readFile(p, "utf8"), "unchanged");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });

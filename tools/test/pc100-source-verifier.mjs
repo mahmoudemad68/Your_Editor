@@ -144,10 +144,15 @@ export async function selectUpstreamRun(read, pr) {
     `actions/workflows/pc100-artifact-integration.yml/runs?event=pull_request&head_sha=${pr.head.sha}`,
     "workflow_runs",
   );
-  const matching = rows.filter(
-    (r) => r.head_sha === pr.head.sha && r.pull_requests?.some((p) => p.number === 100),
-  );
-  for (const r of matching) validateUpstreamAssociation(r, pr);
+  const matching = rows.filter((r) => {
+    try {
+      validateUpstreamAssociation(r, pr);
+      return true;
+    } catch (error) {
+      if (error.message === "POLICY_PREFLIGHT_NOT_QUALIFIED") return false;
+      throw error;
+    }
+  });
   need(matching.length > 0, "POLICY_EVIDENCE_PENDING");
   matching.sort((a, b) => b.id - a.id);
   return matching[0];
