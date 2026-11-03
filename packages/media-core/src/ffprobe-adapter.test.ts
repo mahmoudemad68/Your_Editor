@@ -1,11 +1,16 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { copyFileSync, mkdtempSync } from "node:fs";
+import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { MediaProbeError } from "@editagent/domain";
-import { buildFfprobeArgs, FFprobeMediaProbe } from "./ffprobe-adapter.js";
+import {
+  buildFfprobeArgs,
+  FFprobeMediaProbe,
+  parseDecodedVideoFrameCount,
+} from "./ffprobe-adapter.js";
 
 const media = path.resolve(__dirname, "../fixtures/media");
 const bin = path.resolve(__dirname, "../fixtures/bin");
@@ -35,6 +40,52 @@ test("ffprobe arguments are an array and keep the local path intact", () => {
   assert.equal(args.join("\0").includes("shell"), false);
 });
 
+test("decoded frame census rejects metadata, malformed and excessive counts", () => {
+  const doc = (value: unknown) => ({ streams: [{ codec_type: "video", nb_read_frames: value }] });
+  assert.equal(parseDecodedVideoFrameCount(doc("25")), 25);
+  assert.equal(parseDecodedVideoFrameCount(doc("108000")), 108000);
+  for (const v of [undefined, null, "N/A", "0", "-1", "1.0", "1e2", "01", 25, "108001"])
+    assert.throws(() => parseDecodedVideoFrameCount(doc(v)), MediaProbeError);
+  for (const v of [
+    null,
+    {},
+    { streams: [] },
+    { streams: [doc("25").streams[0], doc("25").streams[0]] },
+    { streams: [{ codec_type: "audio", nb_read_frames: "25" }] },
+    { streams: [{ codec_type: "video", nb_frames: "25", nb_read_packets: "25" }] },
+  ])
+    assert.throws(() => parseDecodedVideoFrameCount(v), MediaProbeError);
+});
+
+test(
+  "decoded frame census executes a full bounded decoder command and rejects error output",
+  {
+    skip:
+      process.platform === "win32"
+        ? "POSIX executable fixture; real decoding qualified on Linux"
+        : false,
+  },
+  async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "full-frame-census-"));
+    const executable = path.join(directory, "probe");
+    try {
+      for (const error of [false, true]) {
+        await writeFile(
+          executable,
+          `#!${process.execPath}\nconst a=process.argv.slice(2);if(!a.includes('-count_frames')||a.includes('-read_intervals')||a[a.indexOf('-threads')+1]!=='1'||a[a.indexOf('-err_detect')+1]!=='explode'||a[a.indexOf('-select_streams')+1]!=='v:0'||a.includes('-c:v'))process.exit(3);console.log(JSON.stringify({streams:[{codec_type:'video',nb_read_frames:'25'}]}));${error ? "console.error('decoder error');" : ""}\n`,
+          { mode: 0o700 },
+        );
+        const probe = new FFprobeMediaProbe({ executable, timeoutMs: 2000, maxOutputBytes: 4096 });
+        const result = probe.countDecodedVideoFrames({ filePath: normal });
+        if (error) await assert.rejects(result, (e) => code(e) === "exit");
+        else assert.equal(await result, 25);
+      }
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
 test("a filename with shell metacharacters is passed as one argument", async () => {
   const directory = mkdtempSync(path.join(tmpdir(), "editagent-probe-name-"));
   const filePath = path.join(directory, "clip;$(echo pwned).mp4");
@@ -49,6 +100,7 @@ test("a filename with shell metacharacters is passed as one argument", async () 
 test("real ffprobe matches the recorded fixture metadata", async () => {
   const probe = new FFprobeMediaProbe();
   const normalResult = await probe.inspect({ filePath: normal });
+  assert.equal(await probe.countDecodedVideoFrames({ filePath: normal }), 25);
   assert.equal(normalResult.videoCodec, "h264");
   assert.equal(normalResult.audioCodec, "aac");
   assert.equal(normalResult.duration, 1_000_000n);
