@@ -137,6 +137,10 @@ export function buildFfprobeArgs(filePath: string): readonly string[] {
     "error",
     "-protocol_whitelist",
     "file",
+    // Host CPU discovery can allocate many decoder frame buffers even inside a
+    // one-CPU coordinator. Bound native probing independently of host topology.
+    "-threads",
+    "1",
     "-print_format",
     "json",
     "-show_format",
@@ -199,6 +203,8 @@ export class FFprobeMediaProbe implements IMediaProbe {
         "error",
         "-protocol_whitelist",
         "file",
+        "-threads",
+        "1",
         "-show_streams",
         "-show_entries",
         "stream=codec_type,codec_name,time_base,start_pts,duration_ts,nb_frames,sample_rate,channels",

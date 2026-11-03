@@ -169,6 +169,12 @@ test("the media page shows FFprobe details after a direct upload and a manual in
     assert.equal(allowed.includes("content-type"), true, allowed);
     assert.equal(allowed.includes("x-amz-checksum-sha256"), true, allowed);
     assert.equal(allowed.includes("if-none-match"), true, allowed);
+    assert.equal(preflight.headers.get("access-control-allow-origin"), "http://127.0.0.1:3000");
+    const rejectedOrigin = await fetch(uploadUrl, {
+      method: "OPTIONS",
+      headers: { Origin: "https://untrusted.example", "Access-Control-Request-Method": "PUT" },
+    });
+    assert.equal(rejectedOrigin.headers.get("access-control-allow-origin"), null);
     const objectUrl = uploadUrl.split("?")[0];
     const anonymous = await fetch(objectUrl);
     assert.equal(anonymous.ok, false);

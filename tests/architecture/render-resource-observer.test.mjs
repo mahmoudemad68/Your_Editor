@@ -93,6 +93,36 @@ test("cgroup diagnostics reject missing and duplicated measurement fields", () =
     /RESOURCE_CGROUP_REJECTED/,
   );
 });
+
+test("an in-flight sample retains its original phase during a phase transition", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "render-phase-"));
+  let release;
+  const blocked = new Promise((r) => {
+    release = r;
+  });
+  let first = true;
+  try {
+    const obs = startResourceObserver(
+      ["render-coordinator-0123456789ab"],
+      path.join(dir, "e.json"),
+      async () => {
+        if (first) {
+          first = false;
+          await blocked;
+        }
+        throw Error("observation unavailable");
+      },
+    );
+    const transition = obs.phase("proof-1");
+    release();
+    await transition;
+    const result = await obs.stop();
+    assert.equal(result.samples[0].phase, "startup");
+    assert.equal(result.samples[1].phase, "proof-1");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
 test("unavailable observations and unsafe container selections fail closed", async () => {
   assert.throws(() => startResourceObserver(["other-container"], "unused"), /CONTAINER_REJECTED/);
   const dir = await mkdtemp(path.join(tmpdir(), "render-resources-"));

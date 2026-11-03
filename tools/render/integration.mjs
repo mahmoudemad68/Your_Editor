@@ -967,19 +967,25 @@ try {
           const after = observations.samples
             .at(-1)
             ?.containers.find((c) => c.container === name)?.cgroup;
+          const termination = classifyTermination(
+            before,
+            after,
+            last.exit_code,
+            last.watchdog_fired,
+            observations.samples.at(-1)?.containers.find((c) => c.container === name)?.state
+              ?.oom_killed,
+          );
           console.log(
             "RENDER_TERMINATION_OBSERVATION",
             JSON.stringify({
               container: name,
-              ...classifyTermination(
-                before,
-                after,
-                last.exit_code,
-                last.watchdog_fired,
-                observations.samples.at(-1)?.containers.find((c) => c.container === name)?.state
-                  ?.oom_killed,
-              ),
+              ...termination,
             }),
+          );
+          assert.equal(
+            termination.cause,
+            "NO_OOM_KILL_OBSERVED",
+            "Unexpected render process termination or unavailable resource evidence",
           );
         }
     }

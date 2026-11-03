@@ -25,6 +25,9 @@ test("ffprobe arguments are an array and keep the local path intact", () => {
   assert.equal(args.includes("-protocol_whitelist"), true);
   assert.equal(args.includes("file"), true);
   assert.equal(args.at(-1), filePath);
+  assert.equal(args.filter((a) => a === "-threads").length, 1);
+  assert.equal(args[args.indexOf("-threads") + 1], "1");
+  assert.ok(args.indexOf("-threads") < args.indexOf("-i"));
   assert.equal(
     args.some((argument) => argument.includes(" && ")),
     false,

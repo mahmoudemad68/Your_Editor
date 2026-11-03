@@ -78,6 +78,7 @@ export function startResourceObserver(containers, destination, execute) {
   async function sample() {
     if (inFlight) return;
     inFlight = true;
+    const sampledPhase = phase;
     try {
       const rows = [];
       for (const id of containers) {
@@ -122,7 +123,7 @@ export function startResourceObserver(containers, destination, execute) {
         } catch {
           host[name] = null;
         }
-      const frame = { at: new Date().toISOString(), phase, host, containers: rows };
+      const frame = { at: new Date().toISOString(), phase: sampledPhase, host, containers: rows };
       const previous = frames.at(-1);
       for (const row of rows) {
         const before = previous?.containers.find((r) => r.container === row.container);
@@ -145,8 +146,8 @@ export function startResourceObserver(containers, destination, execute) {
     sample,
     async phase(name) {
       if (!/^[a-z0-9-]{1,64}$/.test(name)) throw Error("RESOURCE_PHASE_REJECTED");
-      phase = name;
       while (inFlight) await new Promise((r) => globalThis.setTimeout(r, 10));
+      phase = name;
       await sample();
     },
     async stop(outcome = {}) {

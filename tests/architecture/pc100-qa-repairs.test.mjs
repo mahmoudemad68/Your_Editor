@@ -199,6 +199,13 @@ test("B-1 explicit normal-event MinIO route never replaces candidate SeaweedFS o
 });
 test("B-1 normal fixture plans cannot select arbitrary networks or production roles", () => {
   assert.equal(minioRegressionPlan("repository").port, 9000);
+  assert.deepEqual(minioRegressionPlan("repository").corsOrigins, [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+  ]);
+  assert.deepEqual(minioRegressionPlan("walking", "walking-skeleton_render_control").corsOrigins, [
+    "http://localhost:3000",
+  ]);
   assert.equal(minioRegressionPlan("walking", "walking-skeleton_render_control").port, 8333);
   assert.deepEqual(minioRegressionPlan("walking", "walking-skeleton_render_control").networks, [
     "walking-skeleton_render_control",

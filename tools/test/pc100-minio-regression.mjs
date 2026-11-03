@@ -24,6 +24,10 @@ export function minioRegressionPlan(role, network) {
     port,
     network: role === "walking" ? network : null,
     networks: role === "walking" ? [network, "walking-skeleton_default"] : [],
+    corsOrigins:
+      role === "repository"
+        ? ["http://localhost:3000", "http://127.0.0.1:3000"]
+        : ["http://localhost:3000"],
   };
 }
 export function walkingApplicationStart(backend, services) {
@@ -103,7 +107,7 @@ export async function startMinioRegression(role, network) {
     "--env",
     "MINIO_ROOT_PASSWORD=editagent-dev-secret",
     "--env",
-    "MINIO_API_CORS_ALLOW_ORIGIN=http://localhost:3000",
+    `MINIO_API_CORS_ALLOW_ORIGIN=${plan.corsOrigins.join(",")}`,
   ];
   if (plan.network) args.push("--network", plan.network, "--network-alias", "seaweed-s3");
   args.push(image, "--certs-dir", "/data/certs", "server", "/data", "--address", `:${plan.port}`);
