@@ -478,7 +478,15 @@ for (const rules of [
 ])
   test("A-6 PR-controlled required statuses cannot replace a protected required workflow", () =>
     assert.throws(
-      () => validateEnforcementRules(rules, "b".repeat(40)),
+      () =>
+        validateEnforcementRules(rules, {
+          schema: "pc100-independent-app-v1",
+          repository_id: 1395822921,
+          app_id: 246810,
+          installation_id: 12345,
+          slug: "independent-test-only",
+          check_name: "PC100 independent security admission",
+        }),
       /CANDIDATE_ENFORCEMENT_NOT_INSTALLED/,
     ));
 for (const edit of [
@@ -496,7 +504,7 @@ test("A-6 honest exact H required check and protected rules are both necessary",
   const f = candidateFixture(),
     result = await observeCandidateAdmission(f.context, f.read);
   assert.equal(result.enforcement.check, 143);
-  assert.equal(result.enforcement.run, 140);
+  assert.equal(result.enforcement.app, 246810);
 });
 test("A-6 untrusted PR workflow source cannot execute as required trusted verifier", async () => {
   const f = candidateFixture();

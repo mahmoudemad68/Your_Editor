@@ -4,6 +4,9 @@ import { createHash } from "node:crypto";
 import { canonical, hash } from "../../../tools/test/pc100-source-verifier.mjs";
 import {
   REGISTRY,
+  APP_CONFIG,
+  APP_ENGINE,
+  APP_CHECK,
   ENGINE,
   LOCK,
   SCANNERS,
@@ -96,6 +99,8 @@ export function candidateFixture({ context, fileBytes, lock = sampleLock() } = {
     : Object.fromEntries(
         [
           REGISTRY,
+          APP_CONFIG,
+          APP_ENGINE,
           ENGINE,
           CANDIDATE_WORKFLOW,
           REQUIRED_WORKFLOW,
@@ -117,6 +122,16 @@ export function candidateFixture({ context, fileBytes, lock = sampleLock() } = {
     ? Buffer.from(fileBytes[LOCK])
     : Buffer.from(JSON.stringify(lock) + "\n");
   content[LOCK] = lockBytes;
+  content[APP_ENGINE] ??= Buffer.from("synthetic:independent-app-engine");
+  const app = {
+    schema: "pc100-independent-app-v1",
+    repository_id: 1395822921,
+    app_id: 246810,
+    installation_id: 12345,
+    slug: "independent-test-only",
+    check_name: APP_CHECK,
+  };
+  content[APP_CONFIG] = Buffer.from(canonical(app) + "\n");
   const record = (b) => ({
     git_blob_sha1: blobSHA(b),
     sha256: hash(b),
@@ -241,11 +256,10 @@ export function candidateFixture({ context, fileBytes, lock = sampleLock() } = {
   const rows = {
     "rules/branches/main": [
       {
-        type: "workflows",
+        type: "required_status_checks",
         parameters: {
-          workflows: [
-            { repository_id: 1395822921, path: REQUIRED_WORKFLOW, ref: "refs/heads/main" },
-          ],
+          strict_required_status_checks_policy: true,
+          required_status_checks: [{ context: APP_CHECK, integration_id: app.app_id }],
         },
       },
     ],
@@ -316,12 +330,24 @@ export function candidateFixture({ context, fileBytes, lock = sampleLock() } = {
   };
   rows["check-runs/143"] = {
     id: 143,
-    name: REQUIRED_JOB,
+    name: APP_CHECK,
     head_sha: c.H,
-    app: { id: 15368 },
+    app: { id: app.app_id, slug: app.slug },
     check_suite: { id: 141 },
     status: "completed",
     conclusion: "success",
+    completed_at: new Date().toISOString(),
+    external_id: hash(canonical(decision)),
+    output: { title: CANDIDATE_TITLE, summary: canonical(decision) + "\n" },
+  };
+  rows[
+    `commits/${c.H}/check-runs?check_name=${encodeURIComponent(APP_CHECK)}&filter=all&per_page=100&page=1`
+  ] = { total_count: 1, check_runs: [rows["check-runs/143"]] };
+  rows["check-suites/141"] = {
+    id: 141,
+    app: { id: app.app_id },
+    head_sha: c.H,
+    repository: { id: 1395822921 },
   };
   rows["check-runs/143/annotations?per_page=100&page=1"] = [
     { title: CANDIDATE_TITLE, message: canonical(decision) },

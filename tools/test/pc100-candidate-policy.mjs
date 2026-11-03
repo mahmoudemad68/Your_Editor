@@ -24,6 +24,9 @@ import {
 } from "./pc100-source-verifier.mjs";
 
 export const REGISTRY = "infra/seaweedfs/candidate-policy.json";
+export const APP_CONFIG = "infra/seaweedfs/candidate-app.json";
+export const APP_ENGINE = "tools/test/pc100-admission-app.mjs";
+export const APP_CHECK = "PC100 independent security admission";
 export const ENGINE = "tools/test/pc100-candidate-policy.mjs";
 export const CANDIDATE_WORKFLOW = ".github/workflows/pc100-candidate-admission.yml";
 export const REQUIRED_WORKFLOW = ".github/workflows/pc100-required-admission.yml";
@@ -44,6 +47,8 @@ export const SCANNERS = Object.freeze([
   ".dockerignore",
 ]);
 const CONTROL = [
+  APP_CONFIG,
+  APP_ENGINE,
   REGISTRY,
   ENGINE,
   CANDIDATE_WORKFLOW,
@@ -405,16 +410,30 @@ export function evaluateCandidatePolicy(s) {
     },
   };
 }
-export function validateEnforcementRules(rules, B) {
+export function validateAppConfig(c) {
+  keys(c, ["schema", "repository_id", "app_id", "installation_id", "slug", "check_name"]);
+  need(
+    c.schema === "pc100-independent-app-v1" &&
+      c.repository_id === REPOSITORY_ID &&
+      id(c.app_id) &&
+      c.app_id !== 15368 &&
+      id(c.installation_id) &&
+      typeof c.slug === "string" &&
+      /^[a-z0-9-]{1,100}$/.test(c.slug) &&
+      c.check_name === APP_CHECK,
+    "CANDIDATE_APP_NOT_CONFIGURED",
+  );
+  return c;
+}
+export function validateEnforcementRules(rules, app) {
+  validateAppConfig(app);
   need(Array.isArray(rules), "CANDIDATE_ENFORCEMENT_NOT_INSTALLED");
   const matching = rules.filter(
     (r) =>
-      r.type === "workflows" &&
-      r.parameters?.workflows?.some(
-        (w) =>
-          w.repository_id === REPOSITORY_ID &&
-          w.path === REQUIRED_WORKFLOW &&
-          (w.ref === B || w.ref === "refs/heads/main"),
+      r.type === "required_status_checks" &&
+      r.parameters?.strict_required_status_checks_policy === true &&
+      r.parameters?.required_status_checks?.some(
+        (w) => w.context === APP_CHECK && w.integration_id === app.app_id,
       ),
   );
   need(matching.length === 1, "CANDIDATE_ENFORCEMENT_NOT_INSTALLED");
@@ -640,7 +659,10 @@ async function snapshot(context, read) {
     CONTROL.every((p) => entries.has(p)),
     "CANDIDATE_POLICY_NOT_INSTALLED",
   );
-  validateEnforcementRules(await read("rules/branches/main"), c.B);
+  const app = validateAppConfig(
+    readPolicyJSON(await authenticatedBlob(read, entries.get(APP_CONFIG))),
+  );
+  validateEnforcementRules(await read("rules/branches/main"), app);
   const registryBytes = await authenticatedBlob(read, entries.get(REGISTRY)),
     registry = readPolicyJSON(registryBytes);
   need(
@@ -722,6 +744,7 @@ async function snapshot(context, read) {
   const full = { H: c.H, B: c.B, M: c.M, TH: head.tree.sha, TM: merge.tree.sha };
   if (context) need(canonical(full) === canonical(context), "CANDIDATE_IDENTITY_DRIFT");
   return {
+    app,
     context: full,
     ...evaluateCandidatePolicy({
       context: full,
@@ -849,61 +872,43 @@ async function live(read, c) {
     "CANDIDATE_LIVE_DRIFT",
   );
 }
-export async function verifyIndependentHeadCheck(read, context, expectedRecord) {
-  const workflow = await read("actions/workflows/pc100-required-admission.yml"),
-    pr = await read("pulls/100");
-  need(workflow.path === REQUIRED_WORKFLOW && id(workflow.id), "CANDIDATE_REQUIRED_CHECK_MISSING");
-  const runs = await completePages(
-      read,
-      `actions/workflows/${workflow.id}/runs?event=pull_request&head_sha=${context.H}`,
-      "workflow_runs",
-    ),
-    matches = [];
-  for (const run of runs) {
-    if (run.status !== "completed" || run.conclusion !== "success") continue;
-    validateUpstreamAssociation({ ...run, path: INTEGRATION }, pr);
-    need(
-      run.head_sha === context.H &&
-        run.workflow_id === workflow.id &&
-        run.path === REQUIRED_WORKFLOW &&
-        run.run_attempt === 1,
-      "CANDIDATE_REQUIRED_CHECK_DRIFT",
-    );
-    const jobs = await completePages(read, `actions/runs/${run.id}/attempts/1/jobs`, "jobs");
-    for (const job of jobs.filter((j) => j.name === REQUIRED_JOB)) {
-      need(
-        job.run_id === run.id &&
-          job.run_attempt === 1 &&
-          job.status === "completed" &&
-          job.conclusion === "success" &&
-          /^https:\/\/api.github.com\/repos\/mahmoudemad68\/Your_Editor\/check-runs\/[1-9][0-9]*$/.test(
-            job.check_run_url,
-          ),
-        "CANDIDATE_REQUIRED_CHECK_DRIFT",
-      );
-      const cid = job.check_run_url.split("/").at(-1),
-        check = await read(`check-runs/${cid}`),
-        annotations = await completePages(read, `check-runs/${cid}/annotations`);
-      need(
-        String(check.id) === cid &&
-          check.name === REQUIRED_JOB &&
-          check.app?.id === 15368 &&
-          check.head_sha === context.H &&
-          check.check_suite?.id === run.check_suite_id &&
-          check.status === "completed" &&
-          check.conclusion === "success",
-        "CANDIDATE_REQUIRED_CHECK_DRIFT",
-      );
-      const records = annotations.filter((a) => a.title === CANDIDATE_TITLE);
-      need(records.length === 1, "CANDIDATE_REQUIRED_CHECK_AMBIGUOUS");
-      const record = JSON.parse(records[0].message);
-      if (record.M !== context.M || record.B !== context.B) continue;
-      need(canonical(record) === canonical(expectedRecord), "CANDIDATE_REQUIRED_CHECK_DRIFT");
-      matches.push({ run: run.id, attempt: 1, check: check.id });
-    }
-  }
+export async function verifyIndependentHeadCheck(read, context, expectedRecord, app) {
+  validateAppConfig(app);
+  const checks = await completePages(
+    read,
+    `commits/${context.H}/check-runs?check_name=${encodeURIComponent(APP_CHECK)}&filter=all`,
+    "check_runs",
+  );
+  const matches = checks.filter((c) => c.name === APP_CHECK && c.app?.id === app.app_id);
   need(matches.length === 1, "CANDIDATE_REQUIRED_CHECK_MISSING_OR_AMBIGUOUS");
-  return matches[0];
+  const check = await read(`check-runs/${matches[0].id}`);
+  const suite = await read(`check-suites/${check.check_suite?.id}`);
+  need(
+    check.id === matches[0].id &&
+      suite.id === check.check_suite.id &&
+      check.name === APP_CHECK &&
+      check.app?.id === app.app_id &&
+      check.app?.slug === app.slug &&
+      check.head_sha === context.H &&
+      check.status === "completed" &&
+      check.conclusion === "success" &&
+      suite.app?.id === app.app_id &&
+      suite.head_sha === context.H &&
+      suite.repository?.id === REPOSITORY_ID &&
+      id(check.id) &&
+      id(check.check_suite?.id),
+    "CANDIDATE_REQUIRED_CHECK_DRIFT",
+  );
+  need(
+    check.output?.title === CANDIDATE_TITLE &&
+      typeof check.output.summary === "string" &&
+      canonical(readPolicyJSON(Buffer.from(check.output.summary))) === canonical(expectedRecord) &&
+      check.external_id === hash(canonical(expectedRecord)),
+    "CANDIDATE_REQUIRED_CHECK_DRIFT",
+  );
+  const age = Date.now() - Date.parse(check.completed_at);
+  need(Number.isFinite(age) && age >= -30000 && age <= 600000, "CANDIDATE_APP_EVIDENCE_EXPIRED");
+  return { check: check.id, app: app.app_id, suite: check.check_suite.id };
 }
 export async function observeCandidateAdmission(context, read = api) {
   const latest = await selectUpstreamRun(read, await read("pulls/100"));
@@ -968,11 +973,16 @@ export async function observeCandidateAdmission(context, read = api) {
   need(found.length <= 1, "CANDIDATE_EVIDENCE_MISSING_OR_AMBIGUOUS");
   if (!found.length) fail("CANDIDATE_EVIDENCE_PENDING");
   const chosen = found[0];
-  chosen.enforcement = await verifyIndependentHeadCheck(read, context, {
-    ...src.decision,
-    upstream_run: chosen.upstream_run,
-    upstream_attempt: 1,
-  });
+  chosen.enforcement = await verifyIndependentHeadCheck(
+    read,
+    context,
+    {
+      ...src.decision,
+      upstream_run: chosen.upstream_run,
+      upstream_attempt: 1,
+    },
+    src.app,
+  );
   await live(read, context);
   return found.sort((a, b) => b.evidence_run_id - a.evidence_run_id)[0];
 }
