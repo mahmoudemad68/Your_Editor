@@ -45,12 +45,14 @@ jobs:
         id: admit
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          PC100_METADATA_TOKEN: ${{ github.token }}
         run: node tools/test/load-qualified-storage.mjs admit
       - name: Preserve bounded admission outcome
         if: failure() && (steps.admit.outputs.outcome == 'PRODUCER_NOT_YET_COMPLETE' || steps.admit.outputs.outcome == 'PRODUCER_NOT_YET_CREATED') && github.run_attempt == 1
         uses: ./.github/actions/pc100-bounded-artifact
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          PC100_METADATA_TOKEN: ${{ github.token }}
         with:
           operation: upload
           role: outcome
@@ -60,6 +62,7 @@ jobs:
         uses: ./.github/actions/pc100-bounded-artifact
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          PC100_METADATA_TOKEN: ${{ github.token }}
         with:
           operation: upload
           role: ci
@@ -118,12 +121,14 @@ jobs:
         id: storage-load
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          PC100_METADATA_TOKEN: ${{ github.token }}
         run: node tools/test/load-qualified-storage.mjs load '${{ needs.storage-admission.outputs.producer }}:${{ needs.storage-admission.outputs.producer_attempt }}:${{ needs.storage-admission.outputs.artifact }}'
       - name: Bind loaded image evidence
         run: echo 'SEAWEED_QUALIFIED_RECEIPT=${{ steps.storage-load.outputs.receipt }}' >> "$GITHUB_ENV"
       - name: Start SeaweedFS
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          PC100_METADATA_TOKEN: ${{ github.token }}
         run: |
           set -eu
           ./infra/seaweedfs/start-storage.sh
@@ -276,6 +281,7 @@ jobs:
       - name: Real production render, cancellation and timeline golden frames
         if: ${{ !cancelled() && steps.storage-load.outcome == 'success' }}
         env:
+          PC100_METADATA_TOKEN: ${{ github.token }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: pnpm render:test --graduation-demo
 
@@ -439,6 +445,7 @@ jobs:
         id: storage-load
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          PC100_METADATA_TOKEN: ${{ github.token }}
         run: node tools/test/load-qualified-storage.mjs load '${{ needs.storage-admission.outputs.producer }}:${{ needs.storage-admission.outputs.producer_attempt }}:${{ needs.storage-admission.outputs.artifact }}'
       - name: Bind actual candidate evidence
         run: echo 'SEAWEED_QUALIFIED_RECEIPT=${{ steps.storage-load.outputs.receipt }}' >> "$GITHUB_ENV"
@@ -452,16 +459,19 @@ jobs:
       - name: Real storage migration and isolated recovery
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          PC100_METADATA_TOKEN: ${{ github.token }}
         run: node tests/integration/seaweedfs-security-recovery.mjs
       - name: Build immutable production ASR image
         run: node tools/asr/container.mjs --build-only --model tiny
       - name: Independent candidate SeaweedFS browser to export
         env:
+          PC100_METADATA_TOKEN: ${{ github.token }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: pnpm render:test --graduation-demo --storage-seaweedfs
       - name: Verify final exact-head admission
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          PC100_METADATA_TOKEN: ${{ github.token }}
         run: node tools/test/load-qualified-storage.mjs final '${{ steps.storage-load.outputs.receipt }}'
       - name: Audit bounded real-service evidence
         id: audit
@@ -523,6 +533,7 @@ jobs:
         uses: ./.github/actions/pc100-bounded-artifact
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          PC100_METADATA_TOKEN: ${{ github.token }}
         with:
           operation: download
           role: ci
@@ -533,6 +544,7 @@ jobs:
         id: receipt-zip
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          PC100_METADATA_TOKEN: ${{ github.token }}
           PC100_RAW_ZIP_DIGEST: ${{ steps.receipt-download.outputs.artifact-digest }}
           PC100_RAW_ZIP_BYTES: ${{ steps.receipt-download.outputs.artifact-bytes }}
           PC100_RAW_ZIP: ${{ steps.receipt-download.outputs.download-path }}
@@ -541,4 +553,5 @@ jobs:
       - name: Verify genuine final identity and producer
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          PC100_METADATA_TOKEN: ${{ github.token }}
         run: node tools/test/load-qualified-storage.mjs final '${{ steps.receipt-zip.outputs.receipt }}' '${{ needs.storage-admission.outputs.receipt_sha256 }}'

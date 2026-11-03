@@ -1,3 +1,5 @@
+import { spawnSync } from "node:child_process";
+import process from "node:process";
 /** Hermetic software controls. Synthetic records confer no real approval. */
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -13,6 +15,7 @@ import {
   REGISTRY,
   LOCK,
   CANDIDATE_SCHEMA,
+  withoutQualificationCredentials,
 } from "../../tools/test/pc100-candidate-policy.mjs";
 import { canonical, hash } from "../../tools/test/pc100-source-verifier.mjs";
 
@@ -353,4 +356,30 @@ test("candidate source failure and policy denial are not eligible producer prere
       }),
     /CANDIDATE_PREFLIGHT_REJECTED/,
   );
+});
+
+test("candidate metadata credentials cannot enter app/browser child environment", () => {
+  const original = {
+    ...process.env,
+    GITHUB_TOKEN: "private-fixture",
+    GH_TOKEN: "private-fixture",
+    PC100_METADATA_TOKEN: "private-fixture",
+    ACTIONS_RUNTIME_TOKEN: "private-fixture",
+    ACTIONS_RESULTS_URL: "private-fixture",
+    INPUT_GITHUB_TOKEN: "private-fixture",
+    DATABASE_URL: "app-db",
+    APP_SETTING: "safe",
+  };
+  const env = withoutQualificationCredentials(original);
+  assert.equal(original.GITHUB_TOKEN, "private-fixture");
+  const child = spawnSync(
+    process.execPath,
+    [
+      "-e",
+      `const keys=Object.keys(process.env).filter(k=>/^(GITHUB_TOKEN|GH_TOKEN|PC100_METADATA_TOKEN|ACTIONS_.*|INPUT_GITHUB[-_]TOKEN)$/i.test(k));if(keys.length||process.env.APP_SETTING!=='safe')process.exit(1);`,
+    ],
+    { env, encoding: "utf8", timeout: 5000 },
+  );
+  assert.equal(child.status, 0, child.stderr);
+  assert.equal(env.DATABASE_URL, "app-db");
 });

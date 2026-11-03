@@ -1,3 +1,4 @@
+import { withoutQualificationCredentials } from "./pc100-candidate-policy.mjs";
 /** Disposable real production composition. No fixture API or direct DB inserts. */
 import { command, buildProductImages } from "./compose-build.mjs";
 import { verifyReadinessCycles } from "./readiness-cycles.mjs";
@@ -41,7 +42,7 @@ function browser(scenario) {
       stdio: "inherit",
       timeout: 240000,
       env: {
-        ...env,
+        ...withoutQualificationCredentials(env),
         WALKING_SKELETON_SCENARIO: scenario,
         ...(scenario === "negative" ? { WALKING_SKELETON_METADATA_TIMEOUT_MS: "8000" } : {}),
       },

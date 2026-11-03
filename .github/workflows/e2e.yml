@@ -54,12 +54,14 @@ jobs:
         id: admit
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          PC100_METADATA_TOKEN: ${{ github.token }}
         run: node tools/test/load-qualified-storage.mjs admit
       - name: Preserve bounded admission outcome
         if: failure() && (steps.admit.outputs.outcome == 'PRODUCER_NOT_YET_COMPLETE' || steps.admit.outputs.outcome == 'PRODUCER_NOT_YET_CREATED') && github.run_attempt == 1
         uses: ./.github/actions/pc100-bounded-artifact
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          PC100_METADATA_TOKEN: ${{ github.token }}
         with:
           operation: upload
           role: outcome
@@ -69,6 +71,7 @@ jobs:
         uses: ./.github/actions/pc100-bounded-artifact
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          PC100_METADATA_TOKEN: ${{ github.token }}
         with:
           operation: upload
           role: walking

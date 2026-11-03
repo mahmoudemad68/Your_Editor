@@ -120,7 +120,7 @@ export const ORIGINAL_ELF = "6b48572984287dcf64ed09a9080a720e65d4bf5c810c2282782
 export const PRODUCTION_PROFILE = "seaweedfs-go-s-w-production-candidate-v1";
 export const CANDIDATE_SCHEMA = "seaweedfs-candidate-bundle-v4";
 export const SEAL_SCHEMA = "seaweedfs-candidate-seal-v4";
-export const RECEIPT_SCHEMA = "seaweedfs-admission-v4";
+export const RECEIPT_SCHEMA = "seaweedfs-admission-v5";
 
 /** Exact UTF-8 JSON, including duplicate keys. No reviver can detect duplicates. */
 export function strictJSON(bytes, cap = 4 * 1024 ** 2) {
@@ -896,7 +896,8 @@ export function validateCandidateReceipt(r, context, runId, attempt) {
     "policy_inventory_sha256",
     "policy_evidence_check_id",
     "policy_evidence_attempt",
-    "policy_files",
+    "source_manifest",
+    "seal_proof",
     "seal",
     "image_id",
     "elf_sha256",
@@ -910,7 +911,7 @@ export function validateCandidateReceipt(r, context, runId, attempt) {
     "archive_bytes",
   ]);
   requireThat(
-    r.version === 4 &&
+    r.version === 5 &&
       r.schema === RECEIPT_SCHEMA &&
       r.profile === PRODUCTION_PROFILE &&
       isDeepStrictEqual(r.context, context) &&
@@ -954,8 +955,7 @@ export function validateCandidateReceipt(r, context, runId, attempt) {
       r.diff_ids.every((s) => /^sha256:[a-f0-9]{64}$/.test(s)),
     "RECEIPT_LAYERS_REJECTED",
   );
-  exactKeys(r.policy_files, POLICY_FILES);
-  Object.values(r.policy_files).forEach(digest);
+  validateReceiptOutputs(r);
   physicalBudget(r.C, r.R, []);
   return r;
 }
@@ -2351,14 +2351,16 @@ async function qualified(output) {
   const candidateJob = jobs.find((j) => j.name === "image seaweedfs");
   const sealStep = candidateJob.steps.find((s) => s.name === "Upload candidate seal");
   const uploadStep = candidateJob.steps.find((s) => s.name === "Upload qualified candidate");
-  validateArtifact(sealMatches[0], source, sealMatches[0].id, 65536, sealStep);
-  await unpackZip(
-    sealMatches[0],
+  validateArtifact(sealMatches[0], source, sealMatches[0].id, 8472, sealStep);
+  const sealRaw = await downloadArtifactArchive(sealMatches[0], source, sealStep, 8472);
+  await unpackVerifiedZip(
+    sealRaw,
+    sealMatches[0].digest,
     path.join(output, "seal"),
     ["seal.json"],
-    65536,
-    source,
-    sealStep,
+    8472,
+    "python3",
+    true,
   );
   const seal = await jsonFile(path.join(output, "seal/seal.json"));
   validateCandidateSeal(seal, context, source, lock, L);
@@ -2376,7 +2378,7 @@ async function qualified(output) {
     "SEAL_DIGEST_DRIFT",
   );
   const receipt = {
-    version: 4,
+    version: 5,
     schema: RECEIPT_SCHEMA,
     profile: PRODUCTION_PROFILE,
     K,
@@ -2391,7 +2393,12 @@ async function qualified(output) {
     artifact_digest: artifact.digest,
     artifact_bytes: artifact.size_in_bytes,
     ...candidatePolicyLink(binding),
-    policy_files: binding.files,
+    seal_proof: {
+      artifact_id: sealMatches[0].id,
+      digest: sealMatches[0].digest,
+      bytes: sealRaw.length,
+      raw_zip_base64: sealRaw.toString("base64"),
+    },
     seal,
   };
   return { receipt, artifact, source, step: uploadStep };
@@ -2506,6 +2513,7 @@ async function materialize(artifact, output, receipt, source, step) {
     ...receipt,
     ...measured,
     bundle,
+    source_manifest: m,
     image_id: m.image_id,
     elf_sha256: m.elf_sha256,
     inner_sha256: m.files["image.tar.xz"],
@@ -2563,7 +2571,76 @@ print(json.dumps({'elapsed_seconds':time.perf_counter()-started,'uncompressed_by
     ]),
   );
 }
-export async function fresh(receipt) {
+// Output identities are authenticated by the actual producer seal ZIP, not by
+// agreement between caller-controlled receipt fields. Only the small seal is
+// embedded; the full candidate archive is never downloaded a second time.
+export function validateReceiptOutputs(r) {
+  const m = r.source_manifest;
+  requireThat(m && typeof m === "object", "RECEIPT_SOURCE_MANIFEST_MISSING");
+  requireThat(
+    sha256(JSON.stringify(m) + "\n") === r.seal.manifest_sha256,
+    "RECEIPT_MANIFEST_DIGEST_DRIFT",
+  );
+  requireThat(
+    m.schema === "seaweedfs-candidate-bundle-v4" &&
+      m.profile === r.profile &&
+      m.K === r.K &&
+      m.L === r.L &&
+      isDeepStrictEqual(m.context, r.context) &&
+      m.run_id === r.producer_run &&
+      m.attempt === r.producer_attempt &&
+      samePolicyLink(m, r) &&
+      m.image_id === r.image_id &&
+      m.elf_sha256 === r.elf_sha256 &&
+      isDeepStrictEqual(m.diff_ids, r.diff_ids) &&
+      m.archive_sha256 === r.archive_sha256 &&
+      m.archive_bytes === r.archive_bytes &&
+      m.files?.["image.tar.xz"] === r.inner_sha256,
+    "RECEIPT_OUTPUT_IDENTITY_DRIFT",
+  );
+  const p = r.seal_proof;
+  exactKeys(p, ["artifact_id", "digest", "bytes", "raw_zip_base64"]);
+  id(p.artifact_id);
+  imageDigest(p.digest);
+  requireThat(
+    Number.isSafeInteger(p.bytes) &&
+      p.bytes > 0 &&
+      p.bytes <= 8472 &&
+      typeof p.raw_zip_base64 === "string" &&
+      p.raw_zip_base64.length <= 11296 &&
+      Buffer.from(p.raw_zip_base64, "base64").toString("base64") === p.raw_zip_base64,
+    "RECEIPT_SEAL_PROOF_REJECTED",
+  );
+  const raw = Buffer.from(p.raw_zip_base64, "base64");
+  requireThat(
+    raw.length === p.bytes && `sha256:${sha256(raw)}` === p.digest,
+    "RECEIPT_SEAL_PROOF_DIGEST_DRIFT",
+  );
+  requireThat(Buffer.byteLength(JSON.stringify(r) + "\n") <= 16384, "RECEIPT_SIZE_REJECTED");
+  return raw;
+}
+export async function authenticateReceiptSeal(receipt, artifact, source, step, python = "python3") {
+  const raw = validateReceiptOutputs(receipt),
+    p = receipt.seal_proof;
+  validateArtifact(artifact, source, p.artifact_id, 8472, step);
+  requireThat(
+    artifact.name === `seaweedfs-seal-${source.id}-${source.run_attempt}` &&
+      artifact.digest === p.digest &&
+      artifact.size_in_bytes === p.bytes,
+    "RECEIPT_SEAL_ARTIFACT_DRIFT",
+  );
+  const dir = await mkdtemp(path.join(ROOT, ".local/issue99/recheck-seal-"));
+  try {
+    await unpackVerifiedZip(raw, artifact.digest, dir, ["seal.json"], 8472, python, true);
+    requireThat(
+      isDeepStrictEqual(await jsonFile(path.join(dir, "seal.json")), receipt.seal),
+      "RECEIPT_SEAL_AUTHENTICITY_DRIFT",
+    );
+  } finally {
+    await dispose(dir);
+  }
+}
+export async function fresh(receipt, python = "python3") {
   const { context, nativeRun, binding, lock, K, L } = await candidateSource();
   validateCandidateReceipt(receipt, context, nativeRun.id, nativeRun.run_attempt);
   assertCandidatePolicyLink(receipt, binding);
@@ -2588,12 +2665,32 @@ export async function fresh(receipt) {
       artifact.size_in_bytes === receipt.artifact_bytes,
     "ARTIFACT_DIGEST_DRIFT",
   );
+  const sealArtifact = await api(`actions/artifacts/${id(receipt.seal_proof.artifact_id)}`, {
+    publicOnly: true,
+  });
+  await authenticateReceiptSeal(
+    receipt,
+    sealArtifact,
+    source,
+    jobs
+      .find((j) => j.name === "image seaweedfs")
+      .steps.find((s) => s.name === "Upload candidate seal"),
+    python,
+  );
+  validateCandidateManifest(
+    receipt.source_manifest,
+    context,
+    source.id,
+    source.run_attempt,
+    lock,
+    L,
+  );
   validateCandidateSeal(receipt.seal, context, source, lock, L);
   assertCandidatePolicyLink(receipt.seal, binding, "SEAL_POLICY_DRIFT");
   requireThat(
     binding.policy_record_sha256 === receipt.policy_record_sha256 &&
       binding.evidence_run_id === receipt.policy_evidence_run_id &&
-      isDeepStrictEqual(binding.files, receipt.policy_files),
+      isDeepStrictEqual(binding.files, receipt.source_manifest.policy_files),
     "POLICY_BINDING_DRIFT",
   );
 }
@@ -2606,7 +2703,7 @@ export async function reconcileWireArtifacts(input, readRaw, work, python = "pyt
   validateCandidatePolicy(binding, lock, L, context);
   const order = { source: 0, seal: 1, ci: 2, walking: 3, "outcome-ci": 4, "outcome-walking": 5 };
   const rows = [];
-  let source, seal, C, R;
+  let source, seal, sealRawHash, C, R;
   try {
     for (const t of [...transfers].sort(
       (a, b) => order[a.role] - order[b.role] || a.artifact.id - b.artifact.id,
@@ -2665,6 +2762,7 @@ export async function reconcileWireArtifacts(input, readRaw, work, python = "pyt
         // disk while independently reading the Walking copy.
       } else if (t.role === "seal") {
         seal = await jsonFile(path.join(dir, "seal.json"));
+        sealRawHash = { artifact_id: a.id, digest: measured, bytes: raw.length };
         validateCandidateSeal(seal, context, runs.source, lock, L);
         assertCandidatePolicyLink(seal, binding);
         const sourceArtifact = transfers.find((x) => x.role === "source").artifact;
@@ -2683,6 +2781,12 @@ export async function reconcileWireArtifacts(input, readRaw, work, python = "pyt
         assertCandidatePolicyLink(r, binding);
         const m = source.manifest;
         requireThat(
+          r.seal_proof.artifact_id === sealRawHash.artifact_id &&
+            r.seal_proof.digest === sealRawHash.digest &&
+            r.seal_proof.bytes === sealRawHash.bytes,
+          "WIRE_RECEIPT_SEAL_PROOF_DRIFT",
+        );
+        requireThat(
           r.K === m.K &&
             r.L === L &&
             r.C === C &&
@@ -2697,7 +2801,8 @@ export async function reconcileWireArtifacts(input, readRaw, work, python = "pyt
             r.archive_sha256 === m.archive_sha256 &&
             r.archive_bytes === m.archive_bytes &&
             r.inner_sha256 === m.files["image.tar.xz"] &&
-            isDeepStrictEqual(r.policy_files, binding.files),
+            isDeepStrictEqual(r.source_manifest, m) &&
+            isDeepStrictEqual(r.source_manifest.policy_files, binding.files),
           "WIRE_RECEIPT_SOURCE_DRIFT",
         );
         row.receipt_sha256 = await fileDigest(path.join(dir, "admission.json"));
@@ -2958,6 +3063,7 @@ export async function verifyPromotedContents(
   expectedReceiptHash,
   receiptOnly = false,
   env = process.env,
+  python = "python3",
 ) {
   requireThat(
     sha256(await readFile(path.join(dir, "admission.json"))) === expectedReceiptHash,
@@ -2969,7 +3075,7 @@ export async function verifyPromotedContents(
       receipt.native_attempt === id(env.GITHUB_RUN_ATTEMPT),
     "PROMOTED_ATTEMPT_DRIFT",
   );
-  await fresh(receipt);
+  await fresh(receipt, python);
   if (receiptOnly) return receipt;
   const manifest = await jsonFile(path.join(dir, "candidate-manifest.json"));
   requireThat(
@@ -5467,7 +5573,7 @@ async function produce(image, destination) {
     files,
     policy_files: policyFiles,
   };
-  const text = JSON.stringify(manifest, null, 2) + "\n";
+  const text = JSON.stringify(manifest) + "\n";
   reportFileBytes["candidate-manifest.json"] = Buffer.byteLength(text);
   const C = await fileBytes(path.join(folder, "image.tar.xz"));
   requireThat(compression.compressed_bytes === C, "TRANSFER_MEASUREMENT_INVALID");

@@ -36,6 +36,7 @@ jobs:
       - name: Require independently verified default-branch source policy
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          PC100_METADATA_TOKEN: ${{ github.token }}
         run: node tools/test/load-qualified-storage.mjs prepare-producer
 
   dependencies:
@@ -187,6 +188,7 @@ jobs:
         if: matrix.service == 'seaweedfs'
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          PC100_METADATA_TOKEN: ${{ github.token }}
         run: node tools/test/load-qualified-storage.mjs prepare-producer
 
       - name: Build image
@@ -235,6 +237,7 @@ jobs:
         if: matrix.service == 'seaweedfs' && github.event_name == 'pull_request'
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          PC100_METADATA_TOKEN: ${{ github.token }}
         run: node tools/test/load-qualified-storage.mjs produce 'editagent-seaweedfs:${{ github.sha }}' .local/seaweedfs-transfer/bundle
       - name: Bounded RSA JWK and Brotli controls
         if: matrix.service == 'seaweedfs' && github.event_name == 'pull_request'
@@ -254,6 +257,7 @@ jobs:
         uses: ./.github/actions/pc100-bounded-artifact
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          PC100_METADATA_TOKEN: ${{ github.token }}
         with:
           operation: upload
           role: source
@@ -262,12 +266,14 @@ jobs:
         if: matrix.service == 'seaweedfs' && github.event_name == 'pull_request'
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          PC100_METADATA_TOKEN: ${{ github.token }}
         run: node tools/test/load-qualified-storage.mjs seal '${{ steps.qualified-candidate.outputs.artifact-id }}' '${{ steps.qualified-candidate.outputs.artifact-digest }}'
       - name: Upload candidate seal
         if: matrix.service == 'seaweedfs' && github.event_name == 'pull_request'
         uses: ./.github/actions/pc100-bounded-artifact
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          PC100_METADATA_TOKEN: ${{ github.token }}
         with:
           operation: upload
           role: seal

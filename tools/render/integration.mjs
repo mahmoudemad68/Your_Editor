@@ -1,3 +1,4 @@
+import { withoutQualificationCredentials } from "../test/pc100-candidate-policy.mjs";
 import { createRequire } from "node:module";
 import { URL } from "node:url";
 import process from "node:process";
@@ -42,7 +43,7 @@ function launch(bin, args, options) {
   const output = createWriteStream(options.log, { flags: "w", mode: 0o600 });
   const child = spawn(bin, args, {
     cwd: options.cwd,
-    env: options.env,
+    env: withoutQualificationCredentials(options.env ?? process.env),
     shell: false,
     stdio: ["ignore", "pipe", "pipe"],
   });

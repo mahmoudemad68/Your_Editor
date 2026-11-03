@@ -60,6 +60,8 @@ import {
   validateCandidateManifest,
   validateCandidateSeal,
   validateCandidateReceipt,
+  validateReceiptOutputs,
+  authenticateReceiptSeal,
   validateCandidatePolicy,
   candidatePolicyLink,
   assertCandidatePolicyLink,
@@ -2339,14 +2341,23 @@ function pcSeal() {
     artifact_id: 11,
     artifact_digest: Q,
     artifact_bytes: 1100,
-    manifest_sha256: E,
+    manifest_sha256: sha256(JSON.stringify(pcManifest()) + "\n"),
     ...candidatePolicyLink(pcBinding()),
+  };
+}
+function sealProof(seal) {
+  const raw = storedZip({ "seal.json": JSON.stringify(seal) + "\n" });
+  return {
+    artifact_id: 12,
+    digest: `sha256:${sha256(raw)}`,
+    bytes: raw.length,
+    raw_zip_base64: raw.toString("base64"),
   };
 }
 function pcReceipt() {
   return {
-    version: 4,
-    schema: "seaweedfs-admission-v4",
+    version: 5,
+    schema: "seaweedfs-admission-v5",
     profile: PRODUCTION_PROFILE,
     K: productionProfile(candidateLock).K,
     L: lockDigest,
@@ -2360,7 +2371,8 @@ function pcReceipt() {
     artifact_digest: Q,
     artifact_bytes: 1100,
     ...candidatePolicyLink(pcBinding()),
-    policy_files: pcManifest().policy_files,
+    source_manifest: pcManifest(),
+    seal_proof: sealProof(pcSeal()),
     seal: pcSeal(),
     image_id: Q,
     elf_sha256: E,
@@ -3200,6 +3212,13 @@ function wireArchiveFixture() {
       C,
       R,
       seal,
+      source_manifest: m,
+      seal_proof: {
+        artifact_id: 12,
+        digest: `sha256:${sha256(raws.get(12))}`,
+        bytes: raws.get(12).length,
+        raw_zip_base64: raws.get(12).toString("base64"),
+      },
       artifact_digest: seal.artifact_digest,
       artifact_bytes: seal.artifact_bytes,
       inner_sha256: m.files["image.tar.xz"],
@@ -3815,10 +3834,11 @@ test("PC100 P1 full Walking admission and raw ZIP verification works without GIT
       C,
       R,
       seal,
+      source_manifest: m,
+      seal_proof: sealProof(seal),
       artifact_digest: seal.artifact_digest,
       artifact_bytes: seal.artifact_bytes,
       inner_sha256: m.files["image.tar.xz"],
-      policy_files: files,
       ...candidatePolicyLink(binding),
     });
     const receiptBytes = JSON.stringify(receipt) + "\n",
@@ -3844,6 +3864,11 @@ test("PC100 P1 full Walking admission and raw ZIP verification works without GIT
         ...f.inventory[0].artifact,
         digest: seal.artifact_digest,
         size_in_bytes: sourceRaw.length,
+      },
+      sealArtifact = {
+        ...f.inventory[1].artifact,
+        digest: receipt.seal_proof.digest,
+        size_in_bytes: receipt.seal_proof.bytes,
       },
       promotedArtifact = {
         ...f.inventory[3].artifact,
@@ -3874,6 +3899,7 @@ test("PC100 P1 full Walking admission and raw ZIP verification works without GIT
         Object.entries(admission.rows).map(([p, v]) => [p.split("?")[0], v]),
       ),
       sourceArtifact,
+      sealArtifact,
       promotedArtifact,
       prepared: [
         {
@@ -3908,14 +3934,26 @@ test("PC100 P1 full Walking admission and raw ZIP verification works without GIT
  delete process.env.GITHUB_TOKEN;delete process.env.GH_TOKEN;
  Object.assign(process.env,{GITHUB_ACTIONS:'true',GITHUB_WORKFLOW:'Walking skeleton E2E',GITHUB_EVENT_NAME:'pull_request',GITHUB_EVENT_PATH:path.resolve('event.json'),GITHUB_RUN_ID:'30',GITHUB_RUN_ATTEMPT:'1',GITHUB_SHA:${JSON.stringify(M)},GITHUB_REF:'refs/pull/100/merge',GITHUB_REPOSITORY:'mahmoudemad68/Your_Editor'});
  globalThis.fetch=async(url,opts)=>{assert.equal(opts.headers.Authorization,undefined);const p=new URL(url).pathname.split('/Your_Editor/')[1];calls.push(p);let data;
- if(Object.hasOwn(f.extra,p))data=f.extra[p];else if(p==='actions/runs/30')data=f.native;else if(p==='check-suites/77')data=f.suite;else if(p==='pulls/100')data=f.pr;else if(p==='issues/100/comments')data=f.comments;else if(p==='actions/workflows/374068707/runs')data={workflow_runs:[f.source]};else if(p==='actions/runs/10')data=f.source;else if(p==='actions/runs/10/attempts/1/jobs')data={jobs:f.jobs};else if(p==='check-runs/99')data=f.check;else if(p==='actions/artifacts/11')data=f.sourceArtifact;else if(p==='actions/artifacts/31')data=f.promotedArtifact;else if(p==='actions/runs/30/attempts/1/jobs')data={jobs:f.prepared};else return new Response('{}',{status:404});
+ if(Object.hasOwn(f.extra,p))data=f.extra[p];else if(p==='actions/runs/30')data=f.native;else if(p==='check-suites/77')data=f.suite;else if(p==='pulls/100')data=f.pr;else if(p==='issues/100/comments')data=f.comments;else if(p==='actions/workflows/374068707/runs')data={workflow_runs:[f.source]};else if(p==='actions/runs/10')data=f.source;else if(p==='actions/runs/10/attempts/1/jobs')data={jobs:f.jobs};else if(p==='check-runs/99')data=f.check;else if(p==='actions/artifacts/11')data=f.sourceArtifact;else if(p==='actions/artifacts/12')data=f.sealArtifact;else if(p==='actions/artifacts/31')data=f.promotedArtifact;else if(p==='actions/runs/30/attempts/1/jobs')data={jobs:f.prepared};else return new Response('{}',{status:404});
  return new Response(JSON.stringify(data),{status:200,headers:{'x-github-api-version-selected':opts.headers['X-GitHub-Api-Version']}});};
  const loader=await import('./tools/test/load-qualified-storage.mjs'),adapter=await import(pathToFileURL(${JSON.stringify(adapterFile)}));
  const plan=adapter.artifactPlan({operation:'download',role:'walking','artifact-id':'31','artifact-digest':f.promotedArtifact.digest,'artifact-bytes':String(f.promotedArtifact.size_in_bytes)},process.env);
  const admission=await loader.authorizeArtifactAdapter(plan);assert.equal(admission.run_id,30);
  const sdk=adapter.officialInputs(plan,admission,'/scratch',{ACTIONS_RUNTIME_TOKEN:'synthetic-no-remote-use',ACTIONS_RESULTS_URL:'https://results-receiver.actions.githubusercontent.com/'});assert.equal(Object.hasOwn(sdk,'github-token'),false);
  const raw=fs.readFileSync('promoted.zip'),out=path.resolve('unpacked');await loader.unpackVerifiedZip(raw,f.promotedArtifact.digest,out,[...plan.members],plan.cap,process.env.TEST_PYTHON,true);
- const expected=${JSON.stringify(sha256(receiptBytes))};const verified=await loader.verifyPromotedContents(out,expected);assert.equal(verified.native_run_id,30);
+ const expected=${JSON.stringify(sha256(receiptBytes))};const verified=await loader.verifyPromotedContents(out,expected,false,process.env,process.env.TEST_PYTHON);assert.equal(verified.native_run_id,30);
+ const originalReceipt=JSON.parse(fs.readFileSync(path.join(out,'admission.json')));
+ for(const field of ['image_id','elf_sha256','diff_ids','inner_sha256','archive_sha256','archive_bytes']) {
+  const changed=structuredClone(originalReceipt),m=changed.source_manifest;
+  if(field==='image_id')changed.image_id=m.image_id='sha256:'+'1'.repeat(64);
+  if(field==='elf_sha256')changed.elf_sha256=m.elf_sha256='1'.repeat(64);
+  if(field==='diff_ids')changed.diff_ids=m.diff_ids=Array(6).fill('sha256:'+'1'.repeat(64));
+  if(field==='inner_sha256')changed.inner_sha256=m.files['image.tar.xz']='1'.repeat(64);
+  if(field==='archive_sha256')changed.archive_sha256=m.archive_sha256='1'.repeat(64);
+  if(field==='archive_bytes')changed.archive_bytes=m.archive_bytes=1234;
+  changed.seal.manifest_sha256=loader.sha256(JSON.stringify(m)+'\\n');
+  await assert.rejects(()=>loader.fresh(changed,process.env.TEST_PYTHON),/RECEIPT_SEAL_AUTHENTICITY_DRIFT/);
+ }
  const goodName=f.promotedArtifact.name;f.promotedArtifact.name='qualified-storage-30-2';await assert.rejects(()=>loader.authorizeArtifactAdapter(plan),/ADAPTER_SAME_RUN_ARTIFACT_DRIFT/);f.promotedArtifact.name=goodName;
  await assert.rejects(()=>loader.authorizeArtifactAdapter({...plan,id:999}),/GITHUB_EVIDENCE_UNAVAILABLE/);
  await assert.rejects(()=>loader.verifyPromotedContents(out,'0'.repeat(64)),/PROMOTED_RECEIPT_DRIFT/);
@@ -4349,4 +4387,75 @@ test("PC100 shell REST demands identity encoding for physical ZIP byte accountin
   );
   const request = f.calls.find((c) => c.url.endsWith("/zip"));
   assert.equal(request.options.headers["Accept-Encoding"], "identity");
+});
+
+for (const [name, edit] of [
+  ["wrong artifact", (a) => a.id++],
+  ["wrong run", (a) => a.workflow_run.id++],
+  ["wrong digest", (a) => (a.digest = `sha256:${"1".repeat(64)}`)],
+  ["wrong size", (a) => a.size_in_bytes++],
+  ["expired", (a) => (a.expired = true)],
+  ["wrong attempt window", (a) => (a.created_at = "2000-01-01T00:00:00Z")],
+  ["wrong seal name", (a) => (a.name = "seaweedfs-seal-10-2")],
+])
+  test(`PC100 authenticated receipt seal rejects ${name}`, async () => {
+    const r = pcReceipt(),
+      f = restFixture();
+    const a = {
+      ...f.artifact,
+      id: 12,
+      digest: r.seal_proof.digest,
+      size_in_bytes: r.seal_proof.bytes,
+      name: "seaweedfs-seal-10-1",
+    };
+    edit(a);
+    await assert.rejects(() => authenticateReceiptSeal(r, a, f.source, f.step, python));
+  });
+test("PC100 receipt authenticates actual seal ZIP and keeps original 16KiB cap", async () => {
+  const r = pcReceipt(),
+    f = restFixture(),
+    a = {
+      ...f.artifact,
+      id: 12,
+      digest: r.seal_proof.digest,
+      size_in_bytes: r.seal_proof.bytes,
+      name: "seaweedfs-seal-10-1",
+    };
+  await mkdir(path.join(root, ".local/issue99"), { recursive: true });
+  await authenticateReceiptSeal(r, a, f.source, f.step, python);
+  assert.ok(Buffer.byteLength(JSON.stringify(r) + "\n") <= 16384);
+  for (const edit of [
+    (r) => delete r.seal_proof,
+    (r) => (r.seal_proof.raw_zip_base64 += "="),
+    (r) => r.seal_proof.bytes++,
+    (r) => (r.source_manifest.image_id = Q.replace("f", "1")),
+    (r) => (r.version = 4),
+  ]) {
+    const bad = clone(r);
+    edit(bad);
+    assert.throws(() => validateCandidateReceipt(bad, context, 20, 1));
+  }
+  const forged = clone(r);
+  forged.seal.manifest_sha256 = "1".repeat(64);
+  assert.throws(() => validateReceiptOutputs(forged), /RECEIPT_MANIFEST_DIGEST_DRIFT/);
+});
+test("PC100 qualification metadata is explicitly scoped and scrubbed from app/browser children", async () => {
+  const workflow = await readFile(path.join(root, ".github/workflows/ci.yml"), "utf8");
+  for (const step of [
+    "Real storage migration and isolated recovery",
+    "Independent candidate SeaweedFS browser to export",
+  ]) {
+    const section = workflow.split(`- name: ${step}`)[1].split("      - ")[0];
+    assert.match(section, /PC100_METADATA_TOKEN: \$\{\{ github.token \}\}/);
+  }
+  assert.match(
+    await readFile(path.join(root, "tools/test/run-walking-skeleton.mjs"), "utf8"),
+    /\.\.\.withoutQualificationCredentials\(env\)/,
+  );
+  for (const file of ["integration", "agent-loop-proof", "caption-visual-proof"]) {
+    assert.match(
+      await readFile(path.join(root, `tools/render/${file}.mjs`), "utf8"),
+      /env: withoutQualificationCredentials\(/,
+    );
+  }
 });

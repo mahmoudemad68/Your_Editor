@@ -1,3 +1,4 @@
+import { withoutQualificationCredentials } from "../test/pc100-candidate-policy.mjs";
 /** Actual packaged replay-worker -> existing API/Tool SDK/render -> browser/MP4.
  * Model decisions are a declared deterministic fixture, never live LLM proof. */
 import { createRequire } from "node:module";
@@ -319,6 +320,7 @@ export async function runAgentLoopProof({
     phase = "actual-browser-reload-playback-download";
     const { chromium } = webRequire("@playwright/test");
     browser = await chromium.launch({
+      env: withoutQualificationCredentials(process.env),
       executablePath: process.env.PLAYWRIGHT_CHROME_EXECUTABLE ?? "/opt/google/chrome/chrome",
       args: ["--no-sandbox"],
     });
