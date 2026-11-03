@@ -15,6 +15,10 @@ import {
   REGISTRY,
   LOCK,
   CANDIDATE_SCHEMA,
+  verifyCandidateEvent,
+  validateEnforcementRules,
+  REQUIRED_WORKFLOW,
+  verifyRequiredAdmission,
   withoutQualificationCredentials,
 } from "../../tools/test/pc100-candidate-policy.mjs";
 import { canonical, hash } from "../../tools/test/pc100-source-verifier.mjs";
@@ -382,4 +386,161 @@ test("candidate metadata credentials cannot enter app/browser child environment"
   );
   assert.equal(child.status, 0, child.stderr);
   assert.equal(env.DATABASE_URL, "app-db");
+});
+
+// Independent QA register A-1..A-7. Synthetic metadata confers no authority.
+for (const [name, edit] of [
+  [
+    "sibling PR association",
+    (f) => f.upstream.pull_requests.unshift({ ...f.upstream.pull_requests[0], number: 101 }),
+  ],
+  ["wrong source branch", (f) => (f.upstream.head_branch = "attacker-sibling")],
+  ["wrong base branch", (f) => (f.upstream.pull_requests[0].base.ref = "release")],
+  ["fork upstream", (f) => f.upstream.head_repository.id++],
+])
+  test(`A-1 genuine preflight rejects ${name}`, async () => {
+    const f = candidateFixture();
+    edit(f);
+    await assert.rejects(() =>
+      verifyCandidateEvent({ workflow_run: { id: 130 } }, f.context.B, f.read),
+    );
+  });
+test("A-2 every exported per-file SHA256 must authenticate actual Git bytes", async () => {
+  const f = candidateFixture();
+  f.entry.files["infra/seaweedfs/docker-entrypoint.sh"].sha256 = "0".repeat(64);
+  refreshRegistry(f);
+  assert.throws(() => evaluateCandidatePolicy(f.snapshot), /CANDIDATE_SOURCE_SHA256_MISMATCH/);
+});
+for (const key of [
+  "scope",
+  "release_authorized",
+  "decision",
+  "candidate_admission_authorized",
+  "repository_id",
+  "__proto__",
+])
+  test(`A-3 context rejects injected ${key}`, () => {
+    const f = candidateFixture();
+    Object.defineProperty(f.snapshot.context, key, { value: true, enumerable: true });
+    assert.throws(() => evaluateCandidatePolicy(f.snapshot), /CANDIDATE_FIELDS_REJECTED/);
+  });
+test("A-4 duplicate lock keys fail despite recomputed digest", () => {
+  const f = candidateFixture(),
+    text = f.snapshot.lockBytes
+      .toString()
+      .replace('"go_version":"go1.26.10"', '"go_version":"go1.20.0","go_version":"go1.26.10"');
+  assert.notEqual(text, f.snapshot.lockBytes.toString());
+  const bytes = Buffer.from(text);
+  f.snapshot.lockBytes = bytes;
+  f.entry.L = hash(bytes);
+  reviewedChange(f, LOCK, bytes);
+  assert.throws(() => evaluateCandidatePolicy(f.snapshot), /CANDIDATE_JSON_NONCANONICAL/);
+});
+test("A-5 stale merge evidence does not poison current evidence selection", async () => {
+  const f = candidateFixture(),
+    key = `actions/workflows/80/runs?event=workflow_run&head_sha=${f.context.B}&per_page=100&page=1`,
+    old = { ...f.run, id: 122 };
+  f.rows[key] = { total_count: 2, workflow_runs: [old, f.run] };
+  f.rows["actions/runs/122/attempts/1/jobs?per_page=100&page=1"] = {
+    total_count: 1,
+    jobs: [
+      {
+        ...f.rows["actions/runs/123/attempts/1/jobs?per_page=100&page=1"].jobs[0],
+        id: 127,
+        run_id: 122,
+        check_run_url: "https://api.github.com/repos/mahmoudemad68/Your_Editor/check-runs/121",
+      },
+    ],
+  };
+  f.rows["check-runs/121"] = { ...f.check, id: 121 };
+  f.rows["check-runs/121/annotations?per_page=100&page=1"] = [
+    {
+      title: "PC100 candidate admission",
+      message: canonical({ ...f.decision, M: "9".repeat(40) }),
+    },
+  ];
+  assert.equal((await observeCandidateAdmission(f.context, f.read)).evidence_run_id, 123);
+});
+for (const rules of [
+  [],
+  [{ type: "required_status_checks", parameters: { required_status_checks: [{ context: "ci" }] } }],
+  [
+    {
+      type: "workflows",
+      parameters: {
+        workflows: [{ repository_id: 1, path: REQUIRED_WORKFLOW, ref: "refs/heads/main" }],
+      },
+    },
+  ],
+])
+  test("A-6 PR-controlled required statuses cannot replace a protected required workflow", () =>
+    assert.throws(
+      () => validateEnforcementRules(rules, "b".repeat(40)),
+      /CANDIDATE_ENFORCEMENT_NOT_INSTALLED/,
+    ));
+for (const edit of [
+  (f) => (f.rows["check-runs/143"].head_sha = f.context.B),
+  (f) => f.rows["check-runs/143"].app.id++,
+  (f) => (f.rows["check-runs/143"].conclusion = "failure"),
+  (f) => (f.rows["rules/branches/main"] = []),
+])
+  test("A-6 exact H independent required check cannot be forged or omitted", async () => {
+    const f = candidateFixture();
+    edit(f);
+    await assert.rejects(() => observeCandidateAdmission(f.context, f.read));
+  });
+test("A-6 honest exact H required check and protected rules are both necessary", async () => {
+  const f = candidateFixture(),
+    result = await observeCandidateAdmission(f.context, f.read);
+  assert.equal(result.enforcement.check, 143);
+  assert.equal(result.enforcement.run, 140);
+});
+test("A-6 untrusted PR workflow source cannot execute as required trusted verifier", async () => {
+  const f = candidateFixture();
+  await assert.rejects(
+    () =>
+      verifyRequiredAdmission(
+        { pull_request: f.snapshot.pr },
+        f.context.B,
+        {
+          GITHUB_EVENT_NAME: "pull_request",
+          GITHUB_WORKFLOW_SHA: f.context.H,
+          GITHUB_REPOSITORY: "mahmoudemad68/Your_Editor",
+        },
+        f.read,
+      ),
+    /CANDIDATE_REQUIRED_WORKFLOW_UNTRUSTED/,
+  );
+});
+test("A-7 strict child allowlist excludes credentials and Actions/shell control files", () => {
+  const bad = Object.fromEntries(
+    [
+      "GITHUB_ENV",
+      "GITHUB_PATH",
+      "GITHUB_OUTPUT",
+      "GITHUB_STATE",
+      "GITHUB_STEP_SUMMARY",
+      "BASH_ENV",
+      "ENV",
+      "GITHUB_PAT",
+      "NPM_TOKEN",
+      "NODE_OPTIONS",
+      "NODE_PATH",
+      "LD_PRELOAD",
+      "PYTHONPATH",
+      "ARBITRARY_SECRET",
+    ].map((k) => [k, "private"]),
+  );
+  const env = withoutQualificationCredentials({
+    ...bad,
+    PATH: "runtime",
+    HOME: "home",
+    DATABASE_URL: "app-db",
+    API_BASE_URL: "http://localhost",
+    GRADUATION_DEMO_URL: "http://localhost",
+  });
+  for (const k of Object.keys(bad)) assert.equal(Object.hasOwn(env, k), false, k);
+  assert.equal(env.API_BASE_URL, "http://localhost");
+  assert.equal(env.DATABASE_URL, "app-db");
+  assert.equal(env.PATH, "runtime");
 });

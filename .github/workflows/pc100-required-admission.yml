@@ -1,0 +1,32 @@
+name: PC100 independently enforced admission
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  exact-head:
+    name: pc100-independent-candidate-admission
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout protected verification source only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: "24"
+      - name: Require independently installed exact-HEAD enforcement
+        if: github.event.pull_request.number == 100
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TRUSTED_WORKFLOW_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$TRUSTED_WORKFLOW_SHA"
+          test "$GITHUB_WORKFLOW_SHA" = "$TRUSTED_WORKFLOW_SHA"
+          node tools/test/pc100-candidate-policy.mjs required

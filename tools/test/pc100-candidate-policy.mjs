@@ -15,6 +15,8 @@ import {
   hash,
   treeEntries,
   completePages,
+  validateUpstreamAssociation,
+  selectUpstreamRun,
   REPO,
   REPOSITORY_ID,
   INTEGRATION,
@@ -23,6 +25,8 @@ import {
 export const REGISTRY = "infra/seaweedfs/candidate-policy.json";
 export const ENGINE = "tools/test/pc100-candidate-policy.mjs";
 export const CANDIDATE_WORKFLOW = ".github/workflows/pc100-candidate-admission.yml";
+export const REQUIRED_WORKFLOW = ".github/workflows/pc100-required-admission.yml";
+export const REQUIRED_JOB = "pc100-independent-candidate-admission";
 export const CANDIDATE_JOB = "PC100 candidate source admission";
 export const CANDIDATE_TITLE = "PC100 candidate admission";
 export const CANDIDATE_SCHEMA = "pc100-security-candidate-admission-v1";
@@ -38,7 +42,13 @@ export const SCANNERS = Object.freeze([
   ".gitleaksignore",
   ".dockerignore",
 ]);
-const CONTROL = [REGISTRY, ENGINE, CANDIDATE_WORKFLOW, "tools/test/pc100-source-verifier.mjs"];
+const CONTROL = [
+  REGISTRY,
+  ENGINE,
+  CANDIDATE_WORKFLOW,
+  REQUIRED_WORKFLOW,
+  "tools/test/pc100-source-verifier.mjs",
+];
 const fail = (code) => {
   throw new Error(code);
 };
@@ -121,7 +131,9 @@ export function readPolicyJSON(bytes) {
   // and ambiguous encodings while allowing normal repository formatting.
   const value = JSON.parse(text);
   need(
-    (text === canonical(value) + "\n" || text === JSON.stringify(value, null, 2) + "\n") &&
+    (text === canonical(value) + "\n" ||
+      text === JSON.stringify(value) + "\n" ||
+      text === JSON.stringify(value, null, 2) + "\n") &&
       !(bytes[0] === 239 && bytes[1] === 187 && bytes[2] === 191),
     "CANDIDATE_JSON_NONCANONICAL",
   );
@@ -235,6 +247,7 @@ export function evaluateCandidatePolicy(s) {
     reviewedTree,
     lockBytes,
   } = s;
+  keys(c, ["H", "B", "M", "TH", "TM"]);
   need(
     c && ["H", "B", "M", "TH", "TM"].every((k) => sha(c[k])) && c.TH === c.TM,
     "CANDIDATE_IDENTITY_DRIFT",
@@ -295,6 +308,7 @@ export function evaluateCandidatePolicy(s) {
   const entry = entries[0];
   keys(entry, [
     "reviewed_source",
+    "expected_elf_sha256",
     "inventory_sha256",
     "files",
     "K",
@@ -305,7 +319,8 @@ export function evaluateCandidatePolicy(s) {
   ]);
   keys(entry.reviewed_source, ["commit", "tree"]);
   need(
-    sha(entry.reviewed_source.commit) &&
+    digest(entry.expected_elf_sha256) &&
+      sha(entry.reviewed_source.commit) &&
       sha(entry.reviewed_source.tree) &&
       digest(entry.inventory_sha256) &&
       digest(entry.K) &&
@@ -338,7 +353,22 @@ export function evaluateCandidatePolicy(s) {
       "CANDIDATE_SCANNER_POLICY_DRIFT",
     );
   need(entry.files[LOCK]?.sha256 === hash(lockBytes), "CANDIDATE_LOCK_DRIFT");
-  validatePinnedLock(JSON.parse(lockBytes.toString("utf8")), entry, lockBytes);
+  validatePinnedLock(readPolicyJSON(lockBytes), entry, lockBytes);
+  need(s.sourceBytes && typeof s.sourceBytes === "object", "CANDIDATE_SOURCE_BYTES_MISSING");
+  let total = 0;
+  for (const [p, e] of Object.entries(entry.files)) {
+    const bytes = s.sourceBytes[p];
+    need(Buffer.isBuffer(bytes) && bytes.length === e.bytes, "CANDIDATE_SOURCE_BYTES_MISSING");
+    total += bytes.length;
+    need(total <= 128 * 1024 ** 2, "CANDIDATE_SOURCE_BYTES_LIMIT");
+    need(
+      hash(bytes) === e.sha256 &&
+        createHash("sha1")
+          .update(Buffer.concat([Buffer.from(`blob ${bytes.length}\0`), bytes]))
+          .digest("hex") === e.git_blob_sha1,
+      "CANDIDATE_SOURCE_SHA256_MISMATCH",
+    );
+  }
   const reg = base.get(REGISTRY),
     inventory = {
       ...entry.files,
@@ -364,6 +394,7 @@ export function evaluateCandidatePolicy(s) {
       profile: CANDIDATE_PROFILE,
       K: entry.K,
       L: entry.L,
+      expected_elf_sha256: entry.expected_elf_sha256,
       policy_sha256: hash(canonical(entry)),
       registry_sha256: hash(registryBytes),
       inventory_sha256: hash(canonical(inventory)),
@@ -372,6 +403,58 @@ export function evaluateCandidatePolicy(s) {
       trusted_workflow_sha: c.B,
     },
   };
+}
+export function validateEnforcementRules(rules, B) {
+  need(Array.isArray(rules), "CANDIDATE_ENFORCEMENT_NOT_INSTALLED");
+  const matching = rules.filter(
+    (r) =>
+      r.type === "workflows" &&
+      r.parameters?.workflows?.some(
+        (w) =>
+          w.repository_id === REPOSITORY_ID &&
+          w.path === REQUIRED_WORKFLOW &&
+          (w.ref === B || w.ref === "refs/heads/main"),
+      ),
+  );
+  need(matching.length === 1, "CANDIDATE_ENFORCEMENT_NOT_INSTALLED");
+  return true;
+}
+export async function verifyRequiredAdmission(event, trustedSHA, env = process.env, read = api) {
+  need(
+    env.GITHUB_EVENT_NAME === "pull_request" &&
+      env.GITHUB_WORKFLOW_SHA === trustedSHA &&
+      env.GITHUB_REPOSITORY === REPO &&
+      sha(trustedSHA),
+    "CANDIDATE_REQUIRED_WORKFLOW_UNTRUSTED",
+  );
+  need(
+    event.pull_request?.number === 100 && event.pull_request.head?.repo?.id === REPOSITORY_ID,
+    "CANDIDATE_EVENT_REJECTED",
+  );
+  const src = await snapshot(undefined, read);
+  need(
+    src.context.B === trustedSHA &&
+      src.context.H === event.pull_request.head.sha &&
+      src.context.B === event.pull_request.base.sha &&
+      src.context.M === env.GITHUB_SHA,
+    "CANDIDATE_IDENTITY_DRIFT",
+  );
+  const run = await read(`actions/runs/${Number(env.GITHUB_RUN_ID)}`),
+    workflow = await read("actions/workflows/pc100-required-admission.yml");
+  validateUpstreamAssociation({ ...run, path: INTEGRATION }, event.pull_request);
+  need(
+    run.path === REQUIRED_WORKFLOW &&
+      run.workflow_id === workflow.id &&
+      workflow.path === REQUIRED_WORKFLOW &&
+      run.id === Number(env.GITHUB_RUN_ID) &&
+      run.run_attempt === 1 &&
+      Number(env.GITHUB_RUN_ATTEMPT) === 1,
+    "CANDIDATE_REQUIRED_WORKFLOW_UNTRUSTED",
+  );
+  const selected = await selectUpstreamRun(read, event.pull_request);
+  await preflight(read, selected.id, src.context);
+  await live(read, src.context);
+  return { ...src.decision, upstream_run: selected.id, upstream_attempt: 1 };
 }
 async function snapshot(context, read) {
   const [main, pr] = await Promise.all([read("branches/main"), read("pulls/100")]);
@@ -395,6 +478,7 @@ async function snapshot(context, read) {
     CONTROL.every((p) => entries.has(p)),
     "CANDIDATE_POLICY_NOT_INSTALLED",
   );
+  validateEnforcementRules(await read("rules/branches/main"), c.B);
   const registryBytes = await authenticatedBlob(read, entries.get(REGISTRY)),
     registry = readPolicyJSON(registryBytes);
   need(
@@ -422,12 +506,32 @@ async function snapshot(context, read) {
   const reviewed = await read(`git/commits/${entry.reviewed_source.commit}`),
     reviewedTree = await read(`git/trees/${reviewed.tree.sha}?recursive=1`);
   const lockBytes = await authenticatedBlob(read, treeEntries(targetTree).get(LOCK));
-  const full = { ...c, TH: head.tree.sha, TM: merge.tree.sha };
+  const sourceBytes = Object.create(null),
+    sourceEntries = Object.entries(entry.files);
+  need(
+    sourceEntries.reduce((n, [, e]) => n + e.bytes, 0) <= 128 * 1024 ** 2,
+    "CANDIDATE_SOURCE_BYTES_LIMIT",
+  );
+  let cursor = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(8, sourceEntries.length) }, async () => {
+      while (cursor < sourceEntries.length) {
+        const [p, e] = sourceEntries[cursor++];
+        sourceBytes[p] = await authenticatedBlob(
+          read,
+          { type: "blob", mode: e.mode, sha: e.git_blob_sha1, size: e.bytes },
+          16 * 1024 ** 2,
+        );
+      }
+    }),
+  );
+  const full = { H: c.H, B: c.B, M: c.M, TH: head.tree.sha, TM: merge.tree.sha };
   if (context) need(canonical(full) === canonical(context), "CANDIDATE_IDENTITY_DRIFT");
   return {
     context: full,
     ...evaluateCandidatePolicy({
       context: full,
+      sourceBytes,
       main,
       pr,
       head,
@@ -457,6 +561,7 @@ const requiredKeys = [
   "TH",
   "TM",
   "profile",
+  "expected_elf_sha256",
   "K",
   "L",
   "policy_sha256",
@@ -510,10 +615,14 @@ export function verifyCandidateRecord(record, expected, run, check, workflow) {
   };
 }
 async function preflight(read, idValue, context) {
+  const pr = await read("pulls/100");
   const [run, workflow] = await Promise.all([
     read(`actions/runs/${idValue}`),
     read("actions/workflows/pc100-artifact-integration.yml"),
   ]);
+  validateUpstreamAssociation(run, pr);
+  const selected = await selectUpstreamRun(read, pr);
+  need(selected.id === run.id, "CANDIDATE_STALE_UPSTREAM");
   need(
     run.id === idValue &&
       run.workflow_id === workflow.id &&
@@ -546,7 +655,66 @@ async function live(read, c) {
     "CANDIDATE_LIVE_DRIFT",
   );
 }
+export async function verifyIndependentHeadCheck(read, context, expectedRecord) {
+  const workflow = await read("actions/workflows/pc100-required-admission.yml"),
+    pr = await read("pulls/100");
+  need(workflow.path === REQUIRED_WORKFLOW && id(workflow.id), "CANDIDATE_REQUIRED_CHECK_MISSING");
+  const runs = await completePages(
+      read,
+      `actions/workflows/${workflow.id}/runs?event=pull_request&head_sha=${context.H}`,
+      "workflow_runs",
+    ),
+    matches = [];
+  for (const run of runs) {
+    if (run.status !== "completed" || run.conclusion !== "success") continue;
+    validateUpstreamAssociation({ ...run, path: INTEGRATION }, pr);
+    need(
+      run.head_sha === context.H &&
+        run.workflow_id === workflow.id &&
+        run.path === REQUIRED_WORKFLOW &&
+        run.run_attempt === 1,
+      "CANDIDATE_REQUIRED_CHECK_DRIFT",
+    );
+    const jobs = await completePages(read, `actions/runs/${run.id}/attempts/1/jobs`, "jobs");
+    for (const job of jobs.filter((j) => j.name === REQUIRED_JOB)) {
+      need(
+        job.run_id === run.id &&
+          job.run_attempt === 1 &&
+          job.status === "completed" &&
+          job.conclusion === "success" &&
+          /^https:\/\/api.github.com\/repos\/mahmoudemad68\/Your_Editor\/check-runs\/[1-9][0-9]*$/.test(
+            job.check_run_url,
+          ),
+        "CANDIDATE_REQUIRED_CHECK_DRIFT",
+      );
+      const cid = job.check_run_url.split("/").at(-1),
+        check = await read(`check-runs/${cid}`),
+        annotations = await completePages(read, `check-runs/${cid}/annotations`);
+      need(
+        String(check.id) === cid &&
+          check.name === REQUIRED_JOB &&
+          check.app?.id === 15368 &&
+          check.head_sha === context.H &&
+          check.check_suite?.id === run.check_suite_id &&
+          check.status === "completed" &&
+          check.conclusion === "success",
+        "CANDIDATE_REQUIRED_CHECK_DRIFT",
+      );
+      const records = annotations.filter((a) => a.title === CANDIDATE_TITLE);
+      need(records.length === 1, "CANDIDATE_REQUIRED_CHECK_AMBIGUOUS");
+      const record = JSON.parse(records[0].message);
+      if (record.M !== context.M || record.B !== context.B) continue;
+      need(canonical(record) === canonical(expectedRecord), "CANDIDATE_REQUIRED_CHECK_DRIFT");
+      matches.push({ run: run.id, attempt: 1, check: check.id });
+    }
+  }
+  need(matches.length === 1, "CANDIDATE_REQUIRED_CHECK_MISSING_OR_AMBIGUOUS");
+  return matches[0];
+}
 export async function observeCandidateAdmission(context, read = api) {
+  const latest = await selectUpstreamRun(read, await read("pulls/100"));
+  if (latest.status === "completed")
+    need(latest.conclusion === "success", "CANDIDATE_PREFLIGHT_REJECTED");
   const src = await snapshot(context, read),
     workflow = await read("actions/workflows/pc100-candidate-admission.yml");
   need(workflow.path === CANDIDATE_WORKFLOW && id(workflow.id), "CANDIDATE_WORKFLOW_REJECTED");
@@ -583,12 +751,20 @@ export async function observeCandidateAdmission(context, read = api) {
       const records = annotations.filter((a) => a.title === CANDIDATE_TITLE);
       need(records.length === 1, "CANDIDATE_EVIDENCE_MISSING_OR_AMBIGUOUS");
       const record = JSON.parse(records[0].message);
-      if (record.H === context.H && record.B === context.B) {
+      if (
+        record.H === context.H &&
+        record.B === context.B &&
+        record.M === context.M &&
+        record.TH === context.TH &&
+        record.TM === context.TM &&
+        record.upstream_run === latest.id
+      ) {
         const proof = verifyCandidateRecord(record, src.decision, run, check, workflow);
         await preflight(read, record.upstream_run, context);
         found.push({
           ...src.decision,
           ...proof,
+          upstream_run: record.upstream_run,
           file_inventory: src.inventory,
           files: Object.fromEntries(Object.entries(src.inventory).map(([p, e]) => [p, e.sha256])),
         });
@@ -597,8 +773,14 @@ export async function observeCandidateAdmission(context, read = api) {
   }
   need(found.length <= 1, "CANDIDATE_EVIDENCE_MISSING_OR_AMBIGUOUS");
   if (!found.length) fail("CANDIDATE_EVIDENCE_PENDING");
+  const chosen = found[0];
+  chosen.enforcement = await verifyIndependentHeadCheck(read, context, {
+    ...src.decision,
+    upstream_run: chosen.upstream_run,
+    upstream_attempt: 1,
+  });
   await live(read, context);
-  return found[0];
+  return found.sort((a, b) => b.evidence_run_id - a.evidence_run_id)[0];
 }
 export async function readCandidateAdmission(
   context,
@@ -652,14 +834,17 @@ export async function verifyCandidateEvent(event, trustedSHA, read = api) {
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
+    const required = process.argv[2] === "required";
+    need(process.argv.length <= (required ? 3 : 2), "CANDIDATE_EVENT_REJECTED");
     need(
-      process.env.GITHUB_EVENT_NAME === "workflow_run" && process.env.GITHUB_REPOSITORY === REPO,
+      (required || process.env.GITHUB_EVENT_NAME === "workflow_run") &&
+        process.env.GITHUB_REPOSITORY === REPO,
       "CANDIDATE_EVENT_REJECTED",
     );
-    const record = await verifyCandidateEvent(
-      JSON.parse(await readFile(process.env.GITHUB_EVENT_PATH, "utf8")),
-      process.env.TRUSTED_WORKFLOW_SHA,
-    );
+    const event = JSON.parse(await readFile(process.env.GITHUB_EVENT_PATH, "utf8"));
+    const record = required
+      ? await verifyRequiredAdmission(event, process.env.TRUSTED_WORKFLOW_SHA)
+      : await verifyCandidateEvent(event, process.env.TRUSTED_WORKFLOW_SHA);
     console.log(
       `::notice title=${CANDIDATE_TITLE}::${canonical(record).replaceAll("%", "%25").replaceAll("\r", "%0D").replaceAll("\n", "%0A")}`,
     );
@@ -676,12 +861,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
 // Qualification credentials belong only to the trusted storage controller.
 // Never forward them into API/web/browser child environments.
 export function withoutQualificationCredentials(env) {
-  return Object.fromEntries(
-    Object.entries(env).filter(
-      ([key]) =>
-        !/^(GITHUB_TOKEN|GH_TOKEN|PC100_METADATA_TOKEN|ACTIONS_.*|INPUT_GITHUB[-_]TOKEN)$/i.test(
-          key,
-        ),
-    ),
-  );
+  const allowed =
+    /^(PATH|PATHEXT|SYSTEMROOT|WINDIR|COMSPEC|HOME|USERPROFILE|TMP|TEMP|TMPDIR|LANG|LC_[A-Z_]+|TZ|TERM|NODE_ENV|DATABASE_URL|REDIS_URL|APP_SETTING|PORT|HOST|API_BASE_URL|GRADUATION_DEMO_URL|CAPTION_DEMO_URL|EDITAGENT_[A-Z0-9_]+|AUTH_[A-Z0-9_]+|S3_[A-Z0-9_]+|PLAYWRIGHT_[A-Z0-9_]+|NEXT_PUBLIC_[A-Z0-9_]+|WALKING_SKELETON_[A-Z0-9_]+|REMOTION_[A-Z0-9_]+|FFMPEG_[A-Z0-9_]+|FFPROBE_[A-Z0-9_]+)$/i;
+  return Object.fromEntries(Object.entries(env).filter(([key]) => allowed.test(key)));
 }

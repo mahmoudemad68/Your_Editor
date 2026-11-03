@@ -116,6 +116,42 @@ export function sourceInventory(t) {
       .map(([p, e]) => [p, { blob_sha1: e.sha, mode: e.mode }]),
   );
 }
+// Exactly one native integration run for the live PR branch is authoritative.
+export function validateUpstreamAssociation(run, pr) {
+  need(
+    run?.repository?.id === REPOSITORY_ID &&
+      run.head_repository?.id === REPOSITORY_ID &&
+      run.event === "pull_request" &&
+      run.path === INTEGRATION &&
+      run.head_sha === pr.head.sha &&
+      run.head_branch === pr.head.ref &&
+      typeof pr.head.ref === "string" &&
+      pr.head.ref.length > 0 &&
+      pr.base.ref === "main" &&
+      Array.isArray(run.pull_requests) &&
+      run.pull_requests.length === 1 &&
+      run.pull_requests[0].number === 100 &&
+      run.pull_requests[0].head.sha === pr.head.sha &&
+      run.pull_requests[0].head.ref === pr.head.ref &&
+      run.pull_requests[0].base.sha === pr.base.sha &&
+      run.pull_requests[0].base.ref === "main",
+    "POLICY_PREFLIGHT_NOT_QUALIFIED",
+  );
+}
+export async function selectUpstreamRun(read, pr) {
+  const rows = await completePages(
+    read,
+    `actions/workflows/pc100-artifact-integration.yml/runs?event=pull_request&head_sha=${pr.head.sha}`,
+    "workflow_runs",
+  );
+  const matching = rows.filter(
+    (r) => r.head_sha === pr.head.sha && r.pull_requests?.some((p) => p.number === 100),
+  );
+  for (const r of matching) validateUpstreamAssociation(r, pr);
+  need(matching.length > 0, "POLICY_EVIDENCE_PENDING");
+  matching.sort((a, b) => b.id - a.id);
+  return matching[0];
+}
 export function verifySourceSnapshot(s) {
   const { pr, main, head, merge, baselineTree, headTree, trustedTree, upstream, trustedSHA } = s;
   need(
@@ -157,6 +193,7 @@ export function verifySourceSnapshot(s) {
       baselineTree.sha === trustedTree.sha,
     "UNTRUSTED_BASELINE_REJECTED",
   );
+  validateUpstreamAssociation(upstream, pr);
   const trusted = sourceInventory(trustedTree),
     target = sourceInventory(headTree);
   need(
@@ -352,7 +389,10 @@ export async function api(
   const chunks = [];
   for await (const b of response.body) {
     count += b.length;
-    need(count <= 2 * 1024 * 1024, "POLICY_API_OVERSIZE");
+    need(
+      count <= (/^git\/blobs\/[a-f0-9]{40}$/.test(route) ? 24 * 1024 ** 2 : 2 * 1024 ** 2),
+      "POLICY_API_OVERSIZE",
+    );
     chunks.push(b);
   }
   return JSON.parse(Buffer.concat(chunks).toString("utf8"));
@@ -382,6 +422,7 @@ export async function observeTrustedEvidence(context, read = api) {
     `actions/workflows/${workflow.id}/runs?event=workflow_run&head_sha=${context.B}`,
     "workflow_runs",
   );
+  const latest = await selectUpstreamRun(read, live);
   const found = [];
   for (const run of runs) {
     need(
@@ -419,7 +460,14 @@ export async function observeTrustedEvidence(context, read = api) {
       } catch {
         fail("POLICY_ANNOTATION_INVALID");
       }
-      if (v.H === context.H && v.B === context.B) {
+      if (
+        v.H === context.H &&
+        v.B === context.B &&
+        v.M === context.M &&
+        v.TH === context.TH &&
+        v.TM === context.TM &&
+        v.upstream_run === latest.id
+      ) {
         const verified = verifyTrustedEvidence(v, run, check, context, workflow.id);
         need(
           v.inventory_sha256 === hash(canonical(trustedFiles)) &&
@@ -460,7 +508,7 @@ export async function observeTrustedEvidence(context, read = api) {
     }
     fail("POLICY_EVIDENCE_PENDING");
   }
-  const result = found[0];
+  const result = found.sort((a, b) => b.evidence.run - a.evidence.run)[0];
   need(Number.isSafeInteger(result.upstream_run) && result.upstream_run > 0, "POLICY_UPSTREAM_ID");
   const upstream = await read(`actions/runs/${result.upstream_run}`),
     integration = await read("actions/workflows/pc100-artifact-integration.yml");
@@ -481,6 +529,9 @@ export async function observeTrustedEvidence(context, read = api) {
       ),
     "POLICY_PREFLIGHT_NOT_QUALIFIED",
   );
+  validateUpstreamAssociation(upstream, live);
+  const selected = await selectUpstreamRun(read, live);
+  need(selected.id === upstream.id, "POLICY_STALE_UPSTREAM");
   const [finalMain, finalPR] = await Promise.all([read("branches/main"), read("pulls/100")]);
   need(
     finalMain.protected === true &&
@@ -564,6 +615,8 @@ export async function verifyEvent(event, trustedSHA, read = api) {
     read(`git/trees/${trusted.tree.sha}?recursive=1`),
   ]);
   const headTree = await read(`git/trees/${head.tree.sha}?recursive=1`);
+  const selected = await selectUpstreamRun(read, pr);
+  need(selected.id === upstream.id, "POLICY_STALE_UPSTREAM");
   const decision = verifySourceSnapshot({
     pr,
     main,

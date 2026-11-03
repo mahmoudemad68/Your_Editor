@@ -37,8 +37,8 @@ function fixture() {
       draft: true,
       merged: false,
       merge_commit_sha: M,
-      head: { sha: H, repo: { id: REPOSITORY_ID } },
-      base: { sha: B, repo: { id: REPOSITORY_ID } },
+      head: { sha: H, ref: "fix/ci-ffmpeg-seaweedfs-security", repo: { id: REPOSITORY_ID } },
+      base: { sha: B, ref: "main", repo: { id: REPOSITORY_ID } },
     },
     main: { name: "main", protected: true, commit: { sha: B, commit: { tree: { sha: TB } } } },
     head: { sha: H, tree: { sha: TH } },
@@ -53,12 +53,19 @@ function fixture() {
       repository: { id: REPOSITORY_ID },
       head_repository: { id: REPOSITORY_ID },
       event: "pull_request",
+      head_branch: "fix/ci-ffmpeg-seaweedfs-security",
       path: INTEGRATION,
       head_sha: H,
       run_attempt: 1,
       status: "completed",
       conclusion: "success",
-      pull_requests: [{ number: 100, head: { sha: H }, base: { sha: B } }],
+      pull_requests: [
+        {
+          number: 100,
+          head: { sha: H, ref: "fix/ci-ffmpeg-seaweedfs-security" },
+          base: { sha: B, ref: "main" },
+        },
+      ],
     },
   };
 }
@@ -204,6 +211,8 @@ function clientFixture() {
     "check-runs/30/annotations?per_page=100&page=1": [
       { title: "PC100 development source", message: JSON.stringify(x.decision) },
     ],
+    [`actions/workflows/pc100-artifact-integration.yml/runs?event=pull_request&head_sha=${H}&per_page=100&page=1`]:
+      { total_count: 1, workflow_runs: [x.f.upstream] },
     "actions/runs/10": x.f.upstream,
     "actions/workflows/pc100-artifact-integration.yml": { id: 99, path: INTEGRATION },
     "pulls/100": x.f.pr,
@@ -498,6 +507,8 @@ test("N3 actual bootstrap entry logic uses only available trusted module and Git
     "": { id: REPOSITORY_ID, default_branch: "main" },
     "pulls/100": f.pr,
     "branches/main": f.main,
+    [`actions/workflows/pc100-artifact-integration.yml/runs?event=pull_request&head_sha=${H}&per_page=100&page=1`]:
+      { total_count: 1, workflow_runs: [f.upstream] },
     "actions/runs/10": f.upstream,
     "actions/workflows/pc100-artifact-integration.yml": { id: 99, path: INTEGRATION },
     [`git/commits/${B}`]: f.baseline,

@@ -11,6 +11,7 @@ on:
       - tests/architecture/pc100-candidate-policy.test.mjs
       - tests/architecture/support/candidate-policy-fixture.mjs
       - .github/workflows/pc100-candidate-admission.yml
+      - .github/workflows/pc100-required-admission.yml
   push:
     branches: [main]
     paths:
@@ -23,6 +24,7 @@ on:
       - tests/architecture/pc100-candidate-policy.test.mjs
       - tests/architecture/support/candidate-policy-fixture.mjs
       - .github/workflows/pc100-candidate-admission.yml
+      - .github/workflows/pc100-required-admission.yml
 permissions:
   contents: read
 jobs:

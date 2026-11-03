@@ -8,6 +8,8 @@ import {
   LOCK,
   SCANNERS,
   CANDIDATE_WORKFLOW,
+  REQUIRED_WORKFLOW,
+  REQUIRED_JOB,
   CANDIDATE_JOB,
   CANDIDATE_TITLE,
   evaluateCandidatePolicy,
@@ -96,6 +98,7 @@ export function candidateFixture({ context, fileBytes, lock = sampleLock() } = {
           REGISTRY,
           ENGINE,
           CANDIDATE_WORKFLOW,
+          REQUIRED_WORKFLOW,
           "tools/test/pc100-source-verifier.mjs",
           LOCK,
           ...SCANNERS,
@@ -127,6 +130,7 @@ export function candidateFixture({ context, fileBytes, lock = sampleLock() } = {
   );
   const entry = {
     reviewed_source: { commit: R, tree: rt },
+    expected_elf_sha256: "e".repeat(64),
     inventory_sha256: hash(canonical(files)),
     files,
     K: lock.build.production_contract_sha256,
@@ -164,8 +168,8 @@ export function candidateFixture({ context, fileBytes, lock = sampleLock() } = {
     state: "open",
     draft: true,
     merged: false,
-    head: { sha: c.H, repo: { id: 1395822921 } },
-    base: { sha: c.B, repo: { id: 1395822921 } },
+    head: { sha: c.H, ref: "fix/ci-ffmpeg-seaweedfs-security", repo: { id: 1395822921 } },
+    base: { sha: c.B, ref: "main", repo: { id: 1395822921 } },
     merge_commit_sha: c.M,
   };
   const head = { sha: c.H, tree: { sha: c.TH } },
@@ -176,6 +180,7 @@ export function candidateFixture({ context, fileBytes, lock = sampleLock() } = {
     reviewedTree = tree(rt);
   const snapshot = {
     context: c,
+    sourceBytes: content,
     main,
     pr,
     head,
@@ -218,15 +223,32 @@ export function candidateFixture({ context, fileBytes, lock = sampleLock() } = {
     workflow_id: 99,
     path: ".github/workflows/pc100-artifact-integration.yml",
     event: "pull_request",
+    head_branch: "fix/ci-ffmpeg-seaweedfs-security",
     head_sha: c.H,
     run_attempt: 1,
     status: "completed",
     conclusion: "success",
     repository: { id: 1395822921 },
     head_repository: { id: 1395822921 },
-    pull_requests: [{ number: 100, head: { sha: c.H }, base: { sha: c.B } }],
+    pull_requests: [
+      {
+        number: 100,
+        head: { sha: c.H, ref: "fix/ci-ffmpeg-seaweedfs-security" },
+        base: { sha: c.B, ref: "main" },
+      },
+    ],
   };
   const rows = {
+    "rules/branches/main": [
+      {
+        type: "workflows",
+        parameters: {
+          workflows: [
+            { repository_id: 1395822921, path: REQUIRED_WORKFLOW, ref: "refs/heads/main" },
+          ],
+        },
+      },
+    ],
     "branches/main": main,
     "pulls/100": pr,
     [`git/commits/${c.B}`]: { sha: c.B, tree: { sha: bt } },
@@ -262,7 +284,48 @@ export function candidateFixture({ context, fileBytes, lock = sampleLock() } = {
     "actions/runs/130": upstream,
     "actions/workflows/pc100-artifact-integration.yml": { id: 99, path: upstream.path },
   };
-  for (const b of [registryBytes, lockBytes])
+  rows[
+    `actions/workflows/pc100-artifact-integration.yml/runs?event=pull_request&head_sha=${c.H}&per_page=100&page=1`
+  ] = { total_count: 1, workflow_runs: [upstream] };
+  const requiredRun = {
+    ...upstream,
+    id: 140,
+    workflow_id: 81,
+    path: REQUIRED_WORKFLOW,
+    check_suite_id: 141,
+  };
+  rows["actions/workflows/pc100-required-admission.yml"] = { id: 81, path: REQUIRED_WORKFLOW };
+  rows[`actions/workflows/81/runs?event=pull_request&head_sha=${c.H}&per_page=100&page=1`] = {
+    total_count: 1,
+    workflow_runs: [requiredRun],
+  };
+  rows["actions/runs/140/attempts/1/jobs?per_page=100&page=1"] = {
+    total_count: 1,
+    jobs: [
+      {
+        id: 142,
+        name: REQUIRED_JOB,
+        run_id: 140,
+        run_attempt: 1,
+        status: "completed",
+        conclusion: "success",
+        check_run_url: "https://api.github.com/repos/mahmoudemad68/Your_Editor/check-runs/143",
+      },
+    ],
+  };
+  rows["check-runs/143"] = {
+    id: 143,
+    name: REQUIRED_JOB,
+    head_sha: c.H,
+    app: { id: 15368 },
+    check_suite: { id: 141 },
+    status: "completed",
+    conclusion: "success",
+  };
+  rows["check-runs/143/annotations?per_page=100&page=1"] = [
+    { title: CANDIDATE_TITLE, message: canonical(decision) },
+  ];
+  for (const b of Object.values(content))
     rows[`git/blobs/${blobSHA(b)}`] = {
       sha: blobSHA(b),
       encoding: "base64",
