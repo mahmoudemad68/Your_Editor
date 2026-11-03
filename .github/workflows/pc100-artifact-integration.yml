@@ -32,9 +32,9 @@ permissions:
   contents: read
 jobs:
   media-compatibility:
-    name: PC100 FFmpeg 8 edit compatibility
+    name: PC100 qualified host edit compatibility
     if: github.event.pull_request.number == 100 && github.event.pull_request.head.repo.id == 1395822921
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 8
     permissions:
       contents: read

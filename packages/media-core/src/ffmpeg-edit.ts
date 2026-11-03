@@ -3,7 +3,6 @@ import {
   localMediaPath,
   validateFilterGraph,
   loudnessFilter,
-  secondsFromUs,
   type LoudnessSettings,
 } from "./ffmpeg-builder.js";
 export interface EditSource {
@@ -220,9 +219,7 @@ export function buildVideoEditArgs(
     // fabricate missing samples with apad: validation must detect extraction loss.
     const spatial = edit.operation === "crop_video" || edit.operation === "resize_video";
     audio.push("aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo");
-    // A finite authored audio clock must not leave an infinite source feeding
-    // the speed-change graph after the video branch reaches EOF.
-    if (!spatial) audio.push(`apad=whole_len=${t.audioSamples}`);
+    if (!spatial) audio.push("apad");
     audio.push(`atrim=end_sample=${t.audioSamples}`, "asetpts=N/SR/TB");
     validateFilterGraph(audio.join(","));
     args.push(
@@ -240,14 +237,6 @@ export function buildVideoEditArgs(
       "192k",
     );
   } else args.push("-an");
-  if (!spatial) {
-    // Both non-spatial branches have an authored finite end. Tell the muxer
-    // that end as well as the filters: FFmpeg 8 can otherwise wait after all
-    // target video frames have been delivered by a speed-up graph.
-    // Round audio UP and keep the later clock, never cutting an authored sample.
-    const audioEndUs = (t.audioSamples * 1000000n + 47999n) / 48000n;
-    args.push("-t", secondsFromUs(audioEndUs > t.durationUs ? audioEndUs : t.durationUs));
-  }
   args.push(
     "-movie_timescale",
     "48000",

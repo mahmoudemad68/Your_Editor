@@ -619,3 +619,22 @@ no workflow is retried. Downstream Walking retains contents-only permissions and
 uses an explicit separate metadata credential for closed public GETs, avoiding
 the unauthenticated API quota. This credential is never used for archive REST
 downloads or inherited by the official same-run Artifact SDK child.
+
+### Node/media CI host profile
+
+Repository tests and isolated rendering use `ubuntu-24.04`, matching the verified
+Linux adapter/sandbox executor. The floating `ubuntu-latest` label selected Ubuntu
+26.04 with host FFmpeg/FFprobe 8.0.1. The real 2x speed-up test repeatedly reached
+its 30 target frames but failed to terminate within its unchanged 15-second limit.
+Finite padding and an explicit output end did not repair that behavior; those
+unproven recipe changes were reverted. Historical failing evidence is retained in
+[the FFmpeg 8 run](https://github.com/mahmoudemad68/Your_Editor/actions/runs/41724404056).
+FFmpeg 8.0.1 remains **unqualified**, not fixed or accepted by this batch.
+
+All original edit cases, source-integrity/determinism assertions and deadlines
+remain enabled on the Ubuntu 24.04 distribution-provided host FFmpeg profile. Actual
+decoded-frame and PCM-sample checks supplement the metadata checks. This host
+compatibility profile is separate from the unchanged, pinned **FFmpeg
+7.1.5-editagent1 production containers**, whose real rendering, cancellation,
+audio/content and browser/export tests remain mandatory. ASR matrix configuration,
+600,000-ms inference deadlines, scanner policies and container limits are unchanged.
