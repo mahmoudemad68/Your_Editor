@@ -4,9 +4,13 @@ import assert from "node:assert/strict";
 import { generateKeyPairSync, verify } from "node:crypto";
 import { Buffer } from "node:buffer";
 import path from "node:path";
+import { mkdtemp, writeFile, chmod, symlink, link, realpath, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import process from "node:process";
 import {
   assertExternalHost,
   assertExternalKeyPath,
+  readExternalKeyFile,
   appJWT,
   installationClient,
   reconcileAppCheck,
@@ -29,6 +33,29 @@ const config = {
 };
 const key = generateKeyPairSync("rsa", { modulusLength: 2048 });
 const pem = key.privateKey.export({ format: "pem", type: "pkcs8" });
+test(
+  "Linux key-file guard checks real permissions and rejects symbolic/hard links (non-key marker only)",
+  { skip: process.platform !== "linux" },
+  async () => {
+    const dir = await realpath(await mkdtemp(path.join(tmpdir(), "app-file-guard-"))),
+      file = path.join(dir, "marker");
+    try {
+      await writeFile(file, "synthetic-not-a-key", { mode: 0o600 });
+      assert.equal((await readExternalKeyFile(file)).toString(), "synthetic-not-a-key");
+      await chmod(file, 0o644);
+      await assert.rejects(() => readExternalKeyFile(file), /APP_KEY_PERMISSIONS_REJECTED/);
+      await chmod(file, 0o600);
+      const symbolic = path.join(dir, "symbolic");
+      await symlink(file, symbolic);
+      await assert.rejects(() => readExternalKeyFile(symbolic), /APP_KEY_PERMISSIONS_REJECTED/);
+      const hard = path.join(dir, "hard");
+      await link(file, hard);
+      await assert.rejects(() => readExternalKeyFile(file), /APP_KEY_PERMISSIONS_REJECTED/);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  },
+);
 test("private keys cannot be read from a checkout, including dot-dot-prefixed children", () => {
   const checkout = path.resolve(import.meta.dirname, "../..");
   for (const file of [
