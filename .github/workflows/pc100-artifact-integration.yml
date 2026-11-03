@@ -4,6 +4,12 @@ on:
     branches: [main]
     paths:
       - tools/test/load-qualified-storage.mjs
+      - tools/test/pc100-minio-regression.mjs
+      - tools/test/run-walking-skeleton.mjs
+      - tests/architecture/seaweedfs-s3-contract.mjs
+      - tests/architecture/seaweedfs-object-storage.test.mjs
+      - .github/workflows/ci.yml
+      - .github/workflows/e2e.yml
       - tools/test/pc100-artifact-integration.mjs
       - tests/architecture/seaweedfs-security-build.test.mjs
       - tests/architecture/pc100-qa-repairs.test.mjs

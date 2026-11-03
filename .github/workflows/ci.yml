@@ -70,8 +70,6 @@ jobs:
           bundle: ${{ steps.admit.outputs.ci_bundle }}
 
   repository:
-    needs: storage-admission
-    if: ${{ always() && !cancelled() && (github.event.pull_request.number != 100 || needs.storage-admission.result == 'success') }}
     name: repository checks
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -120,29 +118,6 @@ jobs:
         uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
-      - name: Independently load qualified source image
-        if: github.event_name == 'pull_request' && github.event.pull_request.number == 100
-        id: storage-load
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          PC100_METADATA_TOKEN: ${{ github.token }}
-        run: node tools/test/load-qualified-storage.mjs load '${{ needs.storage-admission.outputs.producer }}:${{ needs.storage-admission.outputs.producer_attempt }}:${{ needs.storage-admission.outputs.artifact }}'
-      - name: Bind loaded image evidence
-        if: github.event_name == 'pull_request' && github.event.pull_request.number == 100
-        run: echo 'SEAWEED_QUALIFIED_RECEIPT=${{ steps.storage-load.outputs.receipt }}' >> "$GITHUB_ENV"
-      - name: Start SeaweedFS
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          PC100_METADATA_TOKEN: ${{ github.token }}
-        run: |
-          set -eu
-          ./infra/seaweedfs/start-storage.sh
-          curl -fsS http://127.0.0.1:9000/status >/dev/null
-          S3_HOST=127.0.0.1 S3_PORT=9000 python3 infra/scripts/ensure_bucket.py
-          ./infra/seaweedfs/verify-firewall-lifecycle.sh
-          ./infra/seaweedfs/verify-jwt-authority.sh
-          ./infra/seaweedfs/verify-trust-boundary.sh
-
       - name: Install pnpm
         uses: pnpm/action-setup@v6
 
@@ -175,6 +150,7 @@ jobs:
             ${{ runner.os }}-turbo-
 
       - name: Enable optional Turborepo remote cache
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         env:
           TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
           TURBO_TEAM: ${{ secrets.TURBO_TEAM }}
@@ -224,8 +200,12 @@ jobs:
       - name: Independently verify silence interval accounting
         run: python3 -m unittest discover -s tools/audio -p 'test_*.py'
 
-      - name: Check SeaweedFS S3 contract
-        run: node tests/architecture/seaweedfs-s3-contract.mjs --verify-backup
+      - name: Start explicit MinIO application regression fixture
+        run: |
+          node tools/test/pc100-minio-regression.mjs repository
+          S3_HOST=127.0.0.1 S3_PORT=9000 python3 infra/scripts/ensure_bucket.py
+      - name: MinIO S3 API compatibility (not SeaweedFS qualification)
+        run: node tests/architecture/seaweedfs-s3-contract.mjs --storage-backend=minio
 
       - name: Build
         run: pnpm build
@@ -280,13 +260,12 @@ jobs:
           path: .local/agent-loop-lifecycle-public/diagnostic.json
 
       - name: Real non-root CPU ASR, S3 readiness and crash recovery
-        if: ${{ !cancelled() && steps.storage-load.outcome == 'success' }}
+        if: ${{ !cancelled() }}
         run: pnpm asr:container
 
       - name: Real production render, cancellation and timeline golden frames
-        if: ${{ !cancelled() && steps.storage-load.outcome == 'success' }}
+        if: ${{ !cancelled() }}
         env:
-          PC100_METADATA_TOKEN: ${{ github.token }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: pnpm render:test --graduation-demo
 
@@ -351,6 +330,12 @@ jobs:
             packages/*/coverage/lcov.info
             workers/*/coverage/lcov.info
             workers/ai-worker/coverage.xml
+      - name: Remove explicit MinIO regression fixture
+        if: always()
+        run: |
+          if [ -f .local/pc100-minio-regression/repository.json ]; then
+            node tools/test/pc100-minio-regression.mjs stop-repository
+          fi
 
   real-asr:
     name: real ASR (${{ matrix.shard }})
@@ -462,6 +447,25 @@ jobs:
           sh tools/test/ensure-ffmpeg.sh
           sh tools/test/ensure-chrome.sh
           pnpm test:fixtures
+      - name: Start SeaweedFS and require firewall JWT and trust-boundary controls
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PC100_METADATA_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          ./infra/seaweedfs/start-storage.sh --from-boot
+          curl -fsS http://127.0.0.1:9000/status >/dev/null
+          S3_HOST=127.0.0.1 S3_PORT=9000 python3 infra/scripts/ensure_bucket.py
+          ./infra/seaweedfs/verify-firewall-lifecycle.sh
+          ./infra/seaweedfs/verify-jwt-authority.sh
+          ./infra/seaweedfs/verify-trust-boundary.sh
+      - name: Check SeaweedFS S3 contract including stopped backup and restore
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PC100_METADATA_TOKEN: ${{ github.token }}
+        run: node tests/architecture/seaweedfs-s3-contract.mjs --verify-backup
+      - name: Stop disposable contract stack before independent recovery journey
+        run: docker compose down --remove-orphans
       - name: Real storage migration and isolated recovery
         env:
           GITHUB_TOKEN: ${{ github.token }}

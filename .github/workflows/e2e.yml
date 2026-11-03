@@ -85,7 +85,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - name: Explicitly reject failed admission
+      - name: Explicitly reject failed candidate admission
+        if: github.event_name == 'pull_request' && github.event.pull_request.number == 100
         env:
           ADMISSION_RESULT: ${{ needs.storage-admission.result }}
         run: test "$ADMISSION_RESULT" = success
@@ -100,6 +101,7 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
       - name: Retrieve exact same-run promoted artifact
+        if: github.event_name == 'pull_request' && github.event.pull_request.number == 100
         # Contents-only metadata reads use a separate explicit credential; the
         # same-run SDK child receives only its runner artifact credentials.
         id: promoted-download
@@ -113,6 +115,7 @@ jobs:
           artifact-digest: ${{ needs.storage-admission.outputs.promoted_digest }}
           artifact-bytes: ${{ needs.storage-admission.outputs.promoted_bytes }}
       - name: Revalidate promoted bytes before loading
+        if: github.event_name == 'pull_request' && github.event.pull_request.number == 100
         id: storage-load
         env:
           PC100_METADATA_TOKEN: ${{ github.token }}
@@ -122,6 +125,7 @@ jobs:
           PC100_RECEIPT_SHA: ${{ needs.storage-admission.outputs.receipt_sha256 }}
         run: node tools/test/load-qualified-storage.mjs promoted "$(dirname "$PC100_RAW_ZIP")" "$PC100_RECEIPT_SHA"
       - name: Bind revalidated evidence
+        if: github.event_name == 'pull_request' && github.event.pull_request.number == 100
         run: echo 'SEAWEED_QUALIFIED_RECEIPT=${{ steps.storage-load.outputs.receipt }}' >> "$GITHUB_ENV"
       - name: Install workspace
         run: pnpm install --frozen-lockfile
@@ -138,14 +142,15 @@ jobs:
       - name: Real Compose upload and broken-worker failure proof
         env:
           PC100_METADATA_TOKEN: ${{ github.token }}
-        run: pnpm test:walking-skeleton --verify-failure
+        run: pnpm test:walking-skeleton --verify-failure ${{ github.event_name == 'pull_request' && github.event.pull_request.number == 100 && '--storage-seaweedfs' || '--storage-minio' }}
       - name: Verify final producer and PR identity
+        if: github.event_name == 'pull_request' && github.event.pull_request.number == 100
         env:
           PC100_METADATA_TOKEN: ${{ github.token }}
         run: node tools/test/load-qualified-storage.mjs final '${{ steps.storage-load.outputs.receipt }}'
       - name: Collect and sanitize runtime diagnostics
         id: diagnostics
-        if: ${{ always() && needs.storage-admission.result == 'success' && steps.storage-load.outcome == 'success' }}
+        if: ${{ always() && (github.event.pull_request.number != 100 || (needs.storage-admission.result == 'success' && steps.storage-load.outcome == 'success')) }}
         run: |
           mkdir -p .local/walking-skeleton-artifacts
           COMPOSE_PROJECT_NAME=walking-skeleton docker compose ps --all --format json > .local/walking-skeleton-artifacts/final-compose-status.json
@@ -161,5 +166,5 @@ jobs:
           if-no-files-found: error
           retention-days: 7
       - name: Remove disposable Compose stack
-        if: ${{ always() && needs.storage-admission.result == 'success' && steps.storage-load.outcome == 'success' }}
+        if: ${{ always() && (github.event.pull_request.number != 100 || (needs.storage-admission.result == 'success' && steps.storage-load.outcome == 'success')) }}
         run: COMPOSE_PROJECT_NAME=walking-skeleton docker compose down -v --remove-orphans

@@ -56,16 +56,17 @@ test("the active stack publishes only the SeaweedFS S3 gateway", () => {
 });
 
 test("the S3 contract runs after the workspace install", () => {
-  const workflow = read(".github/workflows/ci.yml");
-  const pnpmSetup = workflow.indexOf("name: Install pnpm");
-  const nodeSetup = workflow.indexOf("name: Setup Node.js");
+  const workflow = read(".github/workflows/ci.yml").split("  seaweedfs-product:")[1];
+  const pnpmSetup = workflow.indexOf("uses: pnpm/action-setup");
+  const nodeSetup = workflow.indexOf("uses: actions/setup-node");
   const install = workflow.indexOf("pnpm install --frozen-lockfile");
   const contract = workflow.indexOf("node tests/architecture/seaweedfs-s3-contract.mjs");
-  const start = workflow.indexOf("name: Start SeaweedFS");
+  const start = workflow.indexOf("name: Start SeaweedFS and require");
   assert.equal(pnpmSetup > 0 && nodeSetup > pnpmSetup, true);
   assert.equal(install > nodeSetup, true);
   assert.equal(contract > install, true);
-  const startup = workflow.slice(start, pnpmSetup);
+  assert.equal(start > install, true);
+  const startup = workflow.slice(start, contract);
   assert.match(startup, /curl -fsS http:\/\/127\.0\.0\.1:9000\/status/);
   assert.match(startup, /ensure_bucket\.py/);
   assert.match(startup, /start-storage\.sh/);

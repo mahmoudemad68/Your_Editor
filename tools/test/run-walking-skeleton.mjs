@@ -1,3 +1,8 @@
+import {
+  walkingStorageBackend,
+  walkingApplicationStart,
+  startMinioRegression,
+} from "./pc100-minio-regression.mjs";
 import { withoutQualificationCredentials } from "./pc100-candidate-policy.mjs";
 /** Disposable real production composition. No fixture API or direct DB inserts. */
 import { command, buildProductImages } from "./compose-build.mjs";
@@ -104,6 +109,16 @@ async function diagnostics(destination = artifacts) {
     (result.stdout ?? "") + (result.stderr ?? ""),
   );
 }
+const event = process.env.GITHUB_EVENT_PATH
+  ? JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH, "utf8"))
+  : {};
+const backend = walkingStorageBackend(process.env.GITHUB_EVENT_NAME, event);
+const requestedMinio = process.argv.includes("--storage-minio");
+if (requestedMinio && backend !== "minio-regression")
+  throw Error("MINIO_CANNOT_REPLACE_QUALIFIED_SEAWEEDFS");
+if (!requestedMinio && backend === "minio-regression")
+  throw Error("EXPLICIT_REGRESSION_BACKEND_REQUIRED");
+let regressionStorage;
 try {
   rmSync(secretFile, { force: true });
   rmSync(artifacts, { recursive: true, force: true });
@@ -113,11 +128,23 @@ try {
   if (!process.argv.includes("--skip-build"))
     await buildProductImages(root, ["api", "web", "media-worker", "postgres", "redis"]);
   await compose(["up", "-d", "--wait", "--wait-timeout", "120", "postgres", "redis"]);
-  await command("sh", ["infra/seaweedfs/start-storage.sh", "--from-boot"], {
-    cwd: root,
-    env,
-    signal: signal.signal,
-  });
+  if (requestedMinio) {
+    regressionStorage = await startMinioRegression("walking", "walking-skeleton_render_control");
+    writeFileSync(
+      path.join(artifacts, "storage-backend.json"),
+      JSON.stringify(regressionStorage.evidence) + "\n",
+    );
+  } else {
+    await command("sh", ["infra/seaweedfs/start-storage.sh", "--from-boot"], {
+      cwd: root,
+      env,
+      signal: signal.signal,
+    });
+    writeFileSync(
+      path.join(artifacts, "storage-backend.json"),
+      JSON.stringify({ backend: "QUALIFIED_SEAWEEDFS", minio_fallback: false }) + "\n",
+    );
+  }
   const s3 = new S3Client({
     endpoint: `http://localhost:${env.S3_PORT ?? 9000}`,
     region: env.S3_REGION ?? "us-east-1",
@@ -129,36 +156,27 @@ try {
   });
   try {
     await s3.send(new CreateBucketCommand({ Bucket: env.S3_BUCKET ?? "editagent" }));
-    await s3.send(
-      new PutBucketCorsCommand({
-        Bucket: env.S3_BUCKET ?? "editagent",
-        CORSConfiguration: {
-          CORSRules: [
-            {
-              AllowedOrigins: ["http://localhost:3000"],
-              AllowedMethods: ["PUT", "GET", "HEAD"],
-              AllowedHeaders: ["*"],
-              ExposeHeaders: ["ETag"],
-              MaxAgeSeconds: 60,
-            },
-          ],
-        },
-      }),
-    );
+    if (!requestedMinio)
+      await s3.send(
+        new PutBucketCorsCommand({
+          Bucket: env.S3_BUCKET ?? "editagent",
+          CORSConfiguration: {
+            CORSRules: [
+              {
+                AllowedOrigins: ["http://localhost:3000"],
+                AllowedMethods: ["PUT", "GET", "HEAD"],
+                AllowedHeaders: ["*"],
+                ExposeHeaders: ["ETag"],
+                MaxAgeSeconds: 60,
+              },
+            ],
+          },
+        }),
+      );
   } finally {
     s3.destroy();
   }
-  await compose([
-    "up",
-    "-d",
-    "--no-build",
-    "--wait",
-    "--wait-timeout",
-    "120",
-    "api",
-    "web",
-    "media-worker",
-  ]);
+  await compose(walkingApplicationStart(backend, ["api", "web", "media-worker"]));
   if (process.argv.includes("--verify-failure")) {
     await compose(["stop", "media-worker"]);
     const code = browser("negative");
@@ -190,7 +208,7 @@ try {
     );
     console.log("NEGATIVE_DIAGNOSTICS_CAPTURED_BEFORE_WORKER_RESTART", negativeRuntime);
     console.log("BROKEN_METADATA_FLOW_TEST_RESULT FAIL_AS_EXPECTED");
-    await compose(["up", "-d", "--no-build", "--wait", "media-worker"]);
+    await compose(walkingApplicationStart(backend, ["media-worker"]));
   }
   const code = browser("healthy");
   if (code !== 0) throw new Error(`Walking skeleton failed (${code})`);
@@ -280,7 +298,9 @@ try {
       "infra/scripts/staging_smoke.py",
       "--local-test",
       "--services",
-      "api,web,media-worker,postgres,redis,seaweed-master,seaweed-volume,seaweed-filer,seaweed-s3",
+      requestedMinio
+        ? "api,web,media-worker,postgres,redis"
+        : "api,web,media-worker,postgres,redis,seaweed-master,seaweed-volume,seaweed-filer,seaweed-s3",
       "--timeout",
       "30",
     ],
@@ -302,6 +322,10 @@ try {
     );
     rmSync(secretFile, { force: true });
   } finally {
-    await compose(["down", "-v", "--remove-orphans"]);
+    try {
+      if (regressionStorage) await regressionStorage.stop();
+    } finally {
+      await compose(["down", "-v", "--remove-orphans"]);
+    }
   }
 }

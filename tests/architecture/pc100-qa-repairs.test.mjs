@@ -1,5 +1,10 @@
 /** Actual parser, shell and workflow regression controls for independent QA findings. */
 import assert from "node:assert/strict";
+import {
+  walkingStorageBackend,
+  walkingApplicationStart,
+  minioRegressionPlan,
+} from "../../tools/test/pc100-minio-regression.mjs";
 import { test } from "node:test";
 import { readFile, mkdtemp, mkdir, rm } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
@@ -35,9 +40,9 @@ test("B-1 ordinary scan jobs are not dependent on PC100 source approval", async 
     /if \[ "\$CANDIDATE_EVENT" = true \]; then test "\$POLICY_RESULT" = success/,
   );
   assert.doesNotMatch(job(ci, "real-asr"), /needs: storage-admission/);
-  assert.match(
+  assert.doesNotMatch(
     job(ci, "repository"),
-    /github.event.pull_request.number != 100 \|\| needs.storage-admission.result == 'success'/,
+    /needs: storage-admission|start-storage\.sh|SEAWEED_QUALIFIED_RECEIPT/,
   );
   assert.match(job(ci, "seaweedfs-product"), /github.event.pull_request.number == 100/);
 });
@@ -175,4 +180,65 @@ test("B-2 image ELF must match independent registry pin, never a self-reported d
   assert.doesNotThrow(() => verifyApprovedELF("e".repeat(64), binding));
   assert.throws(() => verifyApprovedELF("f".repeat(64), binding), /PROTECTED_ELF_IDENTITY_DRIFT/);
   assert.throws(() => verifyApprovedELF("e".repeat(64), {}));
+});
+
+test("B-1 explicit normal-event MinIO route never replaces candidate SeaweedFS on failure", () => {
+  assert.equal(
+    walkingStorageBackend("pull_request", { pull_request: { number: 100 } }),
+    "seaweedfs-qualified",
+  );
+  assert.equal(
+    walkingStorageBackend("pull_request", { pull_request: { number: 101 } }),
+    "minio-regression",
+  );
+  for (const event of ["push", "workflow_dispatch"])
+    assert.equal(walkingStorageBackend(event, {}), "minio-regression");
+  assert.equal(walkingStorageBackend(undefined, {}), "seaweedfs-qualified");
+});
+test("B-1 normal fixture plans cannot select arbitrary networks or production roles", () => {
+  assert.equal(minioRegressionPlan("repository").port, 9000);
+  assert.equal(minioRegressionPlan("walking", "walking-skeleton_render_control").port, 8333);
+  assert.deepEqual(minioRegressionPlan("walking", "walking-skeleton_render_control").networks, [
+    "walking-skeleton_render_control",
+    "walking-skeleton_default",
+  ]);
+  assert.deepEqual(minioRegressionPlan("repository").networks, []);
+  assert.throws(() => minioRegressionPlan("production"));
+  assert.throws(() => minioRegressionPlan("walking", "production-network"));
+});
+test("B-1 generic CI uses explicit MinIO while mandatory candidate job retains every SeaweedFS control", async () => {
+  const s = await read(".github/workflows/ci.yml"),
+    common = job(s, "repository"),
+    qualified = job(s, "seaweedfs-product");
+  assert.doesNotMatch(
+    common,
+    /needs: storage-admission|start-storage\.sh|SEAWEED_QUALIFIED_RECEIPT|PC100_METADATA_TOKEN/,
+  );
+  assert.match(common, /pc100-minio-regression\.mjs repository/);
+  assert.match(common, /--storage-backend=minio/);
+  for (const command of [
+    "verify-firewall-lifecycle.sh",
+    "verify-jwt-authority.sh",
+    "verify-trust-boundary.sh",
+    "--verify-backup",
+    "seaweedfs-security-recovery.mjs",
+    "--storage-seaweedfs",
+  ])
+    assert.ok(qualified.includes(command), command);
+  const walking = job(await read(".github/workflows/e2e.yml"), "walking-skeleton");
+  assert.match(walking, /--storage-seaweedfs.*--storage-minio/);
+  assert.match(
+    walking,
+    /name: Explicitly reject failed candidate admission\n {8}if: github.event_name == 'pull_request' && github.event.pull_request.number == 100/,
+  );
+});
+
+test("B-1 every MinIO application restart avoids SeaweedFS dependencies", () => {
+  for (const roles of [["api", "web", "media-worker"], ["media-worker"]])
+    assert.ok(walkingApplicationStart("minio-regression", roles).includes("--no-deps"));
+  assert.equal(
+    walkingApplicationStart("seaweedfs-qualified", ["media-worker"]).includes("--no-deps"),
+    false,
+  );
+  assert.throws(() => walkingApplicationStart("minio-regression", ["seaweed-s3"]));
 });

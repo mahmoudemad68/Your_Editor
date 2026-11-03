@@ -668,6 +668,31 @@ async function snapshot(context, read) {
   const reviewed = await read(`git/commits/${entry.reviewed_source.commit}`),
     reviewedTree = await read(`git/trees/${reviewed.tree.sha}?recursive=1`);
   const lockBytes = await authenticatedBlob(read, treeEntries(targetTree).get(LOCK));
+  const tb = treeEntries(trustedTree),
+    tt = treeEntries(targetTree);
+  for (const p of CONTROL)
+    need(
+      tb.has(p) &&
+        tt.has(p) &&
+        tb.get(p).sha === tt.get(p).sha &&
+        tb.get(p).mode === tt.get(p).mode,
+      "CANDIDATE_CONTROL_SOURCE_DRIFT",
+    );
+  need(
+    head.sha === c.H &&
+      merge.sha === c.M &&
+      targetTree.sha === head.tree.sha &&
+      merge.tree.sha === head.tree.sha &&
+      canonical(merge.parents.map((p) => p.sha)) === canonical([c.B, c.H]),
+    "CANDIDATE_IDENTITY_DRIFT",
+  );
+  need(
+    reviewed.sha === entry.reviewed_source.commit &&
+      reviewedTree.sha === reviewed.tree.sha &&
+      reviewed.tree.sha === entry.reviewed_source.tree,
+    "CANDIDATE_REVIEWED_SOURCE_DRIFT",
+  );
+  matches(entry.files, reviewedTree, true);
   let sourceBytes;
   if (read === api || read.sourceBytes === readGitSourceBytes)
     sourceBytes = readGitSourceBytes(c.H, entry.files);

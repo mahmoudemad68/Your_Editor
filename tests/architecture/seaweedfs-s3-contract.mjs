@@ -26,6 +26,14 @@ const bucket = process.env.S3_BUCKET ?? "editagent";
 const accessKeyId = process.env.S3_ACCESS_KEY_ID ?? "editagent";
 const secretAccessKey = process.env.S3_SECRET_ACCESS_KEY ?? "editagent-dev-secret";
 const region = process.env.S3_REGION ?? "us-east-1";
+const minioRegression = process.argv.includes("--storage-backend=minio");
+if (minioRegression && process.argv.includes("--verify-backup"))
+  throw Error("MINIO_IS_NOT_SEAWEEDFS_RECOVERY_QUALIFICATION");
+console.log(
+  minioRegression
+    ? "STORAGE_BACKEND=MINIO_REGRESSION_NOT_SEAWEEDFS_QUALIFICATION"
+    : "STORAGE_BACKEND=SEAWEEDFS",
+);
 const key = `projects/seaweed-regression/${randomBytes(8).toString("hex")}.bin`;
 const body = Buffer.from(`seaweed-private-${randomBytes(16).toString("hex")}`);
 const checksum = createHash("sha256").update(body).digest("base64");
