@@ -31,6 +31,29 @@ on:
 permissions:
   contents: read
 jobs:
+  media-compatibility:
+    name: PC100 FFmpeg 8 edit compatibility
+    if: github.event.pull_request.number == 100 && github.event.pull_request.head.repo.id == 1395822921
+    runs-on: ubuntu-26.04
+    timeout-minutes: 8
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version-file: .nvmrc
+      - uses: pnpm/action-setup@v6
+      - name: Real decoder census and edit recipes on the full-CI host runtime
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm --filter @editagent/media-core... build
+          sh tools/test/ensure-ffmpeg.sh
+          node --test --test-name-pattern='decoded frame census|real ffprobe matches the recorded fixture metadata' packages/media-core/dist/ffprobe-adapter.test.js
+          node --test --test-name-pattern='real crop, resize, both speed directions' packages/media-core/dist/ffmpeg-edit.test.js
   transport:
     name: PC100 real REST transport
     if: github.event.pull_request.number == 100 && github.event.pull_request.head.repo.id == 1395822921
