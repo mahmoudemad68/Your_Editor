@@ -92,7 +92,19 @@ test("the shipped registry contains no authorizations", async () => {
   const bytes = await readFile(
     new URL("../../infra/seaweedfs/candidate-policy.json", import.meta.url),
   );
-  assert.deepEqual(readPolicyJSON(bytes).policies, []);
+  // Git's Windows checkout converts LF to CRLF. Only this checkout fixture is
+  // reconstructed as Git text; runtime always authenticates raw API blob bytes.
+  assert.deepEqual(
+    readPolicyJSON(Buffer.from(bytes.toString("utf8").replace(/\r\n/g, "\n"))).policies,
+    [],
+  );
+});
+test("runtime registry parsing never normalizes unauthenticated checkout line endings", () => {
+  const text = JSON.stringify({ schema: "fixture", policies: [] }, null, 2) + "\n";
+  assert.throws(
+    () => readPolicyJSON(Buffer.from(text.replace(/\n/g, "\r\n"))),
+    /CANDIDATE_JSON_NONCANONICAL/,
+  );
 });
 for (const field of ["decision", "schema", "scope", "candidate_admission_authorized"])
   test(`development-only ${field} cannot authorize a candidate`, () => {
