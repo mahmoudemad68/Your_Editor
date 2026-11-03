@@ -7,7 +7,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node ../../tools/test/run-node-tests.mjs --test-concurrency=1 dist/*.test.js"
+    "test": "node ../../tools/test/run-node-tests.mjs dist/*.test.js"
   },
   "dependencies": {
     "@editagent/domain": "workspace:*",

@@ -7,7 +7,7 @@ import {
   minioRegressionPlan,
 } from "../../tools/test/pc100-minio-regression.mjs";
 import { test } from "node:test";
-import { readFile, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { readFile, mkdtemp, mkdir, rm } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { runInNewContext } from "node:vm";
 import path from "node:path";
@@ -24,35 +24,6 @@ const root = path.resolve(import.meta.dirname, "../.."),
 const read = async (p) => (await readFile(path.join(root, p), "utf8")).replace(/\r\n/g, "\n");
 await mkdir(path.join(root, ".local/qa-repairs-20261103"), { recursive: true, mode: 0o700 });
 const job = (text, name) => text.split(`  ${name}:\n`)[1]?.split(/\n {2}[a-z][a-z-]*:\n/)[0];
-
-test("native media-core tests retain every file and deadline with bounded file concurrency", async () => {
-  const pkg = JSON.parse(await read("packages/media-core/package.json"));
-  assert.equal(
-    pkg.scripts.test,
-    "node ../../tools/test/run-node-tests.mjs --test-concurrency=1 dist/*.test.js",
-  );
-  assert.match(await read("packages/media-core/src/ffmpeg-edit.test.ts"), /timeoutMs: 15000/);
-  const directory = await mkdtemp(path.join(root, ".local/media-test-scheduling-"));
-  try {
-    await mkdir(path.join(directory, "dist"));
-    const source = (name) =>
-      `const {test}=require('node:test'),fs=require('node:fs');test('no overlapping native suites',async()=>{const fd=fs.openSync('in-flight','wx');try{await new Promise(r=>setTimeout(r,100));}finally{fs.closeSync(fd);fs.unlinkSync('in-flight');}fs.writeFileSync(${JSON.stringify(name)},'completed');});`;
-    for (const name of ["one", "two"])
-      await writeFile(path.join(directory, "dist", name + ".test.js"), source(name));
-    const env = { ...process.env };
-    delete env.NODE_TEST_CONTEXT; // launch a genuine independent Node test runner
-    const result = spawnSync(
-      process.execPath,
-      [path.join(root, "tools/test/run-node-tests.mjs"), ...pkg.scripts.test.split(" ").slice(2)],
-      { cwd: directory, env, encoding: "utf8", timeout: 15000, maxBuffer: 1048576 },
-    );
-    assert.equal(result.status, 0, result.stderr + result.stdout);
-    for (const name of ["one", "two"])
-      assert.equal(await readFile(path.join(directory, name), "utf8"), "completed");
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
-});
 test("B-1 ordinary scan jobs are not dependent on PC100 source approval", async () => {
   const s = await read(".github/workflows/supply-chain.yml"),
     ci = await read(".github/workflows/ci.yml");

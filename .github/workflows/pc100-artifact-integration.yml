@@ -70,6 +70,8 @@ jobs:
           pnpm --filter @editagent/media-worker... build
           sh tools/test/ensure-ffmpeg.sh
           node --test --test-name-pattern='US-127 kernel sandbox enforces' workers/media-worker/dist/infrastructure/media-validation.test.js
+          node --test --test-name-pattern='decoded frame census|real ffprobe matches the recorded fixture metadata' packages/media-core/dist/ffprobe-adapter.test.js
+          node --test --test-name-pattern='real crop, resize, both speed directions' packages/media-core/dist/ffmpeg-edit.test.js
       - name: Prepare bounded disposable fixture
         env:
           TARGET_SHA: ${{ github.event.pull_request.head.sha }}

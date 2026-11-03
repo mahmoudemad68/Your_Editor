@@ -43,14 +43,20 @@ test("fixed media edits bound dimensions, speed, audio and malformed measurement
     [1, 2],
     [2, 1],
     [4, 1],
-  ])
-    assert.ok(
-      buildVideoEditArgs(
-        source,
-        { operation: "change_speed", numerator: ratio[0]!, denominator: ratio[1]! },
-        "/tmp/output.mp4",
-      ).includes("-af"),
+  ]) {
+    const edit = {
+      operation: "change_speed" as const,
+      numerator: ratio[0]!,
+      denominator: ratio[1]!,
+    };
+    const args = buildVideoEditArgs(source, edit, "/tmp/output.mp4");
+    const samples = editOutputTiming(source, edit).audioSamples;
+    assert.match(
+      args[args.indexOf("-af") + 1]!,
+      new RegExp(`(?:^|,)apad=whole_len=${samples},atrim=end_sample=${samples}(?:,|$)`),
     );
+    assert.doesNotMatch(args[args.indexOf("-af") + 1]!, /(?:^|,)apad(?:,|$)/);
+  }
 });
 test("spatial audio clocks are mandatory, bounded, independent, and never padded", () => {
   const source = {
@@ -226,7 +232,33 @@ test(
           const output = path.join(work, `out-${i}.mp4`),
             timing = editOutputTiming(source, edit),
             args = buildVideoEditArgs(source, edit, output);
-          await new FfmpegExecutor().execute(args, { timeoutMs: 15000 });
+          let lastFrame = 0;
+          const started = Date.now();
+          try {
+            await new FfmpegExecutor().execute(args, {
+              timeoutMs: 15000,
+              onProgress: (p) => {
+                lastFrame = p.frame;
+              },
+            });
+          } catch (error) {
+            console.error(
+              "EDIT_FFMPEG_FAILURE",
+              JSON.stringify({
+                operation: edit.operation,
+                elapsedMs: Date.now() - started,
+                lastFrame,
+                expectedFrames: timing.totalFrames,
+                videoRecipe: args[args.indexOf("-vf") + 1],
+                audioRecipe: args[args.indexOf("-af") + 1],
+                runtime: spawnSync("ffmpeg", ["-version"], {
+                  encoding: "utf8",
+                  timeout: 2000,
+                }).stdout?.split("\n")[0],
+              }),
+            );
+            throw error;
+          }
           const p = await new FFprobeMediaProbe().inspect({ filePath: output });
           assert.equal(p.width, timing.width);
           assert.equal(p.height, timing.height);

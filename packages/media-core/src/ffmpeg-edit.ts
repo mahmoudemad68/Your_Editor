@@ -219,7 +219,9 @@ export function buildVideoEditArgs(
     // fabricate missing samples with apad: validation must detect extraction loss.
     const spatial = edit.operation === "crop_video" || edit.operation === "resize_video";
     audio.push("aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo");
-    if (!spatial) audio.push("apad");
+    // A finite authored audio clock must not leave an infinite source feeding
+    // the speed-change graph after the video branch reaches EOF.
+    if (!spatial) audio.push(`apad=whole_len=${t.audioSamples}`);
     audio.push(`atrim=end_sample=${t.audioSamples}`, "asetpts=N/SR/TB");
     validateFilterGraph(audio.join(","));
     args.push(
