@@ -1,0 +1,29 @@
+name: PC100 candidate admission
+on:
+  workflow_run:
+    workflows: [PC100 artifact integration]
+    types: [completed]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  candidate-source:
+    name: PC100 candidate source admission
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: "24"
+      - name: Admit reviewed candidate source without executing PR code
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TRUSTED_WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$TRUSTED_WORKFLOW_SHA"
+          node tools/test/pc100-candidate-policy.mjs

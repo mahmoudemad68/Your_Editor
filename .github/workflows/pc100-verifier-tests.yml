@@ -6,6 +6,11 @@ on:
       - tests/architecture/pc100-source-verifier*.test.mjs
       - .github/workflows/pc100-source-verifier.yml
       - .github/workflows/pc100-verifier-tests.yml
+      - tools/test/pc100-candidate-policy.mjs
+      - infra/seaweedfs/candidate-policy.json
+      - tests/architecture/pc100-candidate-policy.test.mjs
+      - tests/architecture/support/candidate-policy-fixture.mjs
+      - .github/workflows/pc100-candidate-admission.yml
   push:
     branches: [main]
     paths:
@@ -13,6 +18,11 @@ on:
       - tests/architecture/pc100-source-verifier*.test.mjs
       - .github/workflows/pc100-source-verifier.yml
       - .github/workflows/pc100-verifier-tests.yml
+      - tools/test/pc100-candidate-policy.mjs
+      - infra/seaweedfs/candidate-policy.json
+      - tests/architecture/pc100-candidate-policy.test.mjs
+      - tests/architecture/support/candidate-policy-fixture.mjs
+      - .github/workflows/pc100-candidate-admission.yml
 permissions:
   contents: read
 jobs:
@@ -36,3 +46,4 @@ jobs:
           node --test --test-timeout=30000
           tests/architecture/pc100-source-verifier.test.mjs
           tests/architecture/pc100-source-verifier-adversarial.test.mjs
+          tests/architecture/pc100-candidate-policy.test.mjs
