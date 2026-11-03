@@ -93,7 +93,7 @@ import {
   execute as executeArtifact,
 } from "../../.github/actions/pc100-bounded-artifact/index.mjs";
 
-import { candidateFixture } from "./support/candidate-policy-fixture.mjs";
+import { candidateFixture, blobSHA } from "./support/candidate-policy-fixture.mjs";
 import {
   observeCandidateAdmission,
   REGISTRY,
@@ -3812,6 +3812,17 @@ test("PC100 P1 full Walking admission and raw ZIP verification works without GIT
       code.slice(end);
     code = 'import {readFileSync as __testRead} from "node:fs";\n' + code;
     await writeFile(file, code);
+    const engineFile = path.join(dir, ENGINE);
+    let engine = await readFile(engineFile, "utf8");
+    const gb = engine.indexOf("function gitObjectCommand("),
+      ge = engine.indexOf("export function readGitSourceBytes", gb);
+    assert.ok(gb > 0 && ge > gb);
+    engine =
+      'import {readFileSync as __gitFixture} from "node:fs";\n' +
+      engine.slice(0, gb) +
+      `function gitObjectCommand(args,input){if(args[0]==="cat-file"&&args[1]==="-e")return Buffer.alloc(0);if(args[0]==="cat-file"&&args[1]==="--batch"){const f=JSON.parse(__gitFixture(path.resolve(import.meta.dirname,"../../fixture.json")));const rows=input.trim().split("\\n");return Buffer.concat(rows.map(id=>{const b=Buffer.from(f.gitBlobs[id],"base64");return Buffer.concat([Buffer.from(id+" blob "+b.length+"\\n"),b,Buffer.from("\\n")]);}));}throw Error("UNEXPECTED_TEST_GIT_READ");}\n` +
+      engine.slice(ge);
+    await writeFile(engineFile, engine);
     const fileBytes = Object.fromEntries(
       await Promise.all(allPaths.map(async (p) => [p, await readFile(path.join(dir, p))])),
     );
@@ -3904,6 +3915,9 @@ test("PC100 P1 full Walking admission and raw ZIP verification works without GIT
       };
     const fixture = {
       native,
+      gitBlobs: Object.fromEntries(
+        Object.entries(admission.content).map(([, b]) => [blobSHA(b), b.toString("base64")]),
+      ),
       source: prod.source,
       jobs: prod.jobs,
       pr: identity().pr,

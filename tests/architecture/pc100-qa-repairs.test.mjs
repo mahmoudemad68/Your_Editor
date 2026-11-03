@@ -1,7 +1,7 @@
 /** Actual parser, shell and workflow regression controls for independent QA findings. */
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { readFile, mkdtemp, rm } from "node:fs/promises";
+import { readFile, mkdtemp, mkdir, rm } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import process from "node:process";
@@ -15,6 +15,7 @@ import {
 const root = path.resolve(import.meta.dirname, "../.."),
   python = process.env.TEST_PYTHON ?? "python3";
 const read = async (p) => (await readFile(path.join(root, p), "utf8")).replace(/\r\n/g, "\n");
+await mkdir(path.join(root, ".local/qa-repairs-20261103"), { recursive: true, mode: 0o700 });
 const job = (text, name) => text.split(`  ${name}:\n`)[1]?.split(/\n {2}[a-z][a-z-]*:\n/)[0];
 test("B-1 ordinary scan jobs are not dependent on PC100 source approval", async () => {
   const s = await read(".github/workflows/supply-chain.yml"),
@@ -61,12 +62,13 @@ for (const scenario of [
   "symlink",
   "global-path-pax",
   "local-linkpath-pax",
+  "ancestor-symlink",
 ])
   test(`B-2 actual image parser ${scenario}`, async () => {
     const source = await read("infra/seaweedfs/verify-image.sh"),
       prefix = source.split("<<'PY'\n")[1].split("\nbase,bc,")[0];
     const dir = await mkdtemp(path.join(root, ".local/qa-repairs-20261103/parser-"));
-    const program = `import io,json,tarfile,hashlib,sys\nfrom pathlib import Path\nscenario=sys.argv.pop();ns={}\nexec(${JSON.stringify(prefix)},ns)\nw=Path(sys.argv[2])\ndef layer(entries,pax=None):\n b=io.BytesIO()\n with tarfile.open(fileobj=b,mode='w',format=tarfile.PAX_FORMAT,pax_headers=pax) as t:\n  for name,body,link in entries:\n   e=tarfile.TarInfo(name);e.mode=0o755\n   if link:e.type=tarfile.SYMTYPE;e.linkname=link\n   else:e.size=len(body)\n   t.addfile(e,None if link else io.BytesIO(body))\n return b.getvalue()\nbase=layer([('usr/bin/weed',b'\\x7fELFtrusted',None),('usr/local/bin/editagent-entrypoint.sh',b'trusted',None)])\nlayers=[base]\nif scenario=='symlink':layers.append(layer([('usr/bin/weed',b'', '/data/weed')]))\nif scenario=='global-path-pax':layers.append(layer([('usr/local/bin/editagent-entrypoint.sh',b'bad',None)],{'path':'usr/share/editagent-seaweedfs/LICENSE.go.txt'}))\nif scenario=='local-linkpath-pax':layers.append(layer([('usr/bin/weed',b'bad',None)],{'linkpath':'/outside'}))\nif scenario=='timestamp-pax':layers=[layer([('usr/bin/weed',b'\\x7fELFtrusted',None),('usr/local/bin/editagent-entrypoint.sh',b'trusted',None)],{'mtime':'123.25'})]\nconfig=json.dumps({'architecture':'amd64','os':'linux','rootfs':{'diff_ids':['sha256:'+hashlib.sha256(b).hexdigest() for b in layers]}}).encode();cn=hashlib.sha256(config).hexdigest()+'.json'\nwith tarfile.open(w/'image.tar','w') as t:\n for n,b in [(cn,config),('manifest.json',json.dumps([{'Config':cn,'Layers':[f'{i}/layer.tar' for i in range(len(layers))]}]).encode())]+[(f'{i}/layer.tar',b) for i,b in enumerate(layers)]:\n  e=tarfile.TarInfo(n);e.size=len(b);t.addfile(e,io.BytesIO(b))\nfiles,data,*_=ns['image'](w/'image.tar',True)\nassert data['usr/bin/weed']==b'\\x7fELFtrusted'\nassert files['usr/local/bin/editagent-entrypoint.sh'][0] in ('0','\\x00')\nprint('PARSER_PASS')`;
+    const program = `import io,json,tarfile,hashlib,sys\nfrom pathlib import Path\nscenario=sys.argv.pop();ns={}\nexec(${JSON.stringify(prefix)},ns)\nw=Path(sys.argv[2])\ndef layer(entries,pax=None):\n b=io.BytesIO()\n with tarfile.open(fileobj=b,mode='w',format=tarfile.PAX_FORMAT,pax_headers=pax) as t:\n  for name,body,link in entries:\n   e=tarfile.TarInfo(name);e.mode=0o755\n   if link:e.type=tarfile.SYMTYPE;e.linkname=link\n   else:e.size=len(body)\n   t.addfile(e,None if link else io.BytesIO(body))\n return b.getvalue()\nbase=layer([('usr/bin/weed',b'\\x7fELFtrusted',None),('usr/local/bin/editagent-entrypoint.sh',b'trusted',None)])\nlayers=[base]\nif scenario=='ancestor-symlink':layers.append(layer([('usr/bin',b'', '/data/bin')]))\nif scenario=='symlink':layers.append(layer([('usr/bin/weed',b'', '/data/weed')]))\nif scenario=='global-path-pax':layers.append(layer([('usr/local/bin/editagent-entrypoint.sh',b'bad',None)],{'path':'usr/share/editagent-seaweedfs/LICENSE.go.txt'}))\nif scenario=='local-linkpath-pax':layers.append(layer([('usr/bin/weed',b'bad',None)],{'linkpath':'/outside'}))\nif scenario=='timestamp-pax':layers=[layer([('usr/bin/weed',b'\\x7fELFtrusted',None),('usr/local/bin/editagent-entrypoint.sh',b'trusted',None)],{'mtime':'123.25'})]\nconfig=json.dumps({'architecture':'amd64','os':'linux','rootfs':{'diff_ids':['sha256:'+hashlib.sha256(b).hexdigest() for b in layers]}}).encode();cn=hashlib.sha256(config).hexdigest()+'.json'\nwith tarfile.open(w/'image.tar','w') as t:\n for n,b in [(cn,config),('manifest.json',json.dumps([{'Config':cn,'Layers':[f'{i}/layer.tar' for i in range(len(layers))]}]).encode())]+[(f'{i}/layer.tar',b) for i,b in enumerate(layers)]:\n  e=tarfile.TarInfo(n);e.size=len(b);t.addfile(e,io.BytesIO(b))\nfiles,data,*_=ns['image'](w/'image.tar',True)\nassert data['usr/bin/weed']==b'\\x7fELFtrusted'\nassert files['usr/local/bin/editagent-entrypoint.sh'][0] in ('0','\\x00')\nprint('PARSER_PASS')`;
     try {
       const r = spawnSync(
         python,
@@ -76,7 +78,10 @@ for (const scenario of [
       if (["regular", "timestamp-pax"].includes(scenario)) assert.equal(r.status, 0, r.stderr);
       else {
         assert.notEqual(r.status, 0);
-        assert.match(r.stderr, /not a final regular file|unsupported layer PAX/);
+        assert.match(
+          r.stderr,
+          /not a final regular file|unsupported layer PAX|unsupported nonempty ancestor replacement/,
+        );
       }
     } finally {
       await rm(dir, { recursive: true, force: true });

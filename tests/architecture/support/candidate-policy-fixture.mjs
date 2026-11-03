@@ -294,6 +294,7 @@ export function candidateFixture({ context, fileBytes, lock = sampleLock() } = {
     path: REQUIRED_WORKFLOW,
     check_suite_id: 141,
   };
+  rows["actions/runs/140"] = requiredRun;
   rows["actions/workflows/pc100-required-admission.yml"] = { id: 81, path: REQUIRED_WORKFLOW };
   rows[`actions/workflows/81/runs?event=pull_request&head_sha=${c.H}&per_page=100&page=1`] = {
     total_count: 1,

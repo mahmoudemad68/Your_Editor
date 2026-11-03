@@ -35,7 +35,7 @@ def path(s):
     if s.startswith('/') or '\\' in s or any(p in ('','..') for p in s.split('/')): raise ValueError('unsafe image path')
     return s
 def image(file,candidate):
-    files={}; content={}; total=0; count=0; expanded_all=0; elf_hashes=set()
+    files={}; content={}; mapped_parents=set(); total=0; count=0; expanded_all=0; elf_hashes=set()
     with tarfile.open(file,'r:') as outer:
         members=outer.getmembers(); names=[path(m.name) for m in members]
         if len(names)!=len(set(names)) or len(names)>20000: raise ValueError('duplicate/excess outer paths')
@@ -122,6 +122,13 @@ def image(file,candidate):
                         target=posixpath.normpath(posixpath.join(parent,entry.linkname)) if entry.issym() else posixpath.normpath(entry.linkname)
                         if target.startswith('../') or (candidate and name.startswith('usr/share/editagent-seaweedfs/')): raise ValueError('unsafe link')
                     if candidate and (name=='usr/local/go' or name.startswith('usr/local/go/') or name.startswith('root/go/') or name.startswith('build/')): raise ValueError('compiler/source/cache in runtime')
+                    if candidate:
+                        ancestors=[]; current=posixpath.dirname(name)
+                        while current:
+                            ancestors.append(current); current=posixpath.dirname(current)
+                        if any(a in files and files[a][0]!='5' for a in ancestors): raise ValueError('unsupported non-directory layer ancestor')
+                        if not entry.isdir() and name in mapped_parents: raise ValueError('unsupported nonempty ancestor replacement')
+                        mapped_parents.update(ancestors)
                     content.pop(name,None)
                     digest=None
                     if entry.isfile():

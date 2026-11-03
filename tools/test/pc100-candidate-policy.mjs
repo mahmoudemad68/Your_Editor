@@ -5,6 +5,7 @@ import process from "node:process";
 import { createHash } from "node:crypto";
 import { TextDecoder } from "node:util";
 import { readFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -419,7 +420,45 @@ export function validateEnforcementRules(rules, B) {
   need(matching.length === 1, "CANDIDATE_ENFORCEMENT_NOT_INSTALLED");
   return true;
 }
-export async function verifyRequiredAdmission(event, trustedSHA, env = process.env, read = api) {
+export async function waitForQualifiedUpstream(
+  read,
+  pr,
+  context,
+  timing = { now: Date.now, sleep },
+) {
+  const deadline = timing.now() + 120000;
+  for (;;) {
+    need(timing.now() < deadline, "CANDIDATE_PREFLIGHT_DEADLINE");
+    await live(read, context);
+    let selected;
+    try {
+      selected = await selectUpstreamRun(read, pr);
+    } catch (error) {
+      if (error.message !== "POLICY_EVIDENCE_PENDING") throw error;
+    }
+    need(timing.now() < deadline, "CANDIDATE_PREFLIGHT_DEADLINE");
+    if (selected) {
+      need(selected.run_attempt === 1, "CANDIDATE_PREFLIGHT_REJECTED");
+      if (selected.status === "completed") {
+        need(selected.conclusion === "success", "CANDIDATE_PREFLIGHT_REJECTED");
+        return selected;
+      }
+      need(
+        ["queued", "in_progress", "pending", "waiting", "requested"].includes(selected.status) &&
+          selected.conclusion === null,
+        "CANDIDATE_PREFLIGHT_REJECTED",
+      );
+    }
+    await timing.sleep(Math.min(3000, deadline - timing.now()));
+  }
+}
+export async function verifyRequiredAdmission(
+  event,
+  trustedSHA,
+  env = process.env,
+  read = api,
+  timing = { now: Date.now, sleep },
+) {
   need(
     env.GITHUB_EVENT_NAME === "pull_request" &&
       env.GITHUB_WORKFLOW_SHA === trustedSHA &&
@@ -451,10 +490,133 @@ export async function verifyRequiredAdmission(event, trustedSHA, env = process.e
       Number(env.GITHUB_RUN_ATTEMPT) === 1,
     "CANDIDATE_REQUIRED_WORKFLOW_UNTRUSTED",
   );
-  const selected = await selectUpstreamRun(read, event.pull_request);
+  const selected = await waitForQualifiedUpstream(read, event.pull_request, src.context, timing);
   await preflight(read, selected.id, src.context);
   await live(read, src.context);
   return { ...src.decision, upstream_run: selected.id, upstream_attempt: 1 };
+}
+// Read immutable Git object bytes in one bounded batch. Never check out or
+// execute target source, apply filters/hooks, write refs, or spend one REST
+// request per blob. Only an absent public object may be fetched on Linux.
+function gitObjectCommand(args, input, maxBuffer = 132 * 1024 ** 2) {
+  const env = {
+    ...withoutQualificationCredentials(process.env),
+    GIT_NO_REPLACE_OBJECTS: "1",
+    GIT_TERMINAL_PROMPT: "0",
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_CONFIG_GLOBAL: process.platform === "win32" ? "NUL" : "/dev/null",
+  };
+  return execFileSync(
+    "git",
+    [
+      "--no-replace-objects",
+      "-c",
+      "core.hooksPath=/dev/null",
+      "-c",
+      `safe.directory=${path.resolve(import.meta.dirname, "../..")}`,
+      "-c",
+      "credential.helper=",
+      ...args,
+    ],
+    {
+      cwd: path.resolve(import.meta.dirname, "../.."),
+      env,
+      input,
+      timeout: 30000,
+      maxBuffer,
+      stdio: ["pipe", "pipe", "pipe"],
+    },
+  );
+}
+export function readGitSourceBytes(H, files) {
+  need(sha(H), "CANDIDATE_IDENTITY_DRIFT");
+  validateSourceInventory(files);
+  const rows = Object.entries(files),
+    total = rows.reduce((n, [, e]) => n + e.bytes, 0);
+  need(total <= 128 * 1024 ** 2, "CANDIDATE_SOURCE_BYTES_LIMIT");
+  try {
+    gitObjectCommand(["cat-file", "-e", `${H}^{commit}`], undefined, 65536);
+  } catch {
+    need(process.platform === "linux", "CANDIDATE_SOURCE_OBJECTS_UNAVAILABLE");
+    const env = {
+      ...withoutQualificationCredentials(process.env),
+      GIT_NO_REPLACE_OBJECTS: "1",
+      GIT_TERMINAL_PROMPT: "0",
+      GIT_CONFIG_NOSYSTEM: "1",
+      GIT_CONFIG_GLOBAL: "/dev/null",
+    };
+    execFileSync(
+      "timeout",
+      [
+        "--signal=TERM",
+        "--kill-after=5s",
+        "45s",
+        "git",
+        "--no-replace-objects",
+        "-c",
+        "core.hooksPath=/dev/null",
+        "-c",
+        `safe.directory=${path.resolve(import.meta.dirname, "../..")}`,
+        "-c",
+        "credential.helper=",
+        "-c",
+        "protocol.file.allow=never",
+        "-c",
+        "protocol.ext.allow=never",
+        "fetch",
+        "--no-write-fetch-head",
+        "--no-tags",
+        "--no-recurse-submodules",
+        "--depth=1",
+        `https://github.com/${REPO}.git`,
+        H,
+      ],
+      {
+        cwd: path.resolve(import.meta.dirname, "../.."),
+        env,
+        timeout: 55000,
+        maxBuffer: 65536,
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+  }
+  const unique = [...new Set(rows.map(([, e]) => e.git_blob_sha1))],
+    raw = gitObjectCommand(["cat-file", "--batch"], unique.join("\n") + "\n"),
+    blobs = new Map();
+  let at = 0;
+  for (const expected of unique) {
+    const end = raw.indexOf(10, at);
+    need(end >= at, "CANDIDATE_SOURCE_BATCH_REJECTED");
+    const [actual, type, size] = raw.subarray(at, end).toString("ascii").split(" "),
+      n = Number(size);
+    need(
+      actual === expected &&
+        type === "blob" &&
+        Number.isSafeInteger(n) &&
+        n >= 0 &&
+        n <= 16 * 1024 ** 2 &&
+        end + 1 + n < raw.length &&
+        raw[end + 1 + n] === 10,
+      "CANDIDATE_SOURCE_BATCH_REJECTED",
+    );
+    const bytes = raw.subarray(end + 1, end + 1 + n);
+    need(
+      createHash("sha1")
+        .update(Buffer.concat([Buffer.from(`blob ${n}\0`), bytes]))
+        .digest("hex") === expected,
+      "CANDIDATE_BLOB_DIGEST_MISMATCH",
+    );
+    blobs.set(expected, bytes);
+    at = end + n + 2;
+  }
+  need(at === raw.length, "CANDIDATE_SOURCE_BATCH_REJECTED");
+  const result = Object.create(null);
+  for (const [p, e] of rows) {
+    const bytes = blobs.get(e.git_blob_sha1);
+    need(bytes.length === e.bytes && hash(bytes) === e.sha256, "CANDIDATE_SOURCE_SHA256_MISMATCH");
+    result[p] = bytes;
+  }
+  return result;
 }
 async function snapshot(context, read) {
   const [main, pr] = await Promise.all([read("branches/main"), read("pulls/100")]);
@@ -506,25 +668,32 @@ async function snapshot(context, read) {
   const reviewed = await read(`git/commits/${entry.reviewed_source.commit}`),
     reviewedTree = await read(`git/trees/${reviewed.tree.sha}?recursive=1`);
   const lockBytes = await authenticatedBlob(read, treeEntries(targetTree).get(LOCK));
-  const sourceBytes = Object.create(null),
-    sourceEntries = Object.entries(entry.files);
-  need(
-    sourceEntries.reduce((n, [, e]) => n + e.bytes, 0) <= 128 * 1024 ** 2,
-    "CANDIDATE_SOURCE_BYTES_LIMIT",
-  );
-  let cursor = 0;
-  await Promise.all(
-    Array.from({ length: Math.min(8, sourceEntries.length) }, async () => {
-      while (cursor < sourceEntries.length) {
-        const [p, e] = sourceEntries[cursor++];
-        sourceBytes[p] = await authenticatedBlob(
-          read,
-          { type: "blob", mode: e.mode, sha: e.git_blob_sha1, size: e.bytes },
-          16 * 1024 ** 2,
-        );
-      }
-    }),
-  );
+  let sourceBytes;
+  if (read === api || read.sourceBytes === readGitSourceBytes)
+    sourceBytes = readGitSourceBytes(c.H, entry.files);
+  else {
+    // Explicit injected readers are hermetic-test metadata only. The real
+    // protected workflow/consumer always uses the bounded Git object reader.
+    sourceBytes = Object.create(null);
+    const sourceEntries = Object.entries(entry.files);
+    need(
+      sourceEntries.reduce((n, [, e]) => n + e.bytes, 0) <= 128 * 1024 ** 2,
+      "CANDIDATE_SOURCE_BYTES_LIMIT",
+    );
+    let cursor = 0;
+    await Promise.all(
+      Array.from({ length: Math.min(8, sourceEntries.length) }, async () => {
+        while (cursor < sourceEntries.length) {
+          const [p, e] = sourceEntries[cursor++];
+          sourceBytes[p] = await authenticatedBlob(
+            read,
+            { type: "blob", mode: e.mode, sha: e.git_blob_sha1, size: e.bytes },
+            16 * 1024 ** 2,
+          );
+        }
+      }),
+    );
+  }
   const full = { H: c.H, B: c.B, M: c.M, TH: head.tree.sha, TM: merge.tree.sha };
   if (context) need(canonical(full) === canonical(context), "CANDIDATE_IDENTITY_DRIFT");
   return {
@@ -807,6 +976,7 @@ export async function readCandidateAdmission(
     need(timing.now() < end, "CANDIDATE_EVIDENCE_DEADLINE");
     return result;
   };
+  if (read === api) bounded.sourceBytes = readGitSourceBytes;
   try {
     for (;;) {
       need(timing.now() < end, "CANDIDATE_EVIDENCE_DEADLINE");
