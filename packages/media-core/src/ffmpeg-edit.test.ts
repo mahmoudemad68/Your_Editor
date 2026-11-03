@@ -14,6 +14,7 @@ import {
 } from "./ffmpeg-edit.js";
 import { FfmpegExecutor } from "./ffmpeg-executor.js";
 import { FFprobeMediaProbe } from "./ffprobe-adapter.js";
+import { buildFfmpegArgs } from "./ffmpeg-builder.js";
 test("fixed media edits bound dimensions, speed, audio and malformed measurements", () => {
   const source = {
     path: "/tmp/source.mp4",
@@ -56,6 +57,9 @@ test("fixed media edits bound dimensions, speed, audio and malformed measurement
       new RegExp(`(?:^|,)apad=whole_len=${samples},atrim=end_sample=${samples}(?:,|$)`),
     );
     assert.doesNotMatch(args[args.indexOf("-af") + 1]!, /(?:^|,)apad(?:,|$)/);
+    const endUs = BigInt(args[args.indexOf("-t") + 1]!.replace(".", ""));
+    assert.ok(endUs >= editOutputTiming(source, edit).durationUs);
+    assert.ok(endUs * 48000n >= samples * 1000000n);
   }
 });
 test("spatial audio clocks are mandatory, bounded, independent, and never padded", () => {
@@ -90,6 +94,7 @@ test("spatial audio clocks are mandatory, bounded, independent, and never padded
     assert.match(filter, /atrim=end_sample=310656/);
     assert.doesNotMatch(filter, /apad/);
     assert.ok(!args.includes("-shortest"));
+    assert.ok(!args.includes("-t"), "Spatial edits must retain independent genuine audio tails");
     assert.equal(editOutputTiming({ ...source, audioSamples: 240000n }, edit).totalFrames, 179);
   }
 });
@@ -260,6 +265,39 @@ test(
             throw error;
           }
           const p = await new FFprobeMediaProbe().inspect({ filePath: output });
+          assert.equal(
+            await new FFprobeMediaProbe().countDecodedVideoFrames({ filePath: output }),
+            timing.totalFrames,
+          );
+          let pcmBytes = 0;
+          await new FfmpegExecutor().execute(
+            buildFfmpegArgs({
+              input: { path: output },
+              output: {
+                format: "f32le",
+                maps: ["0:a:0"],
+                audioEncoder: "pcm_f32le",
+                sampleRate: 48000,
+                channels: 1,
+              },
+            }),
+            {
+              timeoutMs: 15000,
+              maxStdoutBytes: Number((timing.audioSamples + 1024n) * 4n),
+              onStdout: (c) => {
+                pcmBytes += c.length;
+              },
+            },
+          );
+          assert.equal(pcmBytes % 4, 0);
+          assert.ok(
+            BigInt(pcmBytes / 4) >= timing.audioSamples - 1n,
+            "Every authored output audio sample must survive",
+          );
+          assert.ok(
+            BigInt(pcmBytes / 4) <= timing.audioSamples + 1023n,
+            "Only bounded AAC packet padding is allowed",
+          );
           assert.equal(p.width, timing.width);
           assert.equal(p.height, timing.height);
           assert.equal(p.videoCodec, "h264");

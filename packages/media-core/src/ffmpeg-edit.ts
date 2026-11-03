@@ -3,6 +3,7 @@ import {
   localMediaPath,
   validateFilterGraph,
   loudnessFilter,
+  secondsFromUs,
   type LoudnessSettings,
 } from "./ffmpeg-builder.js";
 export interface EditSource {
@@ -239,6 +240,14 @@ export function buildVideoEditArgs(
       "192k",
     );
   } else args.push("-an");
+  if (!spatial) {
+    // Both non-spatial branches have an authored finite end. Tell the muxer
+    // that end as well as the filters: FFmpeg 8 can otherwise wait after all
+    // target video frames have been delivered by a speed-up graph.
+    // Round audio UP and keep the later clock, never cutting an authored sample.
+    const audioEndUs = (t.audioSamples * 1000000n + 47999n) / 48000n;
+    args.push("-t", secondsFromUs(audioEndUs > t.durationUs ? audioEndUs : t.durationUs));
+  }
   args.push(
     "-movie_timescale",
     "48000",
