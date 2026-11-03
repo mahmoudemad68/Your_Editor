@@ -3779,7 +3779,15 @@ test("PC100 P2 wrong workflow or merge-SHA evidence aliases fail closed", () => 
 test("PC100 P1 full Walking admission and raw ZIP verification works without GITHUB_TOKEN", async () =>
   temporary(async (dir) => {
     const allPaths = [
-      ...new Set([...POLICY_FILES, REGISTRY, ENGINE, CANDIDATE_WORKFLOW, REQUIRED_WORKFLOW]),
+      ...new Set([
+        ...POLICY_FILES,
+        REGISTRY,
+        ENGINE,
+        "infra/seaweedfs/candidate-app.json",
+        "tools/test/pc100-admission-app.mjs",
+        CANDIDATE_WORKFLOW,
+        REQUIRED_WORKFLOW,
+      ]),
     ];
     for (const name of allPaths) {
       const target = path.join(dir, name);
@@ -3827,6 +3835,10 @@ test("PC100 P1 full Walking admission and raw ZIP verification works without GIT
       await Promise.all(allPaths.map(async (p) => [p, await readFile(path.join(dir, p))])),
     );
     const admission = candidateFixture({ context, lock: candidateLock, fileBytes });
+    await writeFile(
+      path.join(dir, "infra/seaweedfs/candidate-app.json"),
+      admission.content["infra/seaweedfs/candidate-app.json"],
+    );
     await writeFile(path.join(dir, REGISTRY), admission.registryBytes);
     const admitted = await observeCandidateAdmission(context, admission.read);
     const binding = {

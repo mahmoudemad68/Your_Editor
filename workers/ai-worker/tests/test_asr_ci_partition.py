@@ -62,15 +62,18 @@ def test_required_ci_gate_includes_every_partition_and_cannot_ignore_real_infere
         "repository",
         "real-asr",
         "seaweedfs-product",
+        "render-isolated",
     }
     assert "if: ${{ always() }}" in gate
     assert 'test "$REPOSITORY_RESULT" = success' in gate
     assert 'test "$REAL_ASR_RESULT" = success' in gate
     assert 'test "$ADMISSION_RESULT" = success' in gate
     assert 'test "$SEAWEEDFS_RESULT" = success' in gate
+    assert 'test "$ISOLATED_RENDER_RESULT" = success' in gate
     for binding in (
         "needs.storage-admission.result",
         "needs.seaweedfs-product.result",
+        "needs.render-isolated.result",
         "needs.repository.result",
         "needs['real-asr'].result",
     ):
@@ -81,7 +84,14 @@ def test_required_ci_gate_includes_every_partition_and_cannot_ignore_real_infere
 @pytest.mark.parametrize("candidate", [False, True])
 @pytest.mark.parametrize(
     "failed_job",
-    [None, "REPOSITORY_RESULT", "REAL_ASR_RESULT", "ADMISSION_RESULT", "SEAWEEDFS_RESULT"],
+    [
+        None,
+        "REPOSITORY_RESULT",
+        "REAL_ASR_RESULT",
+        "ADMISSION_RESULT",
+        "SEAWEEDFS_RESULT",
+        "ISOLATED_RENDER_RESULT",
+    ],
 )
 @pytest.mark.parametrize("result", ["failure", "cancelled", "skipped"])
 def test_actual_required_gate_fails_on_each_mandatory_job(
@@ -96,7 +106,13 @@ def test_actual_required_gate_fails_on_each_mandatory_job(
         "C:/Program Files/Git/bin/bash.exe" if os.name == "nt" else "/bin/sh"
     )
     environment = {**os.environ, "CANDIDATE_EVENT": "true" if candidate else "false"}
-    for key in ("REPOSITORY_RESULT", "REAL_ASR_RESULT", "ADMISSION_RESULT", "SEAWEEDFS_RESULT"):
+    for key in (
+        "REPOSITORY_RESULT",
+        "REAL_ASR_RESULT",
+        "ADMISSION_RESULT",
+        "SEAWEEDFS_RESULT",
+        "ISOLATED_RENDER_RESULT",
+    ):
         environment[key] = result if failed_job == key else "success"
     execution = subprocess.run(
         [shell, "-e", "-c", script],

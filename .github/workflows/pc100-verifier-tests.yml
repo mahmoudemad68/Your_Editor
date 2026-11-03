@@ -7,6 +7,9 @@ on:
       - .github/workflows/pc100-source-verifier.yml
       - .github/workflows/pc100-verifier-tests.yml
       - tools/test/pc100-candidate-policy.mjs
+      - tools/test/pc100-admission-app.mjs
+      - infra/seaweedfs/candidate-app.json
+      - tests/architecture/pc100-admission-app.test.mjs
       - infra/seaweedfs/candidate-policy.json
       - tests/architecture/pc100-candidate-policy.test.mjs
       - tests/architecture/support/candidate-policy-fixture.mjs
@@ -20,6 +23,9 @@ on:
       - .github/workflows/pc100-source-verifier.yml
       - .github/workflows/pc100-verifier-tests.yml
       - tools/test/pc100-candidate-policy.mjs
+      - tools/test/pc100-admission-app.mjs
+      - infra/seaweedfs/candidate-app.json
+      - tests/architecture/pc100-admission-app.test.mjs
       - infra/seaweedfs/candidate-policy.json
       - tests/architecture/pc100-candidate-policy.test.mjs
       - tests/architecture/support/candidate-policy-fixture.mjs
@@ -49,3 +55,4 @@ jobs:
           tests/architecture/pc100-source-verifier.test.mjs
           tests/architecture/pc100-source-verifier-adversarial.test.mjs
           tests/architecture/pc100-candidate-policy.test.mjs
+          tests/architecture/pc100-admission-app.test.mjs

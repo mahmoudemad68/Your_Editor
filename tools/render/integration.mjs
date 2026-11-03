@@ -1,4 +1,5 @@
 import { withoutQualificationCredentials } from "../test/pc100-candidate-policy.mjs";
+import { startResourceObserver, classifyTermination } from "./resource-observer.mjs";
 import { createRequire } from "node:module";
 import { URL } from "node:url";
 import process from "node:process";
@@ -124,6 +125,9 @@ const s3 = new S3Client({
   forcePathStyle: true,
 });
 const pool = new Pool({ connectionString: services.postgres.url });
+let resources;
+let primaryFailure;
+const proofOutcomes = [];
 try {
   for (const f of (await readdir(root + "apps/api/migrations"))
     .filter((x) => x.endsWith(".sql"))
@@ -274,6 +278,11 @@ try {
   const artifactDir = root + ".local/render-batch";
   await mkdir(artifactDir, { recursive: true });
   await rm(artifactDir + "/report.json", { force: true });
+  resources = startResourceObserver(
+    [executor, coordinator],
+    artifactDir + "/resource-observations.json",
+  );
+  await resources.ready;
   await writeFile(
     artifactDir + "/readiness.json",
     JSON.stringify({ startup: startupReadiness, ...readiness }, null, 2) + "\n",
@@ -378,11 +387,16 @@ try {
   );
   const script = await readFile(new URL("./proof.cjs", import.meta.url), "utf8");
   async function runProof(script) {
+    await resources.sample();
     return await new Promise((resolve, reject) => {
       const child = spawn("docker", ["exec", "-i", coordinator, "node"], {
         stdio: ["pipe", "pipe", "inherit"],
       });
-      const watchdog = setTimeout(() => child.kill("SIGKILL"), 600000);
+      let watchdogFired = false;
+      const watchdog = setTimeout(() => {
+        watchdogFired = true;
+        child.kill("SIGKILL");
+      }, 600000);
       let text = "";
       child.stdout.on("data", (b) => {
         text += b;
@@ -394,6 +408,12 @@ try {
       });
       child.once("exit", (code) => {
         clearTimeout(watchdog);
+        proofOutcomes.push({
+          index: proofOutcomes.length,
+          exit_code: code,
+          watchdog_fired: watchdogFired,
+          at: new Date().toISOString(),
+        });
         if (code === 0) resolve(text);
         else reject(new Error("Production render proof failed " + code));
       });
@@ -915,6 +935,7 @@ try {
     });
   }
 } catch (error) {
+  primaryFailure = error;
   for (const name of [executor, coordinator]) {
     try {
       console.error(docker(["logs", "--tail", "20", name]));
@@ -924,6 +945,46 @@ try {
   }
   throw error;
 } finally {
+  let observationError;
+  try {
+    if (resources) {
+      const observations = await resources.stop({ proofs: proofOutcomes });
+      console.log(
+        "RENDER_RESOURCE_REPORT",
+        JSON.stringify({
+          ...observations,
+          samples: [observations.samples[0], ...observations.samples.slice(-3)],
+        }),
+      );
+      const last = proofOutcomes.at(-1);
+      if (last)
+        for (const name of [executor, coordinator]) {
+          const before = observations.samples[0]?.containers.find(
+            (c) => c.container === name,
+          )?.cgroup;
+          const after = observations.samples
+            .at(-1)
+            ?.containers.find((c) => c.container === name)?.cgroup;
+          console.log(
+            "RENDER_TERMINATION_OBSERVATION",
+            JSON.stringify({
+              container: name,
+              ...classifyTermination(
+                before,
+                after,
+                last.exit_code,
+                last.watchdog_fired,
+                observations.samples.at(-1)?.containers.find((c) => c.container === name)?.state
+                  ?.oom_killed,
+              ),
+            }),
+          );
+        }
+    }
+  } catch (error) {
+    observationError = error;
+    console.error("RENDER_RESOURCE_OBSERVATION_FAILED");
+  }
   await pool.end();
   s3.destroy();
   for (const name of [coordinator, executor])
@@ -944,4 +1005,5 @@ try {
   } catch {
     /* cleanup tolerates a network that was not created */
   }
+  if (observationError && !primaryFailure) process.exitCode = 1;
 }

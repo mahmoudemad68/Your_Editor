@@ -336,7 +336,7 @@ test(
       await writeFile(input, "trusted staged bytes");
       await writeFile(
         c,
-        `#include <stdlib.h>\n#include <stdio.h>\n#include <fcntl.h>\n#include <unistd.h>\n#include <sys/socket.h>\n#include <errno.h>\nint main(int c,char**v){if(c==2&&v[1][0]=='c'){printf("%d\\n",getpid());fflush(stdout);volatile unsigned long x=0;for(;;)x++;}if(c==2&&v[1][0]=='m'){return malloc(512UL*1024*1024)==NULL?0:8;}int a=open(v[1],O_RDONLY),b=open("/etc/passwd",O_RDONLY),s=socket(AF_INET,SOCK_STREAM,0);return a>=0&&b<0&&s<0?0:9;}\n`,
+        `#include <stdlib.h>\n#include <stdio.h>\n#include <fcntl.h>\n#include <unistd.h>\n#include <sys/socket.h>\n#include <sys/resource.h>\n#include <errno.h>\nint main(int c,char**v){if(c==2&&v[1][0]=='c'){printf("%d\\n",getpid());fflush(stdout);volatile unsigned long x=0;for(;;)x++;}if(c==2&&v[1][0]=='m'){struct rlimit r;if(getrlimit(RLIMIT_AS,&r))return 10;errno=0;void*volatile p=malloc(512UL*1024*1024);int e=errno;printf("{\\"addressLimit\\":%llu,\\"allocationFailed\\":%s,\\"errno\\":%d}\\n",(unsigned long long)r.rlim_cur,p==NULL?"true":"false",e);if(p){free(p);return 8;}return e==ENOMEM?0:11;}int a=open(v[1],O_RDONLY),b=open("/etc/passwd",O_RDONLY),s=socket(AF_INET,SOCK_STREAM,0);return a>=0&&b<0&&s<0?0:9;}\n`,
       );
       const compiled = spawnSync("cc", [c, "-O2", "-o", exe], { encoding: "utf8" });
       assert.equal(compiled.status, 0, compiled.stderr);
@@ -347,7 +347,43 @@ test(
           { timeout: 10000, encoding: "utf8" },
         );
       assert.equal(run([input]).status, 0);
-      assert.equal(run(["memory"]).status, 0);
+      // A volatile escape keeps malloc observable even with GCC's malloc-DCE.
+      // The unconfined control must allocate; the identical confined ELF must
+      // observe the actual 128-MiB kernel limit and fail with ENOMEM.
+      assert.equal(spawnSync(exe, ["memory"], { encoding: "utf8", timeout: 10000 }).status, 8);
+      const memory = run(["memory"]);
+      assert.equal(memory.status, 0, JSON.stringify(memory));
+      assert.deepEqual(JSON.parse(memory.stdout), {
+        addressLimit: 134217728,
+        allocationFailed: true,
+        errno: 12,
+      });
+      const old = path.join(dir, "old.c"),
+        oldExe = path.join(dir, "old"),
+        assembly = path.join(dir, "old.s");
+      await writeFile(
+        old,
+        "#include <stdlib.h>\nint main(void){return malloc(512UL*1024*1024)==NULL?0:8;}\n",
+      );
+      assert.equal(spawnSync("cc", [old, "-O2", "-o", oldExe]).status, 0);
+      assert.equal(spawnSync("cc", [old, "-O2", "-S", "-o", assembly]).status, 0);
+      const original = spawnSync(
+        SANDBOX_PATH,
+        ["1", "134217728", "1048576", input, "-", oldExe, "--", oldExe],
+        { timeout: 10000, encoding: "utf8" },
+      );
+      console.log(
+        "SANDBOX_MEMORY_COMPILER_CONTROL",
+        JSON.stringify({
+          compiler: spawnSync("cc", ["--version"], { encoding: "utf8" }).stdout.split("\n")[0],
+          originalStatus: original.status,
+          originalCallsMalloc: /\b(call|bl|jmp)[^\n]*\bmalloc/.test(
+            await readFile(assembly, "utf8"),
+          ),
+          confined: JSON.parse(memory.stdout),
+          unconfinedStatus: 8,
+        }),
+      );
       const cpu = run(["cpu"]);
       assert.ok(cpu.status === 152 || cpu.status === 137, JSON.stringify(cpu));
       assert.equal(cpu.error, undefined);

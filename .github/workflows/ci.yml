@@ -294,6 +294,7 @@ jobs:
           # remain excluded. Screenshots mask account identity and transcript.
           path: |
             .local/asr-public/test-summary.json
+            .local/render-batch/resource-observations.json
             .local/graduation-demo-public/report.json
             .local/graduation-demo-public/upload-inspection.png
             .local/graduation-demo-public/analysis-status.png
@@ -514,10 +515,35 @@ jobs:
             .local/caption-public/repair-boundary-export.mp4
             .local/caption-public/repair-boundary-proof.json
 
+  render-isolated:
+    if: github.event_name == 'pull_request' && github.event.pull_request.number == 100
+    name: isolated real MinIO render diagnostics
+    runs-on: ubuntu-26.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          lfs: true
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - name: Build the existing render dependency graph
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm --filter @editagent/render-worker... build
+          sh tools/test/ensure-ffmpeg.sh
+      - name: Real isolated rendering with unchanged CPU memory and deadline limits
+        run: pnpm render:test
+
   ci:
     name: ci
     runs-on: ubuntu-latest
-    needs: [storage-admission, repository, real-asr, seaweedfs-product]
+    needs: [storage-admission, repository, real-asr, seaweedfs-product, render-isolated]
     if: ${{ always() }}
     steps:
       - name: Require repository checks and every real-inference shard
@@ -525,12 +551,14 @@ jobs:
           CANDIDATE_EVENT: ${{ github.event_name == 'pull_request' && github.event.pull_request.number == 100 }}
           ADMISSION_RESULT: ${{ needs.storage-admission.result }}
           SEAWEEDFS_RESULT: ${{ needs.seaweedfs-product.result }}
+          ISOLATED_RENDER_RESULT: ${{ needs.render-isolated.result }}
           REPOSITORY_RESULT: ${{ needs.repository.result }}
           REAL_ASR_RESULT: ${{ needs['real-asr'].result }}
         run: |
           if [ "$CANDIDATE_EVENT" = true ]; then
             test "$ADMISSION_RESULT" = success
             test "$SEAWEEDFS_RESULT" = success
+            test "$ISOLATED_RENDER_RESULT" = success
           fi
           test "$REPOSITORY_RESULT" = success
           test "$REAL_ASR_RESULT" = success
