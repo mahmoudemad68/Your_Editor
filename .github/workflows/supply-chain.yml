@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  actions: write
+  actions: read
   contents: read
 
 concurrency:
@@ -18,6 +18,28 @@ concurrency:
   cancel-in-progress: ${{ github.event_name != 'push' }}
 
 jobs:
+  source-policy:
+    if: github.event_name == 'pull_request' && github.event.pull_request.number == 100
+    name: source policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+      - name: Require independently verified default-branch source policy
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PC100_METADATA_TOKEN: ${{ github.token }}
+        run: node tools/test/load-qualified-storage.mjs prepare-producer
+
   dependencies:
     name: dependencies
     runs-on: ubuntu-latest
@@ -26,6 +48,7 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v7
         with:
+          persist-credentials: false
           fetch-depth: 0
 
       - name: Install pnpm
@@ -124,6 +147,8 @@ jobs:
           path: dependencies
 
   images:
+    needs: source-policy
+    if: ${{ always() && !cancelled() && (github.event_name != 'pull_request' || github.event.pull_request.number != 100 || needs.source-policy.result == 'success') }}
     name: image ${{ matrix.service }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -157,6 +182,16 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Verify independent exact-source candidate policy before build
+        if: matrix.service == 'seaweedfs' && github.event_name == 'pull_request' && github.event.pull_request.number == 100 && github.event.pull_request.number == 100
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PC100_METADATA_TOKEN: ${{ github.token }}
+        run: node tools/test/load-qualified-storage.mjs prepare-producer
 
       - name: Build image
         run: |
@@ -175,6 +210,17 @@ jobs:
         if: matrix.service == 'media-worker'
         run: ./infra/scripts/verify-media-ffmpeg.sh "editagent-${{ matrix.service }}:${GITHUB_SHA}"
 
+      - name: Verify fixed native Brotli and SeaweedFS privilege drop
+        if: matrix.service == 'seaweedfs'
+        run: |
+          docker run --rm --network none --read-only --entrypoint sh "editagent-seaweedfs:${GITHUB_SHA}" -ec '
+            test "$(sed -n "/^P:brotli-libs$/,/^$/s/^V://p" /lib/apk/db/installed)" = 1.2.1-r0
+            curl --version | grep -F brotli/1.2.1
+            test "$(su-exec seaweed id -u)" = 1000
+            test -x /entrypoint.sh
+            test -x /usr/local/bin/editagent-entrypoint.sh
+          '
+
       - name: Verify packaged prompt registry in production agent image
         if: matrix.service == 'agent-worker'
         run: sh infra/scripts/verify-agent-prompts.sh "editagent-${{ matrix.service }}:${GITHUB_SHA}"
@@ -188,6 +234,52 @@ jobs:
 
       - name: Generate SBOM and scan
         run: ./infra/scripts/supply-chain-scan-image.sh "${{ matrix.service }}" "editagent-${{ matrix.service }}:${GITHUB_SHA}"
+
+      - name: Fixed module reproducibility and zero HIGH gate
+        if: matrix.service == 'seaweedfs' && github.event_name == 'pull_request' && github.event.pull_request.number == 100
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PC100_METADATA_TOKEN: ${{ github.token }}
+        run: node tools/test/load-qualified-storage.mjs produce 'editagent-seaweedfs:${{ github.sha }}' .local/seaweedfs-transfer/bundle
+      - name: Bounded RSA JWK and Brotli controls
+        if: matrix.service == 'seaweedfs' && github.event_name == 'pull_request' && github.event.pull_request.number == 100
+        run: |
+          docker build --platform linux/amd64 --target security-probes -f infra/seaweedfs/Dockerfile -t editagent-seaweedfs-probes .
+          probe_name="editagent-seaweed-crypto-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          trap 'docker rm -f "$probe_name" >/dev/null 2>&1 || true' EXIT
+          for probe in rsa jwk brotli; do
+            timeout 60 docker run --rm --name "$probe_name" --user 65534:65534 --cap-drop ALL --security-opt no-new-privileges:true --cpus 1 --memory 384m --memory-swap 384m --pids-limit 64 --read-only --network none --tmpfs /tmp:rw,noexec,nosuid,size=32m,mode=1777 -e GODEBUG=fips140=on editagent-seaweedfs-probes "$probe"
+          done
+          for suite in jose brotli; do
+            timeout 180 docker run --rm --name "$probe_name" --workdir "/tests/$suite" --user 65534:65534 --cap-drop ALL --security-opt no-new-privileges:true --cpus 1 --memory 384m --memory-swap 384m --pids-limit 64 --read-only --network none --tmpfs /tmp:rw,noexec,nosuid,size=32m,mode=1777 -e GODEBUG=fips140=on --entrypoint "/$suite.test" editagent-seaweedfs-probes -test.timeout=150s
+          done
+      - name: Upload qualified candidate
+        id: qualified-candidate
+        if: matrix.service == 'seaweedfs' && github.event_name == 'pull_request' && github.event.pull_request.number == 100
+        uses: ./.github/actions/pc100-bounded-artifact
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PC100_METADATA_TOKEN: ${{ github.token }}
+        with:
+          operation: upload
+          role: source
+          bundle: .local/seaweedfs-transfer/bundle
+      - name: Seal qualified candidate upload
+        if: matrix.service == 'seaweedfs' && github.event_name == 'pull_request' && github.event.pull_request.number == 100
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PC100_METADATA_TOKEN: ${{ github.token }}
+        run: node tools/test/load-qualified-storage.mjs seal '${{ steps.qualified-candidate.outputs.artifact-id }}' '${{ steps.qualified-candidate.outputs.artifact-digest }}'
+      - name: Upload candidate seal
+        if: matrix.service == 'seaweedfs' && github.event_name == 'pull_request' && github.event.pull_request.number == 100
+        uses: ./.github/actions/pc100-bounded-artifact
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PC100_METADATA_TOKEN: ${{ github.token }}
+        with:
+          operation: upload
+          role: seal
+          bundle: .local/seaweedfs-transfer/seal
 
       - name: Preserve scanned production image for main publication
         if: github.event_name == 'push' && github.ref == 'refs/heads/main' && matrix.service != 'test-minio'
@@ -227,14 +319,26 @@ jobs:
 
   supply-chain-security:
     name: supply-chain-security
-    needs: [dependencies, images]
+    needs: [source-policy, dependencies, images]
     if: always() && needs.dependencies.result != 'cancelled' && needs.images.result != 'cancelled'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
+      - name: Require actual scan jobs and candidate policy where applicable
+        env:
+          CANDIDATE_EVENT: ${{ github.event_name == 'pull_request' && github.event.pull_request.number == 100 }}
+          POLICY_RESULT: ${{ needs.source-policy.result }}
+          DEPENDENCIES_RESULT: ${{ needs.dependencies.result }}
+          IMAGES_RESULT: ${{ needs.images.result }}
+        run: |
+          test "$DEPENDENCIES_RESULT" = success
+          test "$IMAGES_RESULT" = success
+          if [ "$CANDIDATE_EVENT" = true ]; then test "$POLICY_RESULT" = success; fi
       - name: Download scan results
         uses: actions/download-artifact@v7
         with:
@@ -286,6 +390,8 @@ jobs:
           ]
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@v7
         with:
           name: scanned-image-${{ matrix.service }}
@@ -318,6 +424,8 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@v7
         with:
           pattern: release-image-*
@@ -355,6 +463,8 @@ jobs:
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - name: Require configured Owner review protection
         env:
           GH_TOKEN: ${{ github.token }}

@@ -5,7 +5,7 @@ set -eu
 
 root="$(CDPATH= cd -- "$(dirname "$0")/../.." && pwd)"
 cd "$root"
-image="$(sed -n 's/^FROM //p' "$root/infra/seaweedfs/Dockerfile")"
+image="$("$root/infra/seaweedfs/image-reference.sh" live)"
 destination="${1:?backup directory is required}"
 project="${COMPOSE_PROJECT_NAME:-editagent}"
 mkdir -p "$destination"
@@ -19,5 +19,6 @@ for volume in seaweed-master seaweed-volume seaweed-filer; do
     -C /data -cf "/backup/${volume}.tar" .
   test -s "$destination/${volume}.tar"
 done
+(cd "$destination" && sha256sum seaweed-master.tar seaweed-volume.tar seaweed-filer.tar > SHA256SUMS)
 ./infra/seaweedfs/rearm-storage.sh
 echo "seaweedfs backup written to $destination"

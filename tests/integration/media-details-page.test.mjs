@@ -156,19 +156,29 @@ test("the media page shows FFprobe details after a direct upload and a manual in
       Buffer.from(digest, "hex").toString("base64"),
     );
     assert.equal(signedHeaders["x-amz-checksum-sha256"].includes(digest), false);
-    const preflight = await fetch(uploadUrl, {
+    // The repository suite uses both the API page harness and the real Next
+    // browser on port 3030. Verify actual storage admission for each origin.
+    for (const origin of ["http://127.0.0.1:3000", "http://127.0.0.1:3030"]) {
+      const preflight = await fetch(uploadUrl, {
+        method: "OPTIONS",
+        headers: {
+          Origin: origin,
+          "Access-Control-Request-Method": "PUT",
+          "Access-Control-Request-Headers": "content-type,x-amz-checksum-sha256,if-none-match",
+        },
+      });
+      assert.equal(preflight.ok, true, await preflight.text());
+      const allowed = (preflight.headers.get("access-control-allow-headers") ?? "").toLowerCase();
+      assert.equal(allowed.includes("content-type"), true, allowed);
+      assert.equal(allowed.includes("x-amz-checksum-sha256"), true, allowed);
+      assert.equal(allowed.includes("if-none-match"), true, allowed);
+      assert.equal(preflight.headers.get("access-control-allow-origin"), origin);
+    }
+    const rejectedOrigin = await fetch(uploadUrl, {
       method: "OPTIONS",
-      headers: {
-        Origin: "http://127.0.0.1:3000",
-        "Access-Control-Request-Method": "PUT",
-        "Access-Control-Request-Headers": "content-type,x-amz-checksum-sha256,if-none-match",
-      },
+      headers: { Origin: "https://untrusted.example", "Access-Control-Request-Method": "PUT" },
     });
-    assert.equal(preflight.ok, true, await preflight.text());
-    const allowed = (preflight.headers.get("access-control-allow-headers") ?? "").toLowerCase();
-    assert.equal(allowed.includes("content-type"), true, allowed);
-    assert.equal(allowed.includes("x-amz-checksum-sha256"), true, allowed);
-    assert.equal(allowed.includes("if-none-match"), true, allowed);
+    assert.equal(rejectedOrigin.headers.get("access-control-allow-origin"), null);
     const objectUrl = uploadUrl.split("?")[0];
     const anonymous = await fetch(objectUrl);
     assert.equal(anonymous.ok, false);

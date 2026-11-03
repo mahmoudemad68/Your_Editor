@@ -10,13 +10,68 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  actions: write
+  actions: read
   contents: read
 
 jobs:
+  storage-admission:
+    if: github.event_name == 'pull_request' && github.event.pull_request.number == 100
+    name: qualified storage admission
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      producer: ${{ steps.admit.outputs.producer }}
+      producer_attempt: ${{ steps.admit.outputs.producer_attempt }}
+      artifact: ${{ steps.admit.outputs.artifact }}
+      receipt_sha256: ${{ steps.admit.outputs.receipt_sha256 }}
+      promoted_id: ${{ steps.promote.outputs.artifact-id }}
+      promoted_digest: ${{ steps.promote.outputs.artifact-digest }}
+      promoted_bytes: ${{ steps.promote.outputs.artifact-bytes }}
+      outcome: ${{ steps.admit.outputs.outcome }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+      - name: Admit completed exact-head Supply workflow
+        id: admit
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PC100_METADATA_TOKEN: ${{ github.token }}
+        run: node tools/test/load-qualified-storage.mjs admit
+      - name: Preserve bounded admission outcome
+        if: failure() && (steps.admit.outputs.outcome == 'PRODUCER_NOT_YET_COMPLETE' || steps.admit.outputs.outcome == 'PRODUCER_NOT_YET_CREATED') && github.run_attempt == 1
+        uses: ./.github/actions/pc100-bounded-artifact
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PC100_METADATA_TOKEN: ${{ github.token }}
+        with:
+          operation: upload
+          role: outcome
+          bundle: .local/issue99/outcome-bundle
+      - name: Preserve verified preparation receipt
+        id: promote
+        uses: ./.github/actions/pc100-bounded-artifact
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PC100_METADATA_TOKEN: ${{ github.token }}
+        with:
+          operation: upload
+          role: ci
+          bundle: ${{ steps.admit.outputs.ci_bundle }}
+
   repository:
     name: repository checks
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
       TURBO_TELEMETRY_DISABLED: "1"
@@ -55,18 +110,14 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v7
         with:
+          persist-credentials: false
           lfs: true
+          fetch-depth: 2
 
-      - name: Start SeaweedFS
-        run: |
-          set -eu
-          ./infra/seaweedfs/start-storage.sh
-          curl -fsS http://127.0.0.1:9000/status >/dev/null
-          S3_HOST=127.0.0.1 S3_PORT=9000 python3 infra/scripts/ensure_bucket.py
-          ./infra/seaweedfs/verify-firewall-lifecycle.sh
-          ./infra/seaweedfs/verify-jwt-authority.sh
-          ./infra/seaweedfs/verify-trust-boundary.sh
-
+      - name: Setup admission Node
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
       - name: Install pnpm
         uses: pnpm/action-setup@v6
 
@@ -99,6 +150,7 @@ jobs:
             ${{ runner.os }}-turbo-
 
       - name: Enable optional Turborepo remote cache
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         env:
           TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
           TURBO_TEAM: ${{ secrets.TURBO_TEAM }}
@@ -148,8 +200,12 @@ jobs:
       - name: Independently verify silence interval accounting
         run: python3 -m unittest discover -s tools/audio -p 'test_*.py'
 
-      - name: Check SeaweedFS S3 contract
-        run: node tests/architecture/seaweedfs-s3-contract.mjs
+      - name: Start explicit MinIO application regression fixture
+        run: |
+          node tools/test/pc100-minio-regression.mjs repository
+          S3_HOST=127.0.0.1 S3_PORT=9000 python3 infra/scripts/ensure_bucket.py
+      - name: MinIO S3 API compatibility (not SeaweedFS qualification)
+        run: node tests/architecture/seaweedfs-s3-contract.mjs --storage-backend=minio
 
       - name: Build
         run: pnpm build
@@ -238,6 +294,7 @@ jobs:
           # remain excluded. Screenshots mask account identity and transcript.
           path: |
             .local/asr-public/test-summary.json
+            .local/render-batch/resource-observations.json
             .local/graduation-demo-public/report.json
             .local/graduation-demo-public/upload-inspection.png
             .local/graduation-demo-public/analysis-status.png
@@ -274,6 +331,12 @@ jobs:
             packages/*/coverage/lcov.info
             workers/*/coverage/lcov.info
             workers/ai-worker/coverage.xml
+      - name: Remove explicit MinIO regression fixture
+        if: always()
+        run: |
+          if [ -f .local/pc100-minio-regression/repository.json ]; then
+            node tools/test/pc100-minio-regression.mjs stop-repository
+          fi
 
   real-asr:
     name: real ASR (${{ matrix.shard }})
@@ -293,6 +356,7 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v7
         with:
+          persist-credentials: false
           lfs: true
           # Offline base/head inference A/B reads the pinned published source from Git.
           fetch-depth: 0
@@ -342,16 +406,196 @@ jobs:
           path: |
             .local/asr-public/test-summary.json
 
+  seaweedfs-product:
+    if: github.event_name == 'pull_request' && github.event.pull_request.number == 100
+    name: candidate SeaweedFS production journey
+    needs: storage-admission
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          lfs: true
+          fetch-depth: 2
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          python-version: "3.11"
+          version: "0.12.20"
+      - name: Independently load qualified candidate
+        id: storage-load
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PC100_METADATA_TOKEN: ${{ github.token }}
+        run: node tools/test/load-qualified-storage.mjs load '${{ needs.storage-admission.outputs.producer }}:${{ needs.storage-admission.outputs.producer_attempt }}:${{ needs.storage-admission.outputs.artifact }}'
+      - name: Bind actual candidate evidence
+        run: echo 'SEAWEED_QUALIFIED_RECEIPT=${{ steps.storage-load.outputs.receipt }}' >> "$GITHUB_ENV"
+      - name: Install and build workspace
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+          sh tools/test/ensure-ffmpeg.sh
+          sh tools/test/ensure-chrome.sh
+          pnpm test:fixtures
+      - name: Start SeaweedFS and require firewall JWT and trust-boundary controls
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PC100_METADATA_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          ./infra/seaweedfs/start-storage.sh --from-boot
+          curl -fsS http://127.0.0.1:9000/status >/dev/null
+          S3_HOST=127.0.0.1 S3_PORT=9000 python3 infra/scripts/ensure_bucket.py
+          ./infra/seaweedfs/verify-firewall-lifecycle.sh
+          ./infra/seaweedfs/verify-jwt-authority.sh
+          ./infra/seaweedfs/verify-trust-boundary.sh
+      - name: Check SeaweedFS S3 contract including stopped backup and restore
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PC100_METADATA_TOKEN: ${{ github.token }}
+        run: node tests/architecture/seaweedfs-s3-contract.mjs --verify-backup
+      - name: Stop disposable contract stack before independent recovery journey
+        run: docker compose down --remove-orphans
+      - name: Real storage migration and isolated recovery
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PC100_METADATA_TOKEN: ${{ github.token }}
+        run: node tests/integration/seaweedfs-security-recovery.mjs
+      - name: Build immutable production ASR image
+        run: node tools/asr/container.mjs --build-only --model tiny
+      - name: Independent candidate SeaweedFS browser to export
+        env:
+          PC100_METADATA_TOKEN: ${{ github.token }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: pnpm render:test --graduation-demo --storage-seaweedfs
+      - name: Verify final exact-head admission
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PC100_METADATA_TOKEN: ${{ github.token }}
+        run: node tools/test/load-qualified-storage.mjs final '${{ steps.storage-load.outputs.receipt }}'
+      - name: Audit bounded real-service evidence
+        id: audit
+        if: ${{ !cancelled() }}
+        run: |
+          for folder in .local/seaweedfs-recovery-public .local/graduation-demo-public .local/caption-public .local/agent-loop-public; do
+            if [ -d "$folder" ]; then python3 tools/test/audit-artifacts.py "$folder"; fi
+          done
+      - name: Preserve actual candidate media and recovery proof
+        if: ${{ !cancelled() && steps.audit.outcome == 'success' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: seaweedfs-product-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 1
+          path: |
+            .local/seaweedfs-recovery-public/report.json
+            .local/graduation-demo-public/report.json
+            .local/graduation-demo-public/upload-inspection.png
+            .local/graduation-demo-public/analysis-status.png
+            .local/graduation-demo-public/timeline.png
+            .local/graduation-demo-public/export.png
+            .local/graduation-demo-public/demo-export.mp4
+            .local/caption-public/report.json
+            .local/caption-public/repair-report.json
+            .local/caption-public/repair-saved.png
+            .local/caption-public/repair-playback.png
+            .local/caption-public/repair-export.mp4
+            .local/caption-public/repair-boundary-export.mp4
+            .local/caption-public/repair-boundary-proof.json
+
+  render-isolated:
+    if: github.event_name == 'pull_request' && github.event.pull_request.number == 100
+    name: isolated real MinIO render diagnostics
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          lfs: true
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - name: Build the existing render dependency graph
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm --filter @editagent/render-worker... build
+          sh tools/test/ensure-ffmpeg.sh
+      - name: Real isolated rendering with unchanged CPU memory and deadline limits
+        run: pnpm render:test
+
   ci:
     name: ci
     runs-on: ubuntu-latest
-    needs: [repository, real-asr]
+    needs: [storage-admission, repository, real-asr, seaweedfs-product, render-isolated]
     if: ${{ always() }}
     steps:
       - name: Require repository checks and every real-inference shard
         env:
+          CANDIDATE_EVENT: ${{ github.event_name == 'pull_request' && github.event.pull_request.number == 100 }}
+          ADMISSION_RESULT: ${{ needs.storage-admission.result }}
+          SEAWEEDFS_RESULT: ${{ needs.seaweedfs-product.result }}
+          ISOLATED_RENDER_RESULT: ${{ needs.render-isolated.result }}
           REPOSITORY_RESULT: ${{ needs.repository.result }}
           REAL_ASR_RESULT: ${{ needs['real-asr'].result }}
         run: |
+          if [ "$CANDIDATE_EVENT" = true ]; then
+            test "$ADMISSION_RESULT" = success
+            test "$SEAWEEDFS_RESULT" = success
+            test "$ISOLATED_RENDER_RESULT" = success
+          fi
           test "$REPOSITORY_RESULT" = success
           test "$REAL_ASR_RESULT" = success
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+      - name: Retrieve exact preparation receipt
+        if: github.event_name == 'pull_request' && github.event.pull_request.number == 100
+        id: receipt-download
+        uses: ./.github/actions/pc100-bounded-artifact
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PC100_METADATA_TOKEN: ${{ github.token }}
+        with:
+          operation: download
+          role: ci
+          artifact-id: ${{ needs.storage-admission.outputs.promoted_id }}
+          artifact-digest: ${{ needs.storage-admission.outputs.promoted_digest }}
+          artifact-bytes: ${{ needs.storage-admission.outputs.promoted_bytes }}
+      - name: Validate raw preparation receipt ZIP
+        if: github.event_name == 'pull_request' && github.event.pull_request.number == 100
+        id: receipt-zip
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PC100_METADATA_TOKEN: ${{ github.token }}
+          PC100_RAW_ZIP_DIGEST: ${{ steps.receipt-download.outputs.artifact-digest }}
+          PC100_RAW_ZIP_BYTES: ${{ steps.receipt-download.outputs.artifact-bytes }}
+          PC100_RAW_ZIP: ${{ steps.receipt-download.outputs.download-path }}
+          PC100_RECEIPT_SHA: ${{ needs.storage-admission.outputs.receipt_sha256 }}
+        run: node tools/test/load-qualified-storage.mjs receipt-zip "$(dirname "$PC100_RAW_ZIP")" "$PC100_RECEIPT_SHA"
+      - name: Verify genuine final identity and producer
+        if: github.event_name == 'pull_request' && github.event.pull_request.number == 100
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PC100_METADATA_TOKEN: ${{ github.token }}
+        run: node tools/test/load-qualified-storage.mjs final '${{ steps.receipt-zip.outputs.receipt }}' '${{ needs.storage-admission.outputs.receipt_sha256 }}'

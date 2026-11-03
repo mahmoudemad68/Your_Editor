@@ -1,7 +1,10 @@
 """Execution partitioning must retain every real-inference acceptance test."""
 
+import os
 import re
 import runpy
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -52,8 +55,73 @@ def test_required_ci_gate_includes_every_partition_and_cannot_ignore_real_infere
     configured = [line.strip()[2:] for line in matrix.group(1).splitlines()]
     assert tuple(configured) == MODULE["SHARDS"]
     gate = workflow.split("\n  ci:\n", 1)[1]
-    assert "needs: [repository, real-asr]" in gate
+    needs = re.search(r"^    needs: \[([^\]]+)\]$", gate, re.MULTILINE)
+    assert needs is not None
+    assert {name.strip() for name in needs.group(1).split(",")} == {
+        "storage-admission",
+        "repository",
+        "real-asr",
+        "seaweedfs-product",
+        "render-isolated",
+    }
     assert "if: ${{ always() }}" in gate
     assert 'test "$REPOSITORY_RESULT" = success' in gate
     assert 'test "$REAL_ASR_RESULT" = success' in gate
+    assert 'test "$ADMISSION_RESULT" = success' in gate
+    assert 'test "$SEAWEEDFS_RESULT" = success' in gate
+    assert 'test "$ISOLATED_RENDER_RESULT" = success' in gate
+    for binding in (
+        "needs.storage-admission.result",
+        "needs.seaweedfs-product.result",
+        "needs.render-isolated.result",
+        "needs.repository.result",
+        "needs['real-asr'].result",
+    ):
+        assert binding in gate
     assert '--shard "${{ matrix.shard }}"' in workflow
+
+
+@pytest.mark.parametrize("candidate", [False, True])
+@pytest.mark.parametrize(
+    "failed_job",
+    [
+        None,
+        "REPOSITORY_RESULT",
+        "REAL_ASR_RESULT",
+        "ADMISSION_RESULT",
+        "SEAWEEDFS_RESULT",
+        "ISOLATED_RENDER_RESULT",
+    ],
+)
+@pytest.mark.parametrize("result", ["failure", "cancelled", "skipped"])
+def test_actual_required_gate_fails_on_each_mandatory_job(
+    candidate: bool, failed_job: str | None, result: str
+) -> None:
+    workflow = (Path(__file__).resolve().parents[3] / ".github/workflows/ci.yml").read_text()
+    gate = workflow.split("\n  ci:\n", 1)[1]
+    match = re.search(r"        run: \|\n((?:          [^\n]*\n)+)", gate)
+    assert match is not None
+    script = "\n".join(line[10:] for line in match.group(1).splitlines())
+    shell = shutil.which("sh") or (
+        "C:/Program Files/Git/bin/bash.exe" if os.name == "nt" else "/bin/sh"
+    )
+    environment = {**os.environ, "CANDIDATE_EVENT": "true" if candidate else "false"}
+    for key in (
+        "REPOSITORY_RESULT",
+        "REAL_ASR_RESULT",
+        "ADMISSION_RESULT",
+        "SEAWEEDFS_RESULT",
+        "ISOLATED_RENDER_RESULT",
+    ):
+        environment[key] = result if failed_job == key else "success"
+    execution = subprocess.run(
+        [shell, "-e", "-c", script],
+        env=environment,
+        capture_output=True,
+        timeout=10,
+        check=False,
+    )
+    mandatory = failed_job in {"REPOSITORY_RESULT", "REAL_ASR_RESULT"} or (
+        candidate and failed_job is not None
+    )
+    assert (execution.returncode != 0) is mandatory, execution.stderr

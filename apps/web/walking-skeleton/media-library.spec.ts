@@ -6,12 +6,27 @@ import path from "node:path";
 
 const root = path.resolve(__dirname, "../../..");
 const compose = (args: string[]) =>
-  execFileSync("docker", ["compose", ...args], {
+  execFileSync("docker", ["compose", "--project-name", "walking-skeleton", ...args], {
     cwd: root,
     env: process.env,
     stdio: "pipe",
     timeout: 60_000,
   });
+function restartWorker() {
+  const backend = process.env.WALKING_SKELETON_STORAGE_BACKEND;
+  if (!["minio-regression", "seaweedfs-qualified"].includes(backend ?? ""))
+    throw Error("REGRESSION_BROWSER_CONTEXT_REJECTED");
+  compose([
+    "up",
+    "-d",
+    "--no-build",
+    ...(backend === "minio-regression" ? ["--no-deps"] : []),
+    "--wait",
+    "--wait-timeout",
+    "60",
+    "media-worker",
+  ]);
+}
 /** Read-only evidence from the production database: US-210 must publish the
  * existing US-128 job automatically, without a test/operator enqueue shortcut.
  */
@@ -130,8 +145,7 @@ test("US-125 real processing → derivatives → sprite/proxy playback → rejec
         .getByText("Processing", { exact: true }),
     ).toBeVisible();
   } finally {
-    if (workerStopped)
-      compose(["up", "-d", "--no-build", "--wait", "--wait-timeout", "60", "media-worker"]);
+    if (workerStopped) restartWorker();
   }
   const snapshot = async () =>
     page.evaluate(

@@ -1,0 +1,5708 @@
+/** Admission of a completed, reviewed Supply run. No candidate code executes here. */
+import { isDeepStrictEqual, TextDecoder } from "node:util";
+import process from "node:process";
+import console from "node:console";
+import { Buffer } from "node:buffer";
+import { createHash } from "node:crypto";
+import { createReadStream } from "node:fs";
+import { availableParallelism, totalmem, freemem } from "node:os";
+import { execFileSync } from "node:child_process";
+import { setTimeout, clearTimeout } from "node:timers";
+import { readFile, writeFile, mkdir, mkdtemp, lstat, statfs, realpath, rm } from "node:fs/promises";
+import { completePages } from "./pc100-source-verifier.mjs";
+import path from "node:path";
+import { fileURLToPath, URL } from "node:url";
+import {
+  readCandidateAdmission,
+  validateSourceInventory,
+  CANDIDATE_SCHEMA as POLICY_SCHEMA,
+  CANDIDATE_DECISION,
+} from "./pc100-candidate-policy.mjs";
+
+const ROOT = path.resolve(import.meta.dirname, "../..");
+export const REPOSITORY = "mahmoudemad68/Your_Editor";
+export const REPOSITORY_ID = 1395822921;
+export const BASE = "5cdb1d794d347a36d869027947bb62504dddff92";
+// 2026-03-10 deliberately removed merge_commit_sha. Pin the still-supported
+// PR contract rather than substituting a moving ref for immutable event M.
+export const PR_IDENTITY_API = Object.freeze({
+  version: "2022-11-28",
+  path: "pulls/100?identity_api=2022-11-28",
+});
+export function validateIdentityApiVersion(selected) {
+  requireThat(selected === PR_IDENTITY_API.version, "PR_API_VERSION_DRIFT");
+}
+
+export const WORKFLOWS = Object.freeze({
+  CI: { id: 370458734, path: ".github/workflows/ci.yml" },
+  "Walking skeleton E2E": { id: 377653530, path: ".github/workflows/e2e.yml" },
+  "Supply chain": { id: 374068707, path: ".github/workflows/supply-chain.yml" },
+});
+export const SERVICES = Object.freeze([
+  "api",
+  "web",
+  "media-worker",
+  "render-worker",
+  "render-executor",
+  "agent-worker",
+  "ai-worker",
+  "seaweedfs",
+  "postgres",
+  "redis",
+  "test-minio",
+]);
+// Bounded transport projection only. The protected policy validates the COMPLETE
+// repository inventory, including modes; its digest is bound in every artifact.
+export const POLICY_FILES = Object.freeze([
+  ...Object.values(WORKFLOWS).map((v) => v.path),
+  ".github/workflows/pc100-artifact-integration.yml",
+  ".github/workflows/pc100-source-verifier.yml",
+  "tools/test/pc100-artifact-integration.mjs",
+  "tools/test/pc100-source-verifier.mjs",
+  "tests/architecture/pc100-source-verifier.test.mjs",
+  "infra/seaweedfs/Dockerfile",
+  "infra/seaweedfs/security-build.lock.json",
+  "infra/seaweedfs/build-weed.sh",
+  "infra/seaweedfs/verify-image.sh",
+  "infra/seaweedfs/image-reference.sh",
+  "infra/seaweedfs/start-storage.sh",
+  "tools/test/load-qualified-storage.mjs",
+  "infra/scripts/install-supply-chain-tools.sh",
+  "infra/scripts/supply-chain-scan-image.sh",
+  "infra/scripts/supply-chain-security-gate.sh",
+  "infra/scripts/supply-chain-findings.py",
+  ".gitleaks.toml",
+  ".gitleaksignore",
+  ".dockerignore",
+  "infra/seaweedfs/prepare-secrets.sh",
+  "infra/seaweedfs/backup-volumes.sh",
+  "infra/seaweedfs/restore-volumes.sh",
+  "tests/architecture/seaweedfs-object-storage.test.mjs",
+  "tests/architecture/seaweedfs-security-build.test.mjs",
+  "tests/integration/seaweedfs-security-recovery.mjs",
+  "tests/integration/support/containers.mjs",
+  "tests/integration/support/seaweedfs-storage.mjs",
+  "tools/render/integration.mjs",
+  "tools/render/graduation-demo.mjs",
+  "docs/operations/ci-security-remediation-99.md",
+  "docs/operations/seaweedfs-object-storage.md",
+  ".github/actions/pc100-bounded-artifact/action.yml",
+  ".github/actions/pc100-bounded-artifact/index.mjs",
+]);
+const IMAGE_CAP = 120 * 1024 * 1024;
+const REPORT_CAP = 16 * 1024 * 1024;
+const FILES = [
+  "image.tar.xz",
+  "candidate-manifest.json",
+  "verification.json",
+  "go-version-m.txt",
+  "full-trivy.json",
+  "sbom.spdx.json",
+  "scanner-versions.json",
+];
+const BASELINE_POLICY = Object.freeze({
+  "infra/scripts/install-supply-chain-tools.sh":
+    "24038c26bf7bf75ae760a300f42ad40649e172c6d33c1a7d5416731448d71f57",
+  "infra/scripts/supply-chain-scan-image.sh":
+    "169a3e4ca8c3617e57976584ef346e7e91c24e33114b5ed4e5b1d30cdede8ea8",
+  "infra/scripts/supply-chain-security-gate.sh":
+    "16c132a4c0464f06aef599b0f5f7c96413d817064afa536f1b77bc2bb1d8db7f",
+  "infra/scripts/supply-chain-findings.py":
+    "ef234bfca3ed19c81efab1bf9c1f4050cd2d0d4d20f472191123da135a1f953c",
+  ".gitleaks.toml": "987accd5b8dcde52d4ff7f2a3f123b5045ff2d455c23138579e1256ba3b505a3",
+  ".gitleaksignore": "3eddba83701c1d63d7d7cab7b45eda5b9b8280e15a89904a269e391228265a7f",
+  ".dockerignore": "9e07120b810b89c44ba2a67b0717a7e551eceb976b34157350a0ecc3e182ea43",
+});
+export const sha256 = (data) => createHash("sha256").update(data).digest("hex");
+export const SW_PROFILE = "seaweedfs-go-s-w-diagnostic-v1";
+export const SW_FLAGS =
+  "-extldflags -static -X github.com/seaweedfs/seaweedfs/weed/util/version.COMMIT=ffa87c2+editagent-sec1 -s -w";
+export const ORIGINAL_ELF = "6b48572984287dcf64ed09a9080a720e65d4bf5c810c2282782fb4e5da8aa3c8";
+export const PRODUCTION_PROFILE = "seaweedfs-go-s-w-production-candidate-v1";
+export const CANDIDATE_SCHEMA = "seaweedfs-candidate-bundle-v5";
+export const SEAL_SCHEMA = "seaweedfs-candidate-seal-v4";
+export const RECEIPT_SCHEMA = "seaweedfs-admission-v5";
+
+/** Exact UTF-8 JSON, including duplicate keys. No reviver can detect duplicates. */
+export function strictJSON(bytes, cap = 4 * 1024 ** 2) {
+  const data = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes);
+  requireThat(data.length > 0 && data.length <= cap, "JSON_SIZE_REJECTED");
+  let s;
+  try {
+    s = new TextDecoder("utf-8", { fatal: true }).decode(data);
+  } catch {
+    throw new AdmissionError("JSON_UTF8_REJECTED");
+  }
+  let i = 0,
+    nodes = 0;
+  const space = () => {
+    while (/[\x20\t\r\n]/.test(s[i] ?? "")) i++;
+  };
+  const string = () => {
+    const start = i++;
+    while (i < s.length) {
+      if (s[i++] === '"') {
+        const value = JSON.parse(s.slice(start, i));
+        requireThat(value.isWellFormed(), "JSON_UNICODE_REJECTED");
+        return value;
+      }
+      if (s[i - 1] === "\\") i++;
+    }
+    throw new AdmissionError("JSON_STRING_REJECTED");
+  };
+  const value = (depth) => {
+    requireThat(depth <= 40 && ++nodes <= 200000, "JSON_COMPLEXITY_REJECTED");
+    space();
+    if (s[i] === '"') return string();
+    if (s[i] === "{" || s[i] === "[") {
+      const object = s[i++] === "{",
+        end = object ? "}" : "]";
+      const result = object ? {} : [],
+        keys = new Set();
+      space();
+      if (s[i] === end) {
+        i++;
+        return result;
+      }
+      while (i < s.length) {
+        space();
+        let key;
+        if (object) {
+          requireThat(s[i] === '"', "JSON_KEY_REJECTED");
+          key = string();
+          requireThat(!keys.has(key), "JSON_DUPLICATE_KEY");
+          keys.add(key);
+          space();
+          requireThat(s[i++] === ":", "JSON_COLON_REJECTED");
+        }
+        const item = value(depth + 1);
+        if (object)
+          Object.defineProperty(result, key, {
+            value: item,
+            enumerable: true,
+            writable: true,
+            configurable: true,
+          });
+        else result.push(item);
+        space();
+        const next = s[i++];
+        if (next === end) return result;
+        requireThat(next === ",", "JSON_SEPARATOR_REJECTED");
+      }
+      throw new AdmissionError("JSON_TRUNCATED");
+    }
+    const match = /^(?:null|true|false|-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?)/.exec(
+      s.slice(i),
+    );
+    requireThat(match, "JSON_VALUE_REJECTED");
+    i += match[0].length;
+    const result = JSON.parse(match[0]);
+    requireThat(typeof result !== "number" || Number.isFinite(result), "JSON_NUMBER_REJECTED");
+    return result;
+  };
+  try {
+    const result = value(0);
+    space();
+    requireThat(i === s.length, "JSON_TRAILING_DATA");
+    return result;
+  } catch (error) {
+    if (error instanceof AdmissionError) throw error;
+    throw new AdmissionError("JSON_MALFORMED");
+  }
+}
+export function canonical(value) {
+  if (Array.isArray(value)) return "[" + value.map(canonical).join(",") + "]";
+  if (value && typeof value === "object")
+    return (
+      "{" +
+      Object.keys(value)
+        .sort()
+        .map((k) => JSON.stringify(k) + ":" + canonical(value[k]))
+        .join(",") +
+      "}"
+    );
+  requireThat(
+    value === null || ["string", "boolean"].includes(typeof value) || Number.isSafeInteger(value),
+    "CANONICAL_TYPE_REJECTED",
+  );
+  return JSON.stringify(value);
+}
+function exactKeys(value, keys, code = "RECORD_SCHEMA_REJECTED") {
+  requireThat(
+    value &&
+      typeof value === "object" &&
+      !Array.isArray(value) &&
+      isDeepStrictEqual(Object.keys(value).sort(), [...keys].sort()),
+    code,
+  );
+}
+function digest(value) {
+  requireThat(typeof value === "string" && /^[a-f0-9]{64}$/.test(value), "DIGEST_REJECTED");
+  return value;
+}
+function imageDigest(value) {
+  requireThat(
+    typeof value === "string" && /^sha256:[a-f0-9]{64}$/.test(value),
+    "IMAGE_DIGEST_REJECTED",
+  );
+  return value;
+}
+export function candidateContract(lock) {
+  // No output measurements, L, Git H or run IDs enter K.
+  return {
+    schema_version: 1,
+    profile: PRODUCTION_PROFILE,
+    source: lock.source,
+    modules: lock.modules,
+    original_versions: lock.original_versions,
+    compiler: lock.toolchain,
+    runtime_donor: lock.runtime_donor,
+    flags: SW_FLAGS,
+    go_version: "go1.26.10",
+    target: "linux/amd64",
+    CGO_ENABLED: "0",
+    GOAMD64: "v1",
+    build_tags: [],
+    parallelism: 2,
+    trimpath: true,
+    buildvcs: false,
+    scanners: lock.scanners,
+    inventory: lock.build.baseline_inventory,
+    transport: "docker-save-xz6",
+    limits: lock.limits,
+  };
+}
+export function productionProfile(lock) {
+  requireThat(
+    lock?.build?.output_profile === PRODUCTION_PROFILE && lock.build.diagnostic_only === false,
+    "PRODUCTION_PROFILE_REJECTED",
+  );
+  const contract = candidateContract(lock);
+  requireThat(
+    isDeepStrictEqual(lock.build.production_contract, contract) &&
+      lock.build.production_contract_sha256 === sha256(canonical(contract)),
+    "BUILD_CONTRACT_DRIFT",
+  );
+  requireThat(
+    contract.source.commit === "ffa87c25fdf587178b1521ad87f2a4a72a02e584" &&
+      contract.source.sha256 ===
+        "d650e7a8a2cbec8a1725386f87f5eb803c95aa84417530aec58c1925fd23a2c9" &&
+      lock.build.go_version === "go1.26.10",
+    "BUILD_INPUT_DRIFT",
+  );
+  requireThat(
+    contract.modules["github.com/go-jose/go-jose/v4"].version === "v4.1.6" &&
+      contract.modules["github.com/andybalholm/brotli"].version === "v1.2.7" &&
+      isDeepStrictEqual(lock.trusted_baseline, BASELINE_POLICY),
+    "BUILD_INPUT_DRIFT",
+  );
+  return { profile: PRODUCTION_PROFILE, K: digest(lock.build.production_contract_sha256) };
+}
+export function productionMarker(lock, L, E, label) {
+  const { K } = productionProfile(lock);
+  requireThat(["one", "two"].includes(label), "BUILD_LABEL_REJECTED");
+  return {
+    schema_version: 2,
+    trust_class: "production-candidate",
+    profile: PRODUCTION_PROFILE,
+    build_contract_sha256: K,
+    lock_sha256: digest(L),
+    elf_sha256: digest(E),
+    flags_sha256: sha256(SW_FLAGS),
+    source_commit: lock.source.commit,
+    go_version: "go1.26.10",
+    cache_label: label,
+  };
+}
+export function verifyApprovedELF(actual, binding) {
+  digest(actual);
+  digest(binding.expected_elf_sha256);
+  requireThat(actual === binding.expected_elf_sha256, "PROTECTED_ELF_IDENTITY_DRIFT");
+}
+export function validateProductionEvidence(verification, lock, L, actualElf, metadata) {
+  productionProfile(lock);
+  digest(L);
+  requireThat(
+    verification.lock_sha256 === L &&
+      verification.old_elf_absent === true &&
+      verification.runtime_preserved === true &&
+      verification.build_records_match_final_elf === true &&
+      verification.native_brotli === "1.2.1-r0",
+    "PRODUCTION_IMAGE_EVIDENCE_REJECTED",
+  );
+  imageDigest(verification.image_id);
+  digest(verification.elf_sha256);
+  for (const label of ["one", "two"]) {
+    const build = verification.build_measurements?.[label];
+    requireThat(
+      build &&
+        !Object.hasOwn(build, "diagnostic_marker") &&
+        build.output_profile === PRODUCTION_PROFILE &&
+        build.label === label &&
+        build.cache_initially_empty === true &&
+        build.elf_sha256 === verification.elf_sha256 &&
+        isDeepStrictEqual(
+          build.production_candidate_marker,
+          productionMarker(lock, L, verification.elf_sha256, label),
+        ),
+      "PRODUCTION_MARKER_REJECTED",
+    );
+  }
+  if (actualElf)
+    validateELFMeasurements(verification, actualElf, metadata, PRODUCTION_PROFILE, (build, E) => {
+      requireThat(
+        isDeepStrictEqual(
+          build.production_candidate_marker,
+          productionMarker(lock, L, E, build.label),
+        ),
+        "PRODUCTION_MARKER_REJECTED",
+      );
+    });
+  return verification;
+}
+export function zipEnvelope(names) {
+  requireThat(
+    Array.isArray(names) &&
+      names.length > 0 &&
+      names.length <= 8 &&
+      new Set(names).size === names.length &&
+      names.every((n) => /^[a-z0-9.-]{1,32}$/.test(n)),
+    "ZIP_NAMES_REJECTED",
+  );
+  return 164 * names.length + 2 * names.reduce((n, s) => n + Buffer.byteLength(s), 0) + 98;
+}
+export function physicalBudget(C, R, rows, final = false) {
+  requireThat(
+    Number.isSafeInteger(C) &&
+      C > 0 &&
+      C <= IMAGE_CAP &&
+      Number.isSafeInteger(R) &&
+      R > 0 &&
+      2 * R + 65536 <= REPORT_CAP &&
+      2 * C + 2 * R + 65536 <= 256 * 1024 ** 2,
+    "TRANSFER_BUDGET_EXCEEDED",
+  );
+  const caps = {
+    source: C + R + 1482,
+    walking: C + R + 16384 + 1674,
+    seal: 8472,
+    ci: 16674,
+    "outcome-ci": 4402,
+    "outcome-walking": 4402,
+  };
+  const seen = new Set(),
+    ids = new Set();
+  let P = 0,
+    O = 0;
+  for (const row of rows) {
+    requireThat(row && Object.hasOwn(caps, row.role) && !seen.has(row.role), "WIRE_ROLE_REJECTED");
+    seen.add(row.role);
+    const aid = id(row.artifact_id);
+    requireThat(!ids.has(aid), "WIRE_ARTIFACT_DUPLICATE");
+    ids.add(aid);
+    requireThat(
+      Number.isSafeInteger(row.bytes) && row.bytes > 0 && row.bytes <= caps[row.role],
+      "PHYSICAL_WIRE_BUDGET_EXCEEDED",
+    );
+    imageDigest(row.digest);
+    id(row.run_id);
+    id(row.attempt);
+    if (row.role.startsWith("outcome-"))
+      requireThat(
+        row.attempt === 1 &&
+          ["PRODUCER_NOT_YET_CREATED", "PRODUCER_NOT_YET_COMPLETE"].includes(row.outcome),
+        "EXTRA_OUTCOME_REQUIRES_REVIEW",
+      );
+    const replica = ["source", "walking"].includes(row.role);
+    requireThat(!replica || row.bytes >= C + R, "WIRE_SIZE_REJECTED");
+    P += row.bytes;
+    O += replica ? Math.max(0, row.bytes - C - R) : row.bytes;
+  }
+  requireThat(
+    O <= 65536 && P <= 2 * C + 2 * R + 65536 && P <= 256 * 1024 ** 2,
+    "PHYSICAL_WIRE_BUDGET_EXCEEDED",
+  );
+  if (final)
+    requireThat(
+      ["source", "walking", "seal", "ci"].every((n) => seen.has(n)),
+      "WIRE_LEDGER_INCOMPLETE",
+    );
+  return {
+    C,
+    R,
+    R_total: 2 * R + 65536,
+    P,
+    O,
+    retention_days: 1,
+    fully_measured: final,
+    client_envelope_bound: 53490,
+  };
+}
+
+const WIRE_PREFIXES = [
+  "seaweedfs-candidate",
+  "seaweedfs-seal",
+  "storage-receipt",
+  "qualified-storage",
+  "admission-outcome",
+];
+const WIRE_MEMBERS = {
+  source: FILES,
+  walking: [...FILES, "admission.json"],
+  seal: ["seal.json"],
+  ci: ["admission.json"],
+  "outcome-ci": ["admission-outcome.json"],
+  "outcome-walking": ["admission-outcome.json"],
+};
+// Accounting includes EVERY observed transfer, even an unapproved extra outcome.
+// Eligibility is checked separately, so an invalid row cannot disappear from P/O.
+export function wireAccounting(C, R, rows) {
+  requireThat(
+    Number.isSafeInteger(C) && C > 0 && Number.isSafeInteger(R) && R > 0 && Array.isArray(rows),
+    "WIRE_MEASUREMENT_MISSING",
+  );
+  let P = 0,
+    O = 0;
+  for (const row of rows) {
+    requireThat(
+      Number.isSafeInteger(row.raw_bytes) && row.raw_bytes > 0,
+      "WIRE_MEASUREMENT_MISSING",
+    );
+    P += row.raw_bytes;
+    O += ["source", "walking"].includes(row.role)
+      ? Math.max(0, row.raw_bytes - C - R)
+      : row.raw_bytes;
+    requireThat(Number.isSafeInteger(P) && Number.isSafeInteger(O), "WIRE_ACCOUNTING_OVERFLOW");
+  }
+  return { C, R, R_total: 2 * R + 65536, combined: 2 * C + 2 * R + 65536, P, O };
+}
+export function validateWireRun(run, kind, context) {
+  const workflow =
+    WORKFLOWS[kind === "source" ? "Supply chain" : kind === "ci" ? "CI" : "Walking skeleton E2E"];
+  requireThat(
+    ["source", "ci", "walking"].includes(kind) &&
+      run.repository?.id === REPOSITORY_ID &&
+      run.head_repository?.id === REPOSITORY_ID &&
+      run.workflow_id === workflow.id &&
+      run.path === workflow.path &&
+      run.head_sha === context.H &&
+      run.event === "pull_request" &&
+      run.pull_requests?.some(
+        (p) => p.number === 100 && p.head.sha === context.H && p.base.sha === context.B,
+      ),
+    "WIRE_RUN_IDENTITY_DRIFT",
+  );
+  id(run.id);
+  id(run.run_attempt);
+  requireThat(run.status === "completed", "WIRE_CONSUMERS_NOT_COMPLETE");
+  requireThat(run.conclusion === "success", "WIRE_WORKFLOW_FAILED");
+  requireThat(run.run_attempt <= (kind === "source" ? 1 : 2), "WIRE_RETRY_POLICY_REJECTED");
+}
+export function classifyNonTransferArtifact(kind, artifact, run, { context, attemptJobs } = {}) {
+  requireThat(
+    context && /^[a-f0-9]{40}$/.test(context.M) && attemptJobs,
+    "WIRE_NON_TRANSFER_PROVENANCE_MISSING",
+  );
+  const name = artifact.name;
+  let rule;
+  if (kind === "source") {
+    if (name === "supply-chain-dependencies") rule = ["dependencies", "Upload dependency evidence"];
+    else if (name === "supply-chain-scan-dependencies")
+      rule = ["dependencies", "Upload dependency scan result"];
+    else
+      for (const service of SERVICES)
+        for (const [type, step] of [
+          ["sbom", "Upload SBOM"],
+          ["trivy", "Upload Trivy report"],
+          ["scan", "Upload scan result"],
+        ])
+          if (name === `supply-chain-${type}-${service}`) rule = [`image ${service}`, step];
+  } else if (kind === "ci") {
+    if (name === `agent-loop-lifecycle-${context.M}`)
+      rule = ["repository checks", "Upload bounded agent lifecycle diagnostic"];
+    else if (name === `test-summary-${context.M}`)
+      rule = ["repository checks", "Upload allowlisted test summary"];
+    else if (name === "coverage") rule = ["repository checks", "Upload coverage reports"];
+    else
+      for (const shard of [
+        "native",
+        "languages",
+        "state-single",
+        "state-multi",
+        "long-input",
+        "alignment",
+      ])
+        if (name === `asr-test-summary-${shard}-${context.M}`)
+          rule = [`real ASR (${shard})`, "Upload allowlisted test summary"];
+    for (let n = 1; n <= run.run_attempt; n++)
+      if (name === `seaweedfs-product-${run.id}-${n}`)
+        rule = [
+          "candidate SeaweedFS production journey",
+          "Preserve actual candidate media and recovery proof",
+          n,
+        ];
+  } else if (kind === "walking" && name === `walking-skeleton-e2e-${run.id}`)
+    rule = ["walking-skeleton", "Upload failure proof and diagnostics"];
+  requireThat(rule, "WIRE_UNCLASSIFIED_ARTIFACT");
+  imageDigest(artifact.digest);
+  const created = Date.parse(artifact.created_at),
+    expires = Date.parse(artifact.expires_at);
+  requireThat(
+    Number.isSafeInteger(artifact.size_in_bytes) &&
+      artifact.size_in_bytes > 0 &&
+      !artifact.expired &&
+      Number.isFinite(created) &&
+      expires > Date.now(),
+    "WIRE_NON_TRANSFER_METADATA_INVALID",
+  );
+  const matches = [];
+  for (let attempt = 1; attempt <= run.run_attempt; attempt++) {
+    const jobs = attemptJobs[`${run.id}:${attempt}`];
+    requireThat(Array.isArray(jobs), "WIRE_ATTEMPT_EVIDENCE_MISSING");
+    for (const job of jobs.filter((j) => j.name === rule[0]))
+      for (const step of job.steps ?? [])
+        if (
+          step.name === rule[1] &&
+          job.run_id === run.id &&
+          job.run_attempt === attempt &&
+          job.status === "completed" &&
+          step.status === "completed" &&
+          step.conclusion === "success" &&
+          created >= Date.parse(step.started_at) &&
+          created <= Date.parse(step.completed_at) + 1000 &&
+          (!rule[2] || rule[2] === attempt)
+        )
+          matches.push({
+            job_id: id(job.id),
+            attempt,
+            step: step.name,
+            step_number: id(step.number),
+          });
+  }
+  requireThat(matches.length === 1, "WIRE_NON_TRANSFER_PROVENANCE_INVALID");
+  return {
+    artifact_id: artifact.id,
+    name,
+    run_id: run.id,
+    api_bytes: artifact.size_in_bytes,
+    digest: artifact.digest,
+    classification: "VERIFIED_NON_TRANSFER_EVIDENCE",
+    ...matches[0],
+  };
+}
+export function wireInventory(runs, artifacts, provenance) {
+  requireThat(
+    Array.isArray(artifacts) && Object.keys(runs).sort().join(",") === "ci,source,walking",
+    "WIRE_INVENTORY_MISSING",
+  );
+  const runIds = Object.values(runs).map((r) => id(r.id));
+  requireThat(new Set(runIds).size === 3, "WIRE_RUN_DUPLICATE");
+  const seen = new Set(),
+    names = new Set(),
+    transfers = [],
+    excluded = [];
+  for (const entry of artifacts) {
+    const a = entry.artifact,
+      kind = entry.kind,
+      run = runs[kind];
+    requireThat(
+      run &&
+        a &&
+        a.workflow_run?.id === run.id &&
+        a.workflow_run?.head_repository_id === REPOSITORY_ID &&
+        a.workflow_run?.head_sha === run.head_sha,
+      "WIRE_ARTIFACT_RUN_DRIFT",
+    );
+    id(a.id);
+    requireThat(!seen.has(a.id), "WIRE_ARTIFACT_DUPLICATE");
+    seen.add(a.id);
+    requireThat(typeof a.name === "string" && a.name.length <= 256, "WIRE_ARTIFACT_NAME_REJECTED");
+    const nameKey = `${run.id}:${a.name}`;
+    requireThat(!names.has(nameKey), "WIRE_ARTIFACT_NAME_DUPLICATE");
+    names.add(nameKey);
+    const prefix = WIRE_PREFIXES.find((p) => a.name.startsWith(p));
+    if (!prefix) {
+      excluded.push(classifyNonTransferArtifact(kind, a, run, provenance));
+      continue;
+    }
+    const match =
+      /^(seaweedfs-candidate|seaweedfs-seal|storage-receipt|qualified-storage|admission-outcome)-([1-9][0-9]*)-([1-9][0-9]*)$/.exec(
+        a.name,
+      );
+    requireThat(match && id(match[2]) === run.id, "WIRE_ARTIFACT_NAME_REJECTED");
+    const attempt = id(match[3]);
+    requireThat(attempt <= run.run_attempt, "WIRE_ARTIFACT_ATTEMPT_DRIFT");
+    const role =
+      prefix === "seaweedfs-candidate"
+        ? "source"
+        : prefix === "seaweedfs-seal"
+          ? "seal"
+          : prefix === "storage-receipt"
+            ? "ci"
+            : prefix === "qualified-storage"
+              ? "walking"
+              : `outcome-${kind}`;
+    requireThat(
+      (kind === "source" && ["source", "seal"].includes(role)) ||
+        (kind === "ci" && ["ci", "outcome-ci"].includes(role)) ||
+        (kind === "walking" && ["walking", "outcome-walking"].includes(role)),
+      "WIRE_ARTIFACT_ROLE_DRIFT",
+    );
+    if (!role.startsWith("outcome-"))
+      requireThat(attempt === run.run_attempt, "WIRE_ARTIFACT_ATTEMPT_DRIFT");
+    transfers.push({ artifact: a, role, kind, attempt });
+  }
+  for (const role of ["source", "seal", "ci", "walking"])
+    requireThat(transfers.filter((t) => t.role === role).length === 1, "WIRE_LEDGER_INCOMPLETE");
+  return { transfers, excluded };
+}
+export function validateWireStepInventory(runs, inventory, attemptJobs, context) {
+  const { transfers } = wireInventory(runs, inventory, { attemptJobs, context });
+  for (const [kind, run] of Object.entries(runs))
+    for (let attempt = 1; attempt <= run.run_attempt; attempt++) {
+      const jobs = attemptJobs[`${run.id}:${attempt}`];
+      requireThat(Array.isArray(jobs), "WIRE_ATTEMPT_EVIDENCE_MISSING");
+      const matched = jobs.filter(
+        (j) => j.name === (kind === "source" ? "image seaweedfs" : "qualified storage admission"),
+      );
+      requireThat(
+        matched.length === 1 && matched[0].run_attempt === attempt,
+        "WIRE_ARTIFACT_STEP_DRIFT",
+      );
+      const required =
+        kind === "source"
+          ? [
+              ["source", "Upload qualified candidate"],
+              ["seal", "Upload candidate seal"],
+            ]
+          : [
+              [
+                kind,
+                kind === "ci"
+                  ? "Preserve verified preparation receipt"
+                  : "Promote unchanged verified image into this run",
+              ],
+              [`outcome-${kind}`, "Preserve bounded admission outcome"],
+            ];
+      for (const [role, name] of required) {
+        const steps = matched[0].steps.filter((s) => s.name === name);
+        requireThat(
+          steps.length === 1 &&
+            steps[0].status === "completed" &&
+            ["success", "skipped"].includes(steps[0].conclusion),
+          "WIRE_STEP_MEASUREMENT_UNAVAILABLE",
+        );
+        const artifacts = transfers.filter((t) => t.role === role && t.attempt === attempt);
+        requireThat(
+          artifacts.length === (steps[0].conclusion === "success" ? 1 : 0),
+          "WIRE_STEP_ARTIFACT_MISSING_OR_EXTRA",
+        );
+        if (attempt < run.run_attempt && role === `outcome-${kind}`)
+          requireThat(steps[0].conclusion === "success", "WIRE_ORIGINAL_OUTCOME_MISSING");
+        for (const t of artifacts)
+          validateArtifact(t.artifact, run, t.artifact.id, IMAGE_CAP + REPORT_CAP, steps[0]);
+      }
+    }
+}
+export function validateFinalWireLedger(
+  C,
+  R,
+  rows,
+  inventory,
+  runs,
+  context,
+  now = Date.now(),
+  attemptJobs,
+) {
+  const accounting = wireAccounting(C, R, rows);
+  const { transfers, excluded } = wireInventory(runs, inventory, { context, attemptJobs });
+  for (const kind of ["source", "ci", "walking"]) validateWireRun(runs[kind], kind, context);
+  requireThat(rows.length === transfers.length, "WIRE_MEASUREMENT_INCOMPLETE");
+  const seen = new Set();
+  for (const row of rows) {
+    requireThat(!seen.has(row.artifact_id), "WIRE_ARTIFACT_DUPLICATE");
+    seen.add(row.artifact_id);
+    const t = transfers.find((t) => t.artifact.id === row.artifact_id),
+      a = t?.artifact;
+    requireThat(
+      a && row.role === t.role && row.run_id === runs[t.kind].id && row.attempt === t.attempt,
+      "WIRE_ROW_IDENTITY_DRIFT",
+    );
+    requireThat(
+      a.size_in_bytes === row.raw_bytes &&
+        row.bytes === row.raw_bytes &&
+        a.digest === row.digest &&
+        row.raw_sha256 === a.digest,
+      "WIRE_RAW_MEASUREMENT_DRIFT",
+    );
+    imageDigest(a.digest);
+    const created = Date.parse(a.created_at),
+      expires = Date.parse(a.expires_at);
+    requireThat(
+      !a.expired &&
+        Number.isFinite(created) &&
+        Number.isFinite(expires) &&
+        expires > now &&
+        expires - created > 0 &&
+        expires - created <= 86460000,
+      "WIRE_ARTIFACT_EXPIRED_OR_RETENTION",
+    );
+  }
+  const budget = physicalBudget(C, R, rows, true);
+  requireThat(budget.P === accounting.P && budget.O === accounting.O, "WIRE_ACCOUNTING_DRIFT");
+  return {
+    schema: "pc100-final-wire-ledger-v1",
+    context,
+    runs: Object.fromEntries(
+      Object.entries(runs).map(([k, r]) => [
+        k,
+        {
+          id: r.id,
+          attempt: r.run_attempt,
+          workflow_id: r.workflow_id,
+          check_suite_id: r.check_suite_id,
+        },
+      ]),
+    ),
+    rows,
+    excluded_non_transfer_artifacts: excluded,
+    ...accounting,
+    retention_days: 1,
+    fully_measured: true,
+    qualification: "WIRE_ONLY_NOT_RELEASE_APPROVAL",
+  };
+}
+export function validateCandidateManifest(m, context, runId, attempt, lock, L) {
+  exactKeys(m, [
+    "schema",
+    "profile",
+    "K",
+    "L",
+    "context",
+    "run_id",
+    "attempt",
+    "image_id",
+    "elf_sha256",
+    "diff_ids",
+    "archive_sha256",
+    "archive_bytes",
+    "files",
+    "file_bytes",
+    "policy_files",
+    "policy_evidence_run_id",
+    "policy_record_sha256",
+    "candidate_policy_sha256",
+    "policy_inventory_sha256",
+    "policy_evidence_check_id",
+    "policy_evidence_attempt",
+  ]);
+  const { K } = productionProfile(lock);
+  requireThat(
+    m.schema === CANDIDATE_SCHEMA &&
+      m.profile === PRODUCTION_PROFILE &&
+      m.K === K &&
+      m.L === L &&
+      isDeepStrictEqual(m.context, context) &&
+      m.run_id === id(runId) &&
+      m.attempt === id(attempt) &&
+      m.attempt === 1,
+    "CANDIDATE_IDENTITY_DRIFT",
+  );
+  imageDigest(m.image_id);
+  digest(m.elf_sha256);
+  digest(m.archive_sha256);
+  digest(m.policy_record_sha256);
+  validatePolicyLink(m);
+  id(m.policy_evidence_run_id);
+  requireThat(
+    Array.isArray(m.diff_ids) &&
+      m.diff_ids.length === 6 &&
+      m.diff_ids.every((d) => /^sha256:[a-f0-9]{64}$/.test(d)),
+    "LAYER_IDENTITIES_REJECTED",
+  );
+  requireThat(
+    Number.isSafeInteger(m.archive_bytes) &&
+      m.archive_bytes > 0 &&
+      m.archive_bytes <= 4 * 1024 ** 3,
+    "ARCHIVE_SIZE_REJECTED",
+  );
+  exactKeys(
+    m.files,
+    FILES.filter((n) => n !== "candidate-manifest.json"),
+  );
+  Object.values(m.files).forEach(digest);
+  exactKeys(m.file_bytes, Object.keys(m.files));
+  requireThat(
+    Object.values(m.file_bytes).every((n) => Number.isSafeInteger(n) && n > 0 && n <= IMAGE_CAP),
+    "MANIFEST_FILE_SIZE_REJECTED",
+  );
+  exactKeys(m.policy_files, POLICY_FILES);
+  Object.values(m.policy_files).forEach(digest);
+  return m;
+}
+export function validateCandidateSeal(s, context, source, lock, L) {
+  exactKeys(s, [
+    "schema",
+    "profile",
+    "K",
+    "L",
+    "context",
+    "run_id",
+    "attempt",
+    "artifact_id",
+    "artifact_digest",
+    "artifact_bytes",
+    "manifest_sha256",
+    "policy_evidence_run_id",
+    "policy_record_sha256",
+    "candidate_policy_sha256",
+    "policy_inventory_sha256",
+    "policy_evidence_check_id",
+    "policy_evidence_attempt",
+  ]);
+  const { K } = productionProfile(lock);
+  requireThat(
+    s.schema === SEAL_SCHEMA &&
+      s.profile === PRODUCTION_PROFILE &&
+      s.K === K &&
+      s.L === L &&
+      isDeepStrictEqual(s.context, context) &&
+      s.run_id === source.id &&
+      s.attempt === source.run_attempt &&
+      s.attempt === 1,
+    "SEAL_DRIFT",
+  );
+  id(s.artifact_id);
+  imageDigest(s.artifact_digest);
+  digest(s.manifest_sha256);
+  id(s.policy_evidence_run_id);
+  digest(s.policy_record_sha256);
+  validatePolicyLink(s);
+  requireThat(
+    Number.isSafeInteger(s.artifact_bytes) &&
+      s.artifact_bytes > 0 &&
+      s.artifact_bytes <= IMAGE_CAP + REPORT_CAP,
+    "SEAL_SIZE_REJECTED",
+  );
+  return s;
+}
+export function validateCandidateReceipt(r, context, runId, attempt) {
+  exactKeys(r, [
+    "version",
+    "schema",
+    "profile",
+    "K",
+    "L",
+    "context",
+    "native_run_id",
+    "native_attempt",
+    "producer_run",
+    "producer_created_at",
+    "producer_attempt",
+    "artifact_id",
+    "artifact_digest",
+    "artifact_bytes",
+    "policy_evidence_run_id",
+    "policy_record_sha256",
+    "candidate_policy_sha256",
+    "policy_inventory_sha256",
+    "policy_evidence_check_id",
+    "policy_evidence_attempt",
+    "source_manifest",
+    "seal_proof",
+    "seal",
+    "image_id",
+    "elf_sha256",
+    "inner_sha256",
+    "bundle",
+    "archive",
+    "C",
+    "R",
+    "diff_ids",
+    "archive_sha256",
+    "archive_bytes",
+  ]);
+  requireThat(
+    r.version === 5 &&
+      r.schema === RECEIPT_SCHEMA &&
+      r.profile === PRODUCTION_PROFILE &&
+      isDeepStrictEqual(r.context, context) &&
+      r.native_run_id === id(runId) &&
+      r.native_attempt === id(attempt) &&
+      r.producer_attempt === 1,
+    "RECEIPT_IDENTITY_DRIFT",
+  );
+  [r.K, r.L, r.policy_record_sha256, r.elf_sha256, r.inner_sha256, r.archive_sha256].forEach(
+    digest,
+  );
+  [r.producer_run, r.artifact_id, r.policy_evidence_run_id].forEach(id);
+  validatePolicyLink(r);
+  requireThat(
+    samePolicyLink(r.seal, r) &&
+      isDeepStrictEqual(r.seal.context, r.context) &&
+      r.seal.run_id === r.producer_run &&
+      r.seal.attempt === r.producer_attempt,
+    "RECEIPT_SEAL_DRIFT",
+  );
+  imageDigest(r.artifact_digest);
+  imageDigest(r.image_id);
+  requireThat(
+    Number.isFinite(Date.parse(r.producer_created_at)) &&
+      [r.bundle, r.archive].every((s) => typeof s === "string" && s.length > 0 && s.length <= 4096),
+    "RECEIPT_FIELDS_REJECTED",
+  );
+  requireThat(
+    r.seal.artifact_id === r.artifact_id &&
+      r.seal.artifact_digest === r.artifact_digest &&
+      r.seal.artifact_bytes === r.artifact_bytes &&
+      r.seal.policy_evidence_run_id === r.policy_evidence_run_id &&
+      r.seal.policy_record_sha256 === r.policy_record_sha256 &&
+      r.seal.K === r.K &&
+      r.seal.L === r.L,
+    "RECEIPT_SEAL_DRIFT",
+  );
+  requireThat(
+    Array.isArray(r.diff_ids) &&
+      r.diff_ids.length === 6 &&
+      r.diff_ids.every((s) => /^sha256:[a-f0-9]{64}$/.test(s)),
+    "RECEIPT_LAYERS_REJECTED",
+  );
+  validateReceiptOutputs(r);
+  physicalBudget(r.C, r.R, []);
+  return r;
+}
+export function candidatePolicyLink(binding) {
+  return {
+    policy_evidence_run_id: binding.evidence_run_id,
+    policy_record_sha256: binding.policy_record_sha256,
+    candidate_policy_sha256: binding.policy_sha256,
+    policy_inventory_sha256: binding.inventory_sha256,
+    policy_evidence_check_id: binding.evidence_check_id,
+    policy_evidence_attempt: binding.evidence_run_attempt,
+  };
+}
+export function validatePolicyLink(link) {
+  [link.policy_record_sha256, link.candidate_policy_sha256, link.policy_inventory_sha256].forEach(
+    digest,
+  );
+  [link.policy_evidence_run_id, link.policy_evidence_check_id].forEach(id);
+  requireThat(link.policy_evidence_attempt === 1, "POLICY_EVIDENCE_ATTEMPT_DRIFT");
+}
+export function samePolicyLink(a, b) {
+  return [
+    "policy_evidence_run_id",
+    "policy_record_sha256",
+    "candidate_policy_sha256",
+    "policy_inventory_sha256",
+    "policy_evidence_check_id",
+    "policy_evidence_attempt",
+  ].every((k) => a?.[k] === b?.[k] && a?.[k] !== undefined);
+}
+export function assertCandidatePolicyLink(link, binding, code = "CANDIDATE_POLICY_LINK_DRIFT") {
+  validatePolicyLink(link);
+  requireThat(samePolicyLink(link, candidatePolicyLink(binding)), code);
+}
+export function assertSameCandidateAdmission(finalPolicy, binding) {
+  requireThat(
+    samePolicyLink(candidatePolicyLink(finalPolicy), candidatePolicyLink(binding)) &&
+      finalPolicy.K === binding.K &&
+      finalPolicy.L === binding.L &&
+      isDeepStrictEqual(
+        [finalPolicy.H, finalPolicy.B, finalPolicy.M, finalPolicy.TH, finalPolicy.TM],
+        [binding.H, binding.B, binding.M, binding.TH, binding.TM],
+      ),
+    "WIRE_POLICY_CHANGED",
+  );
+}
+export function validateCandidatePolicy(binding, lock, L, context) {
+  const { K } = productionProfile(lock);
+  requireThat(
+    binding.schema === POLICY_SCHEMA &&
+      binding.decision === CANDIDATE_DECISION &&
+      binding.candidate_admission_authorized === true &&
+      binding.profile === PRODUCTION_PROFILE &&
+      binding.K === K &&
+      binding.L === L &&
+      binding.revoked === false &&
+      binding.scope === "candidate-qualification-only" &&
+      binding.release_authorized === false &&
+      binding.evidence_run_attempt === 1 &&
+      Number.isSafeInteger(binding.evidence_run_id) &&
+      binding.evidence_run_id > 0 &&
+      Number.isSafeInteger(binding.evidence_check_id) &&
+      binding.evidence_check_id > 0 &&
+      context &&
+      ["H", "B", "M", "TH", "TM"].every((k) => binding[k] === context[k]),
+    "PRODUCTION_POLICY_NOT_APPROVED",
+  );
+  try {
+    validateSourceInventory(binding.file_inventory);
+  } catch {
+    throw new AdmissionError("PRODUCTION_POLICY_NOT_APPROVED");
+  }
+  requireThat(
+    sha256(canonical(binding.file_inventory)) === binding.inventory_sha256 &&
+      Object.keys(binding.file_inventory).length === binding.file_count,
+    "POLICY_INVENTORY_DRIFT",
+  );
+  exactKeys(binding.files, POLICY_FILES);
+  for (const p of POLICY_FILES)
+    requireThat(binding.files[p] === binding.file_inventory[p]?.sha256, "POLICY_FILE_SET_DRIFT");
+  validatePolicyLink(candidatePolicyLink(binding));
+  digest(binding.registry_sha256);
+  digest(binding.expected_elf_sha256);
+  return binding;
+}
+async function candidateSource(producer = false) {
+  const bytes = await readFile(path.join(ROOT, "infra/seaweedfs/security-build.lock.json"));
+  const lock = strictJSON(bytes),
+    { K } = productionProfile(lock),
+    L = sha256(bytes);
+  const { context, nativeRun } = await identity();
+  const binding = validateCandidatePolicy(await policy(context), lock, L, context);
+  if (producer)
+    requireThat(
+      process.env.GITHUB_WORKFLOW === "Supply chain" && nativeRun.run_attempt === 1,
+      "PRODUCER_CONTEXT_REQUIRED",
+    );
+  return { lock, K, L, context, nativeRun, binding };
+}
+// Called by the bounded local Action. Inputs never confer approval: every
+// operation re-establishes the live native event and independently reviewed
+// source policy before the official SDK receives runtime credentials.
+export async function authorizeArtifactAdapter(plan) {
+  const src = await candidateSource(
+    ["source", "seal"].includes(plan.role) && plan.operation === "upload",
+  );
+  requireThat(
+    plan.run === src.nativeRun.id && plan.attempt === src.nativeRun.run_attempt,
+    "ADAPTER_NATIVE_DRIFT",
+  );
+  const sourceDir = path.join(ROOT, ".local/seaweedfs-transfer/bundle");
+  if (plan.operation === "upload") {
+    if (plan.role === "source") {
+      requireThat(plan.bundle === sourceDir, "ADAPTER_BUNDLE_PATH_REJECTED");
+      const m = await jsonFile(path.join(plan.bundle, "candidate-manifest.json"));
+      validateCandidateManifest(
+        m,
+        src.context,
+        src.nativeRun.id,
+        src.nativeRun.run_attempt,
+        src.lock,
+        src.L,
+      );
+      assertCandidatePolicyLink(m, src.binding, "ADAPTER_POLICY_DRIFT");
+      requireThat(
+        m.policy_record_sha256 === src.binding.policy_record_sha256 &&
+          m.policy_evidence_run_id === src.binding.evidence_run_id,
+        "ADAPTER_POLICY_DRIFT",
+      );
+      for (const name of FILES.filter((n) => n !== "candidate-manifest.json"))
+        requireThat(
+          (await fileDigest(path.join(plan.bundle, name))) === m.files[name] &&
+            (await fileBytes(path.join(plan.bundle, name))) === m.file_bytes[name],
+          "ADAPTER_SOURCE_DRIFT",
+        );
+      const C = await fileBytes(path.join(plan.bundle, "image.tar.xz"));
+      let R = 0;
+      for (const n of REPORT_FILES) R += await fileBytes(path.join(plan.bundle, n));
+      physicalBudget(C, R, []);
+      return { ...src, run_id: src.nativeRun.id, C, R };
+    }
+    if (plan.role === "seal") {
+      requireThat(
+        plan.bundle === path.join(ROOT, ".local/seaweedfs-transfer/seal"),
+        "ADAPTER_BUNDLE_PATH_REJECTED",
+      );
+      const seal = await jsonFile(path.join(plan.bundle, "seal.json"));
+      validateCandidateSeal(seal, src.context, src.nativeRun, src.lock, src.L);
+      assertCandidatePolicyLink(seal, src.binding, "ADAPTER_POLICY_DRIFT");
+      requireThat(
+        seal.policy_record_sha256 === src.binding.policy_record_sha256,
+        "ADAPTER_POLICY_DRIFT",
+      );
+      return { ...src, run_id: src.nativeRun.id };
+    }
+    if (plan.role === "outcome") {
+      requireThat(
+        plan.attempt === 1 && plan.bundle === path.join(ROOT, ".local/issue99/outcome-bundle"),
+        "OUTCOME_PATH_REJECTED",
+      );
+      const o = await jsonFile(path.join(plan.bundle, "admission-outcome.json"));
+      requireThat(
+        ["PRODUCER_NOT_YET_CREATED", "PRODUCER_NOT_YET_COMPLETE"].includes(o.outcome),
+        "NON_RETRYABLE_OUTCOME_REJECTED",
+      );
+      try {
+        await selectProducer(src.context);
+        throw new AdmissionError("OUTCOME_PRODUCER_ALREADY_READY");
+      } catch (error) {
+        requireThat(
+          error instanceof AdmissionError && error.code === o.outcome,
+          "OUTCOME_NOT_RECONCILED",
+        );
+      }
+      return { ...src, run_id: src.nativeRun.id };
+    }
+    requireThat(["walking", "ci"].includes(plan.role), "ADAPTER_ROLE_REJECTED");
+    const receipt = await jsonFile(path.join(plan.bundle, "admission.json"));
+    await fresh(receipt);
+    requireThat(
+      (plan.role === "walking"
+        ? plan.bundle === receipt.bundle
+        : plan.bundle.startsWith(path.join(ROOT, ".local/issue99/ci-receipt-"))) &&
+        ((plan.role === "walking" && process.env.GITHUB_WORKFLOW === "Walking skeleton E2E") ||
+          (plan.role === "ci" && process.env.GITHUB_WORKFLOW === "CI")),
+      "ADAPTER_PROMOTION_PATH_REJECTED",
+    );
+    return { ...src, run_id: src.nativeRun.id, C: receipt.C, R: receipt.R, receipt };
+  }
+  if (["source", "seal"].includes(plan.role)) {
+    const artifact = await api(`actions/artifacts/${id(plan.id)}`);
+    const ownProducer =
+      process.env.GITHUB_WORKFLOW === "Supply chain" &&
+      artifact.workflow_run?.id === src.nativeRun.id;
+    const { source, jobs } = ownProducer
+      ? {
+          source: src.nativeRun,
+          jobs: await pages(
+            `actions/runs/${src.nativeRun.id}/attempts/${src.nativeRun.run_attempt}/jobs`,
+            "jobs",
+          ),
+        }
+      : await selectProducer(src.context);
+    const step = jobs
+      .find((j) => j.name === "image seaweedfs")
+      ?.steps.find(
+        (s) =>
+          s.name ===
+          (plan.role === "source" ? "Upload qualified candidate" : "Upload candidate seal"),
+      );
+    validateArtifact(artifact, source, plan.id, plan.cap, step);
+    requireThat(
+      artifact.digest === plan.digest && artifact.size_in_bytes === plan.bytes,
+      "ADAPTER_DOWNLOAD_DRIFT",
+    );
+    return { ...src, run_id: source.id };
+  }
+  // Same-run SDK reads are bound to the original run and followed by an
+  // independent receipt/source validation before load. No Actions-read token
+  // is added to the downstream Walking job.
+  requireThat(
+    (plan.role === "walking" && process.env.GITHUB_WORKFLOW === "Walking skeleton E2E") ||
+      (plan.role === "ci" && process.env.GITHUB_WORKFLOW === "CI"),
+    "ADAPTER_SAME_RUN_ROLE_REJECTED",
+  );
+  await selectProducer(src.context);
+  const promoted = await api(`actions/artifacts/${id(plan.id)}`, { publicOnly: true });
+  const jobs = await pages(
+    `actions/runs/${src.nativeRun.id}/attempts/${src.nativeRun.run_attempt}/jobs`,
+    "jobs",
+    true,
+  );
+  const prepared = jobs.filter(
+    (j) =>
+      j.name === "qualified storage admission" &&
+      j.run_attempt === src.nativeRun.run_attempt &&
+      j.status === "completed" &&
+      j.conclusion === "success",
+  );
+  requireThat(prepared.length === 1, "ADAPTER_PREPARATION_NOT_COMPLETE");
+  const stepName =
+    plan.role === "walking"
+      ? "Promote unchanged verified image into this run"
+      : "Preserve verified preparation receipt";
+  const steps = prepared[0].steps.filter(
+    (s) => s.name === stepName && s.status === "completed" && s.conclusion === "success",
+  );
+  requireThat(steps.length === 1, "ADAPTER_PREPARATION_NOT_COMPLETE");
+  validateArtifact(promoted, src.nativeRun, plan.id, plan.cap, steps[0]);
+  requireThat(
+    promoted.name === plan.name &&
+      promoted.digest === plan.digest &&
+      promoted.size_in_bytes === plan.bytes,
+    "ADAPTER_SAME_RUN_ARTIFACT_DRIFT",
+  );
+  return { ...src, run_id: src.nativeRun.id };
+}
+export async function verifyAdapterUpload(plan, actual, admission) {
+  const artifact = await api(`actions/artifacts/${id(actual["artifact-id"])}`);
+  requireThat(
+    artifact.name === plan.name &&
+      artifact.workflow_run?.id === plan.run &&
+      artifact.workflow_run?.head_sha === admission.nativeRun.head_sha &&
+      artifact.workflow_run?.head_repository_id === REPOSITORY_ID &&
+      !artifact.expired &&
+      artifact.size_in_bytes <= plan.cap &&
+      artifact.size_in_bytes > 0 &&
+      artifact.digest === `sha256:${actual["artifact-digest"]}`,
+    "ADAPTER_UPLOADED_ARTIFACT_DRIFT",
+  );
+  const created = Date.parse(artifact.created_at),
+    expires = Date.parse(artifact.expires_at);
+  requireThat(
+    created >= Date.parse(admission.nativeRun.run_started_at) &&
+      expires > Date.now() &&
+      expires - created <= 86460000,
+    "ADAPTER_ARTIFACT_RETENTION_OR_ATTEMPT_DRIFT",
+  );
+  if (plan.role === "source" || plan.role === "walking")
+    physicalBudget(admission.C, admission.R, [
+      {
+        role: plan.role,
+        artifact_id: artifact.id,
+        run_id: plan.run,
+        attempt: plan.attempt,
+        bytes: artifact.size_in_bytes,
+        digest: artifact.digest,
+      },
+    ]);
+  await candidateSource(["source", "seal"].includes(plan.role));
+  return {
+    "artifact-id": artifact.id,
+    "artifact-digest": artifact.digest,
+    "artifact-bytes": artifact.size_in_bytes,
+  };
+}
+export function validateDiagnosticMarker(build, elfHash) {
+  requireThat(
+    build &&
+      isDeepStrictEqual(build.diagnostic_marker, {
+        schema_version: 1,
+        profile: SW_PROFILE,
+        diagnostic_only: true,
+        elf_sha256: elfHash,
+        flags_sha256: sha256(SW_FLAGS),
+        source_commit: "ffa87c25fdf587178b1521ad87f2a4a72a02e584",
+        go_version: "go1.26.10",
+      }) &&
+      build.output_profile === SW_PROFILE &&
+      build.elf?.linker_flags === SW_FLAGS &&
+      build.elf_sha256 === elfHash,
+    "S_W_DIAGNOSTIC_MARKER_INVALID",
+  );
+}
+export function diagnosticProfile(lock) {
+  const profile = lock.build?.output_profile;
+  if (profile === undefined) {
+    requireThat(lock.build?.diagnostic_only !== true, "S_W_PROFILE_MISSING");
+    return false;
+  }
+  requireThat(
+    profile === SW_PROFILE && lock.build.diagnostic_only === true,
+    "S_W_PROFILE_REJECTED",
+  );
+  return true;
+}
+export function diagnosticCommandGuard(lock, mode) {
+  if (lock?.build?.output_profile === PRODUCTION_PROFILE) {
+    productionProfile(lock);
+    return;
+  }
+  requireThat(lock?.build?.output_profile === SW_PROFILE, "BUILD_PROFILE_REQUIRED");
+  if (diagnosticProfile(lock))
+    requireThat(
+      ["policy-inventory", "produce", "verify-build-profile"].includes(mode),
+      "S_W_PROMOTION_FORBIDDEN",
+    );
+}
+export function terminateDiagnostic(report) {
+  // A feasible measurement is deliberately a FAILED required check. This
+  // terminal exception has no retryable-prerequisite classification.
+  requireThat(
+    report.profile === SW_PROFILE &&
+      report.artifact_uploaded === false &&
+      report.promoted === false,
+    "S_W_PROMOTION_FORBIDDEN",
+  );
+  throw new AdmissionError("S_W_DIAGNOSTIC_NON_PROMOTABLE");
+}
+export function diagnosticEvidenceLines(report) {
+  const text = JSON.stringify(report),
+    chunkSize = 5000;
+  const total = Math.ceil(text.length / chunkSize),
+    digest = sha256(text);
+  return Array.from(
+    { length: total },
+    (_, index) =>
+      "S_W_DIAGNOSTIC_PART " +
+      JSON.stringify({
+        index,
+        total,
+        sha256: digest,
+        data: text.slice(index * chunkSize, (index + 1) * chunkSize),
+      }),
+  );
+}
+export function validateSWAttempt(attempt) {
+  requireThat(id(attempt) === 1, "S_W_HISTORICAL_RETRY_FORBIDDEN");
+}
+export function validateSWResources(compression, decoder) {
+  requireThat(
+    compression.limits?.address_space_bytes === 1024 ** 3 &&
+      compression.limits.cpu_seconds === 540 &&
+      compression.process_wall_seconds > 0 &&
+      compression.process_wall_seconds <= 600 &&
+      Number.isFinite(compression.user_cpu_seconds) &&
+      Number.isFinite(compression.system_cpu_seconds) &&
+      compression.user_cpu_seconds >= 0 &&
+      compression.system_cpu_seconds >= 0 &&
+      compression.user_cpu_seconds + compression.system_cpu_seconds <= 540 &&
+      compression.peak_rss_bytes > 0 &&
+      compression.peak_rss_bytes <= 1024 ** 3 &&
+      decoder.peak_rss_bytes > 0 &&
+      decoder.peak_rss_bytes <= 256 * 1024 ** 2 &&
+      decoder.elapsed_seconds > 0 &&
+      decoder.elapsed_seconds <= 600 &&
+      decoder.limits?.address_space_bytes === 256 * 1024 ** 2 &&
+      Number.isSafeInteger(decoder.uncompressed_bytes) &&
+      decoder.uncompressed_bytes > 0 &&
+      decoder.uncompressed_bytes <= 4 * 1024 ** 3,
+    "S_W_RESOURCE_MEASUREMENT_REJECTED",
+  );
+}
+export class AdmissionError extends Error {
+  constructor(code) {
+    super(code);
+    this.name = "AdmissionError";
+    this.code = code;
+  }
+}
+function requireThat(condition, code = "INTEGRITY_REJECTED") {
+  if (!condition) throw new AdmissionError(code);
+}
+function id(value) {
+  requireThat(
+    typeof value === "number" || (typeof value === "string" && /^[1-9][0-9]{0,15}$/.test(value)),
+    "INVALID_IDENTITY",
+  );
+  const number = Number(value);
+  requireThat(Number.isSafeInteger(number) && number > 0, "INVALID_IDENTITY");
+  return number;
+}
+function run(command, args, options = {}) {
+  return execFileSync(command, args, {
+    cwd: ROOT,
+    encoding: "utf8",
+    timeout: 600000,
+    maxBuffer: 4 * 1024 * 1024,
+    ...options,
+  });
+}
+async function jsonFile(file) {
+  return strictJSON(await readFile(file));
+}
+async function dispose(directory) {
+  const base = await realpath(path.join(ROOT, ".local/issue99"));
+  const target = await realpath(directory);
+  requireThat(
+    base === path.resolve(ROOT, ".local/issue99") && target.startsWith(base + path.sep),
+    "UNSAFE_CLEANUP_PATH",
+  );
+  requireThat(
+    /^(producer|admission|recheck|source-recheck|promoted)-/.test(
+      path.relative(base, target).split(path.sep)[0],
+    ),
+    "UNSAFE_CLEANUP_PATH",
+  );
+  await rm(target, { recursive: true, force: true });
+}
+function validateStableIdentity(context, pr, headCommit, mergeCommit, nativeRun, env) {
+  const { H, B, M, TH, TM } = context;
+  for (const v of [H, B, M, TH, TM]) requireThat(/^[0-9a-f]{40}$/.test(v), "INVALID_IDENTITY");
+  requireThat(TH === TM, "TREE_OR_BASE_DRIFT");
+  requireThat(
+    pr.number === 100 && pr.state === "open" && pr.draft === true && !pr.merged,
+    "PR_STATE_DRIFT",
+  );
+  requireThat(
+    pr.head?.repo?.id === REPOSITORY_ID && pr.base?.repo?.id === REPOSITORY_ID,
+    "REPOSITORY_DRIFT",
+  );
+  requireThat(pr.head.sha === H && pr.base.sha === B, "HEAD_BASE_MERGE_DRIFT");
+  requireThat(
+    headCommit.sha === H &&
+      headCommit.tree.sha === TH &&
+      mergeCommit.sha === M &&
+      mergeCommit.tree.sha === TM,
+    "TREE_OR_BASE_DRIFT",
+  );
+  requireThat(
+    JSON.stringify(mergeCommit.parents.map((p) => p.sha)) === JSON.stringify([B, H]),
+    "MERGE_PARENT_DRIFT",
+  );
+  const expected = WORKFLOWS[env.GITHUB_WORKFLOW];
+  requireThat(
+    expected && nativeRun.workflow_id === expected.id && nativeRun.path === expected.path,
+    "WORKFLOW_DRIFT",
+  );
+  requireThat(
+    nativeRun.id === id(env.GITHUB_RUN_ID) && nativeRun.run_attempt === id(env.GITHUB_RUN_ATTEMPT),
+    "ATTEMPT_DRIFT",
+  );
+  requireThat(
+    nativeRun.event === "pull_request" &&
+      nativeRun.head_sha === H &&
+      nativeRun.repository.id === REPOSITORY_ID &&
+      nativeRun.head_repository.id === REPOSITORY_ID,
+    "RUN_IDENTITY_DRIFT",
+  );
+  requireThat(
+    nativeRun.pull_requests.some((p) => p.number === 100 && p.head.sha === H && p.base.sha === B),
+    "PR_ASSOCIATION_MISSING",
+  );
+  requireThat(env.GITHUB_SHA === M && env.GITHUB_REF === "refs/pull/100/merge", "EVENT_REF_DRIFT");
+}
+export function validateIdentity(context, pr, headCommit, mergeCommit, nativeRun, env) {
+  validateStableIdentity(context, pr, headCommit, mergeCommit, nativeRun, env);
+  requireThat(pr.merge_commit_sha === context.M, "HEAD_BASE_MERGE_DRIFT");
+}
+const safeSha = (v) => (typeof v === "string" && /^[a-f0-9]{40}$/.test(v) ? v : null);
+const safeId = (v) => (Number.isSafeInteger(v) && v > 0 ? v : null);
+const safeDate = (v) =>
+  typeof v === "string" && v.length <= 128 && Number.isFinite(Date.parse(v))
+    ? new Date(v).toISOString()
+    : null;
+const safeText = (v) => (typeof v === "string" && /^[A-Za-z0-9_.:/ -]{1,128}$/.test(v) ? v : null);
+let lastIdentityEvidence;
+let identityObservations = [];
+export function identityEvidence(input, pr, observation, correlation, outcome) {
+  const { context: c, headCommit: h, mergeCommit: m, checkout, nativeRun: n, env, suite } = input;
+  const association = (p) => ({
+    number: safeId(p.number),
+    H: safeSha(p.head?.sha),
+    B: safeSha(p.base?.sha),
+  });
+  return {
+    version: 1,
+    observed_at: new Date().toISOString(),
+    observation,
+    outcome,
+    event: {
+      H: safeSha(c.H),
+      B: safeSha(c.B),
+      M: safeSha(c.M),
+      TH: safeSha(c.TH),
+      TM: safeSha(c.TM),
+      workflow: Object.hasOwn(WORKFLOWS, env.GITHUB_WORKFLOW) ? env.GITHUB_WORKFLOW : "UNEXPECTED",
+      run_id: safeId(Number(env.GITHUB_RUN_ID)),
+      attempt: safeId(Number(env.GITHUB_RUN_ATTEMPT)),
+      ref_matches: env.GITHUB_REF === "refs/pull/100/merge",
+    },
+    checkout: {
+      commit: safeSha(checkout?.sha),
+      tree: safeSha(checkout?.tree?.sha),
+      parents: checkout?.parents?.map((p) => safeSha(p.sha)),
+    },
+    git: {
+      H: safeSha(h.sha),
+      TH: safeSha(h.tree?.sha),
+      M: safeSha(m.sha),
+      TM: safeSha(m.tree?.sha),
+      merge_parents: m.parents?.map((p) => safeSha(p.sha)),
+    },
+    live_pr: {
+      number: safeId(pr.number),
+      H: safeSha(pr.head?.sha),
+      B: safeSha(pr.base?.sha),
+      M: safeSha(pr.merge_commit_sha),
+      M_present: Object.hasOwn(pr, "merge_commit_sha"),
+      M_type: typeof pr.merge_commit_sha,
+      head_repo: safeId(pr.head?.repo?.id),
+      base_repo: safeId(pr.base?.repo?.id),
+      state: ["open", "closed"].includes(pr.state) ? pr.state : null,
+      draft: typeof pr.draft === "boolean" ? pr.draft : null,
+      merged: typeof pr.merged === "boolean" ? pr.merged : null,
+      mergeable: typeof pr.mergeable === "boolean" ? pr.mergeable : null,
+      mergeable_state: [
+        "unknown",
+        "clean",
+        "dirty",
+        "unstable",
+        "blocked",
+        "behind",
+        "draft",
+        "has_hooks",
+      ].includes(pr.mergeable_state)
+        ? pr.mergeable_state
+        : null,
+    },
+    native: {
+      run_id: safeId(n.id),
+      attempt: safeId(n.run_attempt),
+      workflow_id: safeId(n.workflow_id),
+      path: Object.values(WORKFLOWS).some((w) => w.path === n.path) ? n.path : "UNEXPECTED",
+      event: n.event === "pull_request" ? n.event : "UNEXPECTED",
+      H: safeSha(n.head_sha),
+      repository: safeId(n.repository?.id),
+      head_repository: safeId(n.head_repository?.id),
+      check_suite: safeId(n.check_suite_id),
+      associations: (n.pull_requests ?? []).slice(0, 8).map(association),
+      app: safeId(suite?.app?.id),
+      suite_H: safeSha(suite?.head_sha),
+      suite_associations: (suite?.pull_requests ?? []).slice(0, 8).map((p) => safeId(p.number)),
+    },
+    comparisons: {
+      event_H_live_H: c.H === pr.head?.sha,
+      event_B_live_B: c.B === pr.base?.sha,
+      event_M_live_M: c.M === pr.merge_commit_sha,
+      checkout_M: checkout?.sha === c.M,
+      checkout_tree: checkout?.tree?.sha === c.TM,
+      merge_parents: isDeepStrictEqual(
+        m.parents?.map((p) => p.sha),
+        [c.B, c.H],
+      ),
+      equal_trees: c.TH === c.TM,
+      native_run: n.id === Number(env.GITHUB_RUN_ID),
+      native_attempt: n.run_attempt === Number(env.GITHUB_RUN_ATTEMPT),
+    },
+    api: {
+      request_started_at: safeText(correlation?.request_started_at),
+      received_at: safeText(correlation?.received_at),
+      status: safeId(correlation?.status),
+      request_id:
+        typeof correlation?.request_id === "string" &&
+        /^[A-Fa-f0-9:]{1,128}$/.test(correlation.request_id)
+          ? correlation.request_id
+          : null,
+      date: safeDate(correlation?.date),
+      age:
+        typeof correlation?.age === "string" && /^\d{1,8}$/.test(correlation.age)
+          ? correlation.age
+          : null,
+      refresh: correlation?.refresh === true,
+      api_version_requested: ["2022-11-28", "2026-03-10"].includes(
+        correlation?.api_version_requested,
+      )
+        ? correlation.api_version_requested
+        : null,
+      api_version_selected: ["2022-11-28", "2026-03-10"].includes(correlation?.api_version_selected)
+        ? correlation.api_version_selected
+        : null,
+    },
+  };
+}
+// At most three 3-second PR reads and two 500ms delays, in this SAME
+// admission attempt. Only a null merge SHA while GitHub computes mergeability
+// may be refreshed. A concrete different SHA, H/B drift or any other failed
+// guard is immediately terminal, never a producer-prerequisite classification.
+export async function reconcileIdentity(input, readPr, pause, record) {
+  for (let observation = 1; observation <= 3; observation++) {
+    const { pr, correlation } = await readPr(observation);
+    let outcome = "IDENTITY_CONFIRMED",
+      failure;
+    try {
+      validateStableIdentity(
+        input.context,
+        pr,
+        input.headCommit,
+        input.mergeCommit,
+        input.nativeRun,
+        input.env,
+      );
+      requireThat(
+        input.checkout.sha === input.context.M &&
+          input.checkout.tree.sha === input.context.TM &&
+          isDeepStrictEqual(
+            input.checkout.parents.map((p) => p.sha),
+            [input.context.B, input.context.H],
+          ),
+        "CHECKOUT_COMMIT_DRIFT",
+      );
+      requireThat(
+        input.suite.app?.id === 15368 &&
+          input.suite.head_sha === input.context.H &&
+          input.suite.pull_requests?.some((p) => p.number === 100),
+        "NATIVE_CHECK_SOURCE_DRIFT",
+      );
+      if (pr.merge_commit_sha !== input.context.M) {
+        const incomplete =
+          pr.merge_commit_sha === null && pr.mergeable === null && pr.mergeable_state === "unknown";
+        if (incomplete && observation < 3) outcome = "PR_MERGE_METADATA_INCOMPLETE_REFRESH";
+        else
+          throw new AdmissionError(
+            incomplete ? "PR_MERGE_METADATA_UNRESOLVED" : "HEAD_BASE_MERGE_DRIFT",
+          );
+      }
+      if (outcome === "IDENTITY_CONFIRMED")
+        validateIdentity(
+          input.context,
+          pr,
+          input.headCommit,
+          input.mergeCommit,
+          input.nativeRun,
+          input.env,
+        );
+    } catch (error) {
+      outcome = error instanceof AdmissionError ? error.code : "ADMISSION_INTERNAL_ERROR";
+      failure = error;
+    }
+    await record(identityEvidence(input, pr, observation, correlation, outcome));
+    if (failure) throw failure;
+    if (outcome === "IDENTITY_CONFIRMED") return;
+    await pause(500);
+  }
+  throw new AdmissionError("PR_MERGE_METADATA_UNRESOLVED");
+}
+export function validateProducer(source, jobs, context) {
+  requireThat(
+    source.repository.id === REPOSITORY_ID && source.head_repository.id === REPOSITORY_ID,
+    "PRODUCER_REPOSITORY_DRIFT",
+  );
+  requireThat(
+    source.event === "pull_request" &&
+      source.workflow_id === 374068707 &&
+      source.path === WORKFLOWS["Supply chain"].path &&
+      source.head_sha === context.H,
+    "PRODUCER_WORKFLOW_DRIFT",
+  );
+  requireThat(
+    source.pull_requests.some(
+      (p) => p.number === 100 && p.head.sha === context.H && p.base.sha === context.B,
+    ),
+    "PRODUCER_PR_DRIFT",
+  );
+  if (["queued", "in_progress", "waiting", "pending", "requested"].includes(source.status))
+    throw new AdmissionError("PRODUCER_NOT_YET_COMPLETE");
+  requireThat(source.status === "completed", "PRODUCER_STATE_INVALID");
+  requireThat(source.conclusion === "success", "PRODUCER_FAILED");
+  for (const name of [
+    "source policy",
+    "dependencies",
+    "supply-chain-security",
+    ...SERVICES.map((s) => `image ${s}`),
+  ]) {
+    const found = jobs.filter((j) => j.name === name);
+    requireThat(
+      found.length === 1 &&
+        found[0].status === "completed" &&
+        found[0].conclusion === "success" &&
+        found[0].run_attempt === source.run_attempt,
+      "PRODUCER_REQUIRED_JOB_FAILED",
+    );
+  }
+  const candidate = jobs.find((j) => j.name === "image seaweedfs");
+  for (const name of [
+    "Fixed module reproducibility and zero HIGH gate",
+    "Bounded RSA JWK and Brotli controls",
+    "Upload qualified candidate",
+    "Seal qualified candidate upload",
+    "Upload candidate seal",
+  ]) {
+    const step = candidate.steps.filter((s) => s.name === name);
+    requireThat(
+      step.length === 1 && step[0].status === "completed" && step[0].conclusion === "success",
+      "CANDIDATE_GATE_FAILED",
+    );
+  }
+}
+export function validateArtifact(artifact, source, expectedId, cap, step) {
+  requireThat(
+    artifact.id === id(expectedId) &&
+      artifact.workflow_run?.id === source.id &&
+      artifact.workflow_run?.head_sha === source.head_sha &&
+      artifact.workflow_run?.head_repository_id === REPOSITORY_ID,
+    "ARTIFACT_IDENTITY_DRIFT",
+  );
+  requireThat(
+    !artifact.expired && Date.parse(artifact.expires_at) > Date.now(),
+    "ARTIFACT_EXPIRED",
+  );
+  requireThat(
+    Number.isSafeInteger(artifact.size_in_bytes) &&
+      artifact.size_in_bytes > 0 &&
+      artifact.size_in_bytes <= cap,
+    "ARTIFACT_SIZE_REJECTED",
+  );
+  requireThat(/^sha256:[a-f0-9]{64}$/.test(artifact.digest), "ARTIFACT_DIGEST_MISSING");
+  const created = Date.parse(artifact.created_at);
+  requireThat(
+    created >= Date.parse(step.started_at) && created <= Date.parse(step.completed_at) + 1000,
+    "ARTIFACT_ATTEMPT_DRIFT",
+  );
+  requireThat(
+    Date.parse(artifact.expires_at) - created <= 86400000 + 60000,
+    "ARTIFACT_RETENTION_REJECTED",
+  );
+}
+export function validateScans(report, sbom) {
+  requireThat(
+    report.SchemaVersion >= 2 && Array.isArray(report.Results) && report.Results.length > 0,
+    "SCAN_EVIDENCE_MISSING",
+  );
+  requireThat(
+    report.Results.every((r) =>
+      (r.Vulnerabilities ?? []).every((v) => !["HIGH", "CRITICAL"].includes(v.Severity)),
+    ),
+    "HIGH_OR_CRITICAL_FOUND",
+  );
+  requireThat(
+    sbom.spdxVersion?.startsWith("SPDX-") &&
+      Array.isArray(sbom.packages) &&
+      sbom.packages.length > 0,
+    "SBOM_MISSING",
+  );
+}
+export function validateCheck(check, context, suiteId, name, completed = true) {
+  requireThat(
+    check.app?.id === 15368 &&
+      check.head_sha === context.H &&
+      check.check_suite?.id === suiteId &&
+      check.name === name,
+    "CHECK_SOURCE_DRIFT",
+  );
+  requireThat(
+    check.pull_requests?.some((p) => p.number === 100),
+    "CHECK_PR_ASSOCIATION_MISSING",
+  );
+  if (completed)
+    requireThat(
+      check.status === "completed" && check.conclusion === "success",
+      "REQUIRED_CHECK_NOT_SUCCESS",
+    );
+}
+
+export function apiReadHeaders(
+  url,
+  { publicOnly = false, bytes = false, apiVersion = "2026-03-10", refresh = false } = {},
+  env = process.env,
+) {
+  const target = new URL(url),
+    prefix = `/repos/${REPOSITORY}/`;
+  requireThat(
+    target.origin === "https://api.github.com" &&
+      !target.username &&
+      !target.password &&
+      !target.hash &&
+      target.pathname.startsWith(prefix),
+    "API_ORIGIN_REJECTED",
+  );
+  const headers = { Accept: "application/vnd.github+json", "X-GitHub-Api-Version": apiVersion };
+  if (refresh) headers["Cache-Control"] = "no-cache";
+  if (publicOnly) {
+    const suffix = target.pathname.slice(prefix.length);
+    requireThat(
+      !bytes &&
+        /^(?:pulls\/100|issues\/100\/comments|check-(?:suites|runs)\/[1-9][0-9]*|git\/commits\/[a-f0-9]{40}|actions\/(?:runs\/[1-9][0-9]*(?:\/attempts\/[1-9][0-9]*\/jobs)?|workflows\/(?:370458734|377653530|374068707)\/runs|artifacts\/[1-9][0-9]*))$/.test(
+          suffix,
+        ),
+      "PUBLIC_METADATA_ROUTE_REJECTED",
+    );
+    // Explicit contents-only metadata credential. Never use it for artifact
+    // archives, and never fall back to ambient Owner/Actions-read credentials.
+    if (env.PC100_METADATA_TOKEN !== undefined) {
+      requireThat(
+        typeof env.PC100_METADATA_TOKEN === "string" &&
+          /^[A-Za-z0-9_.-]{1,4096}$/.test(env.PC100_METADATA_TOKEN),
+        "METADATA_TOKEN_INVALID",
+      );
+      headers.Authorization = `Bearer ${env.PC100_METADATA_TOKEN}`;
+    }
+    // Explicit public GETs never inherit an ambient installation/Owner token.
+    // A private/unavailable resource fails at HTTP; there is no auth fallback.
+  } else {
+    requireThat(
+      typeof env.GITHUB_TOKEN === "string" && env.GITHUB_TOKEN.length > 0,
+      "ACTIONS_READ_TOKEN_MISSING",
+    );
+    requireThat(/^[A-Za-z0-9_.-]{1,4096}$/.test(env.GITHUB_TOKEN), "ACTIONS_READ_TOKEN_INVALID");
+    headers.Authorization = `Bearer ${env.GITHUB_TOKEN}`;
+  }
+  return headers;
+}
+export function artifactRedirect(location) {
+  requireThat(
+    typeof location === "string" && location.length <= 8192,
+    "ARTIFACT_REDIRECT_REJECTED",
+  );
+  let next;
+  try {
+    next = new URL(location);
+  } catch {
+    throw new AdmissionError("ARTIFACT_REDIRECT_REJECTED");
+  }
+  requireThat(
+    next.protocol === "https:" &&
+      !next.username &&
+      !next.password &&
+      !next.port &&
+      !next.hash &&
+      (/^productionresults[a-z0-9]{1,7}\.blob\.core\.windows\.net$/.test(next.hostname) ||
+        /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+actions\.githubusercontent\.com$/.test(
+          next.hostname,
+        )),
+    "ARTIFACT_REDIRECT_REJECTED",
+  );
+  return next;
+}
+export async function request(
+  url,
+  {
+    publicOnly = false,
+    bytes = false,
+    cap = 4 * 1024 * 1024,
+    correlate,
+    refresh = false,
+    timeout = bytes ? 120000 : 30000,
+    apiVersion = "2026-03-10",
+  } = {},
+) {
+  requireThat(
+    Number.isSafeInteger(cap) && cap > 0 && cap <= IMAGE_CAP + REPORT_CAP,
+    "HTTP_LIMIT_INVALID",
+  );
+  requireThat(
+    Number.isSafeInteger(timeout) && timeout > 0 && timeout <= 120000,
+    "HTTP_LIMIT_INVALID",
+  );
+  const headers = apiReadHeaders(url, { publicOnly, bytes, apiVersion, refresh });
+  const target = new URL(url);
+  if (bytes)
+    requireThat(
+      new RegExp(`^/repos/${REPOSITORY}/actions/artifacts/[1-9][0-9]*/zip$`).test(
+        target.pathname,
+      ) && !target.search,
+      "ARTIFACT_ROUTE_REJECTED",
+    );
+  if (bytes) headers["Accept-Encoding"] = "identity";
+  const controller = new globalThis.AbortController(),
+    signal = controller.signal;
+  const timer = setTimeout(() => controller.abort(new AdmissionError("HTTP_TIMEOUT")), timeout);
+  // Enforce the deadline even if a stalled reader never delivers another chunk.
+  const bounded = (promise) =>
+    new Promise((resolve, reject) => {
+      const aborted = () => reject(signal.reason);
+      signal.addEventListener("abort", aborted, { once: true });
+      Promise.resolve(promise)
+        .then(resolve, reject)
+        .finally(() => signal.removeEventListener("abort", aborted));
+      if (signal.aborted) aborted();
+    });
+  const started = new Date().toISOString();
+  let response;
+  try {
+    response = await bounded(
+      globalThis.fetch(url, { headers, redirect: "manual", credentials: "omit", signal }),
+    );
+    if (correlate)
+      correlate({
+        request_started_at: started,
+        received_at: new Date().toISOString(),
+        status: response.status,
+        request_id: response.headers.get("x-github-request-id"),
+        date: response.headers.get("date"),
+        age: response.headers.get("age"),
+        refresh,
+        api_version_requested: apiVersion,
+        api_version_selected: response.headers.get("x-github-api-version-selected"),
+      });
+    if (correlate)
+      validateIdentityApiVersion(response.headers.get("x-github-api-version-selected"));
+    if (bytes && response.status === 302) {
+      const next = artifactRedirect(response.headers.get("location"));
+      void response.body?.cancel().catch(() => {});
+      // Never forward Bearer authentication, cookies or referrers to the CDN.
+      response = await bounded(
+        globalThis.fetch(next, {
+          headers: { "Accept-Encoding": "identity" },
+          redirect: "manual",
+          credentials: "omit",
+          referrerPolicy: "no-referrer",
+          signal,
+        }),
+      );
+    }
+    if (response.redirected || response.status !== 200) {
+      const error = new AdmissionError(
+        bytes ? `GITHUB_HTTP_${response.status}` : "GITHUB_EVIDENCE_UNAVAILABLE",
+      );
+      error.http_status = response.status;
+      throw error;
+    }
+    const declared = response.headers.get("content-length");
+    const encoding = (response.headers.get("content-encoding") ?? "identity").trim().toLowerCase();
+    if (bytes) requireThat(encoding === "identity", "HTTP_ENCODING_REJECTED");
+    requireThat(declared === null || /^(?:0|[1-9][0-9]*)$/.test(declared), "HTTP_LENGTH_INVALID");
+    requireThat(declared === null || Number(declared) <= cap, "HTTP_SIZE_REJECTED");
+    requireThat(response.body, "HTTP_BODY_MISSING");
+    const reader = response.body.getReader(),
+      chunks = [];
+    let size = 0;
+    try {
+      while (true) {
+        const { done, value } = await bounded(reader.read());
+        if (done) break;
+        size += value.byteLength;
+        requireThat(size <= cap, "HTTP_SIZE_REJECTED");
+        chunks.push(Buffer.from(value));
+      }
+    } finally {
+      void reader.cancel().catch(() => {});
+    }
+    // fetch decodes gzip JSON, whose Content-Length describes encoded bytes.
+    // Artifact ZIPs require identity encoding and an exact physical length.
+    requireThat(
+      declared === null || (!bytes && encoding !== "identity") || size === Number(declared),
+      "HTTP_LENGTH_MISMATCH",
+    );
+    const result = Buffer.concat(chunks);
+    return bytes ? result : strictJSON(result, cap);
+  } finally {
+    clearTimeout(timer);
+    controller.abort();
+    if (response?.body && !response.body.locked) void response.body.cancel().catch(() => {});
+  }
+}
+const api = (suffix, options) =>
+  request(`https://api.github.com/repos/${REPOSITORY}/${suffix}`, options);
+export async function readIdentityPr(correlate) {
+  return api(PR_IDENTITY_API.path, {
+    publicOnly: true,
+    apiVersion: PR_IDENTITY_API.version,
+    refresh: true,
+    timeout: 3000,
+    correlate,
+  });
+}
+export async function pages(suffix, field, publicOnly = false) {
+  try {
+    return await completePages((route) => api(route, { publicOnly }), suffix, field);
+  } catch (error) {
+    throw new AdmissionError(/^[A-Z_]+$/.test(error.message) ? error.message : "INVALID_API_PAGE");
+  }
+}
+export function parseCommitMetadata(text) {
+  // A fetched depth-2 merge has its H/B parents as shallow boundaries. H's
+  // own parents may therefore be absent; M must still expose exactly [B,H].
+  const [sha, tree, parents = ""] = text.trim().split("\n");
+  return {
+    sha,
+    tree: { sha: tree },
+    parents: parents ? parents.split(" ").map((sha) => ({ sha })) : [],
+  };
+}
+async function identity(env = process.env) {
+  requireThat(
+    env.GITHUB_ACTIONS === "true" && env.GITHUB_EVENT_NAME === "pull_request",
+    "PR_EVENT_REQUIRED",
+  );
+  const event = await jsonFile(env.GITHUB_EVENT_PATH);
+  const H = event.pull_request.head.sha,
+    B = event.pull_request.base.sha,
+    M = env.GITHUB_SHA;
+  const commit = (ref) =>
+    parseCommitMetadata(
+      run("git", ["--no-replace-objects", "show", "-s", "--format=%H%n%T%n%P", ref]),
+    );
+  const head = commit(H),
+    merge = commit(M),
+    checkout = commit("HEAD");
+  const context = { H, B, M, TH: head.tree.sha, TM: merge.tree.sha };
+  const input = {
+    context,
+    headCommit: head,
+    mergeCommit: merge,
+    checkout,
+    nativeRun: {},
+    env,
+    suite: {},
+  };
+  lastIdentityEvidence = undefined;
+  identityObservations = [];
+  const record = async (evidence) => {
+    lastIdentityEvidence = evidence;
+    identityObservations.push(evidence);
+    console.log("IDENTITY_EVIDENCE " + JSON.stringify(evidence));
+    await writeFile(
+      path.join(ROOT, ".local/issue99/identity-evidence.jsonl"),
+      JSON.stringify(evidence) + "\n",
+      { flag: "a", mode: 0o600 },
+    );
+  };
+  try {
+    input.nativeRun = await api(`actions/runs/${id(env.GITHUB_RUN_ID)}`, { publicOnly: true });
+    input.suite = await api(`check-suites/${id(input.nativeRun.check_suite_id)}`, {
+      publicOnly: true,
+    });
+    await reconcileIdentity(
+      input,
+      async (observation) => {
+        let correlation;
+        try {
+          const pr = await readIdentityPr((value) => {
+            correlation = value;
+          });
+          return { pr, correlation };
+        } catch (error) {
+          const outcome = error instanceof AdmissionError ? error.code : "PR_METADATA_READ_FAILED";
+          await record(identityEvidence(input, {}, observation, correlation, outcome));
+          throw new AdmissionError(outcome);
+        }
+      },
+      (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+      record,
+    );
+  } catch (error) {
+    if (!lastIdentityEvidence)
+      await record(
+        identityEvidence(
+          input,
+          {},
+          0,
+          {},
+          error instanceof AdmissionError ? error.code : "NATIVE_METADATA_READ_FAILED",
+        ),
+      );
+    throw error;
+  }
+  return { context, nativeRun: input.nativeRun };
+}
+
+export function reviewedBinding(comments, context) {
+  const approved = [];
+  for (const c of comments) {
+    if (c.user?.login !== "mahmoudemad68" || c.author_association !== "OWNER") continue;
+    const match = /```seaweedfs-policy-v1\s*\n([\s\S]*?)\n```/.exec(c.body);
+    if (!match) continue;
+    let binding;
+    try {
+      binding = strictJSON(Buffer.from(match[1]));
+    } catch {
+      continue;
+    }
+    if (binding.decision === "REVOKED" && binding.H === context.H && binding.B === context.B)
+      throw new AdmissionError("POLICY_REVOKED");
+    if (binding.decision === "APPROVED" && binding.H === context.H && binding.B === context.B)
+      approved.push({
+        ...binding,
+        comment_id: c.id,
+        comment_created_at: c.created_at ?? null,
+        comment_updated_at: c.updated_at ?? null,
+        policy_record_sha256: sha256(canonical(binding)),
+      });
+  }
+  requireThat(approved.length === 1, "REVIEWED_POLICY_BINDING_MISSING_OR_AMBIGUOUS");
+  const binding = approved[0];
+  requireThat(
+    binding.repository_id === REPOSITORY_ID &&
+      binding.pr === 100 &&
+      binding.TH === context.TH &&
+      binding.files &&
+      typeof binding.files === "object",
+    "POLICY_IDENTITY_DRIFT",
+  );
+  requireThat(
+    JSON.stringify(Object.keys(binding.files).sort()) === JSON.stringify([...POLICY_FILES].sort()),
+    "POLICY_FILE_SET_DRIFT",
+  );
+  return binding;
+}
+async function policy(context, readOnlyProductCheckout = false) {
+  let verified;
+  try {
+    verified = await readCandidateAdmission(context);
+  } catch (error) {
+    throw new AdmissionError(
+      /^(CANDIDATE_|POLICY_)[A-Z_]+$/.test(error.message)
+        ? error.message
+        : "CANDIDATE_EVIDENCE_UNAVAILABLE",
+    );
+  }
+  const binding = {
+    ...verified,
+    files: Object.fromEntries(POLICY_FILES.map((p) => [p, verified.file_inventory[p]?.sha256])),
+    revoked: false,
+  };
+  const checkout = run("git", ["rev-parse", "HEAD"]).trim();
+  requireThat(
+    checkout === context.M || (readOnlyProductCheckout && checkout === context.H),
+    "CHECKOUT_COMMIT_DRIFT",
+  );
+  const raw = run("git", ["ls-tree", "-r", "-z", checkout], { encoding: "buffer" }).toString(
+    "utf8",
+  );
+  const entries = Object.fromEntries(
+    raw
+      .split("\0")
+      .filter(Boolean)
+      .map((line) => {
+        const at = line.indexOf("\t"),
+          [mode, type, git_blob_sha1] = line.slice(0, at).split(" ");
+        requireThat(
+          type === "blob" && ["100644", "100755"].includes(mode),
+          "POLICY_WORKTREE_TYPE_DRIFT",
+        );
+        return [line.slice(at + 1), { mode, git_blob_sha1 }];
+      }),
+  );
+  requireThat(
+    isDeepStrictEqual(Object.keys(entries).sort(), Object.keys(binding.file_inventory).sort()),
+    "POLICY_FILE_SET_DRIFT",
+  );
+  for (const [name, expected] of Object.entries(binding.file_inventory)) {
+    requireThat(
+      entries[name].mode === expected.mode &&
+        entries[name].git_blob_sha1 === expected.git_blob_sha1,
+      "POLICY_HASH_DRIFT",
+    );
+    const file = path.join(ROOT, name),
+      s = await lstat(file);
+    requireThat(
+      s.isFile() && !s.isSymbolicLink() && (await realpath(file)) === file,
+      "POLICY_WORKTREE_TYPE_DRIFT",
+    );
+    if (process.platform !== "win32")
+      requireThat(
+        Boolean(s.mode & 0o111) === (expected.mode === "100755"),
+        "POLICY_WORKTREE_MODE_DRIFT",
+      );
+    requireThat(s.size <= 512 * 1024 ** 2, "POLICY_WORKTREE_SIZE_DRIFT");
+    const actual = await fileDigest(file);
+    if (actual === expected.sha256)
+      requireThat(s.size === expected.bytes, "POLICY_WORKTREE_SIZE_DRIFT");
+    if (actual !== expected.sha256) {
+      // Git LFS working bytes differ from the immutable pointer. Verify the
+      // exact approved pointer AND its content address; never normalize media.
+      requireThat(expected.bytes <= 1024, "POLICY_HASH_DRIFT");
+      const pointer = run("git", ["show", `${checkout}:${name}`], { encoding: "buffer" });
+      requireThat(
+        sha256(pointer) === expected.sha256 && pointer.length <= 1024,
+        "POLICY_HASH_DRIFT",
+      );
+      const match =
+        /^version https:\/\/git-lfs.github.com\/spec\/v1\noid sha256:([a-f0-9]{64})\nsize ([0-9]+)\n$/.exec(
+          pointer.toString("utf8"),
+        );
+      requireThat(match && actual === match[1] && s.size === Number(match[2]), "POLICY_HASH_DRIFT");
+    }
+  }
+  const lock = await jsonFile(path.join(ROOT, "infra/seaweedfs/security-build.lock.json"));
+  requireThat(isDeepStrictEqual(lock.trusted_baseline, BASELINE_POLICY), "BASELINE_POLICY_DRIFT");
+  for (const [name, expected] of Object.entries(BASELINE_POLICY))
+    requireThat(binding.files[name] === expected, "SCANNER_POLICY_DRIFT");
+  return binding;
+}
+
+export async function downloadArtifactArchive(artifact, source, step, cap) {
+  // Shell steps have a job-scoped API token, not JS-Action runtime credentials.
+  // The caller already admitted the producer (or is sealing its own upload).
+  // Re-read both identities before and after downloading the exact ZIP ID.
+  const role = /^(seaweedfs-candidate|seaweedfs-seal)-/.exec(artifact.name)?.[1];
+  requireThat(
+    role && artifact.name === `${role}-${id(source.id)}-${id(source.run_attempt)}`,
+    "ARTIFACT_ATTEMPT_DRIFT",
+  );
+  requireThat(
+    step?.status === "completed" && step.conclusion === "success",
+    "ARTIFACT_UPLOAD_NOT_COMPLETE",
+  );
+  validateArtifact(artifact, source, artifact.id, cap, step);
+  const expected = (a) => ({
+    id: a.id,
+    name: a.name,
+    size: a.size_in_bytes,
+    digest: a.digest,
+    created: a.created_at,
+    expires: a.expires_at,
+    workflow_run: a.workflow_run,
+  });
+  const check = async () => {
+    const liveRun = await api(`actions/runs/${id(source.id)}`);
+    requireThat(
+      liveRun.id === source.id &&
+        liveRun.run_attempt === source.run_attempt &&
+        liveRun.workflow_id === 374068707 &&
+        liveRun.path === WORKFLOWS["Supply chain"].path &&
+        liveRun.event === "pull_request" &&
+        liveRun.head_sha === source.head_sha &&
+        liveRun.repository?.id === REPOSITORY_ID &&
+        liveRun.head_repository?.id === REPOSITORY_ID &&
+        isDeepStrictEqual(liveRun.pull_requests, source.pull_requests) &&
+        (source.status !== "completed" ||
+          (liveRun.status === "completed" && liveRun.conclusion === "success")),
+      "ARTIFACT_PRODUCER_DRIFT",
+    );
+    const live = await api(`actions/artifacts/${id(artifact.id)}`);
+    validateArtifact(live, liveRun, artifact.id, cap, step);
+    requireThat(isDeepStrictEqual(expected(live), expected(artifact)), "ARTIFACT_METADATA_DRIFT");
+  };
+  await check();
+  const bytes = await api(`actions/artifacts/${id(artifact.id)}/zip`, { bytes: true, cap });
+  requireThat(bytes.length === artifact.size_in_bytes, "RAW_ARCHIVE_SIZE_DRIFT");
+  requireThat(`sha256:${sha256(bytes)}` === artifact.digest, "GITHUB_ARCHIVE_DIGEST_MISMATCH");
+  await check();
+  return bytes;
+}
+async function unpackZip(artifact, destination, allowed, cap, source, step) {
+  const bytes = await downloadArtifactArchive(artifact, source, step, cap);
+  await unpackVerifiedZip(bytes, artifact.digest, destination, allowed, cap, "python3", true);
+}
+export async function unpackVerifiedZip(
+  data,
+  expectedDigest,
+  destination,
+  allowed,
+  cap,
+  python = "python3",
+  storeOnly = false,
+) {
+  requireThat(data.length <= cap, "ARTIFACT_SIZE_REJECTED");
+  requireThat(`sha256:${sha256(data)}` === expectedDigest, "GITHUB_ARCHIVE_DIGEST_MISMATCH");
+  await mkdir(destination, { recursive: true, mode: 0o700 });
+  const zip = path.join(destination, "download.zip");
+  await writeFile(zip, data, { flag: "wx", mode: 0o600 });
+  run(python, [
+    "-c",
+    `
+import zipfile,sys,json,stat,os,struct
+from pathlib import Path
+p=Path(sys.argv[1]); allowed=set(json.loads(sys.argv[2])); cap=int(sys.argv[3]); store_only=sys.argv[4]=='true'
+b=(p/'download.zip').read_bytes()
+if len(b)<22 or b[-22:-18]!=b'PK\x05\x06': raise ValueError('ZIP EOCD/trailing bytes rejected')
+e=struct.unpack_from('<4s4H2LH',b,len(b)-22)
+if e[1] or e[2] or e[3]!=e[4] or e[4]!=len(allowed) or e[7] or e[5]+e[6]!=len(b)-22: raise ValueError('ZIP directory rejected')
+with zipfile.ZipFile(p/'download.zip') as z:
+ entries=z.infolist(); names=[e.filename for e in entries]
+ if len(names)!=len(set(names)) or set(names)!=allowed: raise ValueError('unexpected/duplicate artifact paths')
+ if sum(e.file_size for e in entries)>cap: raise ValueError('artifact expansion limit')
+ if z.start_dir!=e[6]: raise ValueError('ZIP directory offset rejected')
+ cd=e[6]
+ for member in entries:
+  if cd+46>len(b)-22: raise ValueError('truncated central header')
+  c=struct.unpack_from('<4s6H3L5H2L',b,cd)
+  if c[0]!=b'PK\x01\x02' or c[11] or c[12] or c[13] or c[2]>20: raise ValueError('unsupported central metadata')
+  if cd+46+c[10]>len(b)-22 or b[cd+46:cd+46+c[10]]!=member.filename.encode('ascii'): raise ValueError('central filename rejected')
+  cd+=46+c[10]
+ if cd!=len(b)-22: raise ValueError('central directory size mismatch')
+ cursor=0
+ for member in sorted(entries,key=lambda x:x.header_offset):
+  if member.header_offset!=cursor or cursor+30>z.start_dir: raise ValueError('overlap or gap in ZIP')
+  h=struct.unpack_from('<4s5H3L2H',b,cursor)
+  if h[0]!=b'PK\x03\x04' or h[1]>20 or h[2]&~0x808 or h[2]!=member.flag_bits or h[3]!=member.compress_type or h[10]: raise ValueError('unsafe local header')
+  name=b[cursor+30:cursor+30+h[9]]
+  if name!=member.filename.encode('ascii'): raise ValueError('local filename mismatch')
+  cursor+=30+h[9]+member.compress_size
+  if cursor>z.start_dir: raise ValueError('ZIP data overrun')
+  if h[2]&8:
+   if cursor+16>z.start_dir or struct.unpack_from('<4s3L',b,cursor)!=(b'PK\x07\x08',member.CRC,member.compress_size,member.file_size): raise ValueError('invalid data descriptor')
+   if h[6] not in (0,member.CRC) or h[7] not in (0,member.compress_size) or h[8] not in (0,member.file_size): raise ValueError('local descriptor mismatch')
+   cursor+=16
+  elif (h[6],h[7],h[8])!=(member.CRC,member.compress_size,member.file_size): raise ValueError('local size/CRC mismatch')
+  if store_only and (member.compress_type!=0 or member.compress_size!=member.file_size): raise ValueError('STORE profile required')
+ if cursor!=z.start_dir: raise ValueError('ZIP trailing data rejected')
+ for e in entries:
+  mode=e.external_attr>>16
+  if '/' in e.filename or '\\\\' in e.filename or e.filename in ('.','..') or stat.S_IFMT(mode) not in (0,stat.S_IFREG) or e.flag_bits&1 or e.compress_type not in (0,8): raise ValueError('unsafe artifact member')
+  with z.open(e) as src,open(p/e.filename,'xb') as dst:
+   count=0
+   while b:=src.read(1048576):
+    count+=len(b)
+    if count>e.file_size: raise ValueError('artifact expansion mismatch')
+    dst.write(b)
+   if count!=e.file_size: raise ValueError('artifact truncated')
+`,
+    destination,
+    JSON.stringify(allowed),
+    String(cap),
+    String(storeOnly),
+  ]);
+  await rm(zip);
+}
+async function selectProducer(context) {
+  const candidates = (
+    await pages(
+      `actions/workflows/374068707/runs?event=pull_request&head_sha=${context.H}`,
+      "workflow_runs",
+      true,
+    )
+  ).filter((s) =>
+    s.pull_requests.some(
+      (p) => p.number === 100 && p.head.sha === context.H && p.base.sha === context.B,
+    ),
+  );
+  if (!candidates.length) throw new AdmissionError("PRODUCER_NOT_YET_CREATED");
+  requireThat(candidates.length === 1, "PRODUCER_AMBIGUOUS");
+  const source = await api(`actions/runs/${id(candidates[0].id)}`, { publicOnly: true });
+  if (source.status !== "completed" || source.conclusion !== "success")
+    validateProducer(source, [], context);
+  const jobs = await pages(
+    `actions/runs/${source.id}/attempts/${id(source.run_attempt)}/jobs`,
+    "jobs",
+    true,
+  );
+  validateProducer(source, jobs, context);
+  const aggregate = jobs.find((j) => j.name === "supply-chain-security");
+  requireThat(
+    /^https:\/\/api.github.com\/repos\/mahmoudemad68\/Your_Editor\/check-runs\/[0-9]+$/.test(
+      aggregate.check_run_url,
+    ),
+    "CHECK_URL_REJECTED",
+  );
+  validateCheck(
+    await request(aggregate.check_run_url, { publicOnly: true }),
+    context,
+    source.check_suite_id,
+    "supply-chain-security",
+  );
+  return { source, jobs };
+}
+async function qualified(output) {
+  const { context, nativeRun, binding, lock, K, L } = await candidateSource();
+  // These two and ONLY these outcomes are eligible for the single ordered re-run.
+  const { source, jobs } = await selectProducer(context);
+  const artifacts = await pages(`actions/runs/${source.id}/artifacts`, "artifacts");
+  const sealMatches = artifacts.filter(
+    (a) => a.name === `seaweedfs-seal-${source.id}-${source.run_attempt}`,
+  );
+  requireThat(sealMatches.length === 1, "SEAL_MISSING_OR_AMBIGUOUS");
+  const candidateJob = jobs.find((j) => j.name === "image seaweedfs");
+  const sealStep = candidateJob.steps.find((s) => s.name === "Upload candidate seal");
+  const uploadStep = candidateJob.steps.find((s) => s.name === "Upload qualified candidate");
+  validateArtifact(sealMatches[0], source, sealMatches[0].id, 8472, sealStep);
+  const sealRaw = await downloadArtifactArchive(sealMatches[0], source, sealStep, 8472);
+  await unpackVerifiedZip(
+    sealRaw,
+    sealMatches[0].digest,
+    path.join(output, "seal"),
+    ["seal.json"],
+    8472,
+    "python3",
+    true,
+  );
+  const seal = await jsonFile(path.join(output, "seal/seal.json"));
+  validateCandidateSeal(seal, context, source, lock, L);
+  assertCandidatePolicyLink(seal, binding, "SEAL_POLICY_DRIFT");
+  requireThat(
+    seal.policy_evidence_run_id === binding.evidence_run_id &&
+      seal.policy_record_sha256 === binding.policy_record_sha256,
+    "SEAL_POLICY_DRIFT",
+  );
+  const artifact = artifacts.find((a) => a.id === seal.artifact_id);
+  requireThat(artifact, "ARTIFACT_MISSING");
+  validateArtifact(artifact, source, seal.artifact_id, IMAGE_CAP + REPORT_CAP, uploadStep);
+  requireThat(
+    artifact.digest === seal.artifact_digest && artifact.size_in_bytes === seal.artifact_bytes,
+    "SEAL_DIGEST_DRIFT",
+  );
+  const receipt = {
+    version: 5,
+    schema: RECEIPT_SCHEMA,
+    profile: PRODUCTION_PROFILE,
+    K,
+    L,
+    context,
+    native_run_id: nativeRun.id,
+    native_attempt: nativeRun.run_attempt,
+    producer_run: source.id,
+    producer_created_at: source.created_at,
+    producer_attempt: source.run_attempt,
+    artifact_id: artifact.id,
+    artifact_digest: artifact.digest,
+    artifact_bytes: artifact.size_in_bytes,
+    ...candidatePolicyLink(binding),
+    seal_proof: {
+      artifact_id: sealMatches[0].id,
+      digest: sealMatches[0].digest,
+      bytes: sealRaw.length,
+      raw_zip_base64: sealRaw.toString("base64"),
+    },
+    seal,
+  };
+  return { receipt, artifact, source, step: uploadStep };
+}
+async function verifyCandidateDirectory(bundle, m, src, work) {
+  validateCandidateManifest(m, src.context, src.source.id, src.source.run_attempt, src.lock, src.L);
+  assertCandidatePolicyLink(m, src.binding);
+  requireThat(
+    isDeepStrictEqual(m.policy_files, src.binding.files) &&
+      m.policy_evidence_run_id === src.binding.evidence_run_id &&
+      m.policy_record_sha256 === src.binding.policy_record_sha256,
+    "MANIFEST_POLICY_DRIFT",
+  );
+  for (const name of FILES.filter((n) => n !== "candidate-manifest.json"))
+    requireThat(
+      (await fileDigest(path.join(bundle, name))) === m.files[name] &&
+        (await fileBytes(path.join(bundle, name))) === m.file_bytes[name],
+      "INNER_ARTIFACT_DIGEST_MISMATCH",
+    );
+  const C = await fileBytes(path.join(bundle, "image.tar.xz"));
+  let R = 0;
+  for (const name of REPORT_FILES) R += await fileBytes(path.join(bundle, name));
+  physicalBudget(C, R, []);
+  const scanner = await jsonFile(path.join(bundle, "scanner-versions.json"));
+  requireThat(
+    scanner.trivy?.Version === "0.75.0" &&
+      scanner.syft?.version === "1.54.0" &&
+      Date.parse(scanner.trivy.VulnerabilityDB?.DownloadedAt) >= Date.parse(src.source.created_at),
+    "SCANNER_PROVENANCE_DRIFT",
+  );
+  verifyApprovedELF(m.elf_sha256, src.binding);
+  const archive = path.join(work, "image.tar");
+  await decompress(path.join(bundle, "image.tar.xz"), archive);
+  requireThat(
+    (await fileBytes(archive)) === m.archive_bytes &&
+      (await fileDigest(archive)) === m.archive_sha256,
+    "ARCHIVE_IDENTITY_DRIFT",
+  );
+  const inspection = path.join(work, "inspection");
+  run("sh", ["infra/seaweedfs/verify-image.sh", archive, inspection], { stdio: "inherit" });
+  const v = await jsonFile(path.join(inspection, "verify-image.json"));
+  requireThat(
+    v.image_id === m.image_id &&
+      v.elf_sha256 === m.elf_sha256 &&
+      isDeepStrictEqual(v.diff_ids, m.diff_ids) &&
+      v.project_revision === m.context.M &&
+      v.project_source === `https://github.com/${REPOSITORY}`,
+    "IMAGE_OR_ELF_DRIFT",
+  );
+  requireThat(
+    isDeepStrictEqual(v, await jsonFile(path.join(bundle, "verification.json"))),
+    "VERIFICATION_RECORD_DRIFT",
+  );
+  const metadata = await readFile(path.join(inspection, "actual-go-version-m.txt"), "utf8");
+  const claimed = await readFile(path.join(bundle, "go-version-m.txt"), "utf8");
+  requireThat(
+    metadata.split("\n").slice(1).join("\n") === claimed.split("\n").slice(1).join("\n") &&
+      metadata.split("\n")[0].endsWith("go1.26.10") &&
+      claimed.split("\n")[0].endsWith("go1.26.10"),
+    "GO_METADATA_DRIFT",
+  );
+  validateProductionEvidence(
+    v,
+    src.lock,
+    src.L,
+    inspectSWELF(path.join(inspection, "weed")),
+    metadata,
+  );
+  const trivy = await jsonFile(path.join(bundle, "full-trivy.json"));
+  requireThat(trivy.Metadata?.ImageID === m.image_id, "SCAN_IMAGE_IDENTITY_DRIFT");
+  validateSWInventories(
+    trivy,
+    await jsonFile(path.join(bundle, "sbom.spdx.json")),
+    v.build_measurements.one.elf.go_build_info,
+    src.lock.build.baseline_inventory,
+  );
+  await dispose(inspection);
+  return { C, R, archive };
+}
+async function materialize(artifact, output, receipt, source, step) {
+  const bundle = path.join(output, "bundle");
+  await unpackZip(artifact, bundle, FILES, IMAGE_CAP + REPORT_CAP, source, step);
+  const m = await jsonFile(path.join(bundle, "candidate-manifest.json"));
+  requireThat(
+    (await fileDigest(path.join(bundle, "candidate-manifest.json"))) ===
+      receipt.seal.manifest_sha256,
+    "MANIFEST_DIGEST_DRIFT",
+  );
+  const src = await candidateSource();
+  const measured = await verifyCandidateDirectory(
+    bundle,
+    m,
+    {
+      ...src,
+      source: {
+        id: receipt.producer_run,
+        run_attempt: receipt.producer_attempt,
+        created_at: receipt.producer_created_at,
+      },
+    },
+    output,
+  );
+  physicalBudget(measured.C, measured.R, [
+    {
+      role: "source",
+      artifact_id: artifact.id,
+      run_id: receipt.producer_run,
+      attempt: receipt.producer_attempt,
+      bytes: artifact.size_in_bytes,
+      digest: artifact.digest,
+    },
+  ]);
+  return {
+    ...receipt,
+    ...measured,
+    bundle,
+    source_manifest: m,
+    image_id: m.image_id,
+    elf_sha256: m.elf_sha256,
+    inner_sha256: m.files["image.tar.xz"],
+    diff_ids: m.diff_ids,
+    archive_sha256: m.archive_sha256,
+    archive_bytes: m.archive_bytes,
+  };
+}
+export async function decompress(
+  source,
+  target,
+  python = "python3",
+  maxBytes = 4 * 1024 ** 3,
+  boundedExperiment = false,
+) {
+  requireThat(
+    Number.isSafeInteger(maxBytes) && maxBytes > 0 && maxBytes <= 4 * 1024 ** 3,
+    "IMAGE_EXPANSION_LIMIT_INVALID",
+  );
+  requireThat(typeof boundedExperiment === "boolean", "FILTER_DECODER_SETTING_INVALID");
+  return JSON.parse(
+    run(python, [
+      "-c",
+      `
+import lzma,sys,time,json
+try: import resource
+except ImportError: resource=None
+limits=None
+if sys.argv[4]=='true' and sys.platform=='linux':
+ if resource is None: raise ValueError('resource measurement unavailable')
+ resource.setrlimit(resource.RLIMIT_AS,(268435456,268435456))
+ limits={'address_space_bytes':268435456}
+started=time.perf_counter()
+d=lzma.LZMADecompressor(memlimit=256*1024**2); total=0
+with open(sys.argv[1],'rb') as src,open(sys.argv[2],'xb') as dst:
+ while b:=src.read(1048576):
+  v=d.decompress(b,max_length=1048576)
+  while True:
+   total+=len(v)
+   if total>int(sys.argv[3]): raise ValueError('image expansion limit')
+   dst.write(v)
+   if d.eof or d.needs_input: break
+   v=d.decompress(b'',max_length=1048576)
+  if d.eof:
+   if d.unused_data or src.read(1): raise ValueError('trailing compressed data')
+   break
+ if not d.eof: raise ValueError('truncated image')
+u=resource.getrusage(resource.RUSAGE_SELF) if resource else None
+print(json.dumps({'elapsed_seconds':time.perf_counter()-started,'uncompressed_bytes':total,'peak_rss_bytes':u.ru_maxrss*1024 if u and sys.platform=='linux' else None,'limits':limits}))
+`,
+      source,
+      target,
+      String(maxBytes),
+      String(boundedExperiment),
+    ]),
+  );
+}
+// Output identities are authenticated by the actual producer seal ZIP, not by
+// agreement between caller-controlled receipt fields. Only the small seal is
+// embedded; the full candidate archive is never downloaded a second time.
+export function validateReceiptPaths(r, root = ROOT) {
+  const base = path.join(root, ".local/issue99");
+  requireThat(
+    path.isAbsolute(r.bundle) &&
+      path.isAbsolute(r.archive) &&
+      path.basename(r.archive) === "image.tar" &&
+      r.bundle === path.join(path.dirname(r.archive), "bundle") &&
+      path.dirname(path.dirname(r.archive)) === base &&
+      /^admission-[A-Za-z0-9_-]+$/.test(path.basename(path.dirname(r.archive))),
+    "RECEIPT_PATH_REJECTED",
+  );
+}
+export function validateReceiptOutputs(r) {
+  const m = r.source_manifest;
+  requireThat(m && typeof m === "object", "RECEIPT_SOURCE_MANIFEST_MISSING");
+  requireThat(
+    sha256(JSON.stringify(m) + "\n") === r.seal.manifest_sha256,
+    "RECEIPT_MANIFEST_DIGEST_DRIFT",
+  );
+  requireThat(
+    m.schema === "seaweedfs-candidate-bundle-v5" &&
+      m.profile === r.profile &&
+      m.K === r.K &&
+      m.L === r.L &&
+      isDeepStrictEqual(m.context, r.context) &&
+      m.run_id === r.producer_run &&
+      m.attempt === r.producer_attempt &&
+      samePolicyLink(m, r) &&
+      m.image_id === r.image_id &&
+      m.elf_sha256 === r.elf_sha256 &&
+      isDeepStrictEqual(m.diff_ids, r.diff_ids) &&
+      m.archive_sha256 === r.archive_sha256 &&
+      m.archive_bytes === r.archive_bytes &&
+      m.files?.["image.tar.xz"] === r.inner_sha256,
+    "RECEIPT_OUTPUT_IDENTITY_DRIFT",
+  );
+  const p = r.seal_proof;
+  exactKeys(p, ["artifact_id", "digest", "bytes", "raw_zip_base64"]);
+  id(p.artifact_id);
+  imageDigest(p.digest);
+  requireThat(
+    Number.isSafeInteger(p.bytes) &&
+      p.bytes > 0 &&
+      p.bytes <= 8472 &&
+      typeof p.raw_zip_base64 === "string" &&
+      p.raw_zip_base64.length <= 11296 &&
+      Buffer.from(p.raw_zip_base64, "base64").toString("base64") === p.raw_zip_base64,
+    "RECEIPT_SEAL_PROOF_REJECTED",
+  );
+  const raw = Buffer.from(p.raw_zip_base64, "base64");
+  requireThat(m.file_bytes && typeof m.file_bytes === "object", "MANIFEST_FILE_SIZE_REJECTED");
+  const bytes = Object.entries(m.file_bytes);
+  requireThat(
+    bytes.length === 6 && bytes.every(([, n]) => Number.isSafeInteger(n) && n > 0),
+    "MANIFEST_FILE_SIZE_REJECTED",
+  );
+  requireThat(
+    r.C === m.file_bytes["image.tar.xz"] &&
+      r.R ===
+        bytes
+          .filter(([p]) => p !== "image.tar.xz")
+          .reduce((n, [, b]) => n + b, Buffer.byteLength(JSON.stringify(m) + "\n")),
+    "RECEIPT_MEASUREMENT_DRIFT",
+  );
+  requireThat(
+    raw.length === p.bytes && `sha256:${sha256(raw)}` === p.digest,
+    "RECEIPT_SEAL_PROOF_DIGEST_DRIFT",
+  );
+  requireThat(Buffer.byteLength(JSON.stringify(r) + "\n") <= 16384, "RECEIPT_SIZE_REJECTED");
+  return raw;
+}
+export async function authenticateReceiptSeal(receipt, artifact, source, step, python = "python3") {
+  const raw = validateReceiptOutputs(receipt),
+    p = receipt.seal_proof;
+  validateArtifact(artifact, source, p.artifact_id, 8472, step);
+  requireThat(
+    artifact.name === `seaweedfs-seal-${source.id}-${source.run_attempt}` &&
+      artifact.digest === p.digest &&
+      artifact.size_in_bytes === p.bytes,
+    "RECEIPT_SEAL_ARTIFACT_DRIFT",
+  );
+  const dir = await mkdtemp(path.join(ROOT, ".local/issue99/recheck-seal-"));
+  try {
+    await unpackVerifiedZip(raw, artifact.digest, dir, ["seal.json"], 8472, python, true);
+    requireThat(
+      isDeepStrictEqual(await jsonFile(path.join(dir, "seal.json")), receipt.seal),
+      "RECEIPT_SEAL_AUTHENTICITY_DRIFT",
+    );
+  } finally {
+    await dispose(dir);
+  }
+}
+export async function fresh(receipt, python = "python3") {
+  const { context, nativeRun, binding, lock, K, L } = await candidateSource();
+  validateCandidateReceipt(receipt, context, nativeRun.id, nativeRun.run_attempt);
+  validateReceiptPaths(receipt);
+  assertCandidatePolicyLink(receipt, binding);
+  requireThat(receipt.K === K && receipt.L === L, "RECEIPT_CONTRACT_DRIFT");
+  const { source, jobs } = await selectProducer(context);
+  requireThat(
+    source.id === receipt.producer_run && source.run_attempt === receipt.producer_attempt,
+    "PRODUCER_ATTEMPT_DRIFT",
+  );
+  const artifact = await api(`actions/artifacts/${id(receipt.artifact_id)}`, { publicOnly: true });
+  validateArtifact(
+    artifact,
+    source,
+    receipt.artifact_id,
+    IMAGE_CAP + REPORT_CAP,
+    jobs
+      .find((j) => j.name === "image seaweedfs")
+      .steps.find((s) => s.name === "Upload qualified candidate"),
+  );
+  requireThat(
+    artifact.digest === receipt.artifact_digest &&
+      artifact.size_in_bytes === receipt.artifact_bytes,
+    "ARTIFACT_DIGEST_DRIFT",
+  );
+  const sealArtifact = await api(`actions/artifacts/${id(receipt.seal_proof.artifact_id)}`, {
+    publicOnly: true,
+  });
+  await authenticateReceiptSeal(
+    receipt,
+    sealArtifact,
+    source,
+    jobs
+      .find((j) => j.name === "image seaweedfs")
+      .steps.find((s) => s.name === "Upload candidate seal"),
+    python,
+  );
+  validateCandidateManifest(
+    receipt.source_manifest,
+    context,
+    source.id,
+    source.run_attempt,
+    lock,
+    L,
+  );
+  requireThat(receipt.producer_created_at === source.created_at, "PRODUCER_TIME_DRIFT");
+  verifyApprovedELF(receipt.elf_sha256, binding);
+  validateCandidateSeal(receipt.seal, context, source, lock, L);
+  assertCandidatePolicyLink(receipt.seal, binding, "SEAL_POLICY_DRIFT");
+  requireThat(
+    binding.policy_record_sha256 === receipt.policy_record_sha256 &&
+      binding.evidence_run_id === receipt.policy_evidence_run_id &&
+      isDeepStrictEqual(binding.files, receipt.source_manifest.policy_files),
+    "POLICY_BINDING_DRIFT",
+  );
+}
+// Read-only post-completion reconciliation. This never loads an image, invokes
+// a candidate, uploads an artifact or manufactures a consumer admission receipt.
+export async function reconcileWireArtifacts(input, readRaw, work, python = "python3") {
+  const { context, runs, inventory, lock, L, binding, attemptJobs } = input;
+  const { transfers } = wireInventory(runs, inventory, { context, attemptJobs });
+  for (const kind of ["source", "ci", "walking"]) validateWireRun(runs[kind], kind, context);
+  validateCandidatePolicy(binding, lock, L, context);
+  const order = { source: 0, seal: 1, ci: 2, walking: 3, "outcome-ci": 4, "outcome-walking": 5 };
+  const rows = [];
+  let source, seal, sealRawHash, C, R;
+  try {
+    for (const t of [...transfers].sort(
+      (a, b) => order[a.role] - order[b.role] || a.artifact.id - b.artifact.id,
+    )) {
+      const a = t.artifact,
+        raw = await readRaw(t);
+      requireThat(
+        Buffer.isBuffer(raw) && raw.length === a.size_in_bytes,
+        "WIRE_RAW_MEASUREMENT_DRIFT",
+      );
+      const measured = `sha256:${sha256(raw)}`;
+      requireThat(measured === a.digest, "GITHUB_ARCHIVE_DIGEST_MISMATCH");
+      const cap = ["source", "walking"].includes(t.role)
+        ? IMAGE_CAP + REPORT_CAP
+        : t.role === "seal"
+          ? 8472
+          : t.role === "ci"
+            ? 16674
+            : 4402;
+      const dir = path.join(work, String(id(a.id)));
+      await unpackVerifiedZip(raw, a.digest, dir, WIRE_MEMBERS[t.role], cap, python, true);
+      const row = {
+        role: t.role,
+        artifact_id: a.id,
+        run_id: runs[t.kind].id,
+        attempt: t.attempt,
+        bytes: raw.length,
+        raw_bytes: raw.length,
+        digest: a.digest,
+        raw_sha256: measured,
+      };
+      rows.push(row);
+      if (t.role === "source") {
+        const m = await jsonFile(path.join(dir, "candidate-manifest.json"));
+        validateCandidateManifest(m, context, runs.source.id, runs.source.run_attempt, lock, L);
+        assertCandidatePolicyLink(m, binding);
+        requireThat(
+          m.policy_evidence_run_id === binding.evidence_run_id &&
+            m.policy_record_sha256 === binding.policy_record_sha256 &&
+            isDeepStrictEqual(m.policy_files, binding.files),
+          "WIRE_SOURCE_POLICY_DRIFT",
+        );
+        const files = {};
+        let reports = 0;
+        for (const name of FILES) {
+          const file = path.join(dir, name);
+          files[name] = { bytes: await fileBytes(file), sha256: await fileDigest(file) };
+          if (name !== "candidate-manifest.json")
+            requireThat(
+              files[name].sha256 === m.files[name] && files[name].bytes === m.file_bytes[name],
+              "INNER_ARTIFACT_DIGEST_MISMATCH",
+            );
+          if (name !== "image.tar.xz") reports += files[name].bytes;
+        }
+        C = files["image.tar.xz"].bytes;
+        R = reports;
+        source = { manifest: m, files };
+        // Keep only hashes after measurement; no second full bundle remains on
+        // disk while independently reading the Walking copy.
+      } else if (t.role === "seal") {
+        seal = await jsonFile(path.join(dir, "seal.json"));
+        sealRawHash = { artifact_id: a.id, digest: measured, bytes: raw.length };
+        validateCandidateSeal(seal, context, runs.source, lock, L);
+        assertCandidatePolicyLink(seal, binding);
+        const sourceArtifact = transfers.find((x) => x.role === "source").artifact;
+        requireThat(
+          seal.artifact_id === sourceArtifact.id &&
+            seal.artifact_digest === sourceArtifact.digest &&
+            seal.artifact_bytes === sourceArtifact.size_in_bytes &&
+            seal.manifest_sha256 === source.files["candidate-manifest.json"].sha256 &&
+            seal.policy_evidence_run_id === binding.evidence_run_id &&
+            seal.policy_record_sha256 === binding.policy_record_sha256,
+          "WIRE_SEAL_SOURCE_DRIFT",
+        );
+      } else if (["ci", "walking"].includes(t.role)) {
+        const r = await jsonFile(path.join(dir, "admission.json"));
+        validateCandidateReceipt(r, context, runs[t.kind].id, runs[t.kind].run_attempt);
+        assertCandidatePolicyLink(r, binding);
+        const m = source.manifest;
+        requireThat(
+          r.seal_proof.artifact_id === sealRawHash.artifact_id &&
+            r.seal_proof.digest === sealRawHash.digest &&
+            r.seal_proof.bytes === sealRawHash.bytes,
+          "WIRE_RECEIPT_SEAL_PROOF_DRIFT",
+        );
+        requireThat(
+          r.K === m.K &&
+            r.L === L &&
+            r.C === C &&
+            r.R === R &&
+            r.producer_run === runs.source.id &&
+            r.producer_created_at === runs.source.created_at &&
+            r.producer_attempt === 1 &&
+            isDeepStrictEqual(r.seal, seal) &&
+            r.image_id === m.image_id &&
+            r.elf_sha256 === m.elf_sha256 &&
+            isDeepStrictEqual(r.diff_ids, m.diff_ids) &&
+            r.archive_sha256 === m.archive_sha256 &&
+            r.archive_bytes === m.archive_bytes &&
+            r.inner_sha256 === m.files["image.tar.xz"] &&
+            isDeepStrictEqual(r.source_manifest, m) &&
+            isDeepStrictEqual(r.source_manifest.policy_files, binding.files),
+          "WIRE_RECEIPT_SOURCE_DRIFT",
+        );
+        row.receipt_sha256 = await fileDigest(path.join(dir, "admission.json"));
+        if (t.role === "walking")
+          for (const name of FILES)
+            requireThat(
+              (await fileBytes(path.join(dir, name))) === source.files[name].bytes &&
+                (await fileDigest(path.join(dir, name))) === source.files[name].sha256,
+              "WIRE_PROMOTION_SOURCE_DRIFT",
+            );
+      } else {
+        const o = await jsonFile(path.join(dir, "admission-outcome.json"));
+        exactKeys(o, ["outcome", "run_id", "attempt"]);
+        requireThat(
+          o.run_id === row.run_id && o.attempt === row.attempt,
+          "WIRE_OUTCOME_IDENTITY_DRIFT",
+        );
+        row.outcome = o.outcome;
+      }
+      await rm(dir, { recursive: true, force: true });
+    }
+    return {
+      ...validateFinalWireLedger(C, R, rows, inventory, runs, context, Date.now(), attemptJobs),
+      source_binding: {
+        K: source.manifest.K,
+        L,
+        manifest_sha256: source.files["candidate-manifest.json"].sha256,
+        image_id: source.manifest.image_id,
+        elf_sha256: source.manifest.elf_sha256,
+        diff_ids: source.manifest.diff_ids,
+        ...candidatePolicyLink(binding),
+      },
+      measured_source_files: source.files,
+    };
+  } catch (error) {
+    // Partial observations are diagnostic only; absent rows are NEVER zero.
+    error.wire_evidence = {
+      fully_measured: false,
+      observed_rows: rows,
+      accounting: C && R ? wireAccounting(C, R, rows) : null,
+    };
+    throw error;
+  }
+}
+async function finalWireCheckpoint(ciId, walkingId, destination) {
+  const lockBytes = await readFile(path.join(ROOT, "infra/seaweedfs/security-build.lock.json"));
+  const lock = strictJSON(lockBytes),
+    L = sha256(lockBytes);
+  productionProfile(lock);
+  const pr = await readIdentityPr();
+  requireThat(
+    pr.number === 100 &&
+      pr.state === "open" &&
+      pr.draft === true &&
+      !pr.merged &&
+      pr.head.repo.id === REPOSITORY_ID &&
+      pr.base.repo.id === REPOSITORY_ID &&
+      /^[a-f0-9]{40}$/.test(pr.base.sha),
+    "WIRE_LIVE_PR_DRIFT",
+  );
+  const H = pr.head.sha,
+    B = pr.base.sha,
+    M = pr.merge_commit_sha;
+  requireThat(
+    [H, B, M].every((s) => /^[a-f0-9]{40}$/.test(s)),
+    "WIRE_LIVE_PR_DRIFT",
+  );
+  const head = await api(`git/commits/${H}`, { publicOnly: true }),
+    merge = await api(`git/commits/${M}`, { publicOnly: true });
+  const context = { H, B, M, TH: head.tree.sha, TM: merge.tree.sha };
+  requireThat(
+    head.sha === H &&
+      merge.sha === M &&
+      context.TH === context.TM &&
+      isDeepStrictEqual(
+        merge.parents.map((p) => p.sha),
+        [B, H],
+      ),
+    "WIRE_MERGE_TREE_DRIFT",
+  );
+  const binding = validateCandidatePolicy(await policy(context, true), lock, L, context);
+  const { source, jobs: sourceJobs } = await selectProducer(context);
+  const runs = {
+    source,
+    ci: await api(`actions/runs/${id(ciId)}`),
+    walking: await api(`actions/runs/${id(walkingId)}`),
+  };
+  const verifiedChecks = [];
+  const recordCheck = async (job, run, name) => {
+    requireThat(
+      new RegExp(`^https://api\\.github\\.com/repos/${REPOSITORY}/check-runs/[0-9]+$`).test(
+        job.check_run_url,
+      ),
+      "CHECK_URL_REJECTED",
+    );
+    const check = await request(job.check_run_url);
+    validateCheck(check, context, run.check_suite_id, name);
+    verifiedChecks.push({
+      id: check.id,
+      name,
+      app_id: check.app.id,
+      head_sha: check.head_sha,
+      check_suite_id: check.check_suite.id,
+      run_id: run.id,
+      attempt: run.run_attempt,
+      conclusion: check.conclusion,
+    });
+  };
+  await recordCheck(
+    sourceJobs.find((j) => j.name === "supply-chain-security"),
+    source,
+    "supply-chain-security",
+  );
+  for (const kind of ["ci", "walking"]) {
+    validateWireRun(runs[kind], kind, context);
+    const wf = WORKFLOWS[kind === "ci" ? "CI" : "Walking skeleton E2E"];
+    const matches = (
+      await pages(
+        `actions/workflows/${wf.id}/runs?event=pull_request&head_sha=${H}`,
+        "workflow_runs",
+      )
+    ).filter((r) => r.head_sha === H && r.pull_requests.some((p) => p.number === 100));
+    requireThat(
+      matches.length === 1 && matches[0].id === runs[kind].id,
+      "WIRE_NATIVE_RUN_AMBIGUOUS",
+    );
+    const jobs = await pages(
+      `actions/runs/${runs[kind].id}/attempts/${runs[kind].run_attempt}/jobs`,
+      "jobs",
+    );
+    const name = kind === "ci" ? "ci" : "walking-skeleton",
+      checkJob = jobs.filter((j) => j.name === name);
+    requireThat(
+      checkJob.length === 1 &&
+        checkJob[0].conclusion === "success" &&
+        checkJob[0].run_attempt === runs[kind].run_attempt,
+      "WIRE_REQUIRED_CHECK_MISSING",
+    );
+    requireThat(
+      new RegExp(`^https://api\\.github\\.com/repos/${REPOSITORY}/check-runs/[0-9]+$`).test(
+        checkJob[0].check_run_url,
+      ),
+      "CHECK_URL_REJECTED",
+    );
+    await recordCheck(checkJob[0], runs[kind], name);
+  }
+  const snapshot = async () => {
+    const all = [];
+    for (const [kind, r] of Object.entries(runs))
+      for (const artifact of await pages(`actions/runs/${r.id}/artifacts`, "artifacts"))
+        all.push({ kind, artifact });
+    return all.sort((a, b) => a.artifact.id - b.artifact.id);
+  };
+  const inventory = await snapshot();
+  const attempts = {};
+  for (const r of Object.values(runs))
+    for (let attempt = 1; attempt <= r.run_attempt; attempt++)
+      attempts[`${r.id}:${attempt}`] = await pages(
+        `actions/runs/${r.id}/attempts/${attempt}/jobs`,
+        "jobs",
+      );
+  const { transfers } = wireInventory(runs, inventory, { context, attemptJobs: attempts });
+  validateWireStepInventory(runs, inventory, attempts, context);
+  for (const t of transfers) {
+    const key = `${runs[t.kind].id}:${t.attempt}`;
+    const job = attempts[key].filter(
+      (j) => j.name === (t.kind === "source" ? "image seaweedfs" : "qualified storage admission"),
+    );
+    const stepName =
+      t.role === "source"
+        ? "Upload qualified candidate"
+        : t.role === "seal"
+          ? "Upload candidate seal"
+          : t.role === "ci"
+            ? "Preserve verified preparation receipt"
+            : t.role === "walking"
+              ? "Promote unchanged verified image into this run"
+              : "Preserve bounded admission outcome";
+    const steps = job[0]?.steps.filter((s) => s.name === stepName) ?? [];
+    requireThat(
+      job.length === 1 &&
+        job[0].run_attempt === t.attempt &&
+        steps.length === 1 &&
+        steps[0].status === "completed" &&
+        steps[0].conclusion === "success",
+      "WIRE_ARTIFACT_STEP_DRIFT",
+    );
+    validateArtifact(t.artifact, runs[t.kind], t.artifact.id, IMAGE_CAP + REPORT_CAP, steps[0]);
+  }
+  const work = await mkdtemp(path.join(ROOT, ".local/issue99/wire-"));
+  try {
+    const ledger = await reconcileWireArtifacts(
+      { context, runs, inventory, lock, L, binding, attemptJobs: attempts },
+      (t) =>
+        api(`actions/artifacts/${t.artifact.id}/zip`, {
+          bytes: true,
+          cap: ["source", "walking"].includes(t.role)
+            ? IMAGE_CAP + REPORT_CAP
+            : t.role === "seal"
+              ? 8472
+              : t.role === "ci"
+                ? 16674
+                : 4402,
+        }),
+      work,
+      process.env.TEST_PYTHON ?? "python3",
+    );
+    const end = await readIdentityPr();
+    requireThat(
+      end.state === "open" &&
+        end.draft &&
+        !end.merged &&
+        end.head.sha === H &&
+        end.base.sha === B &&
+        end.merge_commit_sha === M,
+      "WIRE_LIVE_PR_DRIFT",
+    );
+    requireThat(isDeepStrictEqual(inventory, await snapshot()), "WIRE_INVENTORY_CHANGED");
+    for (const [kind, r] of Object.entries(runs)) {
+      const final = await api(`actions/runs/${r.id}`);
+      validateWireRun(final, kind, context);
+      requireThat(final.run_attempt === r.run_attempt, "WIRE_ATTEMPT_CHANGED");
+    }
+    const finalPolicy = validateCandidatePolicy(await policy(context, true), lock, L, context);
+    assertSameCandidateAdmission(finalPolicy, binding);
+    const target = path.resolve(
+      destination ?? path.join(ROOT, ".local/issue99/final-wire-ledger.json"),
+    );
+    requireThat(
+      path.dirname(target) === (await realpath(path.join(ROOT, ".local/issue99"))),
+      "WIRE_OUTPUT_PATH_REJECTED",
+    );
+    await writeFile(
+      target,
+      JSON.stringify(
+        { ...ledger, required_checks: verifiedChecks, measured_at: new Date().toISOString() },
+        null,
+        2,
+      ) + "\n",
+      { flag: "wx", mode: 0o600 },
+    );
+    console.log(
+      JSON.stringify({
+        outcome: "FINAL_WIRE_LEDGER_MEASURED",
+        file: target,
+        sha256: await fileDigest(target),
+        P: ledger.P,
+        O: ledger.O,
+        fully_measured: true,
+      }),
+    );
+  } finally {
+    await rm(work, { recursive: true, force: true });
+  }
+}
+export async function verifyPromotedContents(
+  dir,
+  expectedReceiptHash,
+  receiptOnly = false,
+  env = process.env,
+  python = "python3",
+) {
+  requireThat(
+    sha256(await readFile(path.join(dir, "admission.json"))) === expectedReceiptHash,
+    "PROMOTED_RECEIPT_DRIFT",
+  );
+  const receipt = await jsonFile(path.join(dir, "admission.json"));
+  requireThat(
+    receipt.native_run_id === id(env.GITHUB_RUN_ID) &&
+      receipt.native_attempt === id(env.GITHUB_RUN_ATTEMPT),
+    "PROMOTED_ATTEMPT_DRIFT",
+  );
+  await fresh(receipt, python);
+  if (receiptOnly) return receipt;
+  const manifest = await jsonFile(path.join(dir, "candidate-manifest.json"));
+  requireThat(
+    (await fileDigest(path.join(dir, "candidate-manifest.json"))) === receipt.seal.manifest_sha256,
+    "PROMOTED_MANIFEST_DRIFT",
+  );
+  const source = await candidateSource();
+  validateCandidateManifest(
+    manifest,
+    source.context,
+    receipt.producer_run,
+    receipt.producer_attempt,
+    source.lock,
+    source.L,
+  );
+  requireThat(
+    sha256(await readFile(path.join(dir, "image.tar.xz"))) === receipt.inner_sha256,
+    "PROMOTED_DIGEST_DRIFT",
+  );
+  return receipt;
+}
+async function output(name, value) {
+  requireThat(process.env.GITHUB_OUTPUT, "JOB_OUTPUT_MISSING");
+  await writeFile(process.env.GITHUB_OUTPUT, `${name}=${value}\n`, { flag: "a" });
+}
+async function cli(mode, arg, extra) {
+  await mkdir(path.join(ROOT, ".local/issue99"), { recursive: true, mode: 0o700 });
+  diagnosticCommandGuard(
+    await jsonFile(path.join(ROOT, "infra/seaweedfs/security-build.lock.json")),
+    mode,
+  );
+  if (mode === "wire-ledger") {
+    requireThat(
+      typeof arg === "string" && /^[1-9][0-9]*:[1-9][0-9]*$/.test(arg),
+      "WIRE_RUN_ARGUMENT_REQUIRED",
+    );
+    const [ci, walking] = arg.split(":").map(id);
+    return finalWireCheckpoint(ci, walking, extra);
+  }
+  if (mode === "policy-inventory") {
+    const H = run("git", ["rev-parse", "HEAD"]).trim();
+    const TH = run("git", ["rev-parse", "HEAD^{tree}"]).trim();
+    const files = {};
+    for (const name of POLICY_FILES)
+      files[name] = sha256(run("git", ["show", `${H}:${name}`], { encoding: "buffer" }));
+    console.log(
+      JSON.stringify(
+        {
+          decision: "REVIEW_REQUIRED_NOT_APPROVED",
+          repository_id: REPOSITORY_ID,
+          pr: 100,
+          H,
+          B: BASE,
+          TH,
+          files,
+        },
+        null,
+        2,
+      ),
+    );
+    return;
+  }
+  if (mode === "prepare-producer") {
+    await candidateSource(true);
+    console.log("EXACT_SOURCE_POLICY_VERIFIED");
+    return;
+  }
+  if (mode === "verify-build-profile") {
+    const v = await jsonFile(path.join(arg, "verify-image.json"));
+    const elf = inspectSWELF(path.join(arg, "weed"));
+    const metadata = await readFile(path.join(arg, "actual-go-version-m.txt"), "utf8");
+    const lockFile = await readFile(path.join(ROOT, "infra/seaweedfs/security-build.lock.json"));
+    const lock = strictJSON(lockFile);
+    if (lock.build.output_profile === PRODUCTION_PROFILE)
+      validateProductionEvidence(v, lock, sha256(lockFile), elf, metadata);
+    else validateSWEvidence(v, elf, metadata);
+    console.log("IMAGE_BUILD_PROFILE_VERIFIED");
+    return;
+  }
+  if (mode === "produce") return produce(arg, extra);
+  if (mode === "seal") {
+    const src = await candidateSource(true);
+    const bundle = path.join(ROOT, ".local/seaweedfs-transfer/bundle");
+    const m = await jsonFile(path.join(bundle, "candidate-manifest.json"));
+    validateCandidateManifest(
+      m,
+      src.context,
+      src.nativeRun.id,
+      src.nativeRun.run_attempt,
+      src.lock,
+      src.L,
+    );
+    const actual = await api(`actions/artifacts/${id(arg)}`);
+    const digest = /^[a-f0-9]{64}$/.test(extra) ? `sha256:${extra}` : extra;
+    const jobs = await pages(
+      `actions/runs/${src.nativeRun.id}/attempts/${src.nativeRun.run_attempt}/jobs`,
+      "jobs",
+    );
+    const step = jobs
+      .find((j) => j.name === "image seaweedfs")
+      ?.steps.find((x) => x.name === "Upload qualified candidate");
+    requireThat(
+      step?.status === "completed" && step.conclusion === "success",
+      "UPLOAD_STEP_NOT_COMPLETE",
+    );
+    validateArtifact(actual, src.nativeRun, id(arg), IMAGE_CAP + REPORT_CAP, step);
+    requireThat(
+      actual.digest === digest &&
+        actual.name === `seaweedfs-candidate-${src.nativeRun.id}-${src.nativeRun.run_attempt}`,
+      "UPLOAD_ARTIFACT_DRIFT",
+    );
+    const work = await mkdtemp(path.join(ROOT, ".local/issue99/source-recheck-"));
+    try {
+      const downloaded = path.join(work, "source");
+      await unpackZip(actual, downloaded, FILES, IMAGE_CAP + REPORT_CAP, src.nativeRun, step);
+      requireThat(
+        (await fileDigest(path.join(downloaded, "candidate-manifest.json"))) ===
+          (await fileDigest(path.join(bundle, "candidate-manifest.json"))),
+        "UPLOADED_MANIFEST_DRIFT",
+      );
+      const measured = await verifyCandidateDirectory(
+        downloaded,
+        m,
+        { ...src, source: src.nativeRun },
+        work,
+      );
+      physicalBudget(measured.C, measured.R, [
+        {
+          role: "source",
+          artifact_id: actual.id,
+          run_id: src.nativeRun.id,
+          attempt: src.nativeRun.run_attempt,
+          bytes: actual.size_in_bytes,
+          digest: actual.digest,
+        },
+      ]);
+      const seal = {
+        schema: SEAL_SCHEMA,
+        profile: PRODUCTION_PROFILE,
+        K: src.K,
+        L: src.L,
+        context: src.context,
+        run_id: src.nativeRun.id,
+        attempt: src.nativeRun.run_attempt,
+        artifact_id: actual.id,
+        artifact_digest: actual.digest,
+        artifact_bytes: actual.size_in_bytes,
+        manifest_sha256: await fileDigest(path.join(downloaded, "candidate-manifest.json")),
+        ...candidatePolicyLink(src.binding),
+      };
+      validateCandidateSeal(seal, src.context, src.nativeRun, src.lock, src.L);
+      const dest = path.join(ROOT, ".local/seaweedfs-transfer/seal");
+      await mkdir(dest, { recursive: true, mode: 0o700 });
+      await writeFile(path.join(dest, "seal.json"), JSON.stringify(seal) + "\n", {
+        flag: "wx",
+        mode: 0o600,
+      });
+    } finally {
+      await dispose(work);
+    }
+    return;
+  }
+  if (mode === "verify-local") {
+    const receipt = await jsonFile(arg);
+    await fresh(receipt);
+    requireThat(
+      run("docker", ["image", "inspect", extra, "--format", "{{.Id}}"]).trim() === receipt.image_id,
+      "LOCAL_IMAGE_DRIFT",
+    );
+    const work = await mkdtemp(path.join(ROOT, ".local/issue99/recheck-"));
+    try {
+      run("sh", ["infra/seaweedfs/verify-image.sh", receipt.image_id, work], { stdio: "inherit" });
+    } finally {
+      await dispose(work);
+    }
+    return;
+  }
+  if (mode === "promoted" || mode === "receipt-zip") {
+    // The official Action deliberately leaves a raw ZIP. Require the exact
+    // independently admitted digest/size before parsing a single member.
+    const { verifyRawOutput } =
+      await import("../../.github/actions/pc100-bounded-artifact/index.mjs");
+    const raw = path.resolve(arg);
+    const bytes = id(process.env.PC100_RAW_ZIP_BYTES);
+    const rawFile = await verifyRawOutput(raw, {
+      bytes,
+      cap: mode === "promoted" ? IMAGE_CAP + REPORT_CAP : 16674,
+      digest: process.env.PC100_RAW_ZIP_DIGEST,
+    });
+    const dir = await mkdtemp(path.join(ROOT, ".local/issue99/unpacked-"));
+    await unpackVerifiedZip(
+      await readFile(rawFile),
+      process.env.PC100_RAW_ZIP_DIGEST,
+      dir,
+      mode === "promoted" ? [...FILES, "admission.json"] : ["admission.json"],
+      mode === "promoted" ? IMAGE_CAP + REPORT_CAP : 16674,
+      "python3",
+      true,
+    );
+    const receipt = await verifyPromotedContents(dir, extra, mode === "receipt-zip");
+    if (mode === "receipt-zip") {
+      await output("receipt", path.join(dir, "admission.json"));
+      return;
+    }
+    const work = await mkdtemp(path.join(ROOT, ".local/issue99/promoted-"));
+    await decompress(path.join(dir, "image.tar.xz"), path.join(work, "image.tar"));
+    run(
+      "sh",
+      [
+        "infra/seaweedfs/verify-image.sh",
+        path.join(work, "image.tar"),
+        path.join(work, "inspection"),
+      ],
+      { stdio: "inherit" },
+    );
+    const verification = await jsonFile(path.join(work, "inspection/verify-image.json"));
+    requireThat(
+      verification.image_id === receipt.image_id && verification.elf_sha256 === receipt.elf_sha256,
+      "PROMOTED_IMAGE_DRIFT",
+    );
+    await fresh(receipt);
+    run("docker", ["load", "-i", path.join(work, "image.tar")]);
+    run("docker", ["tag", receipt.image_id, "editagent-seaweedfs:local"]);
+    await rm(path.join(work, "image.tar"));
+    await dispose(path.join(work, "inspection"));
+    const receiptFile = path.join(work, "admission.json");
+    await writeFile(receiptFile, JSON.stringify(receipt));
+    await output("receipt", receiptFile);
+    return;
+  }
+  requireThat(["admit", "load", "final"].includes(mode), "INVALID_MODE");
+  if (mode === "final") {
+    if (extra) requireThat(sha256(await readFile(arg)) === extra, "FINAL_RECEIPT_DRIFT");
+    await fresh(await jsonFile(arg));
+    console.log("FINAL_ADMISSION_IDENTITY_VERIFIED");
+    console.log(
+      JSON.stringify({
+        global_wire_ledger: "POST_COMPLETION_RECONCILIATION_REQUIRED",
+        qualification: "NOT_ESTABLISHED_BY_THIS_IDENTITY_CHECK",
+      }),
+    );
+    return;
+  }
+  const work = await mkdtemp(path.join(ROOT, ".local/issue99/admission-"));
+  const admitted = await qualified(work);
+  let receipt = await materialize(
+    admitted.artifact,
+    work,
+    admitted.receipt,
+    admitted.source,
+    admitted.step,
+  );
+  await fresh(receipt);
+  if (mode === "load") {
+    if (arg) {
+      const [source, attempt, artifact] = arg.split(":").map(id);
+      requireThat(
+        source === receipt.producer_run &&
+          attempt === receipt.producer_attempt &&
+          artifact === receipt.artifact_id,
+        "PREPARATION_BINDING_DRIFT",
+      );
+    }
+    run("docker", ["load", "-i", receipt.archive]);
+    run("docker", ["tag", receipt.image_id, "editagent-seaweedfs:local"]);
+  }
+  await rm(receipt.archive);
+  const file = path.join(work, "admission.json");
+  await writeFile(file, JSON.stringify(receipt) + "\n", { mode: 0o600 });
+  const promotedReceipt = JSON.stringify(receipt) + "\n";
+  await writeFile(path.join(receipt.bundle, "admission.json"), promotedReceipt, { mode: 0o600 });
+  await output("receipt", file);
+  if (process.env.GITHUB_WORKFLOW === "CI") {
+    const ciBundle = await mkdtemp(path.join(ROOT, ".local/issue99/ci-receipt-"));
+    await writeFile(path.join(ciBundle, "admission.json"), promotedReceipt, {
+      flag: "wx",
+      mode: 0o600,
+    });
+    await output("ci_bundle", ciBundle);
+  }
+  await output("bundle", receipt.bundle);
+  await output("producer", receipt.producer_run);
+  await output("producer_attempt", receipt.producer_attempt);
+  await output("artifact", receipt.artifact_id);
+  await output("receipt_sha256", sha256(Buffer.from(promotedReceipt)));
+  console.log(
+    JSON.stringify({
+      outcome: "QUALIFIED",
+      native_run: receipt.native_run_id,
+      attempt: receipt.native_attempt,
+      producer: receipt.producer_run,
+      producer_attempt: receipt.producer_attempt,
+      image_id: receipt.image_id,
+      C: receipt.C,
+      R: receipt.R,
+    }),
+  );
+}
+
+const MIB = 1024 * 1024;
+export const REPORT_FILES = Object.freeze(FILES.filter((name) => name !== "image.tar.xz"));
+const byteCount = (value) => Number.isSafeInteger(value) && value > 0;
+export function transferBudgetReport(measurement) {
+  requireThat(
+    measurement && byteCount(measurement.uncompressed_archive_bytes) && byteCount(measurement.C),
+    "TRANSFER_MEASUREMENT_INVALID",
+  );
+  const sizes = measurement.report_file_bytes;
+  requireThat(
+    sizes &&
+      isDeepStrictEqual(Object.keys(sizes).sort(), [...REPORT_FILES].sort()) &&
+      Object.values(sizes).every(byteCount),
+    "TRANSFER_MEASUREMENT_INVALID",
+  );
+  const compression = measurement.compression;
+  requireThat(
+    compression &&
+      compression.algorithm === "xz" &&
+      [6, 9].includes(compression.preset) &&
+      Number.isFinite(compression.elapsed_seconds) &&
+      compression.elapsed_seconds > 0 &&
+      /^[a-f0-9]{64}$/.test(compression.input_sha256) &&
+      /^[a-f0-9]{64}$/.test(compression.output_sha256),
+    "TRANSFER_MEASUREMENT_INVALID",
+  );
+  for (const key of ["peak_rss_bytes", "user_cpu_seconds", "system_cpu_seconds"])
+    requireThat(
+      compression[key] === null || (Number.isFinite(compression[key]) && compression[key] >= 0),
+      "TRANSFER_MEASUREMENT_INVALID",
+    );
+  requireThat(
+    compression.peak_rss_bytes === null || Number.isSafeInteger(compression.peak_rss_bytes),
+    "TRANSFER_MEASUREMENT_INVALID",
+  );
+  const R = Object.values(sizes).reduce((sum, n) => sum + n, 0),
+    R_total = 2 * R + 65536,
+    combined = 2 * measurement.C + R_total;
+  requireThat([R, R_total, combined].every(Number.isSafeInteger), "TRANSFER_MEASUREMENT_INVALID");
+  const predicates = {
+    candidate: measurement.C <= IMAGE_CAP,
+    replicated_provenance: R_total <= REPORT_CAP,
+    combined: combined <= 256 * MIB,
+  };
+  return {
+    kind: "TRANSFER_BUDGET_MEASUREMENT",
+    schema_version: 1,
+    byte_unit: "bytes",
+    mib_unit_bytes: MIB,
+    uncompressed_archive_bytes: measurement.uncompressed_archive_bytes,
+    C: measurement.C,
+    report_file_bytes: { ...sizes },
+    R,
+    provenance_copies: 2,
+    provenance_reserve_bytes: 65536,
+    R_total,
+    combined_transfer_bytes: combined,
+    retention_days: 1,
+    thresholds: { C: IMAGE_CAP, R_total: REPORT_CAP, combined_transfer_bytes: 256 * MIB },
+    display_mib: {
+      uncompressed_archive: measurement.uncompressed_archive_bytes / MIB,
+      C: measurement.C / MIB,
+      R: R / MIB,
+      R_total: R_total / MIB,
+      combined: combined / MIB,
+    },
+    thresholds_mib: { C: 120, R_total: 16, combined: 256 },
+    predicates,
+    within_budget: Object.values(predicates).every(Boolean),
+    compression: {
+      algorithm: "xz",
+      preset: compression.preset,
+      elapsed_seconds: compression.elapsed_seconds,
+      input_sha256: compression.input_sha256,
+      output_sha256: compression.output_sha256,
+      peak_rss_bytes: compression.peak_rss_bytes,
+      user_cpu_seconds: compression.user_cpu_seconds,
+      system_cpu_seconds: compression.system_cpu_seconds,
+    },
+    observed_resources: {
+      visibility: "process_and_runner_observation_only",
+      platform: process.platform,
+      available_parallelism: availableParallelism(),
+      total_memory_bytes: totalmem(),
+      free_memory_bytes: freemem(),
+    },
+  };
+}
+export async function reportAndEnforceTransfer(measurement, emit, forensic) {
+  const report = transferBudgetReport(measurement);
+  const withinBudget = report.within_budget;
+  try {
+    await emit(globalThis.structuredClone(report));
+  } catch {
+    throw new AdmissionError(
+      withinBudget ? "BUDGET_REPORT_EMISSION_FAILED" : "TRANSFER_BUDGET_EXCEEDED",
+    );
+  }
+  if (!withinBudget) {
+    if (forensic) {
+      try {
+        await forensic(globalThis.structuredClone(report));
+      } catch {
+        try {
+          await emit({
+            kind: "LOSSLESS_COMPRESSION_PROBE",
+            outcome: "NOT_PROVEN_RESOURCE_OR_VERIFICATION_FAILURE",
+            qualified: false,
+          });
+        } catch {
+          /* preserve original rejection */
+        }
+      }
+    }
+    // Neither a successful diagnostic callback nor a smaller experimental file
+    // can change the disposition of the original baseline candidate.
+    throw new AdmissionError("TRANSFER_BUDGET_EXCEEDED");
+  }
+  return report;
+}
+export const FILTER_PROFILE = "xz-x86-bcj-lzma2-preset9";
+export const OCI_PROFILE = "complete-oci-raw-xz6-v1";
+export function compressArchive(source, target, preset = 6, python = "python3", profile = "plain") {
+  requireThat(
+    [6, 9].includes(preset) &&
+      (profile === "plain" ||
+        (profile === FILTER_PROFILE && preset === 9) ||
+        (profile === OCI_PROFILE && preset === 6)),
+    "COMPRESSION_SETTING_REJECTED",
+  );
+  const started = Date.now();
+  const result = JSON.parse(
+    run(
+      python,
+      [
+        "-c",
+        `
+import lzma,sys,time,hashlib,platform,ctypes,_lzma
+from pathlib import Path
+preset=int(sys.argv[3]);profile=sys.argv[4];limits=None
+try:
+ import resource
+ if sys.platform=='linux':
+  resource.setrlimit(resource.RLIMIT_AS,(1073741824,1073741824))
+  limit=480 if preset==9 or profile=='complete-oci-raw-xz6-v1' else 540
+  resource.setrlimit(resource.RLIMIT_CPU,(limit,limit))
+  limits={'address_space_bytes':1073741824,'cpu_seconds':limit}
+except ImportError: resource=None
+try:
+ library=ctypes.CDLL(_lzma.__file__);version=library.lzma_version_string;version.restype=ctypes.c_char_p
+ libversion=version().decode('ascii')
+except (AttributeError,OSError):libversion='UNAVAILABLE'
+filtered=profile=='xz-x86-bcj-lzma2-preset9'
+options={'filters':[{'id':lzma.FILTER_X86},{'id':lzma.FILTER_LZMA2,'preset':9}]} if filtered else {'preset':preset}
+started=time.perf_counter();h=hashlib.sha256();count=0
+with open(sys.argv[1],'rb') as src,lzma.open(sys.argv[2],'xb',format=lzma.FORMAT_XZ,check=lzma.CHECK_CRC64,**options) as dst:
+ while b:=src.read(1048576):h.update(b);count+=len(b);dst.write(b)
+elapsed=time.perf_counter()-started;out=hashlib.sha256()
+with open(sys.argv[2],'rb') as f:
+ while b:=f.read(1048576):out.update(b)
+u=resource.getrusage(resource.RUSAGE_SELF) if resource else None
+import json
+print(json.dumps({'algorithm':'xz','preset':preset,'profile':profile,'filter_chain':['X86','LZMA2_PRESET_9'] if filtered else ['LZMA2_PRESET_'+str(preset)],'check':'CRC64','runtime':{'python':platform.python_version(),'implementation':platform.python_implementation(),'platform':sys.platform,'liblzma':libversion},'elapsed_seconds':elapsed,'input_sha256':h.hexdigest(),'output_sha256':out.hexdigest(),'uncompressed_bytes':count,'compressed_bytes':Path(sys.argv[2]).stat().st_size,'peak_rss_bytes':u.ru_maxrss*1024 if u and sys.platform=='linux' else None,'user_cpu_seconds':u.ru_utime if u else None,'system_cpu_seconds':u.ru_stime if u else None,'limits':limits}))
+`,
+        source,
+        target,
+        String(preset),
+        profile,
+      ],
+      { timeout: preset === 9 || profile === OCI_PROFILE ? 540000 : 600000 },
+    ),
+  );
+  return { ...result, process_wall_seconds: (Date.now() - started) / 1000 };
+}
+
+async function fileDigest(file) {
+  const hash = createHash("sha256");
+  for await (const chunk of createReadStream(file)) hash.update(chunk);
+  return hash.digest("hex");
+}
+async function fileBytes(file) {
+  try {
+    const info = await lstat(file);
+    requireThat(info.isFile() && byteCount(info.size), "TRANSFER_MEASUREMENT_INVALID");
+    return info.size;
+  } catch {
+    throw new AdmissionError("TRANSFER_MEASUREMENT_INVALID");
+  }
+}
+
+export function validateFilterAttempt(result, expected) {
+  requireThat(
+    result && result.budget && result.encoder && result.decoding && result.identity,
+    "FILTER_MEASUREMENTS_UNAVAILABLE",
+  );
+  requireThat(result.artifact_uploaded === false, "FILTER_PROMOTION_FORBIDDEN");
+  const c = result.encoder,
+    d = result.decoding;
+  requireThat(
+    c.profile === FILTER_PROFILE &&
+      isDeepStrictEqual(c.filter_chain, ["X86", "LZMA2_PRESET_9"]) &&
+      c.algorithm === "xz" &&
+      c.preset === 9 &&
+      c.check === "CRC64",
+    "FILTER_PROFILE_DRIFT",
+  );
+  requireThat(
+    c.runtime?.platform === "linux" &&
+      /^\d+\.\d+\.\d+(?:[a-z0-9.-]*)?$/.test(c.runtime.python) &&
+      c.runtime.implementation === "CPython" &&
+      /^\d+\.\d+\.\d+(?:[a-z0-9.-]*)?$/.test(c.runtime.liblzma),
+    "FILTER_RUNTIME_UNAVAILABLE",
+  );
+  const positive = (n) => Number.isFinite(n) && n > 0;
+  requireThat(
+    positive(c.process_wall_seconds) &&
+      c.process_wall_seconds <= 540 &&
+      positive(c.elapsed_seconds) &&
+      c.elapsed_seconds <= 540 &&
+      Number.isSafeInteger(c.peak_rss_bytes) &&
+      c.peak_rss_bytes > 0 &&
+      c.peak_rss_bytes <= 1073741824 &&
+      Number.isFinite(c.user_cpu_seconds) &&
+      c.user_cpu_seconds >= 0 &&
+      Number.isFinite(c.system_cpu_seconds) &&
+      c.system_cpu_seconds >= 0 &&
+      c.user_cpu_seconds + c.system_cpu_seconds <= 480 &&
+      c.limits?.address_space_bytes === 1073741824 &&
+      c.limits?.cpu_seconds === 480,
+    "FILTER_ENCODER_RESOURCE_LIMIT",
+  );
+  requireThat(
+    positive(d.elapsed_seconds) &&
+      d.elapsed_seconds <= 600 &&
+      Number.isSafeInteger(d.peak_rss_bytes) &&
+      d.peak_rss_bytes > 0 &&
+      d.peak_rss_bytes <= 256 * MIB &&
+      d.limits?.address_space_bytes === 268435456 &&
+      d.uncompressed_bytes === expected.archive_bytes &&
+      d.uncompressed_bytes <= 4 * 1024 ** 3,
+    "FILTER_DECODER_RESOURCE_LIMIT",
+  );
+  requireThat(
+    result.archive_sha256 === expected.archive_sha256 &&
+      c.input_sha256 === expected.archive_sha256 &&
+      c.uncompressed_bytes === expected.archive_bytes &&
+      /^[a-f0-9]{64}$/.test(c.output_sha256),
+    "FILTER_ARCHIVE_DRIFT",
+  );
+  requireThat(
+    isDeepStrictEqual(result.identity, expected.identity),
+    "FILTER_IMAGE_LAYER_ELF_DRIFT",
+  );
+  const recalculated = transferBudgetReport({
+    uncompressed_archive_bytes: expected.archive_bytes,
+    C: c.compressed_bytes,
+    report_file_bytes: expected.report_file_bytes,
+    compression: c,
+  });
+  requireThat(
+    result.budget.C === recalculated.C &&
+      result.budget.R === recalculated.R &&
+      result.budget.R_total === recalculated.R_total &&
+      result.budget.combined_transfer_bytes === recalculated.combined_transfer_bytes,
+    "FILTER_ACCOUNTING_DRIFT",
+  );
+  requireThat(recalculated.within_budget, "FILTER_CAPACITY_FAILED");
+}
+export async function runBoundedFilterExperiment(expected, attempt, emit) {
+  const results = [];
+  let started = 0;
+  try {
+    for (let number = 1; number <= 2; number++) {
+      started = number;
+      const result = await attempt(number);
+      results.push(globalThis.structuredClone(result));
+      try {
+        validateFilterAttempt(result, expected);
+      } catch (error) {
+        await emit({
+          kind: "BCJ_FILTER_ATTEMPT",
+          attempt: number,
+          qualified: false,
+          result: globalThis.structuredClone(result),
+          failure: error instanceof AdmissionError ? error.code : "FILTER_VALIDATION_FAILED",
+        });
+        throw error;
+      }
+      await emit({
+        kind: "BCJ_FILTER_ATTEMPT",
+        attempt: number,
+        qualified: false,
+        result: globalThis.structuredClone(result),
+        outcome: "ATTEMPT_CONDITIONS_PASS",
+      });
+      if (number === 2)
+        requireThat(
+          results[0].encoder.output_sha256 === result.encoder.output_sha256 &&
+            results[0].encoder.compressed_bytes === result.encoder.compressed_bytes &&
+            isDeepStrictEqual(results[0].encoder.runtime, result.encoder.runtime),
+          "FILTER_REPRODUCIBILITY_FAILED",
+        );
+    }
+    await emit({
+      kind: "BCJ_FILTER_FEASIBILITY",
+      verdict: "FULL_IMAGE_FILTER_FEASIBILITY=MET_EXPERIMENT_ONLY",
+      qualified: false,
+      attempts: 2,
+      compressed_sha256: results[0].encoder.output_sha256,
+      baseline_disposition: "TRANSFER_BUDGET_EXCEEDED",
+      artifact_compatibility: "NOT_PROVEN_NO_UPLOAD",
+    });
+    return "FULL_IMAGE_FILTER_FEASIBILITY=MET_EXPERIMENT_ONLY";
+  } catch (error) {
+    await emit({
+      kind: "BCJ_FILTER_FEASIBILITY",
+      verdict: "FULL_IMAGE_FILTER_FEASIBILITY=NOT_MET",
+      qualified: false,
+      attempts: started,
+      verified_results: results.length,
+      failure:
+        error instanceof AdmissionError ? error.code : "FILTER_RESOURCE_OR_MEASUREMENT_FAILURE",
+      signal: ["SIGTERM", "SIGKILL", "SIGXCPU"].includes(error?.signal) ? error.signal : null,
+      baseline_disposition: "TRANSFER_BUDGET_EXCEEDED",
+    });
+    return "FULL_IMAGE_FILTER_FEASIBILITY=NOT_MET";
+  }
+}
+async function archiveIdentity(file) {
+  return JSON.parse(
+    run("python3", [
+      "-c",
+      `
+import tarfile,json,sys,hashlib
+with tarfile.open(sys.argv[1],'r:') as t:
+ m=json.load(t.extractfile('manifest.json'))
+ if len(m)!=1: raise ValueError('ambiguous manifest')
+ b=t.extractfile(m[0]['Config']).read(1048577)
+ if len(b)>1048576: raise ValueError('config size')
+ c=json.loads(b)
+ print(json.dumps({'config_sha256':hashlib.sha256(b).hexdigest(),'layer_diff_ids':c['rootfs']['diff_ids']}))
+`,
+      file,
+    ]),
+  );
+}
+function filterIdentity(verification, layers) {
+  requireThat(
+    layers.config_sha256 === verification.image_id.slice(7) &&
+      Array.isArray(layers.layer_diff_ids) &&
+      layers.layer_diff_ids.length === 6 &&
+      layers.layer_diff_ids.every((v) => /^sha256:[a-f0-9]{64}$/.test(v)),
+    "FILTER_LAYER_CONFIG_INVALID",
+  );
+  requireThat(
+    verification.old_elf_absent === true &&
+      verification.runtime_preserved === true &&
+      verification.native_brotli === "1.2.1-r0" &&
+      verification.rust_sha256 &&
+      Object.keys(verification.rust_sha256).length === 2 &&
+      Object.values(verification.rust_sha256).every((v) => /^[a-f0-9]{64}$/.test(v)),
+    "FILTER_NATIVE_RUNTIME_INVALID",
+  );
+  return {
+    image_id: verification.image_id,
+    config_sha256: layers.config_sha256,
+    layer_diff_ids: layers.layer_diff_ids,
+    elf_sha256: verification.elf_sha256,
+    old_elf_absent: true,
+    runtime_preserved: true,
+    native_brotli: verification.native_brotli,
+    rust_sha256: verification.rust_sha256,
+  };
+}
+export const OCI_DIAGNOSTIC_PY = String.raw`import sys,json,hashlib,tarfile,posixpath,gzip,tempfile,os,time,contextlib,re
+from pathlib import Path
+try: import resource
+except ImportError: resource=None
+LIMIT=4*1024**3
+PROFILE='complete-oci-raw-xz6-v1'
+RAW='application/vnd.oci.image.layer.v1.tar'
+MAN='application/vnd.oci.image.manifest.v1+json'
+CFG='application/vnd.oci.image.config.v1+json'
+IDX='application/vnd.oci.image.index.v1+json'
+OBS={}
+class Reject(Exception):pass
+def need(ok,code):
+ if not ok:raise Reject(code)
+def sha(b):return hashlib.sha256(b).hexdigest()
+def filehash(p):
+ with open(p,'rb') as f:return hashlib.file_digest(f,'sha256').hexdigest()
+def digest(s):return isinstance(s,str) and len(s)==71 and s.startswith('sha256:') and all(c in '0123456789abcdef' for c in s[7:])
+def integer(n):return type(n) is int and 0<=n<=LIMIT
+def pairs(a):
+ d={}
+ for k,v in a:
+  need(k not in d,'OCI_JSON_DUPLICATE');d[k]=v
+ return d
+def parse(b):
+ need(len(b)<=1048576,'OCI_METADATA_LIMIT')
+ v=json.loads(b.decode('utf8'),object_pairs_hook=pairs,parse_constant=lambda _:need(False,'OCI_JSON_NUMBER'))
+ def walk(x,n=0):
+  need(n<=32,'OCI_METADATA_DEPTH')
+  if isinstance(x,dict):
+   for a in x.values():walk(a,n+1)
+  if isinstance(x,list):
+   for a in x:walk(a,n+1)
+ walk(v);return v
+def encode(v):return (json.dumps(v,sort_keys=True,separators=(',',':'),ensure_ascii=True)+'\n').encode()
+def path(s,root=False):
+ need(isinstance(s,str),'OCI_PATH')
+ s=s.removeprefix('./').rstrip('/')
+ if s in ('','.'):need(root,'OCI_PATH');return ''
+ need(not s.startswith('/') and '\\' not in s and ':' not in s and '\x00' not in s and all(p not in ('','..','.') for p in s.split('/')),'OCI_PATH')
+ return s
+def copy(src,dst,count):
+ h=hashlib.sha256();remaining=count
+ while remaining:
+  b=src.read(min(1048576,remaining));need(bool(b),'OCI_TRUNCATED');remaining-=len(b);h.update(b)
+  if dst:dst.write(b)
+ return h.hexdigest()
+def header(name,size,kind=tarfile.REGTYPE):
+ t=tarfile.TarInfo(name);t.size=size;t.type=kind;t.mode=0o755 if kind==tarfile.DIRTYPE else 0o644
+ t.uid=t.gid=t.mtime=0;t.uname=t.gname=''
+ return t.tobuf(format=tarfile.USTAR_FORMAT,encoding='utf8',errors='strict')
+def wrap(target,items,dirs=False):
+ need(len({n for n,_,_ in items})==len(items),'OCI_DUPLICATE_ENTRY')
+ total=1024;payload=0
+ for n,size,_ in items:total+=512+((size+511)//512)*512;payload+=size
+ if dirs:total+=1024
+ need(total<=LIMIT,'OCI_EXPANSION_LIMIT')
+ with open(target,'xb') as out:
+  if dirs:
+   for n in ('blobs/','blobs/sha256/'):out.write(header(n,0,tarfile.DIRTYPE))
+  for n,size,source in sorted(items):
+   out.write(header(n,size))
+   with source() as f:copy(f,out,size)
+   out.write(b'\0'*((-size)%512))
+  out.write(b'\0'*1024)
+ need(Path(target).stat().st_size==total,'OCI_WRITER_SIZE')
+ return {'bytes':total,'sha256':filehash(target),'header_padding_bytes':total-payload,'payload_bytes':payload}
+class Segment:
+ def __init__(self,p,offset,size):self.p=p;self.offset=offset;self.size=size
+ def __enter__(self):self.f=open(self.p,'rb');self.f.seek(self.offset);return self
+ def __exit__(self,*a):self.f.close()
+ def read(self,n=-1):
+  if n<0:n=self.size
+  n=min(n,self.size);b=self.f.read(n);self.size-=len(b);return b
+def records(p):
+ # Fixed canonical USTAR only; no implicit PAX/long-name interpretation.
+ need(Path(p).stat().st_size<=LIMIT,'OCI_EXPANSION_LIMIT');result={}
+ with open(p,'rb') as f:
+  while True:
+   b=f.read(512);need(len(b)==512,'OCI_TRUNCATED')
+   if b==b'\0'*512:
+    need(f.read(512)==b'\0'*512 and not f.read(1),'OCI_TRAILING_DATA');break
+   t=tarfile.TarInfo.frombuf(b,'utf8','strict');n=t.name+('/' if t.isdir() and not t.name.endswith('/') else '')
+   need(n not in result and len(result)<16,'OCI_DUPLICATE_OR_EXCESS_ENTRY')
+   need(t.type in (tarfile.REGTYPE,tarfile.DIRTYPE) and b==header(n,t.size,t.type),'OCI_OUTER_HEADER')
+   if t.isdir():need(n in ('blobs/','blobs/sha256/') and t.size==0,'OCI_OUTER_PATH')
+   else:need(n in ('oci-layout','index.json') or (n.startswith('blobs/sha256/') and digest('sha256:'+n[13:])),'OCI_OUTER_PATH')
+   need(integer(t.size),'OCI_SIZE');result[n]={'offset':f.tell(),'bytes':t.size,'directory':t.isdir()}
+   f.seek(t.size,1);padding=f.read((-t.size)%512);need(padding==b'\0'*len(padding) and len(padding)==(-t.size)%512,'OCI_PADDING')
+ return result
+def pax(b):
+ need(len(b)<=1048576,'OCI_PAX_LIMIT');d={}
+ while b:
+  n,boundary,b2=b.partition(b' ');need(boundary and n.isdigit(),'OCI_PAX')
+  length=int(n);need(0<length<=len(b),'OCI_PAX')
+  entry=b[len(n)+1:length];need(entry.endswith(b'\n'),'OCI_PAX')
+  k,sep,v=entry[:-1].partition(b'=');need(sep,'OCI_PAX');k=k.decode('utf8');v=v.decode('utf8')
+  need(k not in d and len(v.encode())<=65536,'OCI_PAX')
+  OBS['pax_key_sha256']=sha(k.encode('utf8'));need(k in ('path','linkpath','size','uid','gid','uname','gname','mtime','atime','ctime') or k.startswith('SCHILY.xattr.'),'OCI_PAX_UNSUPPORTED')
+  if k in ('mtime','atime','ctime'):need(re.fullmatch(r'-?[0-9]{1,20}(?:\.[0-9]{1,9})?',v) is not None,'OCI_PAX_NUMBER')
+  d[k]=v;b=b[length:]
+ return d
+def layer(f,length,state,old,counts):
+ need(length>=1024 and length%512==0,'OCI_LAYER_END')
+ remaining=length;seen=set();pending={};longname=None;longlink=None;forms={};elfs=[];ended=False;extended=0
+ def read(n):
+  nonlocal remaining
+  need(0<=n<=remaining,'OCI_LAYER_TRUNCATED');b=f.read(n);need(len(b)==n,'OCI_LAYER_TRUNCATED');remaining-=n;return b
+ while remaining:
+  b=read(512)
+  if b==b'\0'*512:
+   ended=True
+   need(remaining>=512 and read(512)==b'\0'*512 and not pending and longname is None and longlink is None,'OCI_LAYER_END')
+   while remaining:need(not any(read(min(1048576,remaining))),'OCI_LAYER_TRAILING')
+   break
+  t=tarfile.TarInfo.frombuf(b,'utf8','strict');OBS.update(header_type_hex=t.type.hex(),header_name_sha256=sha(t.name.encode('utf8')));need(integer(t.size),'OCI_LAYER_SIZE')
+  need(type(t.uid) is int and 0<=t.uid<=4294967295 and type(t.gid) is int and 0<=t.gid<=4294967295 and 0<=t.mode<=0o7777,'OCI_LAYER_OWNER_MODE')
+  forms[t.type.decode('ascii')]=forms.get(t.type.decode('ascii'),0)+1
+  if t.type in (tarfile.XHDTYPE,tarfile.GNUTYPE_LONGNAME,tarfile.GNUTYPE_LONGLINK):
+   counts['extended_bytes']+=t.size;extended+=t.size;need(extended<=1048576,'OCI_PAX_LIMIT')
+   v=read(t.size);read((-t.size)%512)
+   if t.type==tarfile.XHDTYPE:need(not pending,'OCI_PAX');pending=pax(v)
+   elif t.type==tarfile.GNUTYPE_LONGNAME:need(longname is None,'OCI_PAX');longname=v.rstrip(b'\0').decode('utf8')
+   else:need(longlink is None,'OCI_PAX');longlink=v.rstrip(b'\0').decode('utf8')
+   continue
+  need(t.type in (tarfile.REGTYPE,tarfile.AREGTYPE,tarfile.DIRTYPE,tarfile.SYMTYPE,tarfile.LNKTYPE),'OCI_LAYER_TYPE_UNSUPPORTED')
+  name=path(pending.get('path',longname if longname is not None else t.name),True)
+  link=pending.get('linkpath',longlink if longlink is not None else t.linkname)
+  for key in ('size','uid','gid'):
+   if key in pending:need(pending[key].isdigit() and int(pending[key])==getattr(t,key),'OCI_PAX_OVERRIDE_UNSUPPORTED')
+  need(name not in seen,'OCI_LAYER_DUPLICATE');seen.add(name);counts['entries']+=1;need(counts['entries']<=200000,'OCI_ENTRY_LIMIT')
+  need(not posixpath.basename(name).startswith('.wh.'),'OCI_WHITEOUT_UNSUPPORTED')
+  need(not(name=='usr/local/go' or name.startswith(('usr/local/go/','root/go/','build/'))),'OCI_COMPILER_IN_LAYER')
+  for parent in [name.rsplit('/',i)[0] for i in range(1,name.count('/')+1)]:
+   need(parent not in state or state[parent]['type']=='5','OCI_LINK_PARENT_UNSUPPORTED')
+  h=None;iself=False
+  if t.isfile():
+   need(t.size<=512*1024**2,'OCI_FILE_LIMIT');hasher=hashlib.sha256();left=t.size;first=True
+   while left:
+    v=read(min(1048576,left));left-=len(v);hasher.update(v)
+    if first:iself=v.startswith(b'\x7fELF');first=False
+   h=hasher.hexdigest()
+   if iself:need(h!=old and not name.startswith('usr/share/editagent-seaweedfs/'),'OCI_OLD_OR_HIDDEN_ELF');elfs.append(h)
+  else:need(t.size==0,'OCI_LINK_OR_DIR_DATA')
+  read((-t.size)%512)
+  if t.issym() or t.islnk():
+   need(link and '\\' not in link and '\0' not in link,'OCI_LINK_UNSUPPORTED')
+   target=posixpath.normpath((link.lstrip('/') if link.startswith('/') else posixpath.join(posixpath.dirname(name),link)) if t.issym() else link)
+   target=path(target,True)
+   if t.islnk():need(target in state and state[target]['type'] in ('0','1'),'OCI_HARDLINK_UNSUPPORTED');h=state[target]['sha256']
+   visited={name};cur=target
+   while cur in state and state[cur]['type']=='2':
+    need(cur not in visited and len(visited)<40,'OCI_LINK_CYCLE');visited.add(cur);cur=state[cur]['target']
+   need(cur!=name,'OCI_LINK_CYCLE')
+  else:target=None
+  if name in state and state[name]['type']=='5' and not t.isdir():
+   need(not any(p.startswith(name+'/') for p in state),'OCI_DIRECTORY_REPLACEMENT_UNSUPPORTED')
+  state[name]={'type':'0' if t.isfile() else t.type.decode('ascii'),'mode':t.mode,'uid':t.uid,'gid':t.gid,'link':link,'target':target,'sha256':h,'mtime':str(t.mtime),'pax':pending}
+  pending={};longname=longlink=None
+ need(remaining==0 and ended,'OCI_LAYER_TRUNCATED')
+ return {'forms':forms,'elfs':elfs}
+def source(p,tmp,expected,old):
+ need(Path(p).stat().st_size<=LIMIT,'OCI_SOURCE_LIMIT');sourcehash=filehash(p)
+ OBS.update(source_sha256=sourcehash,source_bytes=Path(p).stat().st_size)
+ if expected.get('source_sha256'):need(sourcehash==expected['source_sha256'],'OCI_SOURCE_DRIFT')
+ with tarfile.open(p,'r:') as t:
+  members=t.getmembers();names={}
+  need(len(members)<=20000,'OCI_SOURCE_LIMIT')
+  for m in members:
+   n=path(m.name,True);need(n not in names and (m.isfile() or m.isdir()),'OCI_SOURCE_ENTRY');names[n]=m
+  def stream(n):
+   n=path(n);need(n in names and names[n].isfile(),'OCI_MISSING_BLOB');return t.extractfile(names[n])
+  def data(n):
+   n=path(n);need(n in names and names[n].size<=1048576,'OCI_METADATA_LIMIT')
+   with stream(n) as f:return f.read()
+  m=parse(data('manifest.json'));need(type(m) is list and len(m)==1,'OCI_SOURCE_MANIFEST');m=m[0]
+  config=data(m['Config']);cfg=parse(config);q=sha(config)
+  need('sha256:'+q==expected['image_id'] and cfg.get('architecture')=='amd64' and cfg.get('os')=='linux','OCI_CONFIG_OR_PLATFORM')
+  ds=cfg['rootfs']['diff_ids'];need(cfg['rootfs']['type']=='layers' and len(ds)==6 and all(digest(d) for d in ds) and len(m['Layers'])==6,'OCI_LAYER_ORDER')
+  if 'index.json' in names:
+   need(parse(data('oci-layout')).get('imageLayoutVersion')=='1.0.0','OCI_SOURCE_LAYOUT')
+   leaves=[]
+   def desc(d,depth=0):
+    need(depth<=4 and digest(d.get('digest')) and integer(d.get('size')) and not any(k in d for k in ('urls','data')),'OCI_SOURCE_DESCRIPTOR')
+    n='blobs/sha256/'+d['digest'][7:];v=data(n);need(len(v)==d['size'] and sha(v)==d['digest'][7:],'OCI_SOURCE_DESCRIPTOR')
+    mt=d.get('mediaType')
+    if mt in (IDX,'application/vnd.docker.distribution.manifest.list.v2+json'):
+     children=parse(v)['manifests'];need(len(children)==1,'OCI_SOURCE_DESCRIPTOR');desc(children[0],depth+1)
+    else:need(mt in (MAN,'application/vnd.docker.distribution.manifest.v2+json'),'OCI_SOURCE_MEDIA');leaves.append(parse(v))
+   idx=parse(data('index.json'));need(len(idx['manifests'])==1,'OCI_SOURCE_DESCRIPTOR');desc(idx['manifests'][0])
+   need(len(leaves)==1 and leaves[0]['config']['mediaType'] in (CFG,'application/vnd.docker.container.image.v1+json') and leaves[0]['config']['digest']=='sha256:'+q and leaves[0]['config']['size']==len(config),'OCI_SOURCE_DESCRIPTOR')
+   ls=leaves[0]['layers'];need(len(ls)==6,'OCI_LAYER_ORDER')
+   for d,n in zip(ls,m['Layers']):
+    need(digest(d.get('digest')) and d.get('mediaType') in (RAW,RAW+'+gzip','application/vnd.docker.image.rootfs.diff.tar.gzip') and not any(k in d for k in ('urls','data')),'OCI_SOURCE_MEDIA')
+    need(path(n)=='blobs/sha256/'+d['digest'][7:] and names[path(n)].size==d['size'],'OCI_SOURCE_DESCRIPTOR')
+  state={};layers=[];blobs={};counts={'entries':0,'extended_bytes':0};semantic=0
+  for i,(n,d) in enumerate(zip(m['Layers'],ds)):
+   OBS['layer_position']=i
+   n=path(n);raw=Path(tmp)/('layer-'+str(i));h=hashlib.sha256();size=0
+   with stream(n) as f:
+    encodedhash=hashlib.file_digest(f,'sha256').hexdigest()
+   if n.startswith('blobs/sha256/'):need(n[13:]==encodedhash,'OCI_SOURCE_BLOB_DIGEST')
+   with stream(n) as f:
+    magic=f.read(2)
+   if 'index.json' in names:need((ls[i]['mediaType']==RAW and magic!=b'\x1f\x8b') or (ls[i]['mediaType']!=RAW and magic==b'\x1f\x8b'),'OCI_SOURCE_ENCODING_MEDIA_DRIFT')
+   with stream(n) as f,contextlib.ExitStack() as stack,open(raw,'xb') as out:
+    src=stack.enter_context(gzip.GzipFile(fileobj=f)) if magic==b'\x1f\x8b' else f
+    while b:=src.read(1048576):
+     size+=len(b);semantic+=len(b);need(semantic<=LIMIT,'OCI_EXPANSION_LIMIT');h.update(b);out.write(b)
+   need('sha256:'+h.hexdigest()==d,'OCI_RAW_DIFFID')
+   with open(raw,'rb') as f:meta=layer(f,size,state,old,counts)
+   layers.append({'position':i,'diff_id':d,'raw_bytes':size,'source_encoded_bytes':names[n].size,'source_encoded_sha256':encodedhash,'metadata':meta})
+   if d not in blobs:blobs[d]=raw
+  need(state.get('usr/bin/weed',{}).get('sha256')==expected['elf_sha256'],'OCI_ELF_DRIFT')
+  for n,h in expected['rust_sha256'].items():need(state.get(n,{}).get('sha256')==h,'OCI_NATIVE_DRIFT')
+  return config,ds,layers,blobs,{'source_sha256':sourcehash,'source_bytes':Path(p).stat().st_size,'image_id':'sha256:'+q,'config_bytes':len(config),'layers':layers,'semantic_layer_bytes':semantic,'metadata_sha256':sha(encode(state)),'entry_count':counts['entries']}
+def oldelf(p):
+ value=None
+ with tarfile.open(p,'r:') as t:
+  m=parse(t.extractfile('manifest.json').read(1048577))[0]
+  for n in m['Layers']:
+   with t.extractfile(n) as f:magic=f.read(2)
+   with t.extractfile(n) as f,contextlib.ExitStack() as stack:
+    src=stack.enter_context(gzip.GzipFile(fileobj=f)) if magic==b'\x1f\x8b' else f
+    with tarfile.open(fileobj=src,mode='r|') as layer_tar:
+     for x in layer_tar:
+      if path(x.name,True)=='usr/bin/weed' and x.isfile():value=hashlib.file_digest(layer_tar.extractfile(x),'sha256').hexdigest()
+ need(value is not None,'OCI_OLD_ELF_REFERENCE_MISSING');return {'old_elf_sha256':value}
+def check_descriptor(d,media):
+ need(type(d) is dict and set(d)=={'mediaType','digest','size'} and d['mediaType']==media and digest(d['digest']) and integer(d['size']),'OCI_DESCRIPTOR')
+def validate(p,target,expected,old):
+ rs=records(p)
+ def data(n):
+  need(n in rs and rs[n]['bytes']<=1048576,'OCI_MISSING_OR_OVERSIZE_METADATA')
+  with Segment(p,rs[n]['offset'],rs[n]['bytes']) as f:return f.read()
+ need(data('oci-layout')==b'{"imageLayoutVersion":"1.0.0"}\n','OCI_LAYOUT')
+ index_data=data('index.json');idx=parse(index_data);need(encode(idx)==index_data,'OCI_CANONICAL_JSON');need(set(idx)=={'schemaVersion','mediaType','manifests'} and type(idx['schemaVersion']) is int and idx['schemaVersion']==2 and idx['mediaType']==IDX and len(idx['manifests'])==1,'OCI_INDEX')
+ desc=idx['manifests'][0];need(set(desc)=={'mediaType','digest','size','platform'} and desc['platform']=={'os':'linux','architecture':'amd64'},'OCI_PLATFORM')
+ check_descriptor({k:v for k,v in desc.items() if k!='platform'},MAN)
+ mn='blobs/sha256/'+desc['digest'][7:];mb=data(mn);need(len(mb)==desc['size'] and sha(mb)==desc['digest'][7:],'OCI_MANIFEST_DIGEST')
+ m=parse(mb);need(encode(m)==mb,'OCI_CANONICAL_JSON');need(set(m)=={'schemaVersion','mediaType','config','layers'} and type(m['schemaVersion']) is int and m['schemaVersion']==2 and m['mediaType']==MAN and len(m['layers'])==6,'OCI_MANIFEST')
+ check_descriptor(m['config'],CFG);cn='blobs/sha256/'+m['config']['digest'][7:];config=data(cn);cfg=parse(config)
+ need(len(config)==m['config']['size'] and 'sha256:'+sha(config)==m['config']['digest']==expected['image_id'] and len(config)==expected['config_bytes'],'OCI_CONFIG_DRIFT')
+ ds=cfg['rootfs']['diff_ids'];need(cfg.get('os')=='linux' and cfg.get('architecture')=='amd64' and cfg['rootfs']['type']=='layers' and ds==[v['diff_id'] for v in expected['layers']],'OCI_LAYER_ORDER')
+ closure={'blobs/','blobs/sha256/','oci-layout','index.json',mn,cn};items=[];state={};counts={'entries':0,'extended_bytes':0};semantic=0
+ for i,(d,original) in enumerate(zip(m['layers'],expected['layers'])):
+  check_descriptor(d,RAW);need(d['digest']==ds[i] and d['size']==original['raw_bytes'],'OCI_LAYER_ORDER')
+  n='blobs/sha256/'+d['digest'][7:];closure.add(n);need(n in rs and rs[n]['bytes']==d['size'],'OCI_MISSING_BLOB')
+  with Segment(p,rs[n]['offset'],d['size']) as f:need(copy(f,None,d['size'])==ds[i][7:],'OCI_RAW_DIFFID')
+  semantic+=d['size'];need(semantic<=LIMIT,'OCI_EXPANSION_LIMIT')
+  with Segment(p,rs[n]['offset'],d['size']) as f:layer(f,d['size'],state,old,counts)
+  items.append(('layers/'+str(i).zfill(4)+'/layer.tar',d['size'],lambda n=n:Segment(p,rs[n]['offset'],rs[n]['bytes'])))
+ need(set(rs)==closure,'OCI_CLOSURE_EXTRA_OR_MISSING')
+ need(sha(encode(state))==expected['metadata_sha256'],'OCI_RUNTIME_METADATA_DRIFT')
+ need(state.get('usr/bin/weed',{}).get('sha256')==expected['elf_sha256'],'OCI_ELF_DRIFT')
+ for n,h in expected['rust_sha256'].items():need(state.get(n,{}).get('sha256')==h,'OCI_NATIVE_DRIFT')
+ q=sha(config);import io
+ items.append((q+'.json',len(config),lambda:io.BytesIO(config)))
+ adapter_manifest=encode([{'Config':q+'.json','RepoTags':[],'Layers':[v[0] for v in items if v[0].startswith('layers/')]}])
+ items.append(('manifest.json',len(adapter_manifest),lambda:io.BytesIO(adapter_manifest)))
+ adapter=wrap(target,items)
+ return {'image_id':expected['image_id'],'ordered_diff_ids':ds,'elf_sha256':state['usr/bin/weed']['sha256'],'metadata_sha256':sha(encode(state)),'layout_sha256':filehash(p),'layout_bytes':Path(p).stat().st_size,'config_sha256':q,'manifest_sha256':sha(mb),'adapter':adapter}
+def main():
+ mode,p,target,expected_json=sys.argv[1:5];expected=json.loads(expected_json);old=expected.get('old_elf_sha256')
+ if mode=='old-elf':return oldelf(p)
+ need(digest('sha256:'+str(old)) and digest(expected.get('image_id')) and digest('sha256:'+str(expected.get('elf_sha256'))),'OCI_REFERENCE_MISSING')
+ if mode=='validate':return validate(p,target,expected,old)
+ need(mode in ('pack','resave'),'OCI_MODE')
+ with tempfile.TemporaryDirectory(prefix='oci-raw-',dir=str(Path(target).parent)) as tmp:
+  config,ds,layers,blobs,inventory=source(p,tmp,expected,old)
+  if mode=='resave':return inventory
+  import io
+  q=sha(config);content={'oci-layout':b'{"imageLayoutVersion":"1.0.0"}\n','blobs/sha256/'+q:config}
+  manifest=encode({'schemaVersion':2,'mediaType':MAN,'config':{'mediaType':CFG,'digest':'sha256:'+q,'size':len(config)},'layers':[{'mediaType':RAW,'digest':d,'size':v['raw_bytes']} for d,v in zip(ds,layers)]})
+  content['blobs/sha256/'+sha(manifest)]=manifest
+  content['index.json']=encode({'schemaVersion':2,'mediaType':IDX,'manifests':[{'mediaType':MAN,'digest':'sha256:'+sha(manifest),'size':len(manifest),'platform':{'os':'linux','architecture':'amd64'}}]})
+  items=[(n,len(b),lambda b=b:io.BytesIO(b)) for n,b in content.items()]
+  items.extend(('blobs/sha256/'+d[7:],Path(f).stat().st_size,lambda f=f:open(f,'rb')) for d,f in blobs.items())
+  result=wrap(target,items,True)
+  return {**inventory,'layout':result,'manifest_sha256':sha(manifest),'index_bytes':len(content['index.json']),'manifest_bytes':len(manifest),'unique_raw_blobs':len(blobs),'metadata_file_bytes':sum(map(len,content.values())),'blob_inventory':[{'path':n,'bytes':size} for n,size,_ in sorted(items)]}
+try:
+ limits=None
+ if resource and sys.platform=='linux':
+  resource.setrlimit(resource.RLIMIT_AS,(268435456,268435456));resource.setrlimit(resource.RLIMIT_CPU,(120,120));limits={'address_space_bytes':268435456,'cpu_seconds':120}
+ started=time.perf_counter();value=main();u=resource.getrusage(resource.RUSAGE_SELF) if resource else None
+ visible={}
+ for key in ('cpu.max','memory.max','pids.max'):
+  try:
+   text=(Path('/sys/fs/cgroup')/key).read_text()[:4096].strip();visible[key]=text if re.fullmatch(r'(?:max|[0-9]+)(?: [0-9]+)?',text) else 'UNTRUSTWORTHY'
+  except OSError:visible[key]='UNAVAILABLE'
+ value['measurement']={'visible_resources':{'affinity_cpus':len(os.sched_getaffinity(0)) if hasattr(os,'sched_getaffinity') else None,'cgroup_current_namespace':visible,'visibility':'observations only; hidden parent limits not attested'},'wall_seconds':time.perf_counter()-started,'peak_rss_bytes':u.ru_maxrss*1024 if u and sys.platform=='linux' else None,'user_cpu_seconds':u.ru_utime if u else None,'system_cpu_seconds':u.ru_stime if u else None,'limits':limits}
+ print(json.dumps(value,sort_keys=True))
+except Exception as error:
+ print(json.dumps({'error':str(error) if isinstance(error,Reject) else 'OCI_TOOL_FAILURE','observed':OBS}));sys.exit(1)
+`;
+export function runOCITool(mode, input, target, expected, python = "python3") {
+  requireThat(["old-elf", "pack", "validate", "resave"].includes(mode), "OCI_MODE");
+  try {
+    return JSON.parse(
+      run(python, ["-c", OCI_DIAGNOSTIC_PY, mode, input, target, JSON.stringify(expected)], {
+        timeout: 180000,
+      }),
+    );
+  } catch (error) {
+    let code = "OCI_TOOL_RESOURCE_OR_MEASUREMENT_FAILURE";
+    const observed = {};
+    try {
+      const failure = JSON.parse(String(error.stdout));
+      if (/^OCI_[A-Z0-9_]+$/.test(failure.error)) code = failure.error;
+      for (const key of ["source_sha256", "header_name_sha256", "pax_key_sha256"])
+        if (/^[a-f0-9]{64}$/.test(failure.observed?.[key])) observed[key] = failure.observed[key];
+      for (const key of ["source_bytes", "layer_position"])
+        if (byteCount(failure.observed?.[key])) observed[key] = failure.observed[key];
+      if (/^[a-f0-9]{2}$/.test(failure.observed?.header_type_hex))
+        observed.header_type_hex = failure.observed.header_type_hex;
+    } catch {
+      /* never disclose exception payloads */
+    }
+    const rejection = new AdmissionError(code);
+    rejection.ociObserved = observed;
+    throw rejection;
+  }
+}
+export function ociZipBound(C, reportFileBytes) {
+  requireThat(byteCount(C), "OCI_ZIP_MEASUREMENT_INVALID");
+  requireThat(
+    isDeepStrictEqual(Object.keys(reportFileBytes).sort(), [...REPORT_FILES].sort()),
+    "OCI_ZIP_MEASUREMENT_INVALID",
+  );
+  for (const n of Object.values(reportFileBytes))
+    requireThat(byteCount(n), "OCI_ZIP_MEASUREMENT_INVALID");
+  // zlib default deflateBound form, plus conservative ZIP64/header allowances.
+  // This is a model, not measured GitHub wire compatibility or upload approval.
+  const deflate = (n) =>
+    n + Math.floor(n / 4096) + Math.floor(n / 16384) + Math.floor(n / 33554432) + 13;
+  const zip = (files) =>
+    98 +
+    files.reduce((n, [name, size]) => n + deflate(size) + 148 + 2 * Buffer.byteLength(name), 0);
+  const files = [["image.oci.tar.xz", C], ...Object.entries(reportFileBytes)];
+  const R = Object.values(reportFileBytes).reduce((a, b) => a + b, 0);
+  const receipt = 8192,
+    seal = 2048;
+  const wrapper =
+    1024 +
+    [...files, ["admission.json", receipt]].reduce(
+      (n, [, size]) => n + 512 + Math.ceil(size / 512) * 512,
+      0,
+    );
+  const source = zip(files),
+    promoted = zip([["promoted-bundle.tar", wrapper]]);
+  const ancillary = zip([["admission.json", receipt]]) + zip([["seal.json", seal]]);
+  const extra = Math.max(0, source - C - R) + Math.max(0, promoted - C - R) + ancillary;
+  return {
+    model: "default-deflate-bound-plus-ZIP64-v1",
+    source_zip_upper_bytes: source,
+    promotion_wrapper_upper_bytes: wrapper,
+    promoted_zip_upper_bytes: promoted,
+    ancillary_zip_upper_bytes: ancillary,
+    extra_upper_bytes: extra,
+    reserve_bytes: 65536,
+    within_reserve: extra <= 65536,
+    diagnostic_artifact_uploads: 0,
+    diagnostic_artifact_downloads: 0,
+    wire_qualification: "NOT_PROVEN_NO_UPLOAD",
+  };
+}
+function measureOCICommand(command, timeout = 240, daemon = false) {
+  const script = String.raw`
+import sys,json,time,subprocess,os,signal,resource
+from pathlib import Path
+command=json.loads(sys.argv[1]);limit=int(sys.argv[2]);daemon=sys.argv[3]=='true'
+samples=0;peak=0;hwm=0;pids=[]
+if daemon:
+ for entry in Path('/proc').iterdir():
+  if entry.name.isdigit():
+   try:
+    if (entry/'comm').read_text().strip() in ('dockerd','containerd'):pids.append(entry)
+   except OSError:pass
+ if not pids:print(json.dumps({'error':'OCI_DAEMON_MEASUREMENT_UNAVAILABLE'}));sys.exit(1)
+started=time.monotonic();p=subprocess.Popen(command,stdout=sys.stderr,stderr=sys.stderr,start_new_session=True)
+failed=False
+try:
+ while True:
+  rss=high=0
+  for entry in pids:
+   fields={line.split(':',1)[0]:line.split(':',1)[1].strip() for line in (entry/'status').read_text().splitlines() if ':' in line}
+   rss+=int(fields['VmRSS'].split()[0])*1024;high+=int(fields['VmHWM'].split()[0])*1024
+  samples+=1;peak=max(peak,rss);hwm=max(hwm,high)
+  if p.poll() is not None:break
+  if time.monotonic()-started>limit:failed=True;break
+  time.sleep(.05)
+finally:
+ if p.poll() is None:
+  os.killpg(p.pid,signal.SIGTERM)
+  try:p.wait(timeout=5)
+  except subprocess.TimeoutExpired:os.killpg(p.pid,signal.SIGKILL);p.wait()
+ if failed and command[:2]==['sh','infra/seaweedfs/verify-image.sh']:
+  subprocess.run(['docker','rm','-f','editagent-seaweed-metadata-'+str(p.pid)],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=15)
+u=resource.getrusage(resource.RUSAGE_CHILDREN)
+if failed or p.returncode!=0:print(json.dumps({'error':'OCI_COMMAND_DEADLINE' if failed else 'OCI_COMMAND_FAILED'}));sys.exit(1)
+print(json.dumps({'wall_seconds':time.monotonic()-started,'peak_waited_child_rss_bytes':u.ru_maxrss*1024,'user_cpu_seconds':u.ru_utime,'system_cpu_seconds':u.ru_stime,'deadline_seconds':limit,'daemon':{'observed_processes':len(pids),'samples':samples,'peak_sampled_rss_bytes':peak,'lifetime_hwm_upper_bytes':hwm,'attribution':'shared daemon observations, not import-exclusive or cold-store proof'} if daemon else None}))
+`;
+  try {
+    return JSON.parse(
+      run("python3", ["-c", script, JSON.stringify(command), String(timeout), String(daemon)], {
+        timeout: (timeout + 25) * 1000,
+      }),
+    );
+  } catch (error) {
+    let code = "OCI_COMMAND_RESOURCE_OR_MEASUREMENT_FAILURE";
+    try {
+      const r = JSON.parse(String(error.stdout));
+      if (/^OCI_[A-Z0-9_]+$/.test(r.error)) code = r.error;
+    } catch {
+      /* bounded public code only */
+    }
+    throw new AdmissionError(code);
+  }
+}
+export function validateOCIAttempt(r, expected) {
+  requireThat(
+    r && r.pack && r.encoder && r.decoding && r.validation && r.imported && r.resave && r.budget,
+    "OCI_MEASUREMENTS_UNAVAILABLE",
+  );
+  requireThat(
+    r.artifact_uploaded === false && r.production_format_unchanged === true,
+    "OCI_PROMOTION_FORBIDDEN",
+  );
+  const c = r.encoder,
+    positive = (n) => Number.isFinite(n) && n > 0;
+  requireThat(
+    c.profile === OCI_PROFILE &&
+      c.algorithm === "xz" &&
+      c.preset === 6 &&
+      c.check === "CRC64" &&
+      isDeepStrictEqual(c.filter_chain, ["LZMA2_PRESET_6"]),
+    "OCI_PROFILE_DRIFT",
+  );
+  requireThat(
+    Number.isSafeInteger(c.compressed_bytes) &&
+      c.compressed_bytes > 0 &&
+      /^[a-f0-9]{64}$/.test(c.output_sha256),
+    "OCI_ENCODER_MEASUREMENT_INVALID",
+  );
+  requireThat(
+    c.runtime?.platform === "linux" &&
+      c.runtime.implementation === "CPython" &&
+      /^\d+\.\d+\.\d+$/.test(c.runtime.python) &&
+      /^\d+\.\d+\.\d+$/.test(c.runtime.liblzma),
+    "OCI_RUNTIME_UNAVAILABLE",
+  );
+  requireThat(
+    positive(c.process_wall_seconds) &&
+      c.process_wall_seconds <= 540 &&
+      positive(c.elapsed_seconds) &&
+      c.elapsed_seconds <= 540 &&
+      positive(c.peak_rss_bytes) &&
+      c.peak_rss_bytes <= 1073741824 &&
+      Number.isFinite(c.user_cpu_seconds) &&
+      c.user_cpu_seconds >= 0 &&
+      Number.isFinite(c.system_cpu_seconds) &&
+      c.system_cpu_seconds >= 0 &&
+      c.user_cpu_seconds + c.system_cpu_seconds <= 480 &&
+      c.limits?.address_space_bytes === 1073741824 &&
+      c.limits?.cpu_seconds === 480,
+    "OCI_ENCODER_RESOURCE_LIMIT",
+  );
+  const d = r.decoding;
+  requireThat(
+    positive(d.elapsed_seconds) &&
+      d.elapsed_seconds <= 600 &&
+      positive(d.peak_rss_bytes) &&
+      d.peak_rss_bytes <= 256 * MIB &&
+      d.limits?.address_space_bytes === 268435456 &&
+      d.uncompressed_bytes === r.pack.layout.bytes &&
+      d.uncompressed_bytes <= 4 * 1024 ** 3,
+    "OCI_DECODER_RESOURCE_LIMIT",
+  );
+  for (const phase of [r.pack, r.validation, r.resave]) {
+    const m = phase.measurement;
+    requireThat(
+      m &&
+        positive(m.wall_seconds) &&
+        m.wall_seconds <= 180 &&
+        positive(m.peak_rss_bytes) &&
+        m.peak_rss_bytes <= 256 * MIB &&
+        Number.isFinite(m.user_cpu_seconds) &&
+        m.user_cpu_seconds >= 0 &&
+        Number.isFinite(m.system_cpu_seconds) &&
+        m.system_cpu_seconds >= 0 &&
+        m.user_cpu_seconds + m.system_cpu_seconds <= 120 &&
+        m.limits?.address_space_bytes === 268435456 &&
+        m.limits?.cpu_seconds === 120,
+      "OCI_PARSER_RESOURCE_LIMIT",
+    );
+  }
+  for (const m of [
+    r.adapter_verification,
+    r.loaded_verification,
+    r.import_measurement,
+    r.export_measurement,
+  ])
+    requireThat(
+      m &&
+        positive(m.wall_seconds) &&
+        m.wall_seconds <= m.deadline_seconds &&
+        positive(m.peak_waited_child_rss_bytes) &&
+        m.peak_waited_child_rss_bytes <= 1073741824,
+      "OCI_COMMAND_MEASUREMENT_INVALID",
+    );
+  requireThat(
+    r.import_measurement.daemon?.observed_processes > 0 &&
+      r.import_measurement.daemon.peak_sampled_rss_bytes > 0 &&
+      r.import_measurement.daemon.lifetime_hwm_upper_bytes > 0,
+    "OCI_DAEMON_MEASUREMENT_UNAVAILABLE",
+  );
+  requireThat(
+    r.pack.source_sha256 === expected.source_sha256 &&
+      r.pack.image_id === expected.identity.image_id &&
+      c.input_sha256 === r.pack.layout.sha256 &&
+      r.decoded_sha256 === r.pack.layout.sha256 &&
+      r.validation.layout_sha256 === r.pack.layout.sha256 &&
+      r.validation.layout_bytes === r.pack.layout.bytes &&
+      r.validation.metadata_sha256 === r.pack.metadata_sha256 &&
+      r.validation.config_sha256 === expected.identity.config_sha256 &&
+      r.validation.image_id === expected.identity.image_id &&
+      r.validation.elf_sha256 === expected.identity.elf_sha256,
+    "OCI_SOURCE_OR_LAYOUT_DRIFT",
+  );
+  const ds = r.pack.layers.map((l) => l.diff_id);
+  requireThat(
+    ds.length === 6 &&
+      isDeepStrictEqual(ds, expected.identity.layer_diff_ids) &&
+      isDeepStrictEqual(ds, r.validation.ordered_diff_ids) &&
+      isDeepStrictEqual(ds, r.imported.RootFS?.Layers) &&
+      isDeepStrictEqual(
+        ds,
+        r.resave.layers.map((l) => l.diff_id),
+      ),
+    "OCI_ORDERED_DIFFID_DRIFT",
+  );
+  requireThat(
+    r.imported.Id === expected.identity.image_id &&
+      r.imported.RootFS?.Type === "layers" &&
+      r.imported.Os === "linux" &&
+      r.imported.Architecture === "amd64" &&
+      r.resave.image_id === expected.identity.image_id &&
+      r.resave.config_bytes === r.pack.config_bytes &&
+      r.resave.metadata_sha256 === r.pack.metadata_sha256 &&
+      isDeepStrictEqual(r.adapter_identity, expected.identity) &&
+      isDeepStrictEqual(r.loaded_identity, expected.identity),
+    "OCI_IMPORT_OR_RUNTIME_DRIFT",
+  );
+  const b = transferBudgetReport({
+    uncompressed_archive_bytes: r.pack.layout.bytes,
+    C: c.compressed_bytes,
+    report_file_bytes: r.report_file_bytes,
+    compression: c,
+  });
+  requireThat(
+    r.budget.C === b.C &&
+      r.budget.R === b.R &&
+      r.budget.R_total === b.R_total &&
+      r.budget.combined_transfer_bytes === b.combined_transfer_bytes,
+    "OCI_BUDGET_ACCOUNTING_DRIFT",
+  );
+  requireThat(b.within_budget, "OCI_CAPACITY_FAILED");
+  const z = ociZipBound(b.C, r.report_file_bytes);
+  requireThat(isDeepStrictEqual(z, r.zip_bound), "OCI_ZIP_MEASUREMENT_INVALID");
+  requireThat(z.within_reserve, "OCI_ZIP_BOUND_NOT_PROVEN");
+}
+export async function runBoundedOCIExperiment(expected, attempt, emit) {
+  let started = 0;
+  const results = [];
+  try {
+    for (let number = 1; number <= 2; number++) {
+      started = number;
+      const r = await attempt(number);
+      results.push(globalThis.structuredClone(r));
+      try {
+        validateOCIAttempt(r, expected);
+      } catch (error) {
+        await emit({
+          kind: "OCI_DIAGNOSTIC_ATTEMPT",
+          attempt: number,
+          qualified: false,
+          result: globalThis.structuredClone(r),
+          failure: error instanceof AdmissionError ? error.code : "OCI_VALIDATION_FAILED",
+        });
+        throw error;
+      }
+      await emit({
+        kind: "OCI_DIAGNOSTIC_ATTEMPT",
+        attempt: number,
+        qualified: false,
+        result: globalThis.structuredClone(r),
+        outcome: "ATTEMPT_CONDITIONS_PASS",
+      });
+      if (number === 2)
+        requireThat(
+          results[0].encoder.output_sha256 === r.encoder.output_sha256 &&
+            results[0].pack.layout.sha256 === r.pack.layout.sha256 &&
+            isDeepStrictEqual(results[0].encoder.runtime, r.encoder.runtime),
+          "OCI_REPRODUCIBILITY_FAILED",
+        );
+    }
+    await emit({
+      kind: "OCI_REPRESENTATION_FEASIBILITY",
+      verdict: "OCI_REPRESENTATION_FEASIBILITY=MET_DIAGNOSTIC_ONLY",
+      attempts: 2,
+      qualified: false,
+      baseline_disposition: "TRANSFER_BUDGET_EXCEEDED",
+      wire_compatibility: "NOT_PROVEN_NO_UPLOAD",
+      cold_runner_compatibility: "NOT_PROVEN",
+    });
+    return "OCI_REPRESENTATION_FEASIBILITY=MET_DIAGNOSTIC_ONLY";
+  } catch (error) {
+    await emit({
+      kind: "OCI_REPRESENTATION_FEASIBILITY",
+      verdict: "OCI_REPRESENTATION_FEASIBILITY=NOT_MET",
+      attempts: started,
+      completed_measurements: results.length,
+      qualified: false,
+      failure: error instanceof AdmissionError ? error.code : "OCI_RESOURCE_OR_MEASUREMENT_FAILURE",
+      observed: error instanceof AdmissionError ? error.ociObserved : undefined,
+      baseline_disposition: "TRANSFER_BUDGET_EXCEEDED",
+    });
+    return "OCI_REPRESENTATION_FEASIBILITY=NOT_MET";
+  }
+}
+async function _losslessCompressionProbe(report, work, verification, context) {
+  const emit = async (r) => console.log(JSON.stringify(r));
+  try {
+    requireThat(process.platform === "linux", "OCI_LINUX_REQUIRED");
+    const jobs = await pages(`actions/runs/${id(process.env.GITHUB_RUN_ID)}/jobs`, "jobs");
+    const matches = jobs.filter(
+      (j) =>
+        j.name === "image seaweedfs" &&
+        j.run_attempt === id(process.env.GITHUB_RUN_ATTEMPT) &&
+        j.status === "in_progress",
+    );
+    requireThat(
+      matches.length === 1 && Number.isFinite(Date.parse(matches[0].started_at)),
+      "OCI_JOB_DEADLINE_UNAVAILABLE",
+    );
+    const deadline = Date.parse(matches[0].started_at) + 59 * 60000;
+    const remaining = (seconds) =>
+      requireThat(deadline - Date.now() >= seconds * 1000, "OCI_REMAINING_JOB_TIME");
+    remaining(1500);
+    const disk = await statfs(work),
+      scratchFree = disk.bavail * disk.bsize;
+    const scratchRequired =
+      report.uncompressed_archive_bytes + 4 * 4 * 1024 ** 3 + report.C * 2 + 1024 * MIB;
+    requireThat(scratchFree >= scratchRequired, "OCI_SCRATCH_LIMIT");
+    const dockerVersion = JSON.parse(run("docker", ["version", "--format", "{{json .Server}}"]));
+    const dockerInfo = JSON.parse(run("docker", ["info", "--format", "{{json .}}"]));
+    const rootDisk = await statfs(dockerInfo.DockerRootDir);
+    requireThat(rootDisk.bavail * rootDisk.bsize >= 9 * 1024 ** 3, "OCI_DOCKER_SCRATCH_LIMIT");
+    const source = path.join(work, "candidate.tar");
+    const old = runOCITool("old-elf", path.join(work, "donor.tar"), path.join(work, "unused"), {});
+    const identityExpected = filterIdentity(verification, await archiveIdentity(source));
+    const expected = { source_sha256: report.compression.input_sha256, identity: identityExpected };
+    const inputExpected = {
+      source_sha256: expected.source_sha256,
+      image_id: verification.image_id,
+      elf_sha256: verification.elf_sha256,
+      rust_sha256: verification.rust_sha256,
+      old_elf_sha256: old.old_elf_sha256,
+    };
+    await emit({
+      kind: "OCI_DIAGNOSTIC_START",
+      profile: OCI_PROFILE,
+      context,
+      run_id: id(process.env.GITHUB_RUN_ID),
+      attempt: id(process.env.GITHUB_RUN_ATTEMPT),
+      original: identityExpected,
+      source_sha256: expected.source_sha256,
+      source_bytes: report.uncompressed_archive_bytes,
+      scratch_free_bytes: scratchFree,
+      scratch_required_bytes: scratchRequired,
+      docker_root_free_bytes: rootDisk.bavail * rootDisk.bsize,
+      artifact_uploaded: false,
+    });
+    await runBoundedOCIExperiment(
+      expected,
+      async (number) => {
+        remaining(1500);
+        requireThat(
+          isDeepStrictEqual((await identity()).context, context),
+          "OCI_LIVE_IDENTITY_DRIFT",
+        );
+        const raw = path.join(work, `oci-${number}.tar`),
+          packed = path.join(work, `oci-${number}.xz`),
+          decoded = path.join(work, `oci-${number}-decoded.tar`),
+          adapter = path.join(work, `oci-${number}-adapter.tar`),
+          loaded = path.join(work, `oci-${number}-loaded.tar`);
+        const pack = runOCITool("pack", source, raw, inputExpected);
+        await emit({
+          kind: "OCI_DIAGNOSTIC_STAGE",
+          attempt: number,
+          stage: "RAW_LAYOUT_PREPARED",
+          pack,
+          qualified: false,
+        });
+        remaining(540);
+        await emit({
+          kind: "OCI_DIAGNOSTIC_STAGE",
+          attempt: number,
+          stage: "ENCODER_START",
+          profile: OCI_PROFILE,
+          qualified: false,
+        });
+        const encoder = compressArchive(raw, packed, 6, "python3", OCI_PROFILE);
+        await emit({
+          kind: "OCI_DIAGNOSTIC_STAGE",
+          attempt: number,
+          stage: "ENCODER_COMPLETE",
+          encoder,
+          C_cap: 125829120,
+          C_within_cap: encoder.compressed_bytes <= 125829120,
+          qualified: false,
+        });
+        requireThat(
+          (await fileBytes(packed)) === encoder.compressed_bytes &&
+            (await fileDigest(packed)) === encoder.output_sha256,
+          "OCI_ENCODER_MEASUREMENT_DRIFT",
+        );
+        remaining(600);
+        const decoding = await decompress(packed, decoded, "python3", 4 * 1024 ** 3, true),
+          decoded_sha256 = await fileDigest(decoded);
+        await emit({
+          kind: "OCI_DIAGNOSTIC_STAGE",
+          attempt: number,
+          stage: "DECODED",
+          decoding,
+          decoded_sha256,
+          qualified: false,
+        });
+        requireThat(decoded_sha256 === pack.layout.sha256, "OCI_LAYOUT_DIGEST_DRIFT");
+        const completeExpected = { ...inputExpected, ...pack };
+        remaining(180);
+        const validation = runOCITool("validate", decoded, adapter, completeExpected);
+        await emit({
+          kind: "OCI_DIAGNOSTIC_STAGE",
+          attempt: number,
+          stage: "ADAPTER_PREPARED",
+          validation,
+          qualified: false,
+        });
+        remaining(240);
+        const inspection = path.join(work, `oci-inspection-${number}`);
+        const adapter_verification = measureOCICommand([
+          "sh",
+          "infra/seaweedfs/verify-image.sh",
+          adapter,
+          inspection,
+        ]);
+        const adapter_identity = filterIdentity(
+          await jsonFile(path.join(inspection, "verify-image.json")),
+          await archiveIdentity(adapter),
+        );
+        requireThat(
+          isDeepStrictEqual(adapter_identity, identityExpected),
+          "OCI_ADAPTER_IDENTITY_DRIFT",
+        );
+        await emit({
+          kind: "OCI_DIAGNOSTIC_STAGE",
+          attempt: number,
+          stage: "ADAPTER_VERIFIED",
+          adapter_identity,
+          adapter_verification,
+          qualified: false,
+        });
+        remaining(120);
+        const import_measurement = measureOCICommand(["docker", "load", "-i", adapter], 120, true);
+        await emit({
+          kind: "OCI_DIAGNOSTIC_STAGE",
+          attempt: number,
+          stage: "IMPORTED",
+          import_measurement,
+          qualified: false,
+        });
+        const importedAll = JSON.parse(
+          run("docker", ["image", "inspect", verification.image_id]),
+        )[0];
+        const imported = {
+          Id: importedAll.Id,
+          Os: importedAll.Os,
+          Architecture: importedAll.Architecture,
+          RootFS: importedAll.RootFS,
+        };
+        remaining(120);
+        const export_measurement = measureOCICommand(
+          [
+            "docker",
+            "image",
+            "save",
+            "--platform",
+            "linux/amd64",
+            verification.image_id,
+            "-o",
+            loaded,
+          ],
+          120,
+        );
+        remaining(180);
+        const resave = runOCITool("resave", loaded, path.join(work, "unused"), {
+          ...completeExpected,
+          source_sha256: undefined,
+        });
+        remaining(240);
+        const loadedInspection = path.join(work, `oci-loaded-inspection-${number}`);
+        const loaded_verification = measureOCICommand([
+          "sh",
+          "infra/seaweedfs/verify-image.sh",
+          loaded,
+          loadedInspection,
+        ]);
+        const loaded_identity = filterIdentity(
+          await jsonFile(path.join(loadedInspection, "verify-image.json")),
+          await archiveIdentity(loaded),
+        );
+        requireThat(
+          isDeepStrictEqual(loaded_identity, identityExpected),
+          "OCI_LOADED_IDENTITY_DRIFT",
+        );
+        requireThat(
+          isDeepStrictEqual((await identity()).context, context),
+          "OCI_FINAL_IDENTITY_DRIFT",
+        );
+        const diagnosticVerification = {
+          original: verification,
+          adapter: adapter_identity,
+          loaded: loaded_identity,
+          metadata_sha256: pack.metadata_sha256,
+          profile: OCI_PROFILE,
+        };
+        const diagnosticManifest = {
+          schema_version: "1.0.0-draft.1",
+          diagnostic_only: true,
+          format: OCI_PROFILE,
+          context,
+          producer: {
+            run_id: id(process.env.GITHUB_RUN_ID),
+            attempt: id(process.env.GITHUB_RUN_ATTEMPT),
+          },
+          pack,
+          payload: { sha256: encoder.output_sha256, bytes: encoder.compressed_bytes },
+          source_reports: report.report_file_bytes,
+        };
+        const report_file_bytes = {
+          ...report.report_file_bytes,
+          "verification.json": Buffer.byteLength(JSON.stringify(diagnosticVerification) + "\n"),
+          "candidate-manifest.json": Buffer.byteLength(JSON.stringify(diagnosticManifest) + "\n"),
+        };
+        const budget = transferBudgetReport({
+          uncompressed_archive_bytes: pack.layout.bytes,
+          C: encoder.compressed_bytes,
+          report_file_bytes,
+          compression: encoder,
+        });
+        const result = {
+          pack,
+          encoder,
+          decoding,
+          decoded_sha256,
+          validation,
+          adapter_verification,
+          adapter_identity,
+          imported,
+          import_measurement,
+          export_measurement,
+          resave,
+          loaded_verification,
+          loaded_identity,
+          report_file_bytes,
+          budget,
+          zip_bound: ociZipBound(budget.C, report_file_bytes),
+          scratch_free_bytes: scratchFree,
+          scratch_required_bytes: scratchRequired,
+          docker_root_free_bytes: rootDisk.bavail * rootDisk.bsize,
+          remaining_job_seconds: Math.floor((deadline - Date.now()) / 1000),
+          runtime: {
+            docker_version: dockerVersion.Version,
+            api_version: dockerVersion.ApiVersion,
+            os: dockerVersion.Os,
+            architecture: dockerVersion.Arch,
+            storage_driver: dockerInfo.Driver,
+            python_decoder: "configured producer runtime",
+            warm_image_cache: true,
+            cold_runner_qualification: "NOT_PROVEN",
+          },
+          artifact_uploaded: false,
+          production_format_unchanged: true,
+        };
+        for (const f of [raw, packed, decoded, adapter, loaded]) await rm(f);
+        await dispose(inspection);
+        await dispose(loadedInspection);
+        return result;
+      },
+      emit,
+    );
+  } catch (error) {
+    await emit({
+      kind: "OCI_REPRESENTATION_FEASIBILITY",
+      verdict: "OCI_REPRESENTATION_FEASIBILITY=NOT_MET",
+      attempts: 0,
+      qualified: false,
+      failure: error instanceof AdmissionError ? error.code : "OCI_RESOURCE_OR_MEASUREMENT_FAILURE",
+      baseline_disposition: "TRANSFER_BUDGET_EXCEEDED",
+    });
+  }
+}
+
+export function validateSWInventories(trivy, sbom, buildInfo, baseline) {
+  validateScans(trivy, sbom);
+  requireThat(
+    buildInfo?.GoVersion === "go1.26.10" &&
+      Array.isArray(buildInfo.Deps) &&
+      buildInfo.Deps.length > 0,
+    "S_W_BUILDINFO_MISSING",
+  );
+  const pair = (name, version) => {
+    requireThat(
+      typeof name === "string" && typeof version === "string" && version.length > 0,
+      "S_W_PACKAGE_INVALID",
+    );
+    return `${name}@${name === "stdlib" ? "v" + version.replace(/^(?:go|v)/, "") : version}`;
+  };
+  const fingerprint = (items) => {
+    requireThat(new Set(items).size === items.length, "S_W_DUPLICATE_PACKAGE");
+    return sha256(JSON.stringify(items.sort()));
+  };
+  const linked = buildInfo.Deps.map((m) => {
+    const effective = m.Replace ?? m;
+    requireThat(/^h1:[A-Za-z0-9+/]+=*$/.test(effective.Sum ?? ""), "S_W_MODULE_SUM_MISSING");
+    return pair(effective.Path, effective.Version);
+  });
+  linked.push(pair("stdlib", buildInfo.GoVersion));
+  const go = trivy.Results.filter((r) => r.Type === "gobinary" && r.Target === "usr/bin/weed")
+    .flatMap((r) => r.Packages ?? [])
+    .filter((p) => p.Version)
+    .map((p) => pair(p.Name, p.Version));
+  const native = trivy.Results.filter((r) => r.Type === "alpine")
+    .flatMap((r) => r.Packages ?? [])
+    .map((p) => pair(p.Name, p.Version));
+  const syftSet = (prefix) =>
+    sbom.packages
+      .filter((p) =>
+        p.externalRefs?.some(
+          (r) => r.referenceType === "purl" && r.referenceLocator.startsWith(prefix),
+        ),
+      )
+      .filter((p) => p.name !== buildInfo.Main?.Path)
+      .map((p) => pair(p.name, p.versionInfo));
+  const goHash = fingerprint(go),
+    nativeHash = fingerprint(native);
+  requireThat(
+    go.length === baseline.go_count &&
+      goHash === baseline.go_sha256 &&
+      fingerprint(linked) === goHash &&
+      fingerprint(syftSet("pkg:golang/")) === goHash,
+    "S_W_GO_INVENTORY_COLLAPSE_OR_DRIFT",
+  );
+  requireThat(
+    native.length === baseline.native_count &&
+      nativeHash === baseline.native_sha256 &&
+      fingerprint(syftSet("pkg:apk/")) === nativeHash,
+    "S_W_NATIVE_INVENTORY_COLLAPSE_OR_DRIFT",
+  );
+  requireThat(
+    go.includes("github.com/go-jose/go-jose/v4@v4.1.6") &&
+      go.includes("github.com/andybalholm/brotli@v1.2.7") &&
+      native.includes("brotli-libs@1.2.1-r0"),
+    "S_W_FIXED_MODULE_MISSING",
+  );
+  return {
+    go_count: go.length,
+    go_sha256: goHash,
+    native_count: native.length,
+    native_sha256: nativeHash,
+    go_packages: go,
+    native_packages: native,
+    source_verified_linked_modules_match: true,
+    trivy_syft_inventory_equal: true,
+    fixed_go_brotli: "v1.2.7",
+    high_critical: 0,
+  };
+}
+
+export function inspectSWELF(file, python = "python3") {
+  return JSON.parse(
+    run(
+      python,
+      [
+        "-c",
+        String.raw`
+import hashlib,json,mmap,os,struct,sys
+try:
+ import resource
+ resource.setrlimit(resource.RLIMIT_AS,(1073741824,1073741824));resource.setrlimit(resource.RLIMIT_CPU,(30,30))
+except ImportError: resource=None
+p=sys.argv[1];size=os.stat(p).st_size
+if not 0<size<=512*1024**2: raise ValueError('ELF size rejected')
+with open(p,'rb') as f:
+ h=hashlib.file_digest(f,'sha256').hexdigest();f.seek(0)
+ with mmap.mmap(f.fileno(),0,access=mmap.ACCESS_READ) as b:
+  if b[:6]!=b'\x7fELF\x02\x01': raise ValueError('ELF64LE required')
+  e=struct.unpack_from('<16sHHIQQQIHHHHHH',b,0)
+  ident,typ,machine,version,entry,po,so,_,eh,pe,pn,se,sn,ss=e
+  if ident[6]!=1 or version!=1 or typ!=2 or machine!=62 or eh!=64 or pe!=56 or se!=64 or not 0<pn<=64 or not 0<sn<=256 or not 0<ss<sn: raise ValueError('ELF header rejected')
+  maximum=(1<<64)-1
+  def end64(start,length):
+   if start<0 or length<0 or start>maximum or length>maximum-start: raise ValueError('ELF integer range rejected')
+   return start+length
+  def bounded(off,n):
+   if end64(off,n)>size: raise ValueError('ELF range rejected')
+  def aligned(value,alignment):
+   if alignment not in (0,1) and (alignment&(alignment-1) or value%alignment): raise ValueError('ELF alignment rejected')
+  bounded(po,pn*pe);bounded(so,sn*se)
+  sh=[struct.unpack_from('<IIQQQQIIQQ',b,so+i*se) for i in range(sn)]
+  if any(sh[0]): raise ValueError('ELF null section rejected')
+  st=sh[ss]
+  if st[1]!=3 or st[5]==0: raise ValueError('ELF section names table rejected')
+  bounded(st[4],st[5]);names=b[st[4]:st[4]+st[5]]
+  if names[0]!=0 or names[-1]!=0: raise ValueError('ELF section names table malformed')
+  programs=[]
+  for i in range(pn):
+   t,flags,off,va,pa,fs,ms,align=struct.unpack_from('<IIQQQQQQ',b,po+i*pe)
+   bounded(off,fs);end64(va,ms)
+   if fs>ms: raise ValueError('ELF file size exceeds memory size')
+   if t==3 or flags&3==3: raise ValueError('ELF interpreter or WX program')
+   aligned(0,align)
+   if align>1 and off%align!=va%align: raise ValueError('ELF segment alignment rejected')
+   programs.append({'type':t,'flags':flags,'offset':off,'file_bytes':fs,'memory_bytes':ms,'virtual_address':va,'align':align})
+  loads=[p for p in programs if p['type']==1]
+  if not any(p['flags']&1 and p['virtual_address']<=entry<end64(p['virtual_address'],p['file_bytes']) for p in loads): raise ValueError('ELF entry mapping rejected')
+  sections=[]
+  for s in sh:
+   n,t,flags,addr,off,nbytes,_,_,align,_=s
+   if n>=len(names): raise ValueError('ELF section name rejected')
+   end=names.find(b'\0',n)
+   if end<0: raise ValueError('ELF section name unterminated')
+   name=names[n:end].decode('ascii');disk=0 if t==8 else nbytes
+   # NOBITS has no physical payload; sh_offset is unused, not a file range.
+   if t!=8: bounded(off,disk)
+   aligned(0,align)
+   if flags&2:
+    memory_end=end64(addr,nbytes);aligned(addr,align)
+    def compatible(p):
+     start=p['virtual_address']
+     if not p['flags']&4 or flags&1 and not p['flags']&2 or flags&4 and not p['flags']&1: return False
+     if not start<=addr or memory_end>end64(start,p['memory_bytes']): return False
+     if t!=8 and (memory_end>end64(start,p['file_bytes']) or off!=end64(p['offset'],addr-start)): return False
+     return True
+    if not any(compatible(p) for p in loads): raise ValueError('ELF allocated section mapping rejected')
+   sections.append({'name':name,'type':t,'flags':flags,'address':addr,'offset':off,'file_bytes':disk,'logical_bytes':nbytes,'align':align})
+print(json.dumps({'sha256':h,'file_bytes':size,'entry':entry,'type':typ,'machine':machine,'sections':sections,'program_headers':programs,'inspector':'python-stdlib-elf64le-read-only-v1'}))
+`,
+        file,
+      ],
+      { timeout: 60000 },
+    ),
+  );
+}
+
+export function validateSWEvidence(verification, elf, metadata) {
+  return validateELFMeasurements(verification, elf, metadata, SW_PROFILE, validateDiagnosticMarker);
+}
+function validateELFMeasurements(verification, elf, metadata, expectedProfile, marker) {
+  requireThat(
+    verification.old_elf_absent === true &&
+      verification.runtime_preserved === true &&
+      verification.build_records_match_final_elf === true &&
+      verification.native_brotli === "1.2.1-r0",
+    "S_W_IMAGE_EVIDENCE_MISSING",
+  );
+  requireThat(
+    elf.sha256 === verification.elf_sha256 &&
+      elf.sha256 !== "6b48572984287dcf64ed09a9080a720e65d4bf5c810c2282782fb4e5da8aa3c8",
+    "S_W_ELF_IDENTITY_DRIFT",
+  );
+  for (const label of ["one", "two"]) {
+    const b = verification.build_measurements?.[label];
+    marker(b, elf.sha256);
+    requireThat(
+      b?.cache_initially_empty === true &&
+        b.elf_sha256 === elf.sha256 &&
+        b.output_profile === expectedProfile &&
+        b.elf?.linker_flags === SW_FLAGS &&
+        b.elf.file_bytes === elf.file_bytes &&
+        b.wall_seconds > 0 &&
+        b.max_rss_kib > 0,
+      "S_W_REPRODUCIBILITY_OR_PROFILE_FAILURE",
+    );
+    requireThat(
+      isDeepStrictEqual(b.elf, verification.build_measurements.one.elf),
+      "S_W_REPRODUCIBILITY_OR_PROFILE_FAILURE",
+    );
+    const actualSections = elf.sections.map((s) => [s.name, s.offset, s.file_bytes]);
+    const claimedSections = b.elf.sections.map((s) => [s.name, s.offset, s.file_bytes]);
+    requireThat(isDeepStrictEqual(actualSections, claimedSections), "S_W_SECTION_IDENTITY_DRIFT");
+  }
+  requireThat(
+    elf.sections.some((s) => s.name === ".gopclntab" && s.file_bytes > 0) &&
+      elf.sections.some((s) => s.name === ".go.buildinfo" && s.file_bytes > 0),
+    "S_W_BUILDINFO_OR_PC_TABLE_MISSING",
+  );
+  requireThat(
+    !elf.sections.some((s) => /^\.(?:debug_|zdebug_|symtab$|strtab$)/.test(s.name)),
+    "S_W_DEBUG_SECTIONS_UNEXPECTED",
+  );
+  requireThat(
+    typeof metadata === "string" &&
+      metadata.length < 512 * 1024 &&
+      metadata.includes("go1.26.10") &&
+      metadata.includes("\tdep\tgithub.com/go-jose/go-jose/v4\tv4.1.6") &&
+      metadata.includes("\tdep\tgithub.com/andybalholm/brotli\tv1.2.7"),
+    "S_W_BUILDINFO_MISSING",
+  );
+}
+
+async function diagnosticResolverControls(imageId, work) {
+  const project = `sw-resolver-${id(process.env.GITHUB_RUN_ID)}-${id(process.env.GITHUB_RUN_ATTEMPT)}`;
+  const localTag = "editagent-seaweedfs:local";
+  let existing;
+  try {
+    existing = run("docker", ["image", "inspect", localTag, "--format", "{{.Id}}"]);
+  } catch {
+    /* absent */
+  }
+  requireThat(!existing, "S_W_RESOLVER_EXISTING_TAG_REFUSED");
+  const composeFile = path.join(work, "resolver-negative.compose.json");
+  const roles = ["seaweed-master", "seaweed-volume", "seaweed-filer", "seaweed-s3"];
+  await writeFile(
+    composeFile,
+    JSON.stringify({
+      services: Object.fromEntries(
+        roles.map((role) => [
+          role,
+          {
+            image: imageId,
+            entrypoint: ["diagnostic-must-never-start"],
+            network_mode: "none",
+            read_only: true,
+            user: "1000:1000",
+            cap_drop: ["ALL"],
+            security_opt: ["no-new-privileges:true"],
+            pids_limit: 64,
+          },
+        ]),
+      ),
+    }),
+  );
+  const args = ["compose", "--project-name", project, "--file", composeFile];
+  requireThat(
+    !run("docker", [...args, "ps", "--all", "--quiet"]).trim(),
+    "S_W_RESOLVER_EXISTING_PROJECT_REFUSED",
+  );
+  const containers = [];
+  try {
+    run("docker", ["tag", imageId, localTag]);
+    // Stopped containers only: no service process, network, port, secret or
+    // volume. Their sole purpose is the real live-selector negative control.
+    run("docker", [...args, "create", "--no-build"]);
+    for (const role of roles) {
+      const container = run("docker", [...args, "ps", "--all", "--quiet", role]).trim();
+      requireThat(/^[a-f0-9]{64}$/.test(container), "S_W_RESOLVER_CONTAINER_INVALID");
+      containers.push(container);
+      requireThat(
+        run("docker", ["inspect", "--format", "{{.Image}} {{.State.Status}}", container]).trim() ===
+          `${imageId} created`,
+        "S_W_RESOLVER_CONTAINER_STARTED",
+      );
+    }
+    for (const selector of ["built", "live"])
+      for (const actions of [undefined, "false", "true", "manipulated"]) {
+        const env = {
+          ...process.env,
+          COMPOSE_PROJECT_NAME: project,
+          COMPOSE_FILE: composeFile,
+          SEAWEED_QUALIFIED_RECEIPT: "diagnostic-forged-receipt-must-not-authorize",
+        };
+        delete env.GITHUB_ACTIONS;
+        if (actions !== undefined) env.GITHUB_ACTIONS = actions;
+        let rejected = false;
+        try {
+          run("sh", ["infra/seaweedfs/image-reference.sh", selector], { env, timeout: 180000 });
+        } catch (error) {
+          rejected =
+            error.status !== 0 &&
+            String(error.stdout ?? "") === "" &&
+            String(error.stderr ?? "").includes("S_W_OPERATOR_STARTUP_FORBIDDEN");
+        }
+        requireThat(rejected, "S_W_REAL_RESOLVER_REJECTION_FAILED");
+      }
+    return {
+      built: "PASS",
+      live: "PASS",
+      cases: 8,
+      env_states: ["absent", "false", "true", "manipulated"],
+      real_verified_image: imageId,
+      stopped_containers_only: true,
+      no_service_started: true,
+      stdout_image_ids: 0,
+    };
+  } finally {
+    for (const container of containers) run("docker", ["container", "rm", container]);
+    if (run("docker", ["image", "inspect", localTag, "--format", "{{.Id}}"]).trim() === imageId)
+      run("docker", ["image", "rm", localTag]);
+  }
+}
+
+async function diagnosticCryptoControls() {
+  run(
+    "docker",
+    [
+      "build",
+      "--platform",
+      "linux/amd64",
+      "--target",
+      "security-probes",
+      "-f",
+      "infra/seaweedfs/Dockerfile",
+      "-t",
+      "editagent-seaweedfs-probes",
+      ".",
+    ],
+    { stdio: "inherit" },
+  );
+  const name = `editagent-seaweed-crypto-${id(process.env.GITHUB_RUN_ID)}-${id(process.env.GITHUB_RUN_ATTEMPT)}`;
+  const common = [
+    "run",
+    "--rm",
+    "--name",
+    name,
+    "--user",
+    "65534:65534",
+    "--cap-drop",
+    "ALL",
+    "--security-opt",
+    "no-new-privileges:true",
+    "--cpus",
+    "1",
+    "--memory",
+    "384m",
+    "--memory-swap",
+    "384m",
+    "--pids-limit",
+    "64",
+    "--read-only",
+    "--network",
+    "none",
+    "--tmpfs",
+    "/tmp:rw,noexec,nosuid,size=32m,mode=1777",
+    "-e",
+    "GODEBUG=fips140=on",
+  ];
+  try {
+    for (const probe of ["rsa", "jwk", "brotli"])
+      run("timeout", ["60", "docker", ...common, "editagent-seaweedfs-probes", probe], {
+        stdio: "inherit",
+        timeout: 65000,
+      });
+    for (const suite of ["jose", "brotli"])
+      run(
+        "timeout",
+        [
+          "180",
+          "docker",
+          ...common,
+          "--workdir",
+          `/tests/${suite}`,
+          "--entrypoint",
+          `/${suite}.test`,
+          "editagent-seaweedfs-probes",
+          "-test.timeout=150s",
+        ],
+        { stdio: "inherit", timeout: 185000 },
+      );
+  } finally {
+    try {
+      run("docker", ["rm", "-f", name]);
+    } catch {
+      /* --rm already removed it */
+    }
+  }
+  return {
+    rsa: "PASS",
+    jwk: "PASS",
+    brotli: "PASS",
+    upstream_jose: "PASS",
+    upstream_brotli: "PASS",
+    fips140: "on",
+    policy: "unchanged bounded workflow controls executed before terminal diagnostic gate",
+  };
+}
+
+export function finalizeSWReports(
+  report,
+  verification,
+  metadata,
+  trivyBytes,
+  sbomBytes,
+  measurement,
+  policyFiles,
+) {
+  // A fixed-size JSON whitespace envelope avoids recursive byte-count/float
+  // length oscillation. Its entire padding is physically written and counted.
+  // Headroom is fixed before admission; exceeding it fails, never resizes.
+  const base = Buffer.byteLength(JSON.stringify({ ...verification, diagnostic_evidence: report }));
+  const envelope = Math.ceil((base + 16384) / 4096) * 4096;
+  requireThat(envelope <= 4 * 1024 ** 2, "S_W_REPORT_ENVELOPE_EXCEEDED");
+  report.provenance_envelope = { verification_bytes: envelope, padding_counted_in_R: true };
+  const render = () => {
+    const text = JSON.stringify({ ...verification, diagnostic_evidence: report }) + "\n";
+    const remaining = envelope - Buffer.byteLength(text);
+    requireThat(remaining >= 0, "S_W_REPORT_ENVELOPE_EXCEEDED");
+    const reports = {
+      "verification.json": text + " ".repeat(remaining),
+      "go-version-m.txt": metadata,
+      "full-trivy.json": trivyBytes,
+      "sbom.spdx.json": sbomBytes,
+      "scanner-versions.json": JSON.stringify(report.scanners) + "\n",
+    };
+    reports["candidate-manifest.json"] =
+      JSON.stringify({
+        diagnostic_only: true,
+        profile: SW_PROFILE,
+        context: report.context,
+        image_id: verification.image_id,
+        elf_sha256: verification.elf_sha256,
+        run_id: report.run_id,
+        attempt: 1,
+        policy_files: policyFiles,
+        files: {
+          "image.tar.xz": measurement.compression.output_sha256,
+          ...Object.fromEntries(
+            Object.entries(reports).map(([name, bytes]) => [name, sha256(bytes)]),
+          ),
+        },
+        upload: "FORBIDDEN",
+      }) + "\n";
+    return reports;
+  };
+  const sizes = (reports) =>
+    Object.fromEntries(Object.entries(reports).map(([n, b]) => [n, Buffer.byteLength(b)]));
+  report.budget = transferBudgetReport({ ...measurement, report_file_bytes: sizes(render()) });
+  report.verdict = report.budget.within_budget
+    ? "S_W_BUILD_FEASIBILITY=MET_DIAGNOSTIC_ONLY"
+    : "S_W_BUILD_FEASIBILITY=NOT_MET";
+  if (!report.budget.within_budget) report.failure = "TRANSFER_BUDGET_EXCEEDED";
+  const final = render();
+  requireThat(
+    isDeepStrictEqual(sizes(final), report.budget.report_file_bytes),
+    "S_W_FINAL_REPORT_MEASUREMENT_MISMATCH",
+  );
+  return final;
+}
+
+async function produceSWDiagnostic(image, destination) {
+  requireThat(
+    path.resolve(destination) === path.join(ROOT, ".local/seaweedfs-transfer/bundle"),
+    "ARTIFACT_DESTINATION_REJECTED",
+  );
+  validateSWAttempt(process.env.GITHUB_RUN_ATTEMPT);
+  const { context } = await identity();
+  const lock = await jsonFile(path.join(ROOT, "infra/seaweedfs/security-build.lock.json"));
+  requireThat(diagnosticProfile(lock), "S_W_PROFILE_REJECTED");
+  const work = await mkdtemp(path.join(ROOT, ".local/issue99/producer-"));
+  const report = {
+    profile: SW_PROFILE,
+    context,
+    run_id: id(process.env.GITHUB_RUN_ID),
+    attempt: 1,
+    artifact_uploaded: false,
+    promoted: false,
+    qualified: false,
+    verdict: "S_W_BUILD_FEASIBILITY=NOT_MET",
+    baseline_sections: "UNKNOWN",
+    execution_runtime: { node: process.version, platform: process.platform, arch: process.arch },
+    limitations: [
+      "Actual service ZIP and cross-job transfer NOT_PROVEN: upload prohibited",
+      "DIAGNOSTIC_REAL_SERVICE_E2E=NOT_RUN_BY_DESIGN: no qualified receipt, S3/mTLS/recovery/browser/Walking product execution",
+    ],
+    gates: {},
+  };
+  try {
+    let tap;
+    try {
+      tap = run(
+        process.execPath,
+        [
+          "--test",
+          "--test-reporter=tap",
+          "tests/architecture/seaweedfs-security-build.test.mjs",
+          "tests/architecture/seaweedfs-object-storage.test.mjs",
+          "tests/architecture/ffmpeg-download.test.mjs",
+        ],
+        { timeout: 180000 },
+      );
+      console.log(tap);
+    } catch (error) {
+      if (error.stdout) console.log(String(error.stdout).slice(-65536));
+      throw new AdmissionError("S_W_NATIVE_ARCHITECTURE_TEST_FAILED");
+    }
+    const count = (name) => Number(new RegExp("^# " + name + " (\\d+)$", "m").exec(tap)?.[1]);
+    report.architecture_tests = {
+      tests: count("tests"),
+      pass: count("pass"),
+      fail: count("fail"),
+      skipped: count("skipped"),
+    };
+    requireThat(
+      report.architecture_tests.tests > 0 &&
+        report.architecture_tests.pass === report.architecture_tests.tests &&
+        report.architecture_tests.fail === 0 &&
+        report.architecture_tests.skipped === 0,
+      "S_W_NATIVE_ARCHITECTURE_TEST_FAILED",
+    );
+    const imageId = run("docker", ["image", "inspect", image, "--format", "{{.Id}}"]).trim();
+    requireThat(/^sha256:[a-f0-9]{64}$/.test(imageId), "S_W_IMAGE_IDENTITY_DRIFT");
+    run("sh", ["infra/seaweedfs/verify-image.sh", imageId, work], { stdio: "inherit" });
+    const verification = await jsonFile(path.join(work, "verify-image.json"));
+    requireThat(
+      verification.image_id === imageId &&
+        verification.project_revision === context.M &&
+        verification.project_source === `https://github.com/${REPOSITORY}`,
+      "PRODUCER_IMAGE_IDENTITY_DRIFT",
+    );
+    const inspect = JSON.parse(run("docker", ["image", "inspect", imageId]))[0];
+    const configEvidence = (v) => ({
+      Id: v.Id,
+      Architecture: v.Architecture,
+      Os: v.Os,
+      RootFS: v.RootFS,
+      Config: v.Config,
+    });
+    report.image = { ...verification, config: configEvidence(inspect) };
+    const metadata = await readFile(path.join(work, "actual-go-version-m.txt"), "utf8");
+    const elf = inspectSWELF(path.join(work, "weed"));
+    validateSWEvidence(verification, elf, metadata);
+    report.elf = elf;
+    report.go_version_m = metadata;
+    report.gates.image_elf_provenance = "PASS";
+    const syftVersion = JSON.parse(run("syft", ["version", "-o", "json"]));
+    const cache = path.join(work, "trivy-cache"),
+      sbomFile = path.join(work, "sbom.spdx.json"),
+      trivyFile = path.join(work, "full-trivy.json");
+    const version = () =>
+      JSON.parse(run("trivy", ["--config=", "--cache-dir", cache, "version", "--format", "json"]));
+    requireThat(
+      syftVersion.version === "1.54.0" && version().Version === "0.75.0",
+      "SCANNER_VERSION_DRIFT",
+    );
+    run("syft", [imageId, "-o", `spdx-json=${sbomFile}`]);
+    const scan = (id, file) =>
+      run("trivy", [
+        "--config=",
+        "--cache-dir",
+        cache,
+        "image",
+        "--ignorefile=",
+        "--secret-config=",
+        "--ignore-unfixed=false",
+        "--severity",
+        "UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL",
+        "--format",
+        "json",
+        "--output",
+        file,
+        "--exit-code",
+        "0",
+        id,
+      ]);
+    scan(imageId, trivyFile);
+    const trivy = await jsonFile(trivyFile),
+      sbom = await jsonFile(sbomFile);
+    requireThat(
+      trivy.Metadata?.ImageID === imageId &&
+        Date.parse(version().VulnerabilityDB?.DownloadedAt) >=
+          Date.parse((await api(`actions/runs/${report.run_id}`)).created_at),
+      "FRESH_DB_OR_IMAGE_EVIDENCE_MISSING",
+    );
+    report.scanners = {
+      syft: syftVersion,
+      trivy: version(),
+      coverage: validateSWInventories(
+        trivy,
+        sbom,
+        verification.build_measurements.one.elf.go_build_info,
+        lock.build.baseline_inventory,
+      ),
+      sbom_sha256: sha256(await readFile(sbomFile)),
+      trivy_sha256: sha256(await readFile(trivyFile)),
+    };
+    const controlFile = path.join(work, "scanner-positive-control.json");
+    scan(lock.runtime_donor.image, controlFile);
+    requireThat(
+      (await jsonFile(controlFile)).Results?.some((r) =>
+        r.Vulnerabilities?.some(
+          (v) =>
+            v.PkgName === "github.com/go-jose/go-jose/v4" &&
+            v.VulnerabilityID === "CVE-2026-116587" &&
+            v.Severity === "HIGH",
+        ),
+      ),
+      "S_W_SCANNER_POSITIVE_CONTROL_FAILED",
+    );
+    report.gates.scanner_positive_control = "PASS";
+    report.real_resolver_controls = await diagnosticResolverControls(imageId, work);
+    report.runtime_version = run(
+      "timeout",
+      [
+        "30",
+        "docker",
+        "run",
+        "--rm",
+        "--network",
+        "none",
+        "--read-only",
+        "--user",
+        "1000:1000",
+        "--cap-drop",
+        "ALL",
+        "--security-opt",
+        "no-new-privileges:true",
+        "--cpus",
+        "1",
+        "--memory",
+        "384m",
+        "--memory-swap",
+        "384m",
+        "--pids-limit",
+        "64",
+        "-e",
+        "GODEBUG=fips140=on",
+        "--entrypoint",
+        "/usr/bin/weed",
+        imageId,
+        "version",
+      ],
+      { timeout: 35000 },
+    ).trim();
+    requireThat(
+      report.runtime_version.includes("ffa87c2+editagent-sec1"),
+      "S_W_RUNTIME_IDENTITY_FAILED",
+    );
+    report.gates.runtime_version_uid1000 = "PASS";
+    report.crypto = await diagnosticCryptoControls();
+    report.gates.crypto = "PASS";
+    const raw = path.join(work, "candidate.tar"),
+      packed = path.join(work, "diagnostic.tar.xz"),
+      roundtrip = path.join(work, "roundtrip.tar");
+    const beforeScratch = await statfs(work);
+    requireThat(
+      beforeScratch.bavail * beforeScratch.bsize >= 3 * 4 * 1024 ** 3,
+      "S_W_SCRATCH_UNAVAILABLE",
+    );
+    const compression = compressArchive(raw, packed, 6);
+    const decoder = await decompress(packed, roundtrip, "python3", 4 * 1024 ** 3, true);
+    requireThat(
+      (await fileDigest(raw)) === (await fileDigest(roundtrip)) &&
+        compression.input_sha256 === (await fileDigest(raw)) &&
+        compression.output_sha256 === (await fileDigest(packed)),
+      "S_W_ROUNDTRIP_MISMATCH",
+    );
+    run(
+      "sh",
+      ["infra/seaweedfs/verify-image.sh", roundtrip, path.join(work, "roundtrip-inspection")],
+      { stdio: "inherit" },
+    );
+    const after = await jsonFile(path.join(work, "roundtrip-inspection/verify-image.json"));
+    requireThat(isDeepStrictEqual(verification, after), "S_W_ROUNDTRIP_IMAGE_DRIFT");
+    const checkedConfig = JSON.parse(run("docker", ["image", "inspect", imageId]))[0];
+    requireThat(
+      isDeepStrictEqual(report.image.config, configEvidence(checkedConfig)),
+      "S_W_CONFIG_OR_LAYER_DRIFT",
+    );
+    report.compression = compression;
+    report.decoder = decoder;
+    validateSWResources(compression, decoder);
+    report.resources = {
+      visible_only: true,
+      available_parallelism: availableParallelism(),
+      host_total_memory: totalmem(),
+      host_free_memory: freemem(),
+      scratch_available_before: beforeScratch.bavail * beforeScratch.bsize,
+      scratch_available_after: (await statfs(work)).bavail * beforeScratch.bsize,
+      visible_cgroup: verification.build_measurements.two.visible_cgroup_only,
+      raw_archive_bytes: await fileBytes(raw),
+      expanded_archive_bytes: await fileBytes(roundtrip),
+    };
+    report.gates.roundtrip = "PASS";
+    requireThat(isDeepStrictEqual((await identity()).context, context), "S_W_FINAL_IDENTITY_DRIFT");
+    const policyFiles = {};
+    for (const name of POLICY_FILES)
+      policyFiles[name] = sha256(
+        run("git", ["show", `${context.M}:${name}`], { encoding: "buffer" }),
+      );
+    const prepared = finalizeSWReports(
+      report,
+      verification,
+      metadata,
+      await readFile(trivyFile),
+      await readFile(sbomFile),
+      { uncompressed_archive_bytes: await fileBytes(raw), C: await fileBytes(packed), compression },
+      policyFiles,
+    );
+    const privateReports = path.join(work, "reports");
+    await mkdir(privateReports);
+    for (const [name, bytes] of Object.entries(prepared)) {
+      await writeFile(path.join(privateReports, name), bytes);
+      requireThat(
+        (await fileBytes(path.join(privateReports, name))) ===
+          report.budget.report_file_bytes[name],
+        "S_W_FINAL_REPORT_MEASUREMENT_MISMATCH",
+      );
+    }
+    requireThat(report.budget.within_budget, "TRANSFER_BUDGET_EXCEEDED");
+  } catch (error) {
+    report.verdict = "S_W_BUILD_FEASIBILITY=NOT_MET";
+    report.failure =
+      error instanceof AdmissionError ? error.code : "S_W_NATIVE_EXECUTION_OR_EVIDENCE_FAILED";
+  } finally {
+    try {
+      await dispose(work);
+    } catch {
+      report.verdict = "S_W_BUILD_FEASIBILITY=NOT_MET";
+      report.failure = "S_W_PRIVATE_SCRATCH_CLEANUP_FAILED";
+    }
+    await writeFile(
+      path.join(ROOT, ".local/issue99/s-w-diagnostic-report.json"),
+      JSON.stringify(report, null, 2) + "\n",
+      { mode: 0o600 },
+    );
+    for (const line of diagnosticEvidenceLines(report)) console.log(line);
+  }
+  terminateDiagnostic(report);
+}
+
+async function produce(image, destination) {
+  if (
+    (await jsonFile(path.join(ROOT, "infra/seaweedfs/security-build.lock.json"))).build
+      ?.output_profile === SW_PROFILE
+  )
+    return produceSWDiagnostic(image, destination);
+  const { context, lock, L, K, binding } = await candidateSource(true);
+  const folder = path.resolve(destination);
+  requireThat(
+    folder === path.join(ROOT, ".local/seaweedfs-transfer/bundle"),
+    "ARTIFACT_DESTINATION_REJECTED",
+  );
+  await mkdir(folder, { recursive: true, mode: 0o700 });
+  const work = await mkdtemp(path.join(ROOT, ".local/issue99/producer-"));
+  const imageId = run("docker", ["image", "inspect", image, "--format", "{{.Id}}"]).trim();
+  run("sh", ["infra/seaweedfs/verify-image.sh", imageId, work], { stdio: "inherit" });
+  const verification = await jsonFile(path.join(work, "verify-image.json"));
+  requireThat(
+    verification.image_id === imageId &&
+      verification.project_revision === context.M &&
+      verification.project_source === `https://github.com/${REPOSITORY}`,
+    "PRODUCER_IMAGE_IDENTITY_DRIFT",
+  );
+  validateProductionEvidence(
+    verification,
+    lock,
+    L,
+    inspectSWELF(path.join(work, "weed")),
+    await readFile(path.join(work, "actual-go-version-m.txt"), "utf8"),
+  );
+  await writeFile(path.join(folder, "verification.json"), JSON.stringify(verification) + "\n");
+  await writeFile(
+    path.join(folder, "go-version-m.txt"),
+    await readFile(path.join(work, "actual-go-version-m.txt")),
+  );
+  const syftVersion = JSON.parse(run("syft", ["version", "-o", "json"]));
+  requireThat(syftVersion.version === "1.54.0", "SCANNER_VERSION_DRIFT");
+  const trivyCache = path.join(work, "trivy-cache");
+  const trivyVersion = () =>
+    JSON.parse(
+      run("trivy", ["--config=", "--cache-dir", trivyCache, "version", "--format", "json"]),
+    );
+  requireThat(trivyVersion().Version === "0.75.0", "SCANNER_VERSION_DRIFT");
+  run("syft", [imageId, "-o", `spdx-json=${path.join(folder, "sbom.spdx.json")}`]);
+  run("trivy", [
+    "--config=",
+    "--cache-dir",
+    trivyCache,
+    "image",
+    "--ignorefile=",
+    "--secret-config=",
+    "--ignore-unfixed=false",
+    "--severity",
+    "UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL",
+    "--format",
+    "json",
+    "--output",
+    path.join(folder, "full-trivy.json"),
+    "--exit-code",
+    "0",
+    imageId,
+  ]);
+  validateSWInventories(
+    await jsonFile(path.join(folder, "full-trivy.json")),
+    await jsonFile(path.join(folder, "sbom.spdx.json")),
+    verification.build_measurements.one.elf.go_build_info,
+    lock.build.baseline_inventory,
+  );
+  const positive = path.join(work, "positive-control.json");
+  run("trivy", [
+    "--config=",
+    "--cache-dir",
+    trivyCache,
+    "image",
+    "--ignorefile=",
+    "--ignore-unfixed=false",
+    "--severity",
+    "UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL",
+    "--format",
+    "json",
+    "--output",
+    positive,
+    "--exit-code",
+    "0",
+    lock.runtime_donor.image,
+  ]);
+  requireThat(
+    (await jsonFile(positive)).Results.some((r) =>
+      (r.Vulnerabilities ?? []).some(
+        (v) => v.PkgName === "github.com/go-jose/go-jose/v4" && v.Severity === "HIGH",
+      ),
+    ),
+    "SCANNER_POSITIVE_CONTROL_FAILED",
+  );
+  await diagnosticCryptoControls();
+  const freshVersion = trivyVersion();
+  requireThat(
+    freshVersion.Version === "0.75.0" &&
+      Date.parse(freshVersion.VulnerabilityDB?.DownloadedAt) >=
+        Date.parse(
+          process.env.GITHUB_EVENT_NAME === "pull_request"
+            ? (await api(`actions/runs/${id(process.env.GITHUB_RUN_ID)}`)).created_at
+            : "invalid",
+        ),
+    "FRESH_DB_EVIDENCE_MISSING",
+  );
+  const scannerEvidence = {
+    trivy: { Version: freshVersion.Version, VulnerabilityDB: freshVersion.VulnerabilityDB },
+    syft: {
+      version: syftVersion.version,
+      gitCommit: syftVersion.gitCommit,
+      goVersion: syftVersion.goVersion,
+    },
+  };
+  await writeFile(
+    path.join(folder, "scanner-versions.json"),
+    JSON.stringify(scannerEvidence) + "\n",
+  );
+  requireThat(
+    (await jsonFile(path.join(folder, "full-trivy.json"))).Metadata?.ImageID === imageId,
+    "SCAN_IMAGE_IDENTITY_DRIFT",
+  );
+  const originalArchiveBytes = await fileBytes(path.join(work, "candidate.tar"));
+  const compression = compressArchive(
+    path.join(work, "candidate.tar"),
+    path.join(folder, "image.tar.xz"),
+    6,
+  );
+  requireThat(
+    compression.uncompressed_bytes === originalArchiveBytes,
+    "TRANSFER_MEASUREMENT_INVALID",
+  );
+  const roundtrip = path.join(work, "roundtrip.tar");
+  const decoder = await decompress(
+    path.join(folder, "image.tar.xz"),
+    roundtrip,
+    "python3",
+    4 * 1024 ** 3,
+    true,
+  );
+  validateSWResources(compression, decoder);
+  requireThat(
+    (await fileDigest(roundtrip)) === (await fileDigest(path.join(work, "candidate.tar"))),
+    "PRODUCTION_ROUNDTRIP_DRIFT",
+  );
+  run("sh", ["infra/seaweedfs/verify-image.sh", roundtrip, path.join(work, "roundtrip-inspect")], {
+    stdio: "inherit",
+  });
+  requireThat(
+    isDeepStrictEqual(
+      verification,
+      await jsonFile(path.join(work, "roundtrip-inspect/verify-image.json")),
+    ),
+    "PRODUCTION_IMAGE_ROUNDTRIP_DRIFT",
+  );
+  const files = {};
+  const memberBytes = {};
+  const reportFileBytes = {};
+  for (const name of FILES.filter((n) => n !== "candidate-manifest.json")) {
+    files[name] = sha256(await readFile(path.join(folder, name)));
+    memberBytes[name] = await fileBytes(path.join(folder, name));
+    if (name !== "image.tar.xz") reportFileBytes[name] = await fileBytes(path.join(folder, name));
+  }
+  const policyFiles = {};
+  for (const name of POLICY_FILES)
+    policyFiles[name] = sha256(
+      run("git", ["show", `${context.M}:${name}`], { encoding: "buffer" }),
+    );
+  const manifest = {
+    schema: CANDIDATE_SCHEMA,
+    profile: PRODUCTION_PROFILE,
+    K,
+    L,
+    diff_ids: verification.diff_ids,
+    archive_sha256: await fileDigest(path.join(work, "candidate.tar")),
+    archive_bytes: originalArchiveBytes,
+    ...candidatePolicyLink(binding),
+    context,
+    run_id: id(process.env.GITHUB_RUN_ID),
+    attempt: id(process.env.GITHUB_RUN_ATTEMPT),
+    image_id: imageId,
+    elf_sha256: verification.elf_sha256,
+    files,
+    file_bytes: memberBytes,
+    policy_files: policyFiles,
+  };
+  verifyApprovedELF(manifest.elf_sha256, binding);
+  const text = JSON.stringify(manifest) + "\n";
+  reportFileBytes["candidate-manifest.json"] = Buffer.byteLength(text);
+  const C = await fileBytes(path.join(folder, "image.tar.xz"));
+  requireThat(compression.compressed_bytes === C, "TRANSFER_MEASUREMENT_INVALID");
+  const budget = await reportAndEnforceTransfer(
+    {
+      uncompressed_archive_bytes: originalArchiveBytes,
+      C,
+      report_file_bytes: reportFileBytes,
+      compression,
+    },
+    async (report) => {
+      console.log(
+        JSON.stringify({
+          ...report,
+          context,
+          run_id: id(process.env.GITHUB_RUN_ID),
+          attempt: id(process.env.GITHUB_RUN_ATTEMPT),
+          image_id: imageId,
+        }),
+      );
+    },
+    undefined,
+  );
+  const R = budget.R;
+  validateCandidateManifest(manifest, context, id(process.env.GITHUB_RUN_ID), 1, lock, L);
+  requireThat(
+    isDeepStrictEqual((await candidateSource(true)).context, context),
+    "FINAL_SOURCE_DRIFT",
+  );
+  await writeFile(path.join(folder, "candidate-manifest.json"), text);
+  await dispose(work);
+  console.log(
+    JSON.stringify({ image_id: imageId, C, R, total_transfer_bytes: 2 * C + 2 * R + 65536 }),
+  );
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  cli(...process.argv.slice(2)).catch(async (error) => {
+    const outcome = error instanceof AdmissionError ? error.code : "ADMISSION_INTERNAL_ERROR";
+    const result = {
+      outcome,
+      retryable_prerequisite:
+        process.argv[2] !== "wire-ledger" &&
+        ["PRODUCER_NOT_YET_CREATED", "PRODUCER_NOT_YET_COMPLETE"].includes(outcome),
+      run_id: process.env.GITHUB_RUN_ID,
+      attempt: process.env.GITHUB_RUN_ATTEMPT,
+      identity_evidence: lastIdentityEvidence,
+      identity_observations: identityObservations,
+      ...(process.argv[2] === "wire-ledger"
+        ? {
+            wire_evidence: error.wire_evidence ?? {
+              fully_measured: false,
+              observed_rows: [],
+              accounting: null,
+            },
+          }
+        : {}),
+    };
+    console.error(JSON.stringify(result));
+    if (process.argv[2] === "wire-ledger") {
+      await mkdir(path.join(ROOT, ".local/issue99"), { recursive: true, mode: 0o700 });
+      await writeFile(
+        path.join(ROOT, `.local/issue99/wire-failure-${Date.now()}-${process.pid}.json`),
+        JSON.stringify(result) + "\n",
+        { flag: "wx", mode: 0o600 },
+      );
+      process.exitCode = 1;
+      return;
+    }
+    if (process.env.GITHUB_OUTPUT) await output("outcome", outcome);
+    await mkdir(path.join(ROOT, ".local/issue99"), { recursive: true, mode: 0o700 });
+    await writeFile(
+      path.join(ROOT, ".local/issue99/admission-outcome.json"),
+      JSON.stringify(result) + "\n",
+      { mode: 0o600 },
+    );
+    if (result.retryable_prerequisite && process.env.GITHUB_RUN_ATTEMPT === "1") {
+      const dest = path.join(ROOT, ".local/issue99/outcome-bundle");
+      await mkdir(dest, { recursive: true, mode: 0o700 });
+      const bounded = { outcome, run_id: id(process.env.GITHUB_RUN_ID), attempt: 1 };
+      await writeFile(path.join(dest, "admission-outcome.json"), JSON.stringify(bounded) + "\n", {
+        mode: 0o600,
+      });
+    }
+    process.exitCode = 1;
+  });
+}

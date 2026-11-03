@@ -1,3 +1,5 @@
+import { withoutQualificationCredentials } from "../test/pc100-candidate-policy.mjs";
+import { startResourceObserver, classifyTermination } from "./resource-observer.mjs";
 import { createRequire } from "node:module";
 import { URL } from "node:url";
 import process from "node:process";
@@ -42,7 +44,7 @@ function launch(bin, args, options) {
   const output = createWriteStream(options.log, { flags: "w", mode: 0o600 });
   const child = spawn(bin, args, {
     cwd: options.cwd,
-    env: options.env,
+    env: withoutQualificationCredentials(options.env ?? process.env),
     shell: false,
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -112,15 +114,20 @@ const nonce = randomBytes(6).toString("hex"),
   control = "render-control-" + nonce;
 if (!process.argv.includes("--no-build")) await buildRenderImages();
 const services = await startIntegrationServices({
+  storageBackend: process.argv.includes("--storage-seaweedfs") ? "seaweedfs" : "minio",
   browserLoopbackCors: process.argv.includes("--graduation-demo"),
 });
+const storage = services.objectStorage ?? services.minio;
 const s3 = new S3Client({
-  endpoint: services.minio.endpoint,
-  region: services.minio.region,
-  credentials: services.minio.credentials,
+  endpoint: storage.endpoint,
+  region: storage.region,
+  credentials: storage.credentials,
   forcePathStyle: true,
 });
 const pool = new Pool({ connectionString: services.postgres.url });
+let resources;
+let primaryFailure;
+const proofOutcomes = [];
 try {
   for (const f of (await readdir(root + "apps/api/migrations"))
     .filter((x) => x.endsWith(".sql"))
@@ -128,9 +135,11 @@ try {
     await pool.query(await readFile(root + "apps/api/migrations/" + f, "utf8"));
   await s3.send(new CreateBucketCommand({ Bucket: "editagent" }));
   docker(["network", "create", "--internal", network]);
-  for (const [alias, service] of Object.entries(services).filter(([k]) =>
-    ["postgres", "redis", "minio"].includes(k),
-  ))
+  for (const [alias, service] of [
+    ["postgres", services.postgres],
+    ["redis", services.redis],
+    [storage.networkAlias ?? "minio", storage],
+  ])
     docker(["network", "connect", "--alias", alias, network, service.container.getId()]);
   for (const [name, size] of [
     [work, "2147483648"],
@@ -195,14 +204,14 @@ try {
   const environment = {
     DATABASE_URL: database.toString(),
     REDIS_URL: "redis://redis:6379",
-    S3_ENDPOINT: "http://minio:9000",
+    S3_ENDPOINT: storage.internalEndpoint ?? "http://minio:9000",
     S3_BUCKET: "editagent",
     S3_REGION: "us-east-1",
-    S3_ACCESS_KEY_ID: services.minio.credentials.accessKeyId,
-    S3_SECRET_ACCESS_KEY: services.minio.credentials.secretAccessKey,
+    S3_ACCESS_KEY_ID: storage.credentials.accessKeyId,
+    S3_SECRET_ACCESS_KEY: storage.credentials.secretAccessKey,
     EDITAGENT_RENDER_QUEUE: "render-idle",
   };
-  docker(["network", "disconnect", network, services.minio.container.getId()]);
+  docker(["network", "disconnect", network, storage.container.getId()]);
   docker([
     "run",
     "-d",
@@ -228,7 +237,7 @@ try {
   try {
     startupReadiness = verifyStorageStartup(coordinator);
   } finally {
-    docker(["network", "connect", "--alias", "minio", network, services.minio.container.getId()]);
+    docker(["network", "connect", "--alias", "minio", network, storage.container.getId()]);
   }
   const inspect = JSON.parse(docker(["inspect", executor]))[0];
   assert.equal(inspect.Config.User, "10001:10001");
@@ -263,12 +272,17 @@ try {
   );
   const readiness = await verifyStorageReadiness({
     coordinator,
-    storage: services.minio.container.getId(),
+    storage: storage.container.getId(),
     network,
   });
   const artifactDir = root + ".local/render-batch";
   await mkdir(artifactDir, { recursive: true });
   await rm(artifactDir + "/report.json", { force: true });
+  resources = startResourceObserver(
+    [executor, coordinator],
+    artifactDir + "/resource-observations.json",
+  );
+  await resources.ready;
   await writeFile(
     artifactDir + "/readiness.json",
     JSON.stringify({ startup: startupReadiness, ...readiness }, null, 2) + "\n",
@@ -344,7 +358,7 @@ try {
     executor,
     "node",
     "-e",
-    `const assert=require('node:assert/strict');Promise.all(['http://169.254.169.254','http://1.1.1.1','http://minio:9000'].map(async u=>{let reached=false;try{await fetch(u,{signal:AbortSignal.timeout(500)});reached=true;}catch{}assert.equal(reached,false,'Network egress must fail');})).catch(e=>{console.error(e);process.exitCode=1;});`,
+    `const assert=require('node:assert/strict');Promise.all(['http://169.254.169.254','http://1.1.1.1','http://minio:9000',${JSON.stringify(storage.internalEndpoint ?? "http://minio:9000")}].map(async u=>{let reached=false;try{await fetch(u,{signal:AbortSignal.timeout(500)});reached=true;}catch{}assert.equal(reached,false,'Network egress must fail');})).catch(e=>{console.error(e);process.exitCode=1;});`,
   ]);
   let missingControlsRejected = false;
   try {
@@ -373,11 +387,16 @@ try {
   );
   const script = await readFile(new URL("./proof.cjs", import.meta.url), "utf8");
   async function runProof(script) {
+    await resources.phase("proof-" + proofOutcomes.length);
     return await new Promise((resolve, reject) => {
       const child = spawn("docker", ["exec", "-i", coordinator, "node"], {
         stdio: ["pipe", "pipe", "inherit"],
       });
-      const watchdog = setTimeout(() => child.kill("SIGKILL"), 600000);
+      let watchdogFired = false;
+      const watchdog = setTimeout(() => {
+        watchdogFired = true;
+        child.kill("SIGKILL");
+      }, 600000);
       let text = "";
       child.stdout.on("data", (b) => {
         text += b;
@@ -389,6 +408,12 @@ try {
       });
       child.once("exit", (code) => {
         clearTimeout(watchdog);
+        proofOutcomes.push({
+          index: proofOutcomes.length,
+          exit_code: code,
+          watchdog_fired: watchdogFired,
+          at: new Date().toISOString(),
+        });
         if (code === 0) resolve(text);
         else reject(new Error("Production render proof failed " + code));
       });
@@ -402,6 +427,7 @@ try {
     return JSON.parse(line.slice(marker.length + 1));
   }
   const report = editingOnly ? {} : parseEvidence(output, "RENDER_EVIDENCE");
+  report.storageBackend = storage.identity ?? { backend: "minio" };
   report.readiness = { startup: startupReadiness, ...readiness };
   const timelineScript =
     `require('node:process').env.EDITAGENT_PROOF_PROJECT=${JSON.stringify(fixtureProject)};require('node:process').env.EDITAGENT_PROOF_SOURCE=${JSON.stringify(fixtureSource)};\n` +
@@ -432,6 +458,7 @@ try {
       (await readFile(new URL("./audio-cut-proof.cjs", import.meta.url), "utf8")),
   );
   const audioReport = parseEvidence(audioOutput, "AUDIO_EVIDENCE");
+  await resources.phase("verify-audio-artifacts");
   assert.equal(
     new Set(audioReport.artifacts.map((a) => a.label)).size,
     audioReport.artifacts.length,
@@ -526,6 +553,7 @@ try {
       `const fs=require('node:fs');const identities=${JSON.stringify([])};console.log(JSON.stringify({temp:fs.readdirSync('/tmp').filter(n=>n.startsWith('render-'))}));`,
     ]),
   );
+  await resources.phase("verify-processes-and-frames");
   assert.deepEqual(
     processCheck.temp,
     [],
@@ -909,6 +937,7 @@ try {
     });
   }
 } catch (error) {
+  primaryFailure = error;
   for (const name of [executor, coordinator]) {
     try {
       console.error(docker(["logs", "--tail", "20", name]));
@@ -918,6 +947,52 @@ try {
   }
   throw error;
 } finally {
+  let observationError;
+  try {
+    if (resources) {
+      const observations = await resources.stop({ proofs: proofOutcomes });
+      console.log(
+        "RENDER_RESOURCE_REPORT",
+        JSON.stringify({
+          ...observations,
+          samples: [observations.samples[0], ...observations.samples.slice(-3)],
+        }),
+      );
+      const last = proofOutcomes.at(-1);
+      if (last)
+        for (const name of [executor, coordinator]) {
+          const before = observations.samples[0]?.containers.find(
+            (c) => c.container === name,
+          )?.cgroup;
+          const after = observations.samples
+            .at(-1)
+            ?.containers.find((c) => c.container === name)?.cgroup;
+          const termination = classifyTermination(
+            before,
+            after,
+            last.exit_code,
+            last.watchdog_fired,
+            observations.samples.at(-1)?.containers.find((c) => c.container === name)?.state
+              ?.oom_killed,
+          );
+          console.log(
+            "RENDER_TERMINATION_OBSERVATION",
+            JSON.stringify({
+              container: name,
+              ...termination,
+            }),
+          );
+          assert.equal(
+            termination.cause,
+            "NO_OOM_KILL_OBSERVED",
+            "Unexpected render process termination or unavailable resource evidence",
+          );
+        }
+    }
+  } catch (error) {
+    observationError = error;
+    console.error("RENDER_RESOURCE_OBSERVATION_FAILED");
+  }
   await pool.end();
   s3.destroy();
   for (const name of [coordinator, executor])
@@ -938,4 +1013,5 @@ try {
   } catch {
     /* cleanup tolerates a network that was not created */
   }
+  if (observationError && !primaryFailure) process.exitCode = 1;
 }

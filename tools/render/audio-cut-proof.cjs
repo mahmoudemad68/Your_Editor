@@ -699,6 +699,23 @@ async function main() {
           outputIntents: 0,
         });
       }
+    // A successful high-resolution edit must pass actual coordinator probing,
+    // not be mistaken for a successful revocation after a native decoder dies.
+    console.log("RENDER_STAGE large-coordinator-validation-start");
+    const large = await runtime.executor.execute({
+      name: "editing.resize-video",
+      version: "1.0.0",
+      callerId: actor,
+      projectId: project,
+      resource: { kind: "asset", id: source.id },
+      input: { assetId: source.id, width: 4096, height: 2024 },
+    });
+    assert.equal(large.record.outcome, "succeeded");
+    assert.equal(large.output.asset.artifact.metadata.width, 4096);
+    assert.equal(large.output.asset.artifact.metadata.height, 2024);
+    const largeJob = await runtime.deps.jobs.findById(large.record.jobId);
+    assert.equal(largeJob.status, "Completed");
+    console.log("RENDER_STAGE large-coordinator-validation-completed");
     // Revoke a distinct member only after genuine production FFmpeg execution
     // starts. The existing publication fence must deny it before any S3 PUT.
     const revokedActor = id();
@@ -711,6 +728,7 @@ async function main() {
       [project, revokedActor],
     );
     const putsBeforeRevocation = objects.putCount;
+    console.log("RENDER_STAGE active-revocation-start");
     const revocationRun = runtime.executor
       .execute({
         name: "editing.resize-video",
@@ -753,6 +771,7 @@ async function main() {
       1,
     );
     const revocationError = await revocationRun;
+    console.log("RENDER_STAGE active-revocation-completed");
     // The durable active fence cancels revoked admission; the live permission
     // check denies it. Both existing contracts prohibit successful publication.
     assert.ok(["cancelled", "denied"].includes(revocationError.code));
@@ -859,6 +878,7 @@ async function main() {
     await fast.render(retryInput, project, retryJob, new AbortController().signal, () => {});
     const negativeJob = id(),
       negativeKey = outputKey(catalog.renderVersion, project, negativeJob);
+    console.log("RENDER_STAGE truncated-cache-start");
     const signature = createHash("sha256")
       .update(
         canonicalJson({
@@ -974,6 +994,12 @@ async function main() {
         JSON.stringify({
           artifacts,
           invalidSpatial,
+          largeCoordinatorValidation: {
+            width: 4096,
+            height: 2024,
+            status: largeJob.status,
+            sha256: large.output.asset.artifact.sha256,
+          },
           midRenderRevocation: {
             actualRenderingObserved: renderingObserved,
             s3PutCount: revocationS3Writes,

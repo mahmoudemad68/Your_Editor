@@ -137,6 +137,10 @@ export function buildFfprobeArgs(filePath: string): readonly string[] {
     "error",
     "-protocol_whitelist",
     "file",
+    // Host CPU discovery can allocate many decoder frame buffers even inside a
+    // one-CPU coordinator. Bound native probing independently of host topology.
+    "-threads",
+    "1",
     "-print_format",
     "json",
     "-show_format",
@@ -148,6 +152,21 @@ export function buildFfprobeArgs(filePath: string): readonly string[] {
     "-i",
     filePath,
   ];
+}
+
+export function parseDecodedVideoFrameCount(document: unknown): number {
+  const streams = (document as { streams?: unknown[] } | null)?.streams;
+  if (!Array.isArray(streams) || streams.length !== 1) throw new MediaProbeError("invalid_result");
+  const stream = streams[0] as { codec_type?: unknown; nb_read_frames?: unknown } | null;
+  if (
+    stream?.codec_type !== "video" ||
+    typeof stream.nb_read_frames !== "string" ||
+    !/^[1-9][0-9]{0,5}$/.test(stream.nb_read_frames)
+  )
+    throw new MediaProbeError("invalid_result");
+  const count = Number(stream.nb_read_frames);
+  if (count > 108000) throw new MediaProbeError("invalid_result");
+  return count;
 }
 
 export class FFprobeMediaProbe implements IMediaProbe {
@@ -190,6 +209,43 @@ export class FFprobeMediaProbe implements IMediaProbe {
     }
   }
 
+  /** Decode the complete selected video, without allocating an unnecessary
+   * encoder. Metadata nb_frames and packet counts cannot satisfy this census. */
+  async countDecodedVideoFrames(input: ProbeInput): Promise<number> {
+    assertControlledLocalFile(input.filePath);
+    const stdout = await runFfprobe(
+      this.executable,
+      [
+        "-v",
+        "error",
+        "-protocol_whitelist",
+        "file",
+        "-threads",
+        "1",
+        "-err_detect",
+        "explode",
+        "-select_streams",
+        "v:0",
+        "-count_frames",
+        "-show_entries",
+        "stream=codec_type,nb_read_frames",
+        "-of",
+        "json",
+        "-i",
+        input.filePath,
+      ],
+      this.timeoutMs,
+      this.maxOutputBytes,
+      input.signal,
+      true,
+    );
+    try {
+      return parseDecodedVideoFrameCount(JSON.parse(stdout.toString("utf8")));
+    } catch {
+      throw new MediaProbeError("invalid_result");
+    }
+  }
+
   async inspectStreamTiming(input: ProbeInput): Promise<readonly EncodedStreamTiming[]> {
     assertControlledLocalFile(input.filePath);
     const stdout = await runFfprobe(
@@ -199,6 +255,8 @@ export class FFprobeMediaProbe implements IMediaProbe {
         "error",
         "-protocol_whitelist",
         "file",
+        "-threads",
+        "1",
         "-show_streams",
         "-show_entries",
         "stream=codec_type,codec_name,time_base,start_pts,duration_ts,nb_frames,sample_rate,channels",
@@ -411,6 +469,7 @@ function runFfprobe(
   timeoutMs: number,
   maxOutputBytes: number,
   signal?: AbortSignal,
+  rejectErrorOutput = false,
 ): Promise<Buffer> {
   signal?.throwIfAborted();
   return new Promise((resolve, reject) => {
@@ -494,7 +553,7 @@ function runFfprobe(
         finish(new MediaProbeError("invalid_json"));
         return;
       }
-      if (code !== 0) {
+      if (code !== 0 || (rejectErrorOutput && stderrBytes > 0)) {
         finish(new MediaProbeError("exit"));
         return;
       }

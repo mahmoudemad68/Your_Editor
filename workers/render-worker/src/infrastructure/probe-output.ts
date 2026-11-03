@@ -140,24 +140,12 @@ export async function validateOutput(
     if (p.duration! < longestStream - 1n || p.duration! > longestStream + 1000n)
       throw new Error("MP4 duration does not agree with validated stream clocks.");
   }
-  let decodedFrames = 0;
-  await new FfmpegExecutor(1).execute(
-    buildFfmpegArgs({
-      input: { path: filePath },
-      // The hardened media-core builder requires an explicit admitted video encoder.
-      // Decode every frame and discard the verification encode; never alter the uploaded MP4.
-      output: { format: "null", maps: ["0:v:0"], videoEncoder: "libx264" },
-      progress: true,
-    }),
-    {
-      timeoutMs: 300000,
-      ...(signal ? { signal } : {}),
-      maxCaptureBytes: 1048576,
-      onProgress: (p) => {
-        decodedFrames = p.frame;
-      },
-    },
-  );
+  // Count real decoded frames, not container metadata or copied packets. A
+  // discarded libx264 encode can exceed the coordinator's 1-GiB cgroup at 4K.
+  const decodedFrames = await new FFprobeMediaProbe({ timeoutMs: 300000 }).countDecodedVideoFrames({
+    filePath,
+    ...(signal ? { signal } : {}),
+  });
   if (decodedFrames !== timing.durationInFrames)
     throw new Error("Rendered MP4 frame count does not match its contract.");
   const audioDurationUs = (audioSamples * 1000000n + 24000n) / 48000n;

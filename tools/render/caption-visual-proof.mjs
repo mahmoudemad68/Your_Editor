@@ -1,3 +1,4 @@
+import { withoutQualificationCredentials } from "../test/pc100-candidate-policy.mjs";
 /** Actual Remotion still frames. Synthetic timing is labelled, never ASR accuracy evidence. */
 import { createRequire } from "node:module";
 import { execFileSync } from "node:child_process";
@@ -33,6 +34,7 @@ export async function captionVisualProof(root, directory, privateDir) {
   try {
     await mkdir(privateDir, { recursive: true });
     referenceBrowser = await webRequire("@playwright/test").chromium.launch({
+      env: withoutQualificationCredentials(process.env),
       executablePath: process.env.PLAYWRIGHT_CHROME_EXECUTABLE ?? "/opt/google/chrome/chrome",
       // Match Remotion's raster profile, while keeping the DOM reference and
       // expected word indices independent of the production component.

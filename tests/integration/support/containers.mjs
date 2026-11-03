@@ -5,6 +5,7 @@ import { buildProductImages } from "../../../tools/test/compose-build.mjs";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { lookup } from "node:dns/promises";
+import { startSeaweedfsStorage } from "./seaweedfs-storage.mjs";
 
 const root = path.resolve(import.meta.dirname, "../../..");
 function imageTag(service, files) {
@@ -107,16 +108,21 @@ export async function startMinio({ browserLoopbackCors = false } = {}) {
   };
 }
 /** Concurrent startup and cleanup of partial failures, with no implicit Docker skip. */
-export async function startIntegrationServices({ browserLoopbackCors = false } = {}) {
+export async function startIntegrationServices({
+  browserLoopbackCors = false,
+  storageBackend = "minio",
+} = {}) {
+  if (!["minio", "seaweedfs"].includes(storageBackend))
+    throw new Error("Unsupported explicit storage backend");
   await Promise.all([
     buildInfrastructureImage("postgres"),
     buildInfrastructureImage("redis"),
-    buildMinioImage(),
+    ...(storageBackend === "minio" ? [buildMinioImage()] : []),
   ]);
   const result = await Promise.allSettled([
     startPostgres(),
     startRedis(),
-    startMinio({ browserLoopbackCors }),
+    storageBackend === "minio" ? startMinio({ browserLoopbackCors }) : startSeaweedfsStorage(),
   ]);
   const started = result.filter((r) => r.status === "fulfilled").map((r) => r.value);
   if (result.some((r) => r.status === "rejected")) {
@@ -129,7 +135,9 @@ export async function startIntegrationServices({ browserLoopbackCors = false } =
   return {
     postgres: result[0].value,
     redis: result[1].value,
-    minio: result[2].value,
+    ...(storageBackend === "minio"
+      ? { minio: result[2].value }
+      : { objectStorage: result[2].value }),
     close: async () => {
       const stopped = await Promise.allSettled(started.map((service) => service.close()));
       const failures = stopped.filter((r) => r.status === "rejected");

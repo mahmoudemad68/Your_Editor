@@ -28,14 +28,40 @@ mkdir -p "$lock_dir"
 exec 9>"$lock_dir/editagent-storage.lock"
 flock -w 180 9
 
+candidate="$(python3 - <<'PY'
+import json
+def unique(pairs):
+    result={}
+    for key,value in pairs:
+        if key in result: raise ValueError('duplicate startup profile field')
+        result[key]=value
+    return result
+with open('infra/seaweedfs/security-build.lock.json') as f:
+    build=json.load(f,object_pairs_hook=unique)['build']
+profile=build.get('output_profile')
+allowed={'seaweedfs-go-s-w-diagnostic-v1':True,'seaweedfs-go-s-w-production-candidate-v1':False}
+if profile not in allowed or type(build.get('diagnostic_only')) is not bool or build['diagnostic_only'] is not allowed[profile]:
+    raise ValueError('unsupported or inconsistent startup profile')
+print(profile)
+PY
+)"
+if [ "$candidate" = seaweedfs-go-s-w-production-candidate-v1 ]; then
+  : "${SEAWEED_QUALIFIED_RECEIPT:?production candidate requires authenticated producer receipt}"
+  ./infra/seaweedfs/image-reference.sh built >/dev/null
+elif [ "${GITHUB_ACTIONS:-}" = true ]; then
+  : "${SEAWEED_QUALIFIED_RECEIPT:?CI must admit the completed Supply Chain producer first}"
+else
+  docker compose build seaweed-master
+fi
+./infra/seaweedfs/image-reference.sh built >/dev/null
 ./infra/seaweedfs/prepare-secrets.sh
 ./infra/seaweedfs/ensure-storage-network.sh
-docker compose build seaweed-master
 
 # Stop first so a running volume cannot serve /status while rules change.
 docker compose stop seaweed-s3 seaweed-filer seaweed-volume seaweed-master >/dev/null 2>&1 || true
 docker compose create --force-recreate \
   seaweed-master seaweed-volume seaweed-filer seaweed-s3 >/dev/null
+./infra/seaweedfs/image-reference.sh live >/dev/null
 
 ./infra/seaweedfs/apply-host-isolation.sh
 ./infra/seaweedfs/apply-host-isolation.sh --check

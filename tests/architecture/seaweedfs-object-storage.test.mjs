@@ -12,7 +12,7 @@ import { test } from "node:test";
 const root = path.resolve(import.meta.dirname, "../..");
 
 function read(relativePath) {
-  return readFileSync(path.join(root, relativePath), "utf8");
+  return readFileSync(path.join(root, relativePath), "utf8").replace(/\r\n/g, "\n");
 }
 
 test("the active stack publishes only the SeaweedFS S3 gateway", () => {
@@ -20,7 +20,7 @@ test("the active stack publishes only the SeaweedFS S3 gateway", () => {
   const dockerfile = read("infra/seaweedfs/Dockerfile");
   assert.match(
     dockerfile,
-    /chrislusf\/seaweedfs@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d/,
+    /chrislusf\/seaweedfs@sha256:f7a49e3f3972ebed5be2ed4befa4a0c68eb7bdddba6e692d42729ceb545134b8/,
   );
   assert.equal(compose.includes("infra/minio/Dockerfile"), false);
   assert.match(compose, /storage_internal:\n {4}internal: true/);
@@ -56,16 +56,17 @@ test("the active stack publishes only the SeaweedFS S3 gateway", () => {
 });
 
 test("the S3 contract runs after the workspace install", () => {
-  const workflow = read(".github/workflows/ci.yml");
-  const pnpmSetup = workflow.indexOf("name: Install pnpm");
-  const nodeSetup = workflow.indexOf("name: Setup Node.js");
+  const workflow = read(".github/workflows/ci.yml").split("  seaweedfs-product:")[1];
+  const pnpmSetup = workflow.indexOf("uses: pnpm/action-setup");
+  const nodeSetup = workflow.indexOf("uses: actions/setup-node");
   const install = workflow.indexOf("pnpm install --frozen-lockfile");
   const contract = workflow.indexOf("node tests/architecture/seaweedfs-s3-contract.mjs");
-  const start = workflow.indexOf("name: Start SeaweedFS");
+  const start = workflow.indexOf("name: Start SeaweedFS and require");
   assert.equal(pnpmSetup > 0 && nodeSetup > pnpmSetup, true);
   assert.equal(install > nodeSetup, true);
   assert.equal(contract > install, true);
-  const startup = workflow.slice(start, pnpmSetup);
+  assert.equal(start > install, true);
+  const startup = workflow.slice(start, contract);
   assert.match(startup, /curl -fsS http:\/\/127\.0\.0\.1:9000\/status/);
   assert.match(startup, /ensure_bucket\.py/);
   assert.match(startup, /start-storage\.sh/);
@@ -91,7 +92,7 @@ test("object migration refuses to delete historical volumes", () => {
   assert.equal(backup.includes("minio-data"), false);
   assert.equal(restore.includes("volume rm"), false);
   const rejected = spawnSync(
-    "python3",
+    process.env.TEST_PYTHON ?? "python3",
     [path.join(root, "infra/scripts/migrate-minio-objects.py"), "--delete-volumes"],
     { encoding: "utf8" },
   );

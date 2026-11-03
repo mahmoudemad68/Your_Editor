@@ -14,6 +14,7 @@ import {
 } from "./ffmpeg-edit.js";
 import { FfmpegExecutor } from "./ffmpeg-executor.js";
 import { FFprobeMediaProbe } from "./ffprobe-adapter.js";
+import { buildFfmpegArgs } from "./ffmpeg-builder.js";
 test("fixed media edits bound dimensions, speed, audio and malformed measurements", () => {
   const source = {
     path: "/tmp/source.mp4",
@@ -84,6 +85,7 @@ test("spatial audio clocks are mandatory, bounded, independent, and never padded
     assert.match(filter, /atrim=end_sample=310656/);
     assert.doesNotMatch(filter, /apad/);
     assert.ok(!args.includes("-shortest"));
+    assert.ok(!args.includes("-t"), "Spatial edits must retain independent genuine audio tails");
     assert.equal(editOutputTiming({ ...source, audioSamples: 240000n }, edit).totalFrames, 179);
   }
 });
@@ -226,8 +228,67 @@ test(
           const output = path.join(work, `out-${i}.mp4`),
             timing = editOutputTiming(source, edit),
             args = buildVideoEditArgs(source, edit, output);
-          await new FfmpegExecutor().execute(args, { timeoutMs: 15000 });
+          let lastFrame = 0;
+          const started = Date.now();
+          try {
+            await new FfmpegExecutor().execute(args, {
+              timeoutMs: 15000,
+              onProgress: (p) => {
+                lastFrame = p.frame;
+              },
+            });
+          } catch (error) {
+            console.error(
+              "EDIT_FFMPEG_FAILURE",
+              JSON.stringify({
+                operation: edit.operation,
+                elapsedMs: Date.now() - started,
+                lastFrame,
+                expectedFrames: timing.totalFrames,
+                videoRecipe: args[args.indexOf("-vf") + 1],
+                audioRecipe: args[args.indexOf("-af") + 1],
+                runtime: spawnSync("ffmpeg", ["-version"], {
+                  encoding: "utf8",
+                  timeout: 2000,
+                }).stdout?.split("\n")[0],
+              }),
+            );
+            throw error;
+          }
           const p = await new FFprobeMediaProbe().inspect({ filePath: output });
+          assert.equal(
+            await new FFprobeMediaProbe().countDecodedVideoFrames({ filePath: output }),
+            timing.totalFrames,
+          );
+          let pcmBytes = 0;
+          await new FfmpegExecutor().execute(
+            buildFfmpegArgs({
+              input: { path: output },
+              output: {
+                format: "f32le",
+                maps: ["0:a:0"],
+                audioEncoder: "pcm_f32le",
+                sampleRate: 48000,
+                channels: 1,
+              },
+            }),
+            {
+              timeoutMs: 15000,
+              maxStdoutBytes: Number((timing.audioSamples + 1024n) * 4n),
+              onStdout: (c) => {
+                pcmBytes += c.length;
+              },
+            },
+          );
+          assert.equal(pcmBytes % 4, 0);
+          assert.ok(
+            BigInt(pcmBytes / 4) >= timing.audioSamples - 1n,
+            "Every authored output audio sample must survive",
+          );
+          assert.ok(
+            BigInt(pcmBytes / 4) <= timing.audioSamples + 1023n,
+            "Only bounded AAC packet padding is allowed",
+          );
           assert.equal(p.width, timing.width);
           assert.equal(p.height, timing.height);
           assert.equal(p.videoCodec, "h264");
