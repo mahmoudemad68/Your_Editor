@@ -303,6 +303,10 @@ export function candidateFixture({ context, fileBytes, lock = sampleLock() } = {
     "actions/runs/130": upstream,
     "actions/workflows/pc100-artifact-integration.yml": { id: 99, path: upstream.path },
   };
+  Object.defineProperty(rows, "rules/branches/main?per_page=100&page=1", {
+    enumerable: true,
+    get: () => rows["rules/branches/main"],
+  });
   rows["branches/main/protection"] = {
     enforce_admins: { enabled: true },
     required_status_checks: { strict: true },

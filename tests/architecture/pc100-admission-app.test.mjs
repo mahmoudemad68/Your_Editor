@@ -549,3 +549,38 @@ test("S1 actual GitHub list shape lacks merged; authoritative detail is fetched 
     out = await reconcileAppCycle(c.read, config);
   assert.equal(out.find((r) => r.pr === 104).conclusion, "neutral");
 });
+
+test("S5 every effective-rule page is inspected, including a later bypass ruleset", async () => {
+  const f = candidateFixture();
+  f.rows["rules/branches/main"].push(
+    ...Array.from({ length: 99 }, (_, i) => ({
+      type: "deletion",
+      ruleset_id: 77,
+      source_index: i,
+    })),
+  );
+  f.rows["rules/branches/main?per_page=100&page=2"] = [{ type: "deletion", ruleset_id: 78 }];
+  f.rows["rulesets/78"] = {
+    id: 78,
+    enforcement: "active",
+    target: "branch",
+    bypass_actors: [{ actor_type: "RepositoryRole", actor_id: 1, bypass_mode: "always" }],
+  };
+  const c = client(f);
+  const result = await reconcileAppCheck(c.read, config);
+  assert.equal(result.conclusion, "failure");
+  assert.equal(result.outcome, "CANDIDATE_PROTECTION_BYPASS");
+});
+test("S5 missing next rule page is never treated as complete enforcement", async () => {
+  const f = candidateFixture();
+  f.rows["rules/branches/main"].push(
+    ...Array.from({ length: 99 }, (_, i) => ({
+      type: "deletion",
+      ruleset_id: 77,
+      source_index: i,
+    })),
+  );
+  const c = client(f);
+  assert.equal((await reconcileAppCheck(c.read, config)).conclusion, "failure");
+  assert.ok(c.writes.every((w) => w.body.conclusion !== "success"));
+});

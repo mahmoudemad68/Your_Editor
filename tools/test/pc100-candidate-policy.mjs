@@ -440,7 +440,7 @@ export function validateEnforcementRules(rules, app) {
   return true;
 }
 export async function verifyEnforcement(read, app) {
-  const rules = await read("rules/branches/main");
+  const rules = await completePages(read, "rules/branches/main");
   validateEnforcementRules(rules, app);
   const protection = await read("branches/main/protection");
   need(
