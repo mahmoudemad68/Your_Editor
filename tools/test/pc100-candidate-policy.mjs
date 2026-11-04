@@ -439,6 +439,73 @@ export function validateEnforcementRules(rules, app) {
   need(matching.length === 1, "CANDIDATE_ENFORCEMENT_NOT_INSTALLED");
   return true;
 }
+export async function verifyEnforcement(read, app) {
+  const rules = await read("rules/branches/main");
+  validateEnforcementRules(rules, app);
+  const protection = await read("branches/main/protection");
+  need(
+    protection?.enforce_admins?.enabled === true &&
+      protection.required_status_checks?.strict === true &&
+      Number.isSafeInteger(
+        protection.required_pull_request_reviews?.required_approving_review_count,
+      ) &&
+      protection.required_pull_request_reviews.required_approving_review_count >= 1 &&
+      protection.allow_force_pushes?.enabled === false &&
+      protection.allow_deletions?.enabled === false,
+    "CANDIDATE_PROTECTION_UNVERIFIABLE",
+  );
+  const existing = rules
+    .filter((r) => r.type === "required_status_checks")
+    .flatMap((r) => r.parameters?.required_status_checks ?? []);
+  need(
+    ["ci", "supply-chain-security"].every((name) =>
+      existing.some((c) => c.context === name && c.integration_id === 15368),
+    ),
+    "CANDIDATE_EXISTING_CHECKS_REMOVED",
+  );
+  const allowances = protection.required_pull_request_reviews?.bypass_pull_request_allowances;
+  if (allowances !== undefined) {
+    need(
+      ["users", "teams", "apps"].every(
+        (k) => Array.isArray(allowances[k]) && allowances[k].length === 0,
+      ),
+      "CANDIDATE_PROTECTION_BYPASS",
+    );
+  }
+  const ids = new Set(rules.map((r) => r.ruleset_id));
+  need(ids.size > 0 && [...ids].every(id), "CANDIDATE_PROTECTION_UNVERIFIABLE");
+  for (const i of ids) {
+    const r = await read(`rulesets/${i}`);
+    need(
+      r.id === i &&
+        r.enforcement === "active" &&
+        r.target === "branch" &&
+        Array.isArray(r.bypass_actors) &&
+        r.bypass_actors.length === 0,
+      "CANDIDATE_PROTECTION_BYPASS",
+    );
+  }
+  return true;
+}
+/** PR-local diagnostics only. A PR workflow runs from the test merge, not B. */
+export function validatePRWorkflowEnvironment(event, trustedSHA, env) {
+  const p = event.pull_request;
+  need(
+    env.GITHUB_EVENT_NAME === "pull_request" &&
+      env.GITHUB_REPOSITORY === REPO &&
+      sha(trustedSHA) &&
+      p?.base?.sha === trustedSHA &&
+      sha(p?.head?.sha) &&
+      Number.isSafeInteger(p.number) &&
+      p.number > 0 &&
+      sha(env.GITHUB_SHA) &&
+      env.GITHUB_SHA === p.merge_commit_sha &&
+      env.GITHUB_WORKFLOW_SHA === env.GITHUB_SHA &&
+      env.GITHUB_WORKFLOW_REF === `${REPO}/${REQUIRED_WORKFLOW}@refs/pull/${p.number}/merge`,
+    "CANDIDATE_REQUIRED_WORKFLOW_UNTRUSTED",
+  );
+  return { H: p.head.sha, B: trustedSHA, M: env.GITHUB_SHA, workflow_sha: env.GITHUB_WORKFLOW_SHA };
+}
 export async function waitForQualifiedUpstream(
   read,
   pr,
@@ -478,13 +545,7 @@ export async function verifyRequiredAdmission(
   read = api,
   timing = { now: Date.now, sleep },
 ) {
-  need(
-    env.GITHUB_EVENT_NAME === "pull_request" &&
-      env.GITHUB_WORKFLOW_SHA === trustedSHA &&
-      env.GITHUB_REPOSITORY === REPO &&
-      sha(trustedSHA),
-    "CANDIDATE_REQUIRED_WORKFLOW_UNTRUSTED",
-  );
+  validatePRWorkflowEnvironment(event, trustedSHA, env);
   need(
     event.pull_request?.number === 100 && event.pull_request.head?.repo?.id === REPOSITORY_ID,
     "CANDIDATE_EVENT_REJECTED",
@@ -662,7 +723,7 @@ async function snapshot(context, read) {
   const app = validateAppConfig(
     readPolicyJSON(await authenticatedBlob(read, entries.get(APP_CONFIG))),
   );
-  validateEnforcementRules(await read("rules/branches/main"), app);
+  await verifyEnforcement(read, app);
   const registryBytes = await authenticatedBlob(read, entries.get(REGISTRY)),
     registry = readPolicyJSON(registryBytes);
   need(

@@ -22,6 +22,7 @@ import {
   validateEnforcementRules,
   REQUIRED_WORKFLOW,
   verifyRequiredAdmission,
+  validatePRWorkflowEnvironment,
   withoutQualificationCredentials,
 } from "../../tools/test/pc100-candidate-policy.mjs";
 import { selectUpstreamRun, canonical, hash } from "../../tools/test/pc100-source-verifier.mjs";
@@ -599,7 +600,8 @@ function requiredEnvironment(f) {
   return {
     GITHUB_EVENT_NAME: "pull_request",
     GITHUB_REPOSITORY: "mahmoudemad68/Your_Editor",
-    GITHUB_WORKFLOW_SHA: f.context.B,
+    GITHUB_WORKFLOW_SHA: f.context.M,
+    GITHUB_WORKFLOW_REF: "mahmoudemad68/Your_Editor/" + REQUIRED_WORKFLOW + "@refs/pull/100/merge",
     GITHUB_RUN_ID: "140",
     GITHUB_RUN_ATTEMPT: "1",
     GITHUB_SHA: f.context.M,
@@ -712,4 +714,29 @@ test("A-2 actual complete Git-object batch authenticates every file without per-
   const first = Object.keys(files)[0];
   files[first].sha256 = "0".repeat(64);
   assert.throws(() => readGitSourceBytes(H, files), /CANDIDATE_SOURCE_SHA256_MISMATCH/);
+});
+
+test("S2 native PR semantics bind workflow source to M while checkout is B", () => {
+  const f = candidateFixture(),
+    env = requiredEnvironment(f);
+  assert.equal(
+    validatePRWorkflowEnvironment({ pull_request: f.snapshot.pr }, f.context.B, env).M,
+    f.context.M,
+  );
+  for (const edit of [
+    (e) => (e.GITHUB_WORKFLOW_SHA = f.context.B),
+    (e) => (e.GITHUB_WORKFLOW_SHA = f.context.H),
+    (e) => (e.GITHUB_SHA = f.context.H),
+    (e) =>
+      (e.GITHUB_WORKFLOW_REF =
+        "mahmoudemad68/Your_Editor/" + REQUIRED_WORKFLOW + "@refs/heads/main"),
+    (e) => (e.GITHUB_REPOSITORY = "attacker/repo"),
+  ]) {
+    const bad = { ...env };
+    edit(bad);
+    assert.throws(
+      () => validatePRWorkflowEnvironment({ pull_request: f.snapshot.pr }, f.context.B, bad),
+      /CANDIDATE_REQUIRED_WORKFLOW_UNTRUSTED/,
+    );
+  }
 });

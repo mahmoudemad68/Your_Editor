@@ -1,4 +1,4 @@
-name: PC100 independently enforced admission
+name: PC100 admission diagnostics
 on:
   pull_request:
     branches: [main]
@@ -20,7 +20,19 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
           node-version: "24"
-      - name: Require independently installed exact-HEAD enforcement
+      - name: Observe actual native PR workflow identity (diagnostic only)
+        env:
+          EVENT_H: ${{ github.event.pull_request.head.sha }}
+          EVENT_B: ${{ github.event.pull_request.base.sha }}
+          EVENT_M: ${{ github.event.pull_request.merge_commit_sha }}
+        run: |
+          set -euo pipefail
+          printf 'PR_WORKFLOW_IDENTITY H=%s B=%s M=%s WORKFLOW_SHA=%s CHECKOUT=%s\n' "$EVENT_H" "$EVENT_B" "$EVENT_M" "$GITHUB_WORKFLOW_SHA" "$(git rev-parse HEAD)"
+          test "$(git rev-parse HEAD)" = "$EVENT_B"
+          test "$GITHUB_SHA" = "$EVENT_M"
+          test "$GITHUB_WORKFLOW_SHA" = "$EVENT_M"
+          test "$GITHUB_WORKFLOW_REF" = "$GITHUB_REPOSITORY/.github/workflows/pc100-required-admission.yml@refs/pull/${{ github.event.pull_request.number }}/merge"
+      - name: Inspect independently installed candidate policy (not independent enforcement)
         if: github.event.pull_request.number == 100
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -28,5 +40,4 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$TRUSTED_WORKFLOW_SHA"
-          test "$GITHUB_WORKFLOW_SHA" = "$TRUSTED_WORKFLOW_SHA"
           node tools/test/pc100-candidate-policy.mjs required

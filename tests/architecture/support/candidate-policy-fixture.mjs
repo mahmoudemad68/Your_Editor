@@ -257,9 +257,14 @@ export function candidateFixture({ context, fileBytes, lock = sampleLock() } = {
     "rules/branches/main": [
       {
         type: "required_status_checks",
+        ruleset_id: 77,
         parameters: {
           strict_required_status_checks_policy: true,
-          required_status_checks: [{ context: APP_CHECK, integration_id: app.app_id }],
+          required_status_checks: [
+            { context: APP_CHECK, integration_id: app.app_id },
+            { context: "ci", integration_id: 15368 },
+            { context: "supply-chain-security", integration_id: 15368 },
+          ],
         },
       },
     ],
@@ -298,6 +303,14 @@ export function candidateFixture({ context, fileBytes, lock = sampleLock() } = {
     "actions/runs/130": upstream,
     "actions/workflows/pc100-artifact-integration.yml": { id: 99, path: upstream.path },
   };
+  rows["branches/main/protection"] = {
+    enforce_admins: { enabled: true },
+    required_status_checks: { strict: true },
+    required_pull_request_reviews: { required_approving_review_count: 1 },
+    allow_force_pushes: { enabled: false },
+    allow_deletions: { enabled: false },
+  };
+  rows["rulesets/77"] = { id: 77, enforcement: "active", target: "branch", bypass_actors: [] };
   rows[
     `actions/workflows/pc100-artifact-integration.yml/runs?event=pull_request&head_sha=${c.H}&per_page=100&page=1`
   ] = { total_count: 1, workflow_runs: [upstream] };

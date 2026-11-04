@@ -1,5 +1,6 @@
 /** Hermetic App API/crypto tests. Never an installation or security-policy approval. */
 import { test } from "node:test";
+import { spawnSync } from "node:child_process";
 import assert from "node:assert/strict";
 import { generateKeyPairSync, verify } from "node:crypto";
 import { Buffer } from "node:buffer";
@@ -15,6 +16,8 @@ import {
   installationClient,
   reconcileAppCheck,
   appRequest,
+  reconcileAppCycle,
+  validateAppRoute,
 } from "../../tools/test/pc100-admission-app.mjs";
 import {
   APP_CHECK,
@@ -132,7 +135,7 @@ test("real policy evaluator issues dedicated exact-H check, never production rel
   const outcome = await reconcileAppCheck(c.read, config);
   assert.equal(outcome.conclusion, "success");
   assert.equal(outcome.H, f.context.H);
-  assert.equal(JSON.parse(c.writes[0].body.output.summary).release_authorized, false);
+  assert.equal(JSON.parse(c.writes.at(-1).body.output.summary).release_authorized, false);
   assert.equal((await observeCandidateAdmission(f.context, c.read)).enforcement.app, config.app_id);
 });
 for (const [label, edit] of [
@@ -259,4 +262,279 @@ test("App HTTP transport is fixed-origin bounded and does not follow redirects",
   } finally {
     globalThis.fetch = saved;
   }
+});
+
+test("S5 encoded traversal is rejected before any network or credential use", async () => {
+  const saved = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls++;
+    throw Error("network must not run");
+  };
+  try {
+    for (const route of [
+      "/repos/mahmoudemad68/Your_Editor/%2e%2e/other",
+      "/repos/mahmoudemad68/Your_Editor/%252e%252e/other",
+      "/repos/mahmoudemad68/Your_Editor/pulls%2f100",
+      "/repos/mahmoudemad68/Your_Editor/pulls/100#fragment",
+      "/repos/mahmoudemad68/Your_Editor/pulls/100?unexpected=1",
+    ])
+      await assert.rejects(() => appRequest(route, "synthetic"), /APP_ROUTE_REJECTED/);
+    assert.equal(calls, 0);
+  } finally {
+    globalThis.fetch = saved;
+  }
+});
+
+test("S5 external host rejects loader, proxy and unknown credential variables", () => {
+  for (const name of [
+    "LD_PRELOAD",
+    "LD_LIBRARY_PATH",
+    "HTTPS_PROXY",
+    "https_proxy",
+    "NODE_EXTRA_CA_CERTS",
+    "SSL_CERT_FILE",
+    "ARBITRARY_SECRET",
+  ])
+    assert.throws(() => assertExternalHost({ [name]: "false" }));
+});
+
+function unrelated(f, number) {
+  const pr = {
+    ...f.snapshot.pr,
+    number,
+    draft: false,
+    merged: false,
+    state: "open",
+    head: { ...f.snapshot.pr.head, sha: String(number).padStart(40, "0") },
+  };
+  f.rows[`pulls/${number}`] = pr;
+  f.rows[
+    `commits/${pr.head.sha}/check-runs?check_name=${encodeURIComponent(APP_CHECK)}&filter=all&per_page=100&page=1`
+  ] = { total_count: 0, check_runs: [] };
+  return pr;
+}
+test("S1 unrelated registry PR receives authenticated neutral, never candidate admission", async () => {
+  const f = candidateFixture();
+  unrelated(f, 104);
+  const c = client(f);
+  const result = await reconcileAppCheck(
+    c.read,
+    config,
+    () => {
+      throw Error("must not authorize");
+    },
+    104,
+  );
+  assert.equal(result.conclusion, "neutral");
+  const decision = JSON.parse(c.writes.at(-1).body.output.summary);
+  assert.equal(decision.pr, 104);
+  assert.equal(decision.candidate_admission_authorized, false);
+  assert.equal(decision.release_authorized, false);
+});
+
+for (const number of [1, 99, 101, 104, 200])
+  for (const merged of [false, true])
+    test(`S1 PR ${number} (registry/Dependabot) remains neutral after PR100 merged=${merged}`, async () => {
+      const f = candidateFixture();
+      f.snapshot.pr.merged = merged;
+      f.snapshot.pr.state = merged ? "closed" : "open";
+      const p = unrelated(f, number),
+        c = client(f);
+      const result = await reconcileAppCheck(
+        c.read,
+        config,
+        () => assert.fail("must not authorize"),
+        number,
+      );
+      assert.equal(result.conclusion, "neutral");
+      const body = c.writes.at(-1).body;
+      assert.equal(body.name, APP_CHECK);
+      assert.equal(body.head_sha, p.head.sha);
+      const d = JSON.parse(body.output.summary);
+      assert.equal(d.pr, number);
+      assert.equal(d.candidate_admission_authorized, false);
+      assert.equal(d.release_authorized, false);
+    });
+for (const edit of [
+  (p) => (p.number = 100),
+  (p) => (p.base.ref = "untrusted"),
+  (p) => (p.base.repo.id = 1),
+])
+  test("S1 unrelated PR cannot spoof number or repository", async () => {
+    const f = candidateFixture();
+    f.rows["pulls/104"] = globalThis.structuredClone(unrelated(f, 104));
+    edit(f.rows["pulls/104"]);
+    const c = client(f);
+    await assert.rejects(() => reconcileAppCheck(c.read, config, undefined, 104), /APP_LIVE_DRIFT/);
+    assert.equal(c.writes.length, 0);
+  });
+for (const conclusion of ["neutral", "skipped"])
+  test(`S1 GitHub-acceptable ${conclusion} is never accepted as candidate authority`, async () => {
+    const f = candidateFixture();
+    f.rows["check-runs/143"].conclusion = conclusion;
+    await assert.rejects(
+      () => observeCandidateAdmission(f.context, f.read),
+      /CANDIDATE_REQUIRED_CHECK_DRIFT/,
+    );
+  });
+for (const edit of [
+  (p) => (p.state = "closed"),
+  (p) => (p.draft = false),
+  (p) => {
+    p.merged = true;
+    p.state = "closed";
+  },
+])
+  test("S4 close/undraft/merge invalidates old positive before further evaluation", async () => {
+    const f = candidateFixture();
+    edit(f.snapshot.pr);
+    const c = client(f);
+    assert.equal((await reconcileAppCheck(c.read, config)).conclusion, "failure");
+    assert.equal(c.writes[0].body.conclusion, "failure");
+    assert.ok(c.writes.every((w) => w.body.conclusion !== "success"));
+  });
+test("S4 API/policy failure cannot preserve previous successful check", async () => {
+  const f = candidateFixture(),
+    c = client(f);
+  let called = false;
+  const r = await reconcileAppCheck(c.read, config, async () => {
+    called = true;
+    assert.equal(c.writes[0].body.conclusion, "failure");
+    throw Error("POLICY_REVOKED");
+  });
+  assert.equal(called, true);
+  assert.equal(r.conclusion, "failure");
+});
+test("S4 policy revocation between decision and check publication revokes success", async () => {
+  const f = candidateFixture(),
+    c = client(f);
+  let n = 0;
+  await assert.rejects(
+    () =>
+      reconcileAppCheck(c.read, config, async () => ({
+        ...f.decision,
+        registry_sha256: (++n === 1 ? "1" : "2").repeat(64),
+      })),
+    /APP_POLICY_REVOKED/,
+  );
+  assert.equal(c.writes.at(-1).body.conclusion, "failure");
+  assert.equal(n, 2);
+});
+for (const field of ["sha", "merge_commit_sha"])
+  test(`S4 ${field} race after write invalidates the check`, async () => {
+    const f = candidateFixture();
+    let n = 0;
+    const c = client(f, {
+      afterWrite: (b) => {
+        if (b.conclusion === "success" && !n++) {
+          if (field === "sha") f.snapshot.pr.base.sha = "9".repeat(40);
+          else f.snapshot.pr.merge_commit_sha = "9".repeat(40);
+        }
+      },
+    });
+    await assert.rejects(() => reconcileAppCheck(c.read, config), /APP_LIVE_DRIFT/);
+    assert.equal(c.writes.at(-1).body.conclusion, "failure");
+  });
+test("S4 a tracked old-head check is invalidated before reconciling a new head", async () => {
+  const f = candidateFixture();
+  const oldH = "9".repeat(40);
+  const tracked = new Map([[104, { check: 144, H: oldH, B: f.context.B, M: f.context.M }]]);
+  unrelated(f, 104);
+  f.rows["pulls?state=open&base=main&per_page=100&page=1"] = [f.rows["pulls/104"]];
+  const c = client(f);
+  const out = await reconcileAppCycle(c.read, config, tracked);
+  const revoked = c.writes.findIndex((w) => w.route === "check-runs/144");
+  const accepted = c.writes.findIndex((w) => w.body.conclusion === "neutral");
+  assert.ok(revoked >= 0 && accepted > revoked);
+  assert.equal(c.writes[revoked].body.conclusion, "failure");
+  assert.equal(out.find((x) => x.pr === 104).conclusion, "neutral");
+});
+for (const edit of [
+  (f) =>
+    (f.rows["rulesets/77"].bypass_actors = [
+      { actor_id: 1, actor_type: "RepositoryRole", bypass_mode: "always" },
+    ]),
+  (f) => delete f.rows["rulesets/77"].bypass_actors,
+  (f) => (f.rows["branches/main/protection"].enforce_admins.enabled = false),
+  (f) =>
+    (f.rows["branches/main/protection"].required_pull_request_reviews = {
+      required_approving_review_count: 1,
+      bypass_pull_request_allowances: { users: [{ id: 1 }], teams: [], apps: [] },
+    }),
+])
+  test("S5 bypass or unverifiable protection never yields App authorization", async () => {
+    const f = candidateFixture();
+    edit(f);
+    const c = client(f);
+    assert.equal((await reconcileAppCheck(c.read, config)).conclusion, "failure");
+    assert.ok(c.writes.every((w) => w.body.conclusion !== "success"));
+  });
+test("S5 App read routes and queries are closed; writes limited to tokens/checks", () => {
+  for (const r of [
+    "/app",
+    "/installation/repositories",
+    "/repos/mahmoudemad68/Your_Editor/branches/main/protection",
+    "/repos/mahmoudemad68/Your_Editor/pulls?state=open&base=main&per_page=100&page=1",
+  ])
+    validateAppRoute(r);
+  for (const [r, m] of [
+    ["/repos/mahmoudemad68/Your_Editor/issues/1", "GET"],
+    ["/repos/mahmoudemad68/Your_Editor/pulls/100", "PATCH"],
+    ["/app?x=1", "GET"],
+    ["/repos/mahmoudemad68/Your_Editor/pulls?state=open&state=closed", "GET"],
+  ])
+    assert.throws(() => validateAppRoute(r, m), /APP_ROUTE_REJECTED/);
+});
+
+test("S1 same-H unrelated PR can never overwrite candidate check with neutral", async () => {
+  const f = candidateFixture();
+  f.rows["pulls/104"] = { ...f.snapshot.pr, number: 104 };
+  const c = client(f);
+  const r = await reconcileAppCheck(c.read, config, undefined, 104);
+  assert.equal(r.conclusion, "failure");
+  assert.equal(r.outcome, "APP_HEAD_SHARED_WITH_CANDIDATE");
+  assert.ok(c.writes.every((w) => w.body.conclusion !== "neutral"));
+});
+test("S5 actual CLI rejects unsafe host environment before any key-file access", () => {
+  const r = spawnSync(
+    process.execPath,
+    [
+      path.resolve(import.meta.dirname, "../../tools/test/pc100-admission-app.mjs"),
+      "--once",
+      "/nonexistent-key-never-read",
+    ],
+    {
+      env: { PATH: process.env.PATH, HTTPS_PROXY: "private-marker-must-not-leak" },
+      encoding: "utf8",
+      timeout: 5000,
+    },
+  );
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /APP_HOST_ENV_REJECTED/);
+  assert.doesNotMatch(r.stderr, /private-marker|ENOENT|nonexistent-key/);
+});
+
+test("S5 independent context cannot waive original CI/Supply or review requirements", async () => {
+  for (const edit of [
+    (f) => f.rows["rules/branches/main"][0].parameters.required_status_checks.pop(),
+    (f) =>
+      (f.rows[
+        "branches/main/protection"
+      ].required_pull_request_reviews.required_approving_review_count = 0),
+    (f) => (f.rows["branches/main/protection"].required_status_checks.strict = false),
+  ]) {
+    const f = candidateFixture();
+    edit(f);
+    const c = client(f);
+    assert.equal((await reconcileAppCheck(c.read, config)).conclusion, "failure");
+  }
+});
+test("S4 expired positive is never current candidate evidence", async () => {
+  const f = candidateFixture();
+  f.rows["check-runs/143"].completed_at = new Date(Date.now() - 601000).toISOString();
+  await assert.rejects(
+    () => observeCandidateAdmission(f.context, f.read),
+    /CANDIDATE_APP_EVIDENCE_EXPIRED/,
+  );
 });

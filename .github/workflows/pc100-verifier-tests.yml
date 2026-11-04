@@ -7,6 +7,8 @@ on:
       - .github/workflows/pc100-source-verifier.yml
       - .github/workflows/pc100-verifier-tests.yml
       - tools/test/pc100-candidate-policy.mjs
+      - tools/test/pc100-bootstrap-preflight.mjs
+      - tests/architecture/pc100-bootstrap-preflight.test.mjs
       - tools/test/pc100-admission-app.mjs
       - infra/seaweedfs/candidate-app.json
       - tests/architecture/pc100-admission-app.test.mjs
@@ -23,6 +25,8 @@ on:
       - .github/workflows/pc100-source-verifier.yml
       - .github/workflows/pc100-verifier-tests.yml
       - tools/test/pc100-candidate-policy.mjs
+      - tools/test/pc100-bootstrap-preflight.mjs
+      - tests/architecture/pc100-bootstrap-preflight.test.mjs
       - tools/test/pc100-admission-app.mjs
       - infra/seaweedfs/candidate-app.json
       - tests/architecture/pc100-admission-app.test.mjs
@@ -56,3 +60,4 @@ jobs:
           tests/architecture/pc100-source-verifier-adversarial.test.mjs
           tests/architecture/pc100-candidate-policy.test.mjs
           tests/architecture/pc100-admission-app.test.mjs
+          tests/architecture/pc100-bootstrap-preflight.test.mjs
