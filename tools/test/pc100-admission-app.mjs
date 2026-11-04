@@ -382,7 +382,16 @@ async function reconcileCycle(read, config, tracked) {
   const numbers = new Set([100, ...tracked.keys()]);
   const seen = new Set();
   for (const p of listed) {
-    contextOf(p, p.number);
+    // The list endpoint has merged_at, not the single-PR merged boolean.
+    // Treat it only as enumeration; each decision fetches authoritative detail.
+    need(
+      Number.isSafeInteger(p.number) &&
+        p.number > 0 &&
+        p.state === "open" &&
+        p.base?.ref === "main" &&
+        p.base.repo?.id === REPOSITORY_ID,
+      "APP_LIVE_DRIFT",
+    );
     need(!seen.has(p.number), "APP_DUPLICATE_PR");
     seen.add(p.number);
     numbers.add(p.number);

@@ -499,7 +499,6 @@ export function validatePRWorkflowEnvironment(event, trustedSHA, env) {
       Number.isSafeInteger(p.number) &&
       p.number > 0 &&
       sha(env.GITHUB_SHA) &&
-      env.GITHUB_SHA === p.merge_commit_sha &&
       env.GITHUB_WORKFLOW_SHA === env.GITHUB_SHA &&
       env.GITHUB_WORKFLOW_REF === `${REPO}/${REQUIRED_WORKFLOW}@refs/pull/${p.number}/merge`,
     "CANDIDATE_REQUIRED_WORKFLOW_UNTRUSTED",

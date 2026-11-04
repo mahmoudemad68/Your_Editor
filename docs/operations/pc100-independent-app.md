@@ -115,7 +115,12 @@ and UI source selection remain NOT_VERIFIED until independently exercised.
 
 `pc100-required-admission.yml` is named **PC100 admission diagnostics**. It is
 PR-controlled and is never the independent authority. A native pull_request uses
-the merge ref M for `GITHUB_SHA` and `GITHUB_WORKFLOW_SHA`; checkout of trusted B
+the actual merge ref M for `GITHUB_SHA` and `GITHUB_WORKFLOW_SHA`. The synchronize
+event payload `pull_request.merge_commit_sha` can still carry the previous M; it
+is logged as an annotation only. Read-only fetching the actual immutable workflow
+commit proves parents [B,H] and TREE(M)=TREE(H), without checking out/executing PR
+source. Protected-main candidate verification independently checks current live M.
+Checkout of trusted B
 does not change those variables. The diagnostic validates this real environment,
 logs only H/B/M/workflow/checkout SHAs, then invokes protected-main code only for
 PR100. The actual required source is the external App, never this Actions check.

@@ -740,3 +740,25 @@ test("S2 native PR semantics bind workflow source to M while checkout is B", () 
     );
   }
 });
+
+test("S2 actual synchronize event may carry previous merge annotation while trusted environment binds fresh M", async () => {
+  const f = candidateFixture(),
+    event = { pull_request: { ...f.snapshot.pr, merge_commit_sha: "8".repeat(40) } };
+  assert.equal(
+    validatePRWorkflowEnvironment(event, f.context.B, requiredEnvironment(f)).M,
+    f.context.M,
+  );
+  const result = await verifyRequiredAdmission(event, f.context.B, requiredEnvironment(f), f.read, {
+    now: () => 0,
+    sleep: async () => assert.fail("no waiting"),
+  });
+  assert.equal(result.M, f.context.M);
+});
+test("S2 agreeing forged workflow/SHA values cannot replace actual live merge identity", async () => {
+  const f = candidateFixture(),
+    env = { ...requiredEnvironment(f), GITHUB_SHA: f.context.H, GITHUB_WORKFLOW_SHA: f.context.H };
+  await assert.rejects(
+    () => verifyRequiredAdmission({ pull_request: f.snapshot.pr }, f.context.B, env, f.read),
+    /CANDIDATE_IDENTITY_DRIFT/,
+  );
+});

@@ -538,3 +538,14 @@ test("S4 expired positive is never current candidate evidence", async () => {
     /CANDIDATE_APP_EVIDENCE_EXPIRED/,
   );
 });
+
+test("S1 actual GitHub list shape lacks merged; authoritative detail is fetched before neutral", async () => {
+  const f = candidateFixture(),
+    p = unrelated(f, 104),
+    listed = { ...p, merged_at: null };
+  delete listed.merged;
+  f.rows["pulls?state=open&base=main&per_page=100&page=1"] = [listed];
+  const c = client(f),
+    out = await reconcileAppCycle(c.read, config);
+  assert.equal(out.find((r) => r.pr === 104).conclusion, "neutral");
+});
