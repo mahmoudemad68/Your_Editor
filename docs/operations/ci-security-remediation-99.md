@@ -98,7 +98,7 @@ Reproduce on Linux with the pinned project toolchain:
 ```sh
 pnpm install --frozen-lockfile
 node --test tests/architecture/ffmpeg-download.test.mjs tests/architecture/seaweedfs-object-storage.test.mjs
-node tests/architecture/seaweedfs-s3-contract.mjs --verify-backup
+pnpm test:walking-skeleton --verify-failure
 pnpm render:test --graduation-demo
 ```
 
@@ -116,3 +116,17 @@ acceptance. PR100 and PR103 remain separate Drafts; no protection is changed.
 References: [upstream SeaweedFS4.51](https://github.com/seaweedfs/seaweedfs/releases/tag/4.51),
 [Alpine Brotli advisory](https://security.alpinelinux.org/vuln/CVE-2026-111497),
 [curl retry semantics](https://curl.se/docs/manpage.html#--retry-all-errors).
+
+Independent QA rejected frozen `400df54` with RouteA-F1: the bare recovery flag
+could reach the helpers' default `editagent` volumes. That is a FAIL, despite its
+green native checks. The corrected entry rejects before S3 operations unless it
+verifies the exact reserved disposable `walking-skeleton` stack on the local
+Linux Docker socket: loopback endpoint/port, all four live container identities,
+Compose working-directory/config/service ownership, and each named data volume's
+ownership. It pins the helper environment to this checkout's Compose file with
+.env loading disabled and rechecks identity before backup and restore. Default,
+missing, ambiguous, remote, changed or production ownership fails closed. Use the
+Walking driver (which creates and disposes its test stack), never a bare restore
+flag on an existing operator stack. Hermetic tests exercise actual module control
+flow without storage effects; native Walking must additionally pass admission
+against real containers. No production backup/restore is authorized here.
