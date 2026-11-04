@@ -268,7 +268,7 @@ export function evaluateCandidatePolicy(s) {
   need(
     pr?.number === 100 &&
       pr.state === "open" &&
-      pr.draft === true &&
+      typeof pr.draft === "boolean" &&
       !pr.merged &&
       pr.head?.repo?.id === REPOSITORY_ID &&
       pr.base?.repo?.id === REPOSITORY_ID &&
@@ -927,7 +927,7 @@ async function live(read, c) {
       pr.base.sha === c.B &&
       pr.merge_commit_sha === c.M &&
       pr.state === "open" &&
-      pr.draft === true &&
+      typeof pr.draft === "boolean" &&
       !pr.merged,
     "CANDIDATE_LIVE_DRIFT",
   );

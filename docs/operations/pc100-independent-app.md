@@ -3,11 +3,21 @@
 The issuer is a dedicated GitHub App on an Owner-controlled **external Linux
 host**, never a PR runner. `pc100-admission-app.mjs` polls the actual PR, reads the
 protected-main registry and complete source inventory, authenticates the current
-native preflight run, and publishes only its own check on the exact product HEAD. Every other open main
-PR receives the same context with an authenticated neutral NOT_APPLICABLE record
-bound to live PR number/H/B/M and main, explicitly denying candidate/release admission.
-This includes registry, Dependabot and ordinary PRs, before and after PR100 merges.
-Only PR100 can enter candidate evaluation; neutral/skipped checks cannot authorize it.
+native preflight run, and publishes its own check on the exact product HEAD.
+PR numbers, authors and fork status do not exempt source. An authenticated neutral
+NOT_APPLICABLE is permitted only when the complete tracked path/mode/blob inventory
+is identical to protected main, with an immutable source-inventory digest and
+candidate/release authorization false. Every tracked file is conservatively in
+scope; unfamiliar extensions, additions and renamed dependencies are not exemptions.
+An otherwise ordinary changed-source PR remains blocked until its applicable
+independent source authorization exists. This conservative behavior must not be
+reported as qualified automatic classification of arbitrary unrelated source changes.
+All open PRs are paginated and grouped by actual head SHA. A fork alias at the
+canonical candidate SHA reuses the canonical source evaluation, not a fork policy
+or a competing failure/neutral. Changed source never acquires approval from its
+own hashes. Only PR100's reviewed registry path grants candidate qualification;
+neutral/skipped checks cannot authorize a candidate. Draft and Ready are lifecycle
+metadata, not policy approvals; exact source and security checks remain mandatory.
 Candidate qualification is separate from release authorization. The registry is
 still empty and `candidate-app.json` deliberately contains null identities.
 Publishing these files does not install or approve this gate.
@@ -93,15 +103,25 @@ from another App cannot satisfy the required source.
 
 ## Stale checks and hard limits
 
-Before each evaluation the issuer marks its previous exact-H check failed; it
-updates it only after current policy succeeds. It revalidates policy after writing
-success and marks failure on close/undraft/merge, H/B/M drift or policy revocation.
-The watch cycle covers every open main PR and tracks old heads, invalidating those
-checks on transitions. Installed-main drift invalidates tracked checks and exits.
-API or token outage can prevent revocation; a restarted process cannot recover
-all historic observations. Old-head checks cannot authorize a new HEAD, and
-consumers independently reject changed main, policy, H/B/M/trees and expired proof.
+Every poll revalidates source/policy. Stable valid checks are left untouched until
+the five-minute evidence refresh; no failure-to-success flip is emitted each poll.
+Failures revoke the previous positive, and a post-publication race is rechecked.
+Merged PRs end their lifecycle without creating failure checks. Closed unmerged
+or changed-head contexts are reconciled; shared-head aliases evaluate once.
 
+Before publishing a verdict, the Linux controller persists its context in a bounded
+owner-private journal beside the external key (`pc100-<app-id>-<installation-id>.checks.json`). Its parent
+must be owned by the controller, mode 0700; the journal is a regular single-link
+0600 file. Writes use an exclusive lock, unique temporary file, fsync and atomic
+rename. Busy/corrupt/unwritable journals prevent publication. Startup reconciles
+previously observed heads before new decisions, including after loss of in-memory
+tracking. SIGTERM/SIGINT attempt explicit revocation before stopping. A stale lock
+or unavailable API fails closed; it is not proof that remote revocation happened.
+The journal is tracking, never source approval or a substitute for App identity.
+Historical checks issued before this version without journal entries are not
+magically recovered and require independent audit before activating the issuer.
+
+Consumers independently reject changed main/policy/H/B/M/trees and expired proof.
 GitHub required checks have NO application-defined ten-minute native expiry.
 The consumer's ten-minute TTL does not expire GitHub's merge gate. There is a
 non-atomic window between API reads/writes, main/policy changes and merging, and
@@ -160,3 +180,23 @@ choice with before/after capture and immediate restoration; it is not authorized
 Sources: [GitHub required checks and expected App source](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets),
 [neutral/skipped semantics](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/troubleshooting-required-status-checks),
 [bypass-actor visibility](https://docs.github.com/en/rest/repos/rules).
+
+## N1–N6 repair qualification boundary
+
+The content, alias, Ready, polling and restart regressions are automated software
+checks. N2 live protection visibility remains BLOCKED: the shipped emitter token
+is still exactly contents/pull_requests/actions read and checks write (metadata
+read). It cannot be described as an Administration-read token. GitHub's branch
+protection GET requires Administration read, while full ruleset bypass visibility
+is separately restricted to write access to the ruleset. No Administration-write,
+PAT, omitted-bypass fallback, App permission change or live installation is added.
+The Owner must authorize a narrow independent read-only visibility boundary and
+its real authenticated responses must pass the existing complete rule/bypass
+checks before LIVE_A6_ENFORCED can be YES. If GitHub cannot expose those fields
+through that boundary, keep admission blocked; this code does not solve it by
+weakening checks. No native ten-minute merge TTL is claimed: issuer outage still
+leaves a residual non-atomic merge window requiring explicit Owner disposition.
+
+Route A is separately Owner-authorized on Draft PR105. Its native checks and QA
+are separate evidence, not an authorization to merge it, change protection or
+install this App. PR103's inherited main checks remain independently required.

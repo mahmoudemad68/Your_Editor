@@ -160,7 +160,7 @@ export async function selectUpstreamRun(read, pr) {
 export function verifySourceSnapshot(s) {
   const { pr, main, head, merge, baselineTree, headTree, trustedTree, upstream, trustedSHA } = s;
   need(
-    pr?.number === 100 && pr.state === "open" && pr.draft === true && !pr.merged,
+    pr?.number === 100 && pr.state === "open" && typeof pr.draft === "boolean" && !pr.merged,
     "POLICY_PR_STATE",
   );
   need(
@@ -416,7 +416,7 @@ export async function observeTrustedEvidence(context, read = api) {
       live.base.sha === context.B &&
       live.merge_commit_sha === context.M &&
       live.state === "open" &&
-      live.draft === true &&
+      typeof live.draft === "boolean" &&
       !live.merged,
     "POLICY_LIVE_DRIFT",
   );
@@ -545,7 +545,7 @@ export async function observeTrustedEvidence(context, read = api) {
       finalPR.base.sha === context.B &&
       finalPR.merge_commit_sha === context.M &&
       finalPR.state === "open" &&
-      finalPR.draft === true &&
+      typeof finalPR.draft === "boolean" &&
       !finalPR.merged,
     "POLICY_LIVE_DRIFT",
   );

@@ -109,7 +109,7 @@ test("trusted verifier independently compares frozen baseline and protected-defa
 });
 for (const [name, edit] of [
   ["wrong PR", (f) => f.pr.number++],
-  ["non-draft PR", (f) => (f.pr.draft = false)],
+  ["malformed draft metadata", (f) => (f.pr.draft = "false")],
   ["closed PR", (f) => (f.pr.state = "closed")],
   ["foreign repository", (f) => f.pr.head.repo.id++],
   ["unprotected default", (f) => (f.main.protected = false)],
@@ -544,4 +544,13 @@ test("complete natural repository inventories do not overflow GitHub annotation 
   const record = verifySourceSnapshot(f);
   assert.equal(record.file_count, Object.keys(sourceInventory(f.headTree)).length);
   assert.ok(Buffer.byteLength(canonical(record)) < 8192);
+});
+
+test("N3 Ready is not approval and does not invalidate unchanged development integrity", () => {
+  const f = fixture();
+  f.pr.draft = false;
+  const result = verifySourceSnapshot(f);
+  assert.equal(result.decision, "DEVELOPMENT_SOURCE_INTEGRITY_VERIFIED");
+  assert.equal(result.candidate_admission_authorized, false);
+  assert.equal(result.release_authorized, false);
 });

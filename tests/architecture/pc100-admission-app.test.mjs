@@ -18,6 +18,10 @@ import {
   appRequest,
   reconcileAppCycle,
   validateAppRoute,
+  validateAppJournal,
+  openAppJournal,
+  reconcileJournal,
+  invalidateAppCheck,
 } from "../../tools/test/pc100-admission-app.mjs";
 import {
   APP_CHECK,
@@ -116,14 +120,21 @@ test("unconfigured or shared Actions App cannot become authority", () => {
     );
 });
 function client(f, changes = {}) {
+  f.rows["check-runs/143"].completed_at = new Date(Date.now() - 400000).toISOString();
   const writes = [];
   const read = async (route, method = "GET", body) => {
     if (method !== "GET") {
       writes.push({ route, method, body });
-      const prior = f.rows["check-runs/143"];
-      f.rows["check-runs/143"] = { ...prior, ...body };
+      const id = method === "POST" ? 143 : Number(route.split("/").at(-1));
+      const prior = f.rows[`check-runs/${id}`] ?? f.rows["check-runs/143"];
+      f.rows[`check-runs/${id}`] = { ...prior, ...body, id };
+      for (const [route, page] of Object.entries(f.rows))
+        if (route.startsWith("commits/") && page?.check_runs)
+          page.check_runs = page.check_runs.map((c) =>
+            c.id === 143 ? f.rows["check-runs/143"] : c,
+          );
       await changes.afterWrite?.(body);
-      return f.rows["check-runs/143"];
+      return f.rows[`check-runs/${id}`];
     }
     return f.read(route);
   };
@@ -309,12 +320,18 @@ function unrelated(f, number) {
     head: { ...f.snapshot.pr.head, sha: String(number).padStart(40, "0") },
   };
   f.rows[`pulls/${number}`] = pr;
+  // Genuine unrelated fixture: its complete source is identical to protected
+  // main, not an arbitrary head granted neutral by its PR number.
+  f.rows[`git/commits/${pr.head.sha}`] = {
+    sha: pr.head.sha,
+    tree: { sha: f.snapshot.trustedTree.sha },
+  };
   f.rows[
     `commits/${pr.head.sha}/check-runs?check_name=${encodeURIComponent(APP_CHECK)}&filter=all&per_page=100&page=1`
   ] = { total_count: 0, check_runs: [] };
   return pr;
 }
-test("S1 unrelated registry PR receives authenticated neutral, never candidate admission", async () => {
+test("N1 unchanged complete source receives authenticated neutral, never candidate admission", async () => {
   const f = candidateFixture();
   unrelated(f, 104);
   const c = client(f);
@@ -335,7 +352,7 @@ test("S1 unrelated registry PR receives authenticated neutral, never candidate a
 
 for (const number of [1, 99, 101, 104, 200])
   for (const merged of [false, true])
-    test(`S1 PR ${number} (registry/Dependabot) remains neutral after PR100 merged=${merged}`, async () => {
+    test(`N1 identical-source PR ${number} remains neutral after PR100 merged=${merged}`, async () => {
       const f = candidateFixture();
       f.snapshot.pr.merged = merged;
       f.snapshot.pr.state = merged ? "closed" : "open";
@@ -378,15 +395,8 @@ for (const conclusion of ["neutral", "skipped"])
       /CANDIDATE_REQUIRED_CHECK_DRIFT/,
     );
   });
-for (const edit of [
-  (p) => (p.state = "closed"),
-  (p) => (p.draft = false),
-  (p) => {
-    p.merged = true;
-    p.state = "closed";
-  },
-])
-  test("S4 close/undraft/merge invalidates old positive before further evaluation", async () => {
+for (const edit of [(p) => (p.state = "closed")])
+  test("S4 closed or merged candidate cannot mint a new positive", async () => {
     const f = candidateFixture();
     edit(f.snapshot.pr);
     const c = client(f);
@@ -400,7 +410,7 @@ test("S4 API/policy failure cannot preserve previous successful check", async ()
   let called = false;
   const r = await reconcileAppCheck(c.read, config, async () => {
     called = true;
-    assert.equal(c.writes[0].body.conclusion, "failure");
+    assert.equal(c.writes.length, 0);
     throw Error("POLICY_REVOKED");
   });
   assert.equal(called, true);
@@ -439,6 +449,7 @@ for (const field of ["sha", "merge_commit_sha"])
 test("S4 a tracked old-head check is invalidated before reconciling a new head", async () => {
   const f = candidateFixture();
   const oldH = "9".repeat(40);
+  f.rows["check-runs/144"] = { ...f.rows["check-runs/143"], id: 144, head_sha: oldH };
   const tracked = new Map([[104, { check: 144, H: oldH, B: f.context.B, M: f.context.M }]]);
   unrelated(f, 104);
   f.rows["pulls?state=open&base=main&per_page=100&page=1"] = [f.rows["pulls/104"]];
@@ -487,13 +498,13 @@ test("S5 App read routes and queries are closed; writes limited to tokens/checks
     assert.throws(() => validateAppRoute(r, m), /APP_ROUTE_REJECTED/);
 });
 
-test("S1 same-H unrelated PR can never overwrite candidate check with neutral", async () => {
+test("N4 same-H fork alias uses independently verified canonical source, never neutral", async () => {
   const f = candidateFixture();
   f.rows["pulls/104"] = { ...f.snapshot.pr, number: 104 };
   const c = client(f);
   const r = await reconcileAppCheck(c.read, config, undefined, 104);
-  assert.equal(r.conclusion, "failure");
-  assert.equal(r.outcome, "APP_HEAD_SHARED_WITH_CANDIDATE");
+  assert.equal(r.conclusion, "success");
+  assert.equal(r.pr, 100);
   assert.ok(c.writes.every((w) => w.body.conclusion !== "neutral"));
 });
 test("S5 actual CLI rejects unsafe host environment before any key-file access", () => {
@@ -584,3 +595,278 @@ test("S5 missing next rule page is never treated as complete enforcement", async
   assert.equal((await reconcileAppCheck(c.read, config)).conclusion, "failure");
   assert.ok(c.writes.every((w) => w.body.conclusion !== "success"));
 });
+
+for (const [label, change] of [
+  [
+    "entrypoint",
+    (t) => {
+      t.tree.find((e) => e.path.endsWith("docker-entrypoint.sh")).sha = "9".repeat(40);
+    },
+  ],
+  [
+    "addition",
+    (t) =>
+      t.tree.push({
+        path: "unexpected/new-policy.data",
+        mode: "100644",
+        type: "blob",
+        sha: "9".repeat(40),
+        size: 1,
+      }),
+  ],
+  [
+    "mode",
+    (t) => {
+      t.tree[0].mode = "100755";
+    },
+  ],
+  ["deletion", (t) => t.tree.pop()],
+  [
+    "rename",
+    (t) => {
+      t.tree[0].path = "renamed/policy";
+    },
+  ],
+  [
+    "symlink",
+    (t) => {
+      t.tree[0].mode = "120000";
+    },
+  ],
+  [
+    "gitlink",
+    (t) => {
+      t.tree[0].type = "commit";
+      t.tree[0].mode = "160000";
+    },
+  ],
+  [
+    "truncated tree",
+    (t) => {
+      t.truncated = true;
+    },
+  ],
+])
+  test(`N1 changed-number source cannot gain neutral with unreviewed ${label}`, async () => {
+    const f = candidateFixture(),
+      p = unrelated(f, 200);
+    const tree = globalThis.structuredClone(f.snapshot.trustedTree);
+    tree.sha = "8".repeat(40);
+    change(tree);
+    f.rows[`git/commits/${p.head.sha}`].tree.sha = tree.sha;
+    f.rows[`git/trees/${tree.sha}?recursive=1`] = tree;
+    const c = client(f),
+      result = await reconcileAppCheck(c.read, config, undefined, 200);
+    assert.equal(result.conclusion, "failure");
+    assert.ok(c.writes.every((w) => !["neutral", "success"].includes(w.body.conclusion)));
+  });
+
+test("N3 reviewed unchanged candidate remains admitted after Draft to Ready without release authority", async () => {
+  const f = candidateFixture(),
+    c = client(f);
+  assert.equal((await reconcileAppCheck(c.read, config)).conclusion, "success");
+  f.snapshot.pr.draft = false;
+  assert.equal((await reconcileAppCheck(c.read, config)).conclusion, "success");
+  assert.equal(JSON.parse(c.writes.at(-1).body.output.summary).release_authorized, false);
+  f.rows["rulesets/77"].bypass_actors = [{ actor_id: 1 }];
+  assert.equal((await reconcileAppCheck(c.read, config)).conclusion, "failure");
+});
+
+test("N6 stable polling has zero verdict writes, with same-conclusion bounded refresh", async () => {
+  const f = candidateFixture(),
+    c = client(f);
+  await reconcileAppCheck(c.read, config);
+  const writes = c.writes.length;
+  await reconcileAppCheck(c.read, config);
+  assert.equal(c.writes.length, writes);
+  f.rows["check-runs/143"].completed_at = new Date(Date.now() - 400000).toISOString();
+  await reconcileAppCheck(c.read, config);
+  assert.equal(c.writes.length, writes + 1);
+  assert.ok(c.writes.every((w) => w.body.conclusion === "success"));
+});
+
+test("N6 merged candidate ends lifecycle without new failure/check spam", async () => {
+  const f = candidateFixture(),
+    c = client(f);
+  f.snapshot.pr.state = "closed";
+  f.snapshot.pr.merged = true;
+  for (let i = 0; i < 3; i++)
+    assert.equal((await reconcileAppCheck(c.read, config)).outcome, "APP_MERGED_TERMINAL");
+  assert.equal(c.writes.length, 0);
+});
+
+test("N4 complete same-H fork group evaluates one canonical verdict per stable cycle", async () => {
+  const f = candidateFixture(),
+    c = client(f),
+    tracked = new Map();
+  f.rows["pulls/500"] = globalThis.structuredClone(f.snapshot.pr);
+  f.rows["pulls/500"].number = 500;
+  f.rows["pulls/500"].head.repo.id = 1234;
+  f.rows["pulls/500"].merge_commit_sha = "9".repeat(40);
+  f.rows["pulls?state=open&base=main&per_page=100&page=1"] = [f.rows["pulls/500"], f.snapshot.pr];
+  const first = await reconcileAppCycle(c.read, config, tracked);
+  assert.equal(first.filter((x) => x.conclusion === "success").length, 2);
+  const count = c.writes.length;
+  await reconcileAppCycle(c.read, config, tracked);
+  assert.equal(c.writes.length, count);
+  assert.ok(c.writes.every((w) => w.body.conclusion === "success"));
+});
+
+function journalContext(f) {
+  return {
+    repository_id: 1395822921,
+    pr: 100,
+    H: f.context.H,
+    B: f.context.B,
+    M: f.context.M,
+    head_repository_id: 1395822921,
+    state: "open",
+    draft: true,
+    merged: false,
+  };
+}
+function journalValue(entries = []) {
+  return {
+    schema: "pc100-app-journal-v1",
+    repository_id: 1395822921,
+    app_id: config.app_id,
+    installation_id: config.installation_id,
+    entries,
+  };
+}
+for (const [name, edit] of [
+  ["other app", (v) => v.app_id++],
+  ["other repository", (v) => v.repository_id++],
+  ["extra field", (v) => (v.approved = true)],
+  ["duplicate", (v) => v.entries.push(v.entries[0])],
+  ["bad SHA", (v) => (v.entries[0].H = "invalid")],
+  ["injected context", (v) => (v.entries[0].check = 1)],
+])
+  test(`N5 durable tracking rejects ${name}`, () => {
+    const value = journalValue([journalContext(candidateFixture())]);
+    edit(value);
+    assert.throws(() => validateAppJournal(value, config), /APP_JOURNAL_REJECTED/);
+  });
+test("N5 failed write-ahead tracking prevents check publication", async () => {
+  const f = candidateFixture(),
+    c = client(f);
+  await assert.rejects(
+    () =>
+      reconcileAppCheck(c.read, config, undefined, 100, {
+        record: async () => {
+          throw Error("APP_JOURNAL_BUSY");
+        },
+      }),
+    /APP_JOURNAL_BUSY/,
+  );
+  assert.equal(c.writes.length, 0);
+});
+test("N5 restart reconciles journaled old head after in-memory tracking is lost", async () => {
+  const f = candidateFixture(),
+    c = client(f),
+    prior = journalContext(f),
+    removed = [];
+  f.snapshot.pr.head.sha = "9".repeat(40);
+  const journal = { entries: () => [prior], remove: async (x) => removed.push(x) };
+  await reconcileJournal(c.read, config, journal);
+  assert.equal(c.writes.length, 1);
+  assert.equal(c.writes[0].body.conclusion, "failure");
+  assert.equal(c.writes[0].body.output.summary, "APP_RESTART_REVALIDATION_REQUIRED");
+  assert.deepEqual(removed, [prior]);
+});
+test("N5 orderly shutdown revokes current positives; merged history remains terminal", async () => {
+  const f = candidateFixture(),
+    c = client(f),
+    prior = journalContext(f),
+    removed = [];
+  const journal = { entries: () => [prior], remove: async (x) => removed.push(x) };
+  await reconcileJournal(c.read, config, journal, true);
+  assert.equal(c.writes[0].body.conclusion, "failure");
+  f.snapshot.pr.state = "closed";
+  f.snapshot.pr.merged = true;
+  c.writes.length = 0;
+  await reconcileJournal(c.read, config, journal, true);
+  assert.equal(c.writes.length, 0);
+  assert.equal(removed.length, 2);
+});
+test("N5 API outage cannot claim revocation or discard tracking", async () => {
+  const prior = journalContext(candidateFixture());
+  let removed = false;
+  await assert.rejects(
+    () =>
+      reconcileJournal(
+        async () => {
+          throw Error("APP_API_REJECTED");
+        },
+        config,
+        {
+          entries: () => [prior],
+          remove: async () => {
+            removed = true;
+          },
+        },
+      ),
+    /APP_API_REJECTED/,
+  );
+  assert.equal(removed, false);
+});
+test(
+  "N5 Linux actual atomic journal persists heads across reopen and rejects unsafe links",
+  { skip: process.platform !== "linux" },
+  async () => {
+    const dir = await realpath(await mkdtemp(path.join(tmpdir(), "app-journal-"))),
+      file = path.join(dir, "heads.json");
+    try {
+      const context = journalContext(candidateFixture()),
+        first = await openAppJournal(file, config);
+      await first.record(context);
+      const second = await openAppJournal(file, config);
+      assert.deepEqual(second.entries(), [context]);
+      await second.remove(context);
+      assert.deepEqual((await openAppJournal(file, config)).entries(), []);
+      await chmod(file, 0o644);
+      await assert.rejects(() => openAppJournal(file, config), /APP_JOURNAL_PERMISSIONS_REJECTED/);
+      await chmod(file, 0o600);
+      const alias = path.join(dir, "alias");
+      await link(file, alias);
+      await assert.rejects(() => openAppJournal(file, config), /APP_JOURNAL_PERMISSIONS_REJECTED/);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  },
+);
+
+test("N5 revocation can proceed when PR metadata fails but check APIs remain available", async () => {
+  const f = candidateFixture(),
+    c = client(f),
+    prior = journalContext(f),
+    removed = [];
+  const read = async (route, method, body) => {
+    if (route.startsWith("pulls/")) throw Error("APP_API_REJECTED");
+    return c.read(route, method, body);
+  };
+  await reconcileJournal(
+    read,
+    config,
+    { entries: () => [prior], remove: async (x) => removed.push(x) },
+    true,
+  );
+  assert.equal(c.writes.length, 1);
+  assert.equal(c.writes[0].body.conclusion, "failure");
+  assert.deepEqual(removed, [prior]);
+});
+
+for (const [name, result] of [
+  ["wrong id", { id: 2, status: "completed", conclusion: "failure", head_sha: "a".repeat(40) }],
+  [
+    "unchanged positive",
+    { id: 1, status: "completed", conclusion: "success", head_sha: "a".repeat(40) },
+  ],
+  ["wrong head", { id: 1, status: "completed", conclusion: "failure", head_sha: "9".repeat(40) }],
+])
+  test(`N6 unverifiable ${name} cannot count as remote revocation`, async () => {
+    await assert.rejects(
+      () => invalidateAppCheck(async () => result, { check: 1, H: "a".repeat(40) }),
+      /APP_REVOCATION_UNCONFIRMED/,
+    );
+  });

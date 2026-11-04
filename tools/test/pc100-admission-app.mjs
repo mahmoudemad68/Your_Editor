@@ -1,7 +1,7 @@
 /** Dedicated external App controller. Never run by a PR workflow. No third-party dependencies. */
-import { createPrivateKey, createHash, sign } from "node:crypto";
+import { createPrivateKey, createHash, randomBytes, sign } from "node:crypto";
 import { Buffer } from "node:buffer";
-import { readFile, lstat, realpath, open } from "node:fs/promises";
+import { readFile, lstat, realpath, open, rename, unlink } from "node:fs/promises";
 import { constants } from "node:fs";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
@@ -28,6 +28,7 @@ import {
   canonical,
   hash,
   treeEntries,
+  sourceInventory,
   completePages,
   selectUpstreamRun,
 } from "./pc100-source-verifier.mjs";
@@ -229,11 +230,208 @@ function samePR(p, expected) {
   need(canonical(contextOf(p, expected.pr)) === canonical(expected), "APP_LIVE_DRIFT");
 }
 export async function invalidateAppCheck(read, item, reason = "APP_REVALIDATION_REQUIRED") {
-  await read(`check-runs/${item.check}`, "PATCH", {
+  const result = await read(`check-runs/${item.check}`, "PATCH", {
     status: "completed",
     conclusion: "failure",
     output: { title: CANDIDATE_TITLE, summary: reason },
   });
+  need(
+    result?.id === item.check &&
+      result.status === "completed" &&
+      result.conclusion === "failure" &&
+      (item.H === undefined || result.head_sha === item.H),
+    "APP_REVOCATION_UNCONFIRMED",
+  );
+}
+// The required check API has no TTL. Persist observed heads BEFORE issuing any
+// verdict so restart can reconcile old SHA checks; never claim outage-time
+// revocation. The private journal grants no approval or check authority.
+export function validateAppJournal(value, config) {
+  validateAppConfig(config);
+  need(
+    value?.schema === "pc100-app-journal-v1" &&
+      value.repository_id === REPOSITORY_ID &&
+      value.app_id === config.app_id &&
+      value.installation_id === config.installation_id &&
+      Object.keys(value).sort().join(",") ===
+        "app_id,entries,installation_id,repository_id,schema" &&
+      Array.isArray(value.entries) &&
+      value.entries.length <= 4000,
+    "APP_JOURNAL_REJECTED",
+  );
+  const seen = new Set();
+  for (const c of value.entries) {
+    need(
+      c &&
+        Object.keys(c).sort().join(",") ===
+          "B,H,M,draft,head_repository_id,merged,pr,repository_id,state" &&
+        c.repository_id === REPOSITORY_ID &&
+        Number.isSafeInteger(c.pr) &&
+        c.pr > 0 &&
+        Number.isSafeInteger(c.head_repository_id) &&
+        c.head_repository_id > 0 &&
+        [c.H, c.B].every((x) => typeof x === "string" && /^[a-f0-9]{40}$/.test(x)) &&
+        (c.M === null || (typeof c.M === "string" && /^[a-f0-9]{40}$/.test(c.M))) &&
+        ["open", "closed"].includes(c.state) &&
+        typeof c.draft === "boolean" &&
+        typeof c.merged === "boolean",
+      "APP_JOURNAL_REJECTED",
+    );
+    const k = c.pr + ":" + c.H;
+    need(!seen.has(k), "APP_JOURNAL_REJECTED");
+    seen.add(k);
+  }
+  return value;
+}
+export async function openAppJournal(file, config) {
+  need(process.platform === "linux", "APP_JOURNAL_REQUIRES_LINUX");
+  assertExternalKeyPath(file);
+  const dir = path.dirname(file),
+    d = await lstat(dir);
+  need(
+    d.isDirectory() &&
+      !d.isSymbolicLink() &&
+      d.uid === process.geteuid() &&
+      (d.mode & 0o077) === 0 &&
+      (await realpath(dir)) === dir,
+    "APP_JOURNAL_PERMISSIONS_REJECTED",
+  );
+  const fresh = {
+    schema: "pc100-app-journal-v1",
+    repository_id: REPOSITORY_ID,
+    app_id: config.app_id,
+    installation_id: config.installation_id,
+    entries: [],
+  };
+  const read = async () => {
+    let st;
+    try {
+      st = await lstat(file);
+    } catch (e) {
+      if (e.code === "ENOENT") return fresh;
+      throw e;
+    }
+    need(
+      st.isFile() &&
+        !st.isSymbolicLink() &&
+        st.nlink === 1 &&
+        st.uid === process.geteuid() &&
+        (st.mode & 0o077) === 0 &&
+        st.size <= 2 * 1024 ** 2,
+      "APP_JOURNAL_PERMISSIONS_REJECTED",
+    );
+    const f = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW);
+    try {
+      const now = await f.stat();
+      need(
+        now.ino === st.ino && now.dev === st.dev && now.size <= 2 * 1024 ** 2,
+        "APP_JOURNAL_PERMISSIONS_REJECTED",
+      );
+      const bytes = Buffer.alloc(2 * 1024 ** 2 + 1);
+      let count = 0;
+      while (count < bytes.length) {
+        const r = await f.read(bytes, count, bytes.length - count, count);
+        if (r.bytesRead === 0) break;
+        count += r.bytesRead;
+      }
+      need(count <= 2 * 1024 ** 2, "APP_JOURNAL_REJECTED");
+      return validateAppJournal(readPolicyJSON(bytes.subarray(0, count)), config);
+    } finally {
+      await f.close();
+    }
+  };
+  let value = await read();
+  const update = async (change) => {
+    const lock = file + ".lock";
+    let handle;
+    try {
+      handle = await open(
+        lock,
+        constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
+        0o600,
+      );
+    } catch {
+      throw Error("APP_JOURNAL_BUSY");
+    }
+    const temp = file + "." + randomBytes(12).toString("hex") + ".tmp";
+    try {
+      const next = validateAppJournal(change(await read()), config);
+      const bytes = Buffer.from(canonical(next) + "\n");
+      need(bytes.length <= 2 * 1024 ** 2, "APP_JOURNAL_REJECTED");
+      const out = await open(
+        temp,
+        constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
+        0o600,
+      );
+      try {
+        await out.writeFile(bytes);
+        await out.sync();
+      } finally {
+        await out.close();
+      }
+      await rename(temp, file);
+      const directory = await open(
+        dir,
+        constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
+      );
+      try {
+        await directory.sync();
+      } finally {
+        await directory.close();
+      }
+      value = next;
+    } finally {
+      await unlink(temp).catch((e) => {
+        if (e.code !== "ENOENT") throw e;
+      });
+      await handle.close();
+      await unlink(lock);
+    }
+  };
+  return {
+    entries: () => globalThis.structuredClone(value.entries),
+    record: async (c) => {
+      if (value.entries.some((x) => canonical(x) === canonical(c))) return;
+      await update((v) => ({
+        ...v,
+        entries: [...v.entries.filter((x) => x.pr !== c.pr || x.H !== c.H), c],
+      }));
+    },
+    remove: async (c) =>
+      update((v) => ({ ...v, entries: v.entries.filter((x) => x.pr !== c.pr || x.H !== c.H) })),
+  };
+}
+export async function reconcileJournal(read, config, journal, revokeAll = false) {
+  for (const prior of journal.entries()) {
+    let current;
+    try {
+      current = contextOf(await read(`pulls/${prior.pr}`), prior.pr);
+    } catch (e) {
+      if (!revokeAll) throw e;
+    }
+    if (current?.state === "closed" && current.merged) {
+      await journal.remove(prior);
+      continue;
+    }
+    if (!revokeAll && canonical(current) === canonical(prior)) continue;
+    const rows = await completePages(
+      read,
+      `commits/${prior.H}/check-runs?check_name=${encodeURIComponent(APP_CHECK)}&filter=all`,
+      "check_runs",
+    );
+    for (const c of rows.filter((c) => c.name === APP_CHECK && c.app?.id === config.app_id)) {
+      need(
+        c.head_sha === prior.H &&
+          c.app.slug === config.slug &&
+          Number.isSafeInteger(c.id) &&
+          c.id > 0,
+        "APP_CHECK_ISSUER_REJECTED",
+      );
+      if (c.status !== "completed" || c.conclusion !== "failure")
+        await invalidateAppCheck(read, { check: c.id }, "APP_RESTART_REVALIDATION_REQUIRED");
+    }
+    await journal.remove(prior);
+  }
 }
 /** Transport is an external dedicated App; never a PR GITHUB_TOKEN. */
 export async function reconcileAppCheck(
@@ -241,10 +439,25 @@ export async function reconcileAppCheck(
   config,
   authorize = verifyCandidateEvent,
   number = 100,
+  journal,
 ) {
   validateAppConfig(config);
-  const pr = await read(`pulls/${number}`),
-    context = contextOf(pr, number);
+  let pr = await read(`pulls/${number}`);
+  const requested = contextOf(pr, number);
+  if (number !== 100) {
+    const candidate = await read("pulls/100"),
+      identity = contextOf(candidate, 100);
+    // Checks belong to commits, not PR aliases. A fork cannot invalidate or
+    // authorize the canonical candidate merely by opening the same SHA.
+    if (identity.state === "open" && !identity.merged && identity.H === requested.H) {
+      pr = candidate;
+      number = 100;
+    }
+  }
+  const context = contextOf(pr, number);
+  if (context.merged && context.state === "closed")
+    return { ...context, terminal: true, conclusion: null, outcome: "APP_MERGED_TERMINAL" };
+  if (journal) await journal.record(context);
   const rows = await completePages(
     read,
     `commits/${context.H}/check-runs?check_name=${encodeURIComponent(APP_CHECK)}&filter=all`,
@@ -259,13 +472,15 @@ export async function reconcileAppCheck(
         c.app.slug === config.slug,
       "APP_CHECK_ISSUER_REJECTED",
     );
-    // Revoke old positives BEFORE policy/API evaluation can fail.
-    await invalidateAppCheck(read, { check: c.id });
   }
-  need(own.length <= 1, "APP_DUPLICATE_CHECK_REJECTED");
+  if (own.length > 1) {
+    for (const c of own)
+      await invalidateAppCheck(read, { check: c.id }, "APP_DUPLICATE_CHECK_REJECTED");
+    throw Error("APP_DUPLICATE_CHECK_REJECTED");
+  }
   let record, failure;
   try {
-    need(pr.state === "open" && !pr.merged && (number !== 100 || pr.draft), "APP_PR_INACTIVE");
+    need(pr.state === "open" && !pr.merged, "APP_PR_INACTIVE");
     if (number === 100) {
       need(
         context.head_repository_id === REPOSITORY_ID && /^[a-f0-9]{40}$/.test(context.M),
@@ -293,8 +508,39 @@ export async function reconcileAppCheck(
         main.protected === true && /^[a-f0-9]{40}$/.test(main.commit.sha),
         "APP_MAIN_NOT_PROTECTED",
       );
+      // A required neutral check is a passing check. Never derive it from the
+      // PR number: authenticate the complete immutable source closure first.
+      // All tracked files are conservatively in scope, including new paths,
+      // modes and transitive configuration. Changed source needs independent
+      // registry authorization; an unfamiliar extension is not an exemption.
+      need(context.B === main.commit.sha, "APP_LIVE_DRIFT");
+      const [head, base] = await Promise.all([
+        read(`git/commits/${context.H}`),
+        read(`git/commits/${context.B}`),
+      ]);
+      need(
+        head.sha === context.H &&
+          base.sha === context.B &&
+          /^[a-f0-9]{40}$/.test(head.tree?.sha) &&
+          base.tree?.sha === main.commit.commit?.tree?.sha,
+        "APP_SOURCE_IDENTITY_REJECTED",
+      );
+      const [headTree, baseTree] = await Promise.all([
+        read(`git/trees/${head.tree.sha}?recursive=1`),
+        read(`git/trees/${base.tree.sha}?recursive=1`),
+      ]);
+      need(
+        headTree.sha === head.tree.sha && baseTree.sha === base.tree.sha,
+        "APP_SOURCE_IDENTITY_REJECTED",
+      );
+      const inventory = sourceInventory(headTree),
+        trusted = sourceInventory(baseTree);
+      need(canonical(inventory) === canonical(trusted), "APP_UNREVIEWED_SOURCE");
       record = {
-        schema: "pc100-app-not-applicable-v1",
+        schema: "pc100-app-not-applicable-v2",
+        TH: head.tree.sha,
+        TB: base.tree.sha,
+        source_inventory_sha256: hash(canonical(inventory)),
         decision: "NOT_APPLICABLE",
         ...context,
         trusted_main_sha: main.commit.sha,
@@ -327,11 +573,24 @@ export async function reconcileAppCheck(
         ) + "\n",
     },
   };
-  const result = await read(
-    own.length ? `check-runs/${own[0].id}` : "check-runs",
-    own.length ? "PATCH" : "POST",
-    body,
-  );
+  const existing = own[0],
+    age = Date.now() - Date.parse(existing?.completed_at);
+  const unchanged =
+    existing?.status === "completed" &&
+    existing.conclusion === body.conclusion &&
+    existing.external_id === body.external_id &&
+    existing.output?.title === body.output.title &&
+    existing.output?.summary === body.output.summary &&
+    (body.conclusion === "failure" || (Number.isFinite(age) && age >= 0 && age < 300000));
+  // Revalidate every poll, but refresh a stable positive at most every five
+  // minutes. This is consumer evidence freshness, NOT a native GitHub check TTL.
+  const result = unchanged
+    ? existing
+    : await read(
+        own.length ? `check-runs/${own[0].id}` : "check-runs",
+        own.length ? "PATCH" : "POST",
+        body,
+      );
   need(
     Number.isSafeInteger(result.id) &&
       result.id > 0 &&
@@ -377,13 +636,11 @@ export async function reconcileAppCheck(
   };
 }
 /** Every open main PR receives this context, including registry and Dependabot PRs. */
-async function reconcileCycle(read, config, tracked) {
+async function reconcileCycle(read, config, tracked, journal) {
   const listed = await completePages(read, "pulls?state=open&base=main");
-  const numbers = new Set([100, ...tracked.keys()]);
-  const seen = new Set();
+  const numbers = new Set([100, ...tracked.keys()]),
+    seen = new Set();
   for (const p of listed) {
-    // The list endpoint has merged_at, not the single-PR merged boolean.
-    // Treat it only as enumeration; each decision fetches authoritative detail.
     need(
       Number.isSafeInteger(p.number) &&
         p.number > 0 &&
@@ -396,34 +653,56 @@ async function reconcileCycle(read, config, tracked) {
     seen.add(p.number);
     numbers.add(p.number);
   }
-  const results = [];
-  for (const n of numbers) {
+  const current = new Map(),
+    groups = new Map(),
+    results = [];
+  for (const n of [...numbers].sort((a, b) => a - b)) {
+    const c = contextOf(await read(`pulls/${n}`), n);
+    current.set(n, c);
+    if (c.state === "open" && !c.merged) {
+      const g = groups.get(c.H) ?? [];
+      g.push(n);
+      groups.set(c.H, g);
+    }
+  }
+  for (const [n, c] of current) {
     const old = tracked.get(n);
-    try {
-      const current = contextOf(await read(`pulls/${n}`), n);
-      if (
-        old &&
-        (old.H !== current.H ||
-          old.B !== current.B ||
-          old.M !== current.M ||
-          current.state !== "open" ||
-          (n === 100 && !current.draft))
-      )
-        await invalidateAppCheck(read, old, "APP_LIVE_DRIFT");
-      const result = await reconcileAppCheck(read, config, verifyCandidateEvent, n);
-      tracked.set(n, result);
-      results.push(result);
-    } catch (e) {
-      if (old) await invalidateAppCheck(read, old, safeError(e));
-      results.push({ pr: n, conclusion: "failure", outcome: safeError(e) });
+    if (c.merged && c.state === "closed") {
+      tracked.delete(n);
+      results.push({ ...c, terminal: true, conclusion: null, outcome: "APP_MERGED_TERMINAL" });
+      continue;
+    }
+    if (
+      old &&
+      !groups.has(old.H) &&
+      (old.H !== c.H || old.B !== c.B || old.M !== c.M || c.state !== "open")
+    )
+      await invalidateAppCheck(read, old, "APP_LIVE_DRIFT");
+    if (c.state !== "open") tracked.delete(n);
+  }
+  for (const members of groups.values()) {
+    const n = members.includes(100) ? 100 : members[0];
+    const result = await reconcileAppCheck(read, config, verifyCandidateEvent, n, journal);
+    for (const alias of members) {
+      const item = { ...result, pr: alias };
+      tracked.set(alias, item);
+      results.push(item);
     }
   }
   return results;
 }
-export async function reconcileAppCycle(read, config, tracked = new Map()) {
+export async function reconcileAppCycle(read, config, tracked = new Map(), journal) {
   try {
-    return await reconcileCycle(read, config, tracked);
+    if (journal) await reconcileJournal(read, config, journal);
+    return await reconcileCycle(read, config, tracked, journal);
   } catch (error) {
+    if (journal) {
+      try {
+        await reconcileJournal(read, config, journal, true);
+      } catch {
+        console.error("APP_REVOCATION_UNCONFIRMED");
+      }
+    }
     for (const item of tracked.values()) {
       try {
         await invalidateAppCheck(read, item, safeError(error));
@@ -513,14 +792,28 @@ export async function readExternalKeyFile(file) {
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const tracked = new Map();
-  let client;
+  let client, journal, config;
   try {
     need(
       process.argv.length === 4 && ["--once", "--watch"].includes(process.argv[2]),
       "APP_ARGUMENTS_REJECTED",
     );
-    const config = await trustedHostSource(),
-      key = await readExternalKeyFile(process.argv[3]);
+    config = await trustedHostSource();
+    const key = await readExternalKeyFile(process.argv[3]);
+    journal = await openAppJournal(
+      path.join(
+        path.dirname(process.argv[3]),
+        `pc100-${config.app_id}-${config.installation_id}.checks.json`,
+      ),
+      config,
+    );
+    let stopping = false;
+    const wake = new globalThis.AbortController();
+    for (const signal of ["SIGTERM", "SIGINT"])
+      process.once(signal, () => {
+        stopping = true;
+        wake.abort();
+      });
     do {
       client = await installationClient(config, key);
       // Revalidate the installed source/base before every operation, not just startup.
@@ -534,14 +827,25 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
         throw e;
       }
       client.sourceBytes = readGitSourceBytes;
-      const results = await reconcileAppCycle(client, config, tracked);
+      const results = await reconcileAppCycle(client, config, tracked, journal);
       console.log(JSON.stringify(results));
       if (process.argv[2] === "--once" && results.some((r) => r.conclusion === "failure"))
         process.exitCode = 1;
       if (process.argv[2] === "--once") break;
-      await sleep(60000);
-    } while (process.argv[2] === "--watch");
+      if (!stopping)
+        await sleep(60000, undefined, { signal: wake.signal }).catch((e) => {
+          if (e.name !== "AbortError") throw e;
+        });
+    } while (process.argv[2] === "--watch" && !stopping);
+    if (stopping) await reconcileJournal(client, config, journal, true);
   } catch (e) {
+    if (client && journal) {
+      try {
+        await reconcileJournal(client, config, journal, true);
+      } catch {
+        console.error("APP_REVOCATION_UNCONFIRMED");
+      }
+    }
     if (client)
       for (const item of tracked.values()) {
         try {
