@@ -59,9 +59,23 @@ unchanged Syft and Trivy policies on the actual built image.
 
 No pc100/candidate/App/qualified-storage source, policy, compiler or Go-module
 change is included. Existing entrypoint, JWT/mTLS, firewall, source-network and
-volume safeguards remain in force. The S3 contract additionally performs the
-existing stopped backup/delete/restore procedure on a disposable random object,
-checking restored bytes and anonymous denial; no production volumes are used.
+volume safeguards remain in force. Walking additionally runs the S3 contract's existing stopped backup/delete/restore
+procedure on a disposable random object, checking restored bytes and anonymous
+denial before its existing post-restore readiness/smoke checks. CI retains its
+original S3 contract; no production volumes are used.
+
+The first exact-head native CI run, `41860887282/1` at `ee59acf969`, reproduced a
+cumulative scheduling overrun: all product assertions passed, including
+`CAPTION_REPAIR PASS` at16:29:06 UTC, but artifact/cache cleanup hit the unchanged
+45-minute limit at16:29:39. This is not a passing CI result. The added recovery
+proof consumed about78s on that critical path. The one further necessary path,
+`tools/test/run-walking-skeleton.mjs`, moves that additional proof into the
+existing required Walking job (first run completed its work in about10m), before
+readiness and smoke verification. Recovery failure remains fatal. No original
+assertion is removed, no new job is added, and the45m/15m deadlines, permissions,
+scanner policy and all six ASR shards remain unchanged. The corrected HEAD must
+still obtain its own complete native qualification; historical passes and warm
+caches are not substitutes.
 
 ## Qualification and honest scanner interpretation
 

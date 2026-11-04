@@ -165,3 +165,36 @@ test("storage components keep fixed addresses and reject anonymous master HTTP",
   assert.match(read("infra/seaweedfs/apply-container-firewall.sh"), /seaweed-volume 8080 18080/);
   assert.match(read("Makefile"), /start-storage\.sh/);
 });
+
+test("Route A recovery stays mandatory without extending CI or Walking deadlines", async () => {
+  const ci = read(".github/workflows/ci.yml");
+  const walking = read(".github/workflows/e2e.yml");
+  const driver = read("tools/test/run-walking-skeleton.mjs");
+  assert.match(ci, /run: node tests\/architecture\/seaweedfs-s3-contract\.mjs\n/);
+  assert.match(ci, /name: repository checks\n {4}runs-on: ubuntu-24\.04\n {4}timeout-minutes: 45/);
+  assert.match(walking, /timeout-minutes: 15/);
+  assert.match(walking, /pnpm test:walking-skeleton --verify-failure/);
+  const recovery = driver.indexOf(
+    '["tests/architecture/seaweedfs-s3-contract.mjs", "--verify-backup"]',
+  );
+  assert.ok(recovery > driver.indexOf("if (code !== 0) throw"));
+  assert.ok(recovery < driver.indexOf("const readinessProof = await verifyReadinessCycles"));
+  const invocation = driver.slice(driver.lastIndexOf("await command(", recovery), recovery + 300);
+  assert.match(invocation, /await command\(\s*process\.execPath/);
+  assert.match(invocation, /timeout: 240000/);
+  assert.match(invocation, /S3_ENDPOINT:/);
+  const { command } = await import("../../tools/test/compose-build.mjs");
+  await command(process.execPath, ["-e", "process.exit(0)"], {
+    env: {},
+    stdio: "pipe",
+    timeout: 2000,
+  });
+  await assert.rejects(
+    command(process.execPath, ["-e", "process.exit(7)"], {
+      env: {},
+      stdio: "pipe",
+      timeout: 2000,
+    }),
+    /exited 7/,
+  );
+});
