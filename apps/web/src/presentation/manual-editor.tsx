@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { EditorDownload, EditorRender, EditorTimeline } from "../editor-contract";
 import type { ApiResult } from "../project-contract";
 import type { JobEventStream } from "../job-contract";
@@ -86,7 +86,8 @@ export function ManualEditor({
     if (initialTimelineId) void load(initialTimelineId);
     return () => active.current?.abort();
   }, [initialTimelineId, load]);
-  useEffect(() => {
+  // Initialize a changed clip before paint, so a late passive effect cannot erase user input.
+  useLayoutEffect(() => {
     if (!clipId || clipIn === undefined || clipOut === undefined || clipStart === undefined) return;
     const a = BigInt(clipStart),
       b = a + BigInt(clipOut) - BigInt(clipIn);
