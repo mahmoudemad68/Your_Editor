@@ -1,3 +1,4 @@
+import process from "node:process";
 /**
  * SeaweedFS replaces MinIO in the active Compose stack.
  * S3ObjectStorage stays the application adapter.
@@ -20,7 +21,7 @@ test("the active stack publishes only the SeaweedFS S3 gateway", () => {
   const dockerfile = read("infra/seaweedfs/Dockerfile");
   assert.match(
     dockerfile,
-    /chrislusf\/seaweedfs@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d/,
+    /chrislusf\/seaweedfs@sha256:f7a49e3f3972ebed5be2ed4befa4a0c68eb7bdddba6e692d42729ceb545134b8/,
   );
   assert.equal(compose.includes("infra/minio/Dockerfile"), false);
   assert.match(compose, /storage_internal:\n {4}internal: true/);
@@ -91,7 +92,7 @@ test("object migration refuses to delete historical volumes", () => {
   assert.equal(backup.includes("minio-data"), false);
   assert.equal(restore.includes("volume rm"), false);
   const rejected = spawnSync(
-    "python3",
+    process.env.TEST_PYTHON ?? "python3",
     [path.join(root, "infra/scripts/migrate-minio-objects.py"), "--delete-volumes"],
     { encoding: "utf8" },
   );
@@ -163,4 +164,407 @@ test("storage components keep fixed addresses and reject anonymous master HTTP",
   assert.match(compose, /security\.volume\.toml:\/etc\/seaweedfs\/security\.toml/);
   assert.match(read("infra/seaweedfs/apply-container-firewall.sh"), /seaweed-volume 8080 18080/);
   assert.match(read("Makefile"), /start-storage\.sh/);
+});
+
+test("Route A recovery stays mandatory without extending CI or Walking deadlines", async () => {
+  const ci = read(".github/workflows/ci.yml");
+  const walking = read(".github/workflows/e2e.yml");
+  const driver = read("tools/test/run-walking-skeleton.mjs");
+  assert.match(ci, /run: node tests\/architecture\/seaweedfs-s3-contract\.mjs\n/);
+  assert.match(ci, /name: repository checks\n {4}runs-on: ubuntu-24\.04\n {4}timeout-minutes: 45/);
+  assert.match(walking, /timeout-minutes: 15/);
+  assert.match(walking, /pnpm test:walking-skeleton --verify-failure/);
+  const recovery = driver.indexOf(
+    '["tests/architecture/seaweedfs-s3-contract.mjs", "--verify-backup"]',
+  );
+  assert.ok(recovery > driver.indexOf("if (code !== 0) throw"));
+  assert.ok(recovery < driver.indexOf("const readinessProof = await verifyReadinessCycles"));
+  const invocation = driver.slice(driver.lastIndexOf("await command(", recovery), recovery + 300);
+  assert.match(invocation, /await command\(\s*process\.execPath/);
+  assert.match(invocation, /timeout: 240000/);
+  assert.match(invocation, /S3_ENDPOINT:/);
+  const { command } = await import("../../tools/test/compose-build.mjs");
+  await command(process.execPath, ["-e", "process.exit(0)"], {
+    env: {},
+    stdio: "pipe",
+    timeout: 2000,
+  });
+  await assert.rejects(
+    command(process.execPath, ["-e", "process.exit(7)"], {
+      env: {},
+      stdio: "pipe",
+      timeout: 2000,
+    }),
+    /exited 7/,
+  );
+});
+
+// Evaluate the actual CLI with every service/process/filesystem effect intercepted.
+// This is parser/control-flow evidence, not a real Docker or S3 qualification.
+async function recoveryAdmissionProbe(root) {
+  const assert = (await import("node:assert/strict")).default;
+  const vm = await import("node:vm");
+  const fs = await import("node:fs");
+  const path = (await import("node:path")).default;
+  const url = await import("node:url");
+  const crypto = await import("node:crypto");
+  const source = fs.readFileSync(
+    path.join(root, "tests/architecture/seaweedfs-s3-contract.mjs"),
+    "utf8",
+  );
+  const project = "walking-skeleton",
+    socket = "unix:///var/run/docker.sock";
+  const baseEnv = {
+    COMPOSE_PROJECT_NAME: project,
+    EDITAGENT_RUNTIME: "development",
+    S3_ENDPOINT: "http://127.0.0.1:9000",
+  };
+  const roles = ["seaweed-master", "seaweed-volume", "seaweed-filer", "seaweed-s3"];
+  async function execute(options = {}) {
+    const env = { ...baseEnv, ...options.env },
+      originalEnv = { ...env };
+    const effects = { s3: 0, fetch: 0, writes: 0, shells: [], docker: 0 };
+    let saved,
+      deleted = false,
+      puts = 0,
+      masterReads = 0;
+    const sdk = {};
+    for (const name of [
+      "CreateBucketCommand",
+      "DeleteObjectCommand",
+      "GetObjectCommand",
+      "HeadObjectCommand",
+      "PutObjectCommand",
+    ])
+      sdk[name] = class {
+        constructor(input) {
+          this.kind = name;
+          this.input = input;
+        }
+      };
+    sdk.S3Client = class {
+      constructor() {
+        effects.s3++;
+      }
+      async send(c) {
+        effects.s3++;
+        if (c.kind === "PutObjectCommand") saved = c.input;
+        if (c.kind === "DeleteObjectCommand") deleted = true;
+        if (c.kind === "HeadObjectCommand") {
+          if (deleted) {
+            const e = Error("deleted");
+            e.$metadata = { httpStatusCode: 404 };
+            throw e;
+          }
+          return { ContentType: saved.ContentType, ChecksumSHA256: saved.ChecksumSHA256 };
+        }
+        if (c.kind === "GetObjectCommand") {
+          deleted = false;
+          return { Body: { transformToByteArray: async () => saved.Body } };
+        }
+        return {};
+      }
+    };
+    const containers = roles.map((role, i) => ({
+      Id: String(i + 1).repeat(64),
+      Image: "sha256:" + "a".repeat(64),
+      State: { Running: true },
+      Config: {
+        Labels: {
+          "com.docker.compose.project": project,
+          "com.docker.compose.service": role,
+          "com.docker.compose.project.working_dir": root,
+          "com.docker.compose.project.config_files": path.join(root, "compose.yaml"),
+        },
+      },
+      HostConfig: { NetworkMode: "editagent-storage", Privileged: false },
+      Mounts:
+        role === "seaweed-s3"
+          ? []
+          : [
+              {
+                Type: "volume",
+                Name: project + "_" + role,
+                Destination: "/data",
+                Source: "/virtual/owned/" + project + "_" + role,
+                RW: true,
+              },
+            ],
+      NetworkSettings: { Ports: { "8333/tcp": [{ HostIp: "127.0.0.1", HostPort: "9000" }] } },
+    }));
+    const volumes = roles.slice(0, 3).map((role) => ({
+      Name: project + "_" + role,
+      Driver: "local",
+      Scope: "local",
+      Options: null,
+      Mountpoint: "/virtual/owned/" + project + "_" + role,
+      Labels: {
+        "com.docker.compose.project": project,
+        "com.docker.compose.volume": role,
+      },
+    }));
+    options.mutate?.(containers, volumes);
+    const modules = {
+      "node:module": {
+        createRequire: () => (name) =>
+          name === "@aws-sdk/client-s3"
+            ? sdk
+            : { getSignedUrl: async () => "http://never-requested.invalid/fixture" },
+      },
+      "node:crypto": crypto,
+      "node:child_process": {
+        spawnSync: (bin, args, opts) => {
+          if (bin === "sh") {
+            effects.shells.push(path.basename(args[0]));
+            assert.equal(opts.env.COMPOSE_PROJECT_NAME, project);
+            assert.equal(opts.env.COMPOSE_FILE, path.join(root, "compose.yaml"));
+            assert.equal(opts.env.COMPOSE_DISABLE_ENV_FILE, "1");
+            assert.equal(opts.env.S3_PORT, "9000");
+            assert.equal(opts.env.DOCKER_HOST, socket);
+            assert.equal(opts.env.DOCKER_CONTEXT, undefined);
+            assert.equal(opts.timeout, 120000);
+            return { status: 0 };
+          }
+          assert.equal(bin, "docker");
+          effects.docker++;
+          assert.deepEqual(Array.from(args.slice(0, 2)), ["--host", socket]);
+          assert.equal(opts.timeout, 10000);
+          assert.equal(opts.maxBuffer, 1048576);
+          if (options.dockerFailure) return { status: 1, stdout: "" };
+          const a = args.slice(2);
+          if (a[0] === "ps") {
+            const role = a.at(-1).slice("label=com.docker.compose.service=".length);
+            if (role === "seaweed-master") {
+              masterReads++;
+              if (options.drift === masterReads) containers[0].Id = "e".repeat(64);
+              if (options.physicalDrift === masterReads) {
+                const moved = "/virtual/new-data-root/" + volumes[0].Name;
+                containers[0].Mounts[0].Source = moved;
+                volumes[0].Mountpoint = moved;
+              }
+            }
+            const id = containers[roles.indexOf(role)].Id;
+            return { status: 0, stdout: options.multiple ? id + "\n" + "f".repeat(64) : id };
+          }
+          if (options.malformed) return { status: 0, stdout: "not json" };
+          const row =
+            a[0] === "container"
+              ? containers.find((c) => c.Id === a[2])
+              : volumes.find((v) => v.Name === a[2]);
+          assert.ok(row, "only expected read-only container/volume inspection may execute");
+          return { status: 0, stdout: JSON.stringify([row]) };
+        },
+      },
+      "node:fs": {
+        mkdirSync: () => effects.writes++,
+        mkdtempSync: () => {
+          effects.writes++;
+          return "/no-real-write/fixture";
+        },
+        rmSync: () => effects.writes++,
+      },
+      "node:path": { default: path },
+      "node:url": url,
+    };
+    const ctx = vm.createContext({
+      process: {
+        env,
+        argv: ["node", "contract", ...(options.normal ? [] : ["--verify-backup"])],
+        platform: options.platform ?? "linux",
+        exit: (c) => {
+          throw Error("exit " + c);
+        },
+      },
+      Buffer,
+      console: { log() {}, error() {} },
+      fetch: async (_url, o) => {
+        effects.fetch++;
+        return { status: o?.method === "PUT" ? (++puts === 1 ? 412 : 200) : 403 };
+      },
+    });
+    const entry = new vm.SourceTextModule(source, {
+      context: ctx,
+      initializeImportMeta: (m) => {
+        m.url = url.pathToFileURL(
+          path.join(root, "tests/architecture/seaweedfs-s3-contract.mjs"),
+        ).href;
+      },
+    });
+    await entry.link(async (spec) => {
+      const map = modules[spec];
+      assert.ok(map, "unexpected dependency " + spec);
+      return new vm.SyntheticModule(
+        Object.keys(map),
+        function () {
+          for (const [k, v] of Object.entries(map)) this.setExport(k, v);
+        },
+        { context: ctx },
+      );
+    });
+    let error;
+    try {
+      await entry.evaluate({ timeout: 2000 });
+    } catch (e) {
+      error = e.message;
+    }
+    assert.deepEqual(env, originalEnv, "admission must not mutate the caller environment");
+    return { error, effects };
+  }
+  const cases = [
+    ["missing project", { env: { COMPOSE_PROJECT_NAME: undefined } }],
+    ["default production stack", { env: { COMPOSE_PROJECT_NAME: "editagent" } }],
+    ["arbitrary project", { env: { COMPOSE_PROJECT_NAME: "production" } }],
+    ["production runtime", { env: { EDITAGENT_RUNTIME: "production" } }],
+    ["missing runtime", { env: { EDITAGENT_RUNTIME: undefined } }],
+    ["missing endpoint", { env: { S3_ENDPOINT: undefined } }],
+    ["remote endpoint", { env: { S3_ENDPOINT: "https://example.invalid:9000" } }],
+    ["DNS alias", { env: { S3_ENDPOINT: "http://localhost:9000" } }],
+    ["wrong port", { env: { S3_ENDPOINT: "http://127.0.0.1:9001" } }],
+    ["endpoint userinfo", { env: { S3_ENDPOINT: "http://user@127.0.0.1:9000" } }],
+    ["endpoint path", { env: { S3_ENDPOINT: "http://127.0.0.1:9000/path" } }],
+    ["invalid port", { env: { S3_PORT: "65536" } }],
+    ["remote daemon", { env: { DOCKER_HOST: "tcp://production.invalid:2375" } }],
+    ["remote context", { env: { DOCKER_CONTEXT: "production" } }],
+    ["compose override", { env: { COMPOSE_FILE: "production.yaml" } }],
+    ["compose env override", { env: { COMPOSE_ENV_FILES: "production.env" } }],
+    ["TLS daemon override", { env: { DOCKER_TLS_VERIFY: "1" } }],
+    ["unsupported OS", { platform: "win32" }],
+    ["Docker read failure", { dockerFailure: true }],
+    ["ambiguous containers", { multiple: true }],
+    ["malformed inspection", { malformed: true }],
+    [
+      "wrong container project",
+      { mutate: (c) => (c[0].Config.Labels["com.docker.compose.project"] = "editagent") },
+    ],
+    [
+      "wrong service",
+      { mutate: (c) => (c[0].Config.Labels["com.docker.compose.service"] = "seaweed-filer") },
+    ],
+    [
+      "wrong checkout",
+      {
+        mutate: (c) =>
+          (c[0].Config.Labels["com.docker.compose.project.working_dir"] = "/production"),
+      },
+    ],
+    [
+      "wrong Compose source",
+      {
+        mutate: (c) =>
+          (c[0].Config.Labels["com.docker.compose.project.config_files"] =
+            "/production/compose.yaml"),
+      },
+    ],
+    ["stopped container", { mutate: (c) => (c[0].State.Running = false) }],
+    ["privileged container", { mutate: (c) => (c[0].HostConfig.Privileged = true) }],
+    ["mixed images", { mutate: (c) => (c[3].Image = "sha256:" + "b".repeat(64)) }],
+    ["production volume", { mutate: (c) => (c[0].Mounts[0].Name = "editagent_seaweed-master") }],
+    ["host data bind", { mutate: (c) => (c[0].Mounts[0].Type = "bind") }],
+    [
+      "nested data override",
+      { mutate: (c) => c[0].Mounts.push({ Destination: "/data/override", Name: "foreign" }) },
+    ],
+    [
+      "wrong volume ownership",
+      { mutate: (_c, v) => (v[0].Labels["com.docker.compose.project"] = "editagent") },
+    ],
+    [
+      "wrong volume role",
+      { mutate: (_c, v) => (v[0].Labels["com.docker.compose.volume"] = "seaweed-filer") },
+    ],
+    ["missing physical data source", { mutate: (c) => delete c[0].Mounts[0].Source }],
+    ["remote volume driver", { mutate: (_c, v) => (v[0].Driver = "nfs") }],
+    [
+      "volume alias options",
+      { mutate: (_c, v) => (v[0].Options = { device: "/production", o: "bind" }) },
+    ],
+    ["different physical data source", { mutate: (c) => (c[0].Mounts[0].Source = "/production") }],
+    [
+      "public port binding",
+      { mutate: (c) => (c[3].NetworkSettings.Ports["8333/tcp"][0].HostIp = "0.0.0.0") },
+    ],
+    [
+      "different actual port",
+      { mutate: (c) => (c[3].NetworkSettings.Ports["8333/tcp"][0].HostPort = "9001") },
+    ],
+    [
+      "multiple bindings",
+      {
+        mutate: (c) =>
+          c[3].NetworkSettings.Ports["8333/tcp"].push({ HostIp: "127.0.0.1", HostPort: "9001" }),
+      },
+    ],
+    ["host networking", { mutate: (c) => (c[3].HostConfig.NetworkMode = "host") }],
+    ["forged CI flag", { env: { COMPOSE_PROJECT_NAME: "editagent", GITHUB_ACTIONS: "true" } }],
+  ];
+  for (const [name, options] of cases) {
+    const r = await execute(options);
+    assert.equal(r.error, "RECOVERY_REQUIRES_DISPOSABLE_WALKING_STACK", name);
+    assert.equal(
+      r.effects.s3 + r.effects.fetch + r.effects.writes + r.effects.shells.length,
+      0,
+      name,
+    );
+  }
+  for (const github of [undefined, "false", "true"]) {
+    const r = await execute({ env: { GITHUB_ACTIONS: github } });
+    assert.equal(r.error, undefined, "genuinely inspected disposable shape");
+    assert.deepEqual(r.effects.shells, ["backup-volumes.sh", "restore-volumes.sh"]);
+  }
+  for (const [drift, shells] of [
+    [2, []],
+    [3, ["backup-volumes.sh"]],
+  ]) {
+    const r = await execute({ drift });
+    assert.equal(r.error, "RECOVERY_DISPOSABLE_STACK_CHANGED");
+    assert.deepEqual(r.effects.shells, shells);
+  }
+  const moved = await execute({ physicalDrift: 3 });
+  assert.equal(moved.error, "RECOVERY_DISPOSABLE_STACK_CHANGED");
+  assert.deepEqual(moved.effects.shells, ["backup-volumes.sh"]);
+  const normal = await execute({ normal: true, env: { COMPOSE_PROJECT_NAME: undefined } });
+  assert.equal(normal.error, undefined);
+  assert.equal(normal.effects.docker + normal.effects.shells.length, 0);
+  console.log(
+    JSON.stringify({
+      negatives: cases.length,
+      inspectedShapePositives: 3,
+      identityDrift: 3,
+      ordinaryContract: 1,
+      actualDockerOrS3Calls: 0,
+    }),
+  );
+}
+
+test("RouteA-F1 actual recovery entry rejects unsafe ownership before any storage effect", () => {
+  const code = `(${recoveryAdmissionProbe.toString()})(${JSON.stringify(root)}).catch(e => { console.error(e); process.exitCode = 1; });`;
+  const r = spawnSync(
+    process.execPath,
+    ["--experimental-vm-modules", "--input-type=module", "-e", code],
+    {
+      encoding: "utf8",
+      env: {},
+      timeout: 15000,
+      maxBuffer: 1048576,
+    },
+  );
+  assert.equal(r.status, 0, `${r.stdout}${r.stderr}${r.error ?? ""}`);
+  assert.match(r.stdout, /"negatives":42/);
+  assert.match(r.stdout, /"actualDockerOrS3Calls":0/);
+});
+
+test("RouteA-F1 bare recovery CLI fails before package loading or any external command", () => {
+  const r = spawnSync(
+    process.execPath,
+    [path.join(root, "tests/architecture/seaweedfs-s3-contract.mjs"), "--verify-backup"],
+    {
+      encoding: "utf8",
+      env: {},
+      timeout: 5000,
+    },
+  );
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /RECOVERY_REQUIRES_DISPOSABLE_WALKING_STACK/);
+  assert.doesNotMatch(r.stderr, /MODULE_NOT_FOUND|ERR_MODULE_NOT_FOUND/);
+  assert.equal(r.stdout, "");
 });

@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
+import { createRequire } from "node:module";
+const { load } = createRequire(import.meta.resolve("eslint"))("js-yaml");
 
 test("US-113 immutable release, publication guard, smoke and rollback dry runs", () => {
   execFileSync("python3", ["tests/integration/support/release-regressions.py"], {
@@ -10,23 +12,32 @@ test("US-113 immutable release, publication guard, smoke and rollback dry runs",
 });
 
 test("PR/fork and dispatch cannot publish/deploy; main deployment requires Owner protection", () => {
-  const source = readFileSync(".github/workflows/supply-chain.yml", "utf8");
-  const publish = source.split("\n  publish:")[1].split("\n  release:")[0];
-  const staging = source.split("\n  staging:")[1];
-  assert.match(publish, /needs: \[dependencies, images, supply-chain-security\]/);
+  const workflow = load(readFileSync(".github/workflows/supply-chain.yml", "utf8"));
+  const { publish, staging } = workflow.jobs;
+  assert.deepEqual(publish.needs, [
+    "release-authorization",
+    "dependencies",
+    "images",
+    "supply-chain-security",
+  ]);
+  assert.deepEqual(staging.needs, ["release-authorization", "release"]);
   for (const job of [publish, staging]) {
-    assert.match(job, /if: github.event_name == 'push' && github.ref == 'refs\/heads\/main'/);
-    assert.match(job, /contents: read/);
-    assert.equal(job.includes("contents: write"), false);
+    assert.match(job.if, /needs\.release-authorization\.result == 'success'/);
+    assert.match(job.if, /needs\.release-authorization\.outputs\.authorized == '1'/);
+    assert.match(job.if, /github.event_name == 'push' && github.ref == 'refs\/heads\/main'/);
+    assert.equal(job.permissions.contents, "read");
   }
-  assert.match(publish, /packages: write/);
-  assert.equal(publish.includes("test-minio"), false);
-  assert.match(staging, /STAGING_CD_ENABLED == 'true'/);
-  assert.match(staging, /environment: staging/);
-  assert.match(staging, /prevent_self_review/);
-  assert.match(staging, /cancel-in-progress: false/);
-  assert.match(staging, /packages: read/);
-  assert.equal(staging.includes("packages: write"), false);
+  assert.deepEqual(publish.permissions, { contents: "read", packages: "write" });
+  assert.equal(publish.strategy.matrix.service.includes("test-minio"), false);
+  assert.match(staging.if, /STAGING_CD_ENABLED == 'true'/);
+  assert.match(staging.if, /needs\.release-authorization\.outputs\.staging_authorized == '1'/);
+  assert.equal(staging.environment, "staging");
+  assert.ok(staging.steps.some((step) => step.run?.includes("prevent_self_review")));
+  assert.deepEqual(staging.concurrency, {
+    group: "staging-deployment",
+    "cancel-in-progress": false,
+  });
+  assert.deepEqual(staging.permissions, { contents: "read", actions: "read", packages: "read" });
 });
 
 test("staging Compose uses immutable images and preserves current storage isolation", () => {
