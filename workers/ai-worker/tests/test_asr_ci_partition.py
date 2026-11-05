@@ -52,8 +52,10 @@ def test_required_ci_gate_includes_every_partition_and_cannot_ignore_real_infere
     configured = [line.strip()[2:] for line in matrix.group(1).splitlines()]
     assert tuple(configured) == MODULE["SHARDS"]
     gate = workflow.split("\n  ci:\n", 1)[1]
-    assert "needs: [repository, real-asr]" in gate
+    assert "needs: [repository, real-asr, media-qualification]" in gate
     assert "if: ${{ always() }}" in gate
     assert 'test "$REPOSITORY_RESULT" = success' in gate
     assert 'test "$REAL_ASR_RESULT" = success' in gate
+    assert "MEDIA_RESULT: ${{ needs['media-qualification'].result }}" in gate
+    assert 'test "$MEDIA_RESULT" = success' in gate
     assert '--shard "${{ matrix.shard }}"' in workflow
