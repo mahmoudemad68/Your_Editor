@@ -268,6 +268,19 @@ try {
     JSON.stringify(correlationProof),
   );
   console.log("US115_CORRELATION_EVIDENCE", JSON.stringify(correlationProof));
+  // Required recovery proof uses this disposable stack, before post-restore
+  // readiness and smoke checks. Keep CI's original S3 contract and both job
+  // deadlines unchanged; do not serialize added recovery onto its render path.
+  await command(
+    process.execPath,
+    ["tests/architecture/seaweedfs-s3-contract.mjs", "--verify-backup"],
+    {
+      cwd: root,
+      env: { ...env, S3_ENDPOINT: `http://127.0.0.1:${env.S3_PORT ?? 9000}` },
+      timeout: 240000,
+      signal: signal.signal,
+    },
+  );
   const readinessProof = await verifyReadinessCycles(root, env);
   writeFileSync(
     path.join(artifacts, "healthy/readiness-proof.json"),

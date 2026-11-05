@@ -1,10 +1,10 @@
 # syntax=docker/dockerfile:1
-# SeaweedFS 4.48 on Alpine 3.24.2. The digest was scanned with the repository
-# Trivy policy (HIGH,CRITICAL, no ignore file) and reported zero findings.
+# SeaweedFS 4.51; immutable upstream image contains brotli-libs 1.2.1-r0,
+# fixing native decoder CVE-2026-111497. Fresh scans remain mandatory.
 # The upstream entrypoint starts as root only to fix /data ownership, then
 # su-exec drops to uid 1000 (seaweed).
 
-FROM chrislusf/seaweedfs@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d
+FROM chrislusf/seaweedfs@sha256:f7a49e3f3972ebed5be2ed4befa4a0c68eb7bdddba6e692d42729ceb545134b8
 
 # The upstream entrypoint drops to uid 1000. This wrapper holds that entry
 # until apply-container-firewall.sh has installed this namespace's input rules.

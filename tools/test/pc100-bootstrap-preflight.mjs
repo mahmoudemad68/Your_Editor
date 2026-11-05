@@ -9,7 +9,12 @@ export async function inspectBootstrap(read) {
   const main = await read("branches/main");
   const protection = await read("branches/main/protection");
   const rules = await read("rules/branches/main");
-  if (!main.protected || !protection.enforce_admins?.enabled || !Array.isArray(rules))
+  if (
+    main.protected !== true ||
+    !/^[a-f0-9]{40}$/.test(main.commit?.sha ?? "") ||
+    !protection.enforce_admins?.enabled ||
+    !Array.isArray(rules)
+  )
     throw Error("BOOTSTRAP_PROTECTION_UNVERIFIABLE");
   const rulesets = [];
   for (const id of new Set(rules.map((r) => r.ruleset_id))) {
@@ -35,18 +40,26 @@ export async function inspectBootstrap(read) {
   const pulls = [];
   for (const number of [103, 100]) {
     const p = await read(`pulls/${number}`);
-    if (p.number !== number || p.base.ref !== "main" || !/^[a-f0-9]{40}$/.test(p.merge_commit_sha))
+    if (
+      p.number !== number ||
+      p.base.ref !== "main" ||
+      ![p.head?.sha, p.base?.sha].every((s) => /^[a-f0-9]{40}$/.test(s ?? "")) ||
+      (p.merge_commit_sha !== null && !/^[a-f0-9]{40}$/.test(p.merge_commit_sha ?? ""))
+    )
       throw Error("BOOTSTRAP_PR_IDENTITY_UNVERIFIABLE");
-    const checks = await completePages(
-      read,
-      `commits/${p.merge_commit_sha}/check-runs?filter=all`,
-      "check_runs",
-    );
-    const headChecks = await completePages(
-      read,
-      `commits/${p.head.sha}/check-runs?filter=all`,
-      "check_runs",
-    );
+    // A conflicted PR can legitimately have no test merge. Do not query a
+    // null identity or substitute an old positive HEAD check in that case.
+    const mergeAvailable = p.merge_commit_sha !== null;
+    const checks = !mergeAvailable
+      ? []
+      : await completePages(
+          read,
+          `commits/${p.merge_commit_sha}/check-runs?filter=all`,
+          "check_runs",
+        );
+    const headChecks = !mergeAvailable
+      ? []
+      : await completePages(read, `commits/${p.head.sha}/check-runs?filter=all`, "check_runs");
     const results = [...required].sort().map((name) => {
       // A test-merge check takes precedence; otherwise GitHub uses HEAD.
       const mergeChecks = checks.filter(
@@ -69,24 +82,35 @@ export async function inspectBootstrap(read) {
       H: p.head.sha,
       B: p.base.sha,
       M: p.merge_commit_sha,
+      test_merge_available: mergeAvailable,
+      on_current_base: p.base.sha === main.commit.sha,
       required: results,
     });
   }
+  const finalMain = await read("branches/main");
+  if (finalMain.protected !== true || finalMain.commit?.sha !== main.commit.sha)
+    throw Error("BOOTSTRAP_BASE_DRIFT");
+  const ready = pulls.every(
+    (p) =>
+      p.on_current_base &&
+      p.required.every((c) => c.status === "completed" && c.conclusion === "success"),
+  );
   return {
     schema: "pc100-bootstrap-preflight-v1",
     main: main.commit.sha,
     enforce_admins: true,
     rulesets,
     pulls,
-    outcome: pulls.every((p) =>
-      p.required.every((c) => c.status === "completed" && c.conclusion === "success"),
-    )
-      ? "REQUIRED_CHECKS_PASS_REVIEW_STILL_REQUIRED"
-      : "BLOCKED_REQUIRED_CHECKS",
-    next_route: "OWNER_AUTHORIZATION_REQUIRED_FOR_ISOLATED_PREREQUISITE_REMEDIATION",
+    outcome: ready ? "REQUIRED_CHECKS_PASS_REVIEW_STILL_REQUIRED" : "BLOCKED_REQUIRED_CHECKS",
+    // Route A may already be merged. Report current evidence, never ask for a
+    // second prerequisite PR or treat old-base green checks as qualification.
+    next_route: ready
+      ? "INDEPENDENT_REVIEW_AND_OWNER_INSTALLATION_GATES"
+      : "REVIEW_CURRENT_BASE_AND_REPORTED_REQUIRED_CHECKS",
     settings_mutation_authorized: false,
     candidate_admission_authorized: false,
     release_authorized: false,
+    live_a6_enforced: false,
   };
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

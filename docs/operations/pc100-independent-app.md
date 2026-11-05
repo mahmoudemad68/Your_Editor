@@ -148,7 +148,11 @@ does not change those variables. The diagnostic validates this real environment,
 logs only H/B/M/workflow/checkout SHAs, then invokes protected-main code only for
 PR100. The actual required source is the external App, never this Actions check.
 
-## Protected-main bootstrap deadlock
+## Historical protected-main bootstrap deadlock
+
+The inherited-CI prerequisite described in this section is now resolved by the
+official PR105 merge `edad78d3431c976c0e8e79f5d58527c948fb53eb`. Preserve this
+history; use the post-Route-A section below for current integration and gates.
 
 Run the read-only, fail-closed executable diagnostic (no key or settings write):
 
@@ -261,7 +265,11 @@ Until then, full candidate admission remains blocked even if the external probe
 succeeds. These tests establish software separation, not live A6 or deployment
 authorization. `LIVE_A6_ENFORCED=NO`, registry unapproved, release hold active.
 
-## PR105 release-hold observation and dependent integration
+## Historical PR105 release-hold observation and proposed integration
+
+This is the pre-merge observation. It is superseded by the merged case-exact Node
+preflight, not by the case-insensitive variable comparisons proposed below.
+Do not copy those historical expressions as a secure release guard.
 
 Read-only inspection on 2026-11-05 found PR105 at
 `4d2b73bc48fada4fe44b96e8efb91703b1afd846`, base
@@ -335,3 +343,103 @@ Executable sequence **after separate authorized official PR105 merge**, never no
    JWT/S3/firewall/backup/restore and Small-ASR/captions/edit/undo/restart/export,
    plus the original MinIO browser journey. Independent QA and eventual Owner
    Ready/Merge decisions remain separate. No production-volume migration.
+
+## Post-Route-A integration (2026-11-05)
+
+The official main merge is `edad78d3431c976c0e8e79f5d58527c948fb53eb`, with
+PR105 product head `e2b37a5a142a93e41ccab223201675347e534ba2`. Main was fetched
+with an explicit remote-tracking refspec because this checkout's narrow fetch
+configuration did not refresh `origin/main` with a plain named fetch. No remote
+or local main branch was changed. No commits intervene after the official merge
+at this checkpoint.
+
+The authorized ordinary PR103 integration starts from
+`c1aa0c5b08460e987419a7ca29ab6b22c1b65908`, retaining both histories. The staged
+merge has **zero conflicted paths**; all 13 imported Route A paths are byte-for-byte
+identical to official main. They include Ubuntu24 CI/Walking/Supply, the pinned
+FFmpeg source and bounded authenticated HTTPS retry/fallback controls, native
+Brotli1.2.1-r0, disposable recovery ownership checks, the case-exact release
+preflight and its regression tests. Supply workflow blob remains exactly
+`2aac344887c0b2a8e7e74acf19acf518ec24ed83`. No manual conflict resolution or
+security-policy substitution was necessary. The final handoff records the actual
+merge commit, tree, source inventory and new native checks; earlier PR103 checks
+cannot qualify the new merged source.
+
+The read-only bootstrap diagnostic no longer always requests authorization for
+another prerequisite PR. It identifies stale-base evidence even when that old
+base had green checks, rechecks main after inspection, and reports the currently
+blocked checks or remaining independent-review/installation gates. Every result
+still explicitly denies settings mutation, candidate admission, release and live
+A6 enforcement. This diagnostic observes the identity of its actual read caller;
+an Owner Git token with broader visibility is **not** proof of the separate App's
+permissions. No new trust authority or credential is created.
+
+GitHub currently reports PR100 as conflicted with a null test-merge SHA. The
+diagnostic records that unavailable identity as blocked/missing checks; it never
+queries `commits/null` or substitutes an old positive HEAD result. That dependency
+does not prevent inspection of PR103's own checks, and it does not authorize
+touching PR100.
+
+### N2/A6 hard boundary after integration
+
+`candidate-app.json` still has null issuer/installation/reader identities, and
+the candidate registry remains empty. The actual read-only reader App/host/key is
+not provisioned or independently authorized. PR103 controller and policy code
+are not yet installed on protected main. Consequently there is no genuine
+independently issued expected-App check or live reader visibility proof.
+
+The existing consumer path is precise: `observeCandidateAdmission()` calls
+`snapshot()`, which authenticates protected-main control files and calls
+`verifyEnforcement()`. That function requires complete private branch-protection
+and effective ruleset bypass evidence before registry/evidence acceptance. The
+workflow's contents/actions-read token cannot substitute for the external reader.
+Missing/omitted actors remain a rejection. No App token/key or Owner PAT is passed
+to Actions, and no mocked App response is described as live qualification.
+
+Secure delegation would need an independently reviewed protection-attestation
+contract issued by the real authorized App: bind repository, H/B/M/TH/TM,
+protected-main verifier/policy/blob identities, expected App/check/suite/run and
+attempt, complete rule/bypass snapshot digest, observation freshness and source
+revocation. Consumers would have to authenticate that evidence using a protected
+trust anchor without executing PR code or weakening stale/missing/ambiguous proof
+rejection. Replacing the current direct private inspection with that delegated
+authority is a **consumer trust-anchor/contract change**. Under this assignment,
+that subtask stops here for separate Owner review; no such authority or schema
+is silently enabled by this merge.
+
+Separate Owner actions are required for (1) independently reviewed installation
+of trusted controller/policy source on main through the normal process, (2) an
+authorized App/installation/external host and key arrangement with demonstrably
+complete read-only protection visibility, and (3) review of the attestation and
+expected-source enforcement/consumer trust contract. Branch-protection GET needs
+Administration read, while GitHub documents ruleset bypass actors only for an
+identity with write access to the ruleset. If read-only access hides that field,
+the intended capability is blocked; do not grant Administration-write or infer
+an empty list. No App install, permission expansion, settings change, infrastructure
+provision, source-policy approval or positive candidate receipt is performed.
+
+`LIVE_A6_ENFORCED=NO`, `N2_LIVE_VISIBILITY=NOT_VERIFIED`,
+`ACTIONS_CONSUMER_INTEGRATION=BLOCKED_OWNER_TRUST_CONTRACT`,
+`CANDIDATE_REGISTRY=UNAPPROVED`, `PR103_SAFE_TO_MERGE=NO`.
+
+### Preserved release risks and PR100 forecast
+
+Keep the merged guard unchanged and no-publication mode active. PR105 F7
+authorization-snapshot revocation, F2 alternate publisher, F3 historical reruns,
+F8 stale-review configuration, F9 mutation-test gaps and F10 transitive js-yaml
+remain disclosed follow-up risks; integration is not permission to fix unrelated
+release policy or claim those risks solved. Staging remains unqualified until
+actual protected environment/enablement evidence exists. Fresh exact-head scans
+determine HIGH counts; the historical401 is not a constant or a vulnerability
+waiver. Existing critical-only scanner thresholds remain unchanged.
+
+PR100 remains untouched at `fe270e1905ee709de64121d18dd2e04206286194`.
+Its old source/base/policy/receipt proofs cannot qualify the new main. Only after
+separate authorization and an official PR103 merge may that branch be synchronized.
+Forecast conflicts include CI/Supply/Walking, FFmpeg, SeaweedFS image/storage
+helpers and the verifier/admission contracts. Preserve Route A outcomes and the
+independently reviewed candidate constraints when those conflicts are eventually
+resolved, then recompute complete inventories and rerun real candidate/MinIO/S3,
+crypto, recovery, browser-export, six-ASR and physical-wire qualification. Do not
+merge or modify that branch during this assignment. Production migration and
+release remain forbidden.

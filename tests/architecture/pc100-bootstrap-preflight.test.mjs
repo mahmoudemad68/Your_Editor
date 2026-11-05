@@ -52,6 +52,7 @@ test("deadlock preflight is executable and only inspects fixed read endpoints", 
   assert.equal(r.enforce_admins, true);
   assert.equal(r.settings_mutation_authorized, false);
   assert.equal(r.candidate_admission_authorized, false);
+  assert.equal(r.next_route, "REVIEW_CURRENT_BASE_AND_REPORTED_REQUIRED_CHECKS");
   assert.deepEqual(
     r.pulls.map((p) => p.pr),
     [103, 100],
@@ -63,6 +64,64 @@ test("green checks still never authorize merge or candidate admission", async ()
   assert.equal(r.outcome, "REQUIRED_CHECKS_PASS_REVIEW_STILL_REQUIRED");
   assert.equal(r.candidate_admission_authorized, false);
   assert.equal(r.release_authorized, false);
+  assert.equal(r.live_a6_enforced, false);
+  assert.equal(r.next_route, "INDEPENDENT_REVIEW_AND_OWNER_INSTALLATION_GATES");
+});
+
+test("post-Route-A checks on an old base cannot qualify current main", async () => {
+  const f = fixture("success");
+  const r = await inspectBootstrap(async (route) => {
+    const value = await f.read(route);
+    return route === "pulls/100"
+      ? { ...value, base: { ...value.base, sha: "d".repeat(40) } }
+      : value;
+  });
+  assert.equal(r.pulls.find((p) => p.pr === 103).on_current_base, true);
+  assert.equal(r.pulls.find((p) => p.pr === 100).on_current_base, false);
+  assert.equal(r.outcome, "BLOCKED_REQUIRED_CHECKS");
+  assert.equal(r.candidate_admission_authorized, false);
+});
+
+test("main changing during read-only qualification is rejected", async () => {
+  const f = fixture("success");
+  let calls = 0;
+  await assert.rejects(
+    () =>
+      inspectBootstrap(async (route) => {
+        if (route === "branches/main" && ++calls === 2)
+          return { protected: true, commit: { sha: "e".repeat(40) } };
+        return f.read(route);
+      }),
+    /BOOTSTRAP_BASE_DRIFT/,
+  );
+});
+
+test("unmergeable dependency cannot reuse old positive HEAD checks", async () => {
+  const f = fixture("success");
+  const r = await inspectBootstrap(async (route) => {
+    const value = await f.read(route);
+    return route === "pulls/100" ? { ...value, merge_commit_sha: null } : value;
+  });
+  const p = r.pulls.find((p) => p.pr === 100);
+  assert.equal(p.test_merge_available, false);
+  assert.equal(p.M, null);
+  assert.ok(p.required.every((c) => c.check === null && c.status === "missing"));
+  assert.equal(r.outcome, "BLOCKED_REQUIRED_CHECKS");
+  assert.equal(r.candidate_admission_authorized, false);
+  assert.ok(f.routes.every((route) => !route.includes("commits/null")));
+});
+
+test("incomplete or string-typed main identity cannot produce a readiness report", async () => {
+  for (const main of [
+    { protected: "true", commit: { sha: B } },
+    { protected: true, commit: {} },
+  ]) {
+    const f = fixture("success");
+    await assert.rejects(
+      () => inspectBootstrap((route) => (route === "branches/main" ? main : f.read(route))),
+      /BOOTSTRAP_PROTECTION_UNVERIFIABLE/,
+    );
+  }
 });
 test("incomplete protection and API errors remain unverified", async () => {
   for (const field of ["branches/main/protection", "rulesets/77"]) {

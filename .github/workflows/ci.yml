@@ -16,7 +16,7 @@ permissions:
 jobs:
   repository:
     name: repository checks
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
       TURBO_TELEMETRY_DISABLED: "1"
@@ -277,7 +277,7 @@ jobs:
 
   real-asr:
     name: real ASR (${{ matrix.shard }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -344,7 +344,7 @@ jobs:
 
   ci:
     name: ci
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [repository, real-asr]
     if: ${{ always() }}
     steps:
