@@ -4,5 +4,6 @@
   "app_id": null,
   "installation_id": null,
   "slug": null,
-  "check_name": "PC100 independent security admission"
+  "check_name": "PC100 independent security admission",
+  "protection_reader": null
 }

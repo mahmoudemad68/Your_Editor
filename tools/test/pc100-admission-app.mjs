@@ -17,6 +17,8 @@ import {
   CANDIDATE_TITLE,
   APP_CHECK,
   validateAppConfig,
+  validateProtectionReaderConfig,
+  inspectProtectionVisibility,
   readPolicyJSON,
   verifyCandidateEvent,
   readGitSourceBytes,
@@ -84,6 +86,7 @@ export function validateAppRoute(route, method = "GET") {
   need(
     (method === "GET" &&
       (["/app", "/installation/repositories"].includes(pathname) ||
+        /^\/app\/installations\/[1-9][0-9]*$/.test(pathname) ||
         (relative !== null && readPath.test(relative)))) ||
       (method === "POST" && /^\/app\/installations\/[1-9][0-9]*\/access_tokens$/.test(pathname)) ||
       (method === "POST" && relative === "check-runs") ||
@@ -111,8 +114,9 @@ export function validateAppRoute(route, method = "GET") {
   }
   need(method === "GET" || !query, "APP_ROUTE_REJECTED");
 }
-export async function appRequest(route, token, method = "GET", body) {
+export async function appRequest(route, token, method = "GET", body, cap = 24 * 1024 ** 2) {
   validateAppRoute(route, method);
+  need(Number.isSafeInteger(cap) && cap >= 1024 && cap <= 24 * 1024 ** 2, "APP_RESPONSE_TOO_LARGE");
   const r = await globalThis.fetch("https://api.github.com" + route, {
     method,
     redirect: "error",
@@ -130,13 +134,16 @@ export async function appRequest(route, token, method = "GET", body) {
   let size = 0;
   for await (const b of r.body) {
     size += b.length;
-    need(size <= 24 * 1024 ** 2, "APP_RESPONSE_TOO_LARGE");
+    need(size <= cap, "APP_RESPONSE_TOO_LARGE");
     chunks.push(b);
   }
   return JSON.parse(Buffer.concat(chunks).toString("utf8"));
 }
 export function appJWT(config, key, now = Date.now()) {
   validateAppConfig(config);
+  return signedAppJWT(config.app_id, key, now);
+}
+function signedAppJWT(appID, key, now = Date.now()) {
   const parsed = createPrivateKey(key);
   need(
     parsed.asymmetricKeyType === "rsa" && parsed.asymmetricKeyDetails.modulusLength >= 2048,
@@ -147,7 +154,7 @@ export function appJWT(config, key, now = Date.now()) {
       JSON.stringify({
         iat: Math.floor(now / 1000) - 30,
         exp: Math.floor(now / 1000) + 540,
-        iss: String(config.app_id),
+        iss: String(appID),
       }),
     ).toString("base64url");
   return (
@@ -158,7 +165,133 @@ export function appJWT(config, key, now = Date.now()) {
     sign("RSA-SHA256", Buffer.from(header + "." + payload), parsed).toString("base64url")
   );
 }
-export async function installationClient(config, key, request = appRequest) {
+const protectionReaders = new WeakMap();
+const readerPermissions = Object.freeze({ administration: "read", metadata: "read" });
+const protectionPath = (route) =>
+  /^(?:branches\/main(?:\/protection)?|rules\/branches\/main|rulesets\/[1-9][0-9]*)$/.test(
+    route.split("?")[0],
+  );
+export function validateProtectionRoute(route, method = "GET", body) {
+  need(
+    typeof route === "string" && method === "GET" && body === undefined && protectionPath(route),
+    "PROTECTION_READER_ROUTE_REJECTED",
+  );
+  validateAppRoute(`/repos/${REPO}/${route}`, method);
+  const [pathname, query] = route.split("?");
+  need(
+    query === undefined || pathname === "rules/branches/main",
+    "PROTECTION_READER_ROUTE_REJECTED",
+  );
+  if (query !== undefined) {
+    const q = new URLSearchParams(query);
+    need(
+      [...q.keys()].every((k) => ["per_page", "page"].includes(k)) &&
+        q.get("per_page") === "100" &&
+        /^(?:[1-9]|[1-3][0-9]|40)$/.test(q.get("page") ?? ""),
+      "PROTECTION_READER_ROUTE_REJECTED",
+    );
+  }
+}
+// A distinct, Owner-installed App must itself have ONLY these read permissions.
+// Narrowing a token minted by an overprivileged reader App is not sufficient.
+// This constructor performs no installation/permission update and never writes
+// a check. Null protected-main configuration leaves the capability unavailable.
+export async function protectionReaderClient(writer, key, request = appRequest) {
+  validateAppConfig(writer);
+  need(writer.protection_reader != null, "PROTECTION_READER_NOT_CONFIGURED");
+  const config = validateProtectionReaderConfig(writer.protection_reader, writer),
+    jwt = signedAppJWT(config.app_id, key),
+    actual = await request("/app", jwt, "GET", undefined, 2 * 1024 ** 2);
+  need(
+    actual.id === config.app_id &&
+      actual.slug === config.slug &&
+      canonical(actual.permissions) === canonical(readerPermissions),
+    "PROTECTION_READER_ISSUER_REJECTED",
+  );
+  const installation = await request(
+    `/app/installations/${config.installation_id}`,
+    jwt,
+    "GET",
+    undefined,
+    2 * 1024 ** 2,
+  );
+  need(
+    installation.id === config.installation_id &&
+      installation.app_id === config.app_id &&
+      installation.app_slug === config.slug &&
+      installation.repository_selection === "selected" &&
+      installation.suspended_at === null &&
+      canonical(installation.permissions) === canonical(readerPermissions),
+    "PROTECTION_READER_INSTALLATION_REJECTED",
+  );
+  const token = await request(
+    `/app/installations/${config.installation_id}/access_tokens`,
+    jwt,
+    "POST",
+    { repository_ids: [REPOSITORY_ID], permissions: { ...readerPermissions } },
+    2 * 1024 ** 2,
+  );
+  need(
+    typeof token.token === "string" &&
+      /^[A-Za-z0-9_.-]{1,4096}$/.test(token.token) &&
+      Date.parse(token.expires_at) > Date.now() + 60000 &&
+      Date.parse(token.expires_at) <= Date.now() + 3660000 &&
+      canonical(token.permissions) === canonical(readerPermissions),
+    "PROTECTION_READER_TOKEN_REJECTED",
+  );
+  const repos = await request(
+    "/installation/repositories?per_page=100&page=1",
+    token.token,
+    "GET",
+    undefined,
+    2 * 1024 ** 2,
+  );
+  need(
+    repos.total_count === 1 &&
+      repos.repositories?.length === 1 &&
+      repos.repositories[0].id === REPOSITORY_ID &&
+      repos.repositories[0].full_name === REPO,
+    "PROTECTION_READER_REPOSITORY_REJECTED",
+  );
+  const client = async (route, method = "GET", body) => {
+    validateProtectionRoute(route, method, body);
+    need(Date.parse(token.expires_at) > Date.now() + 15000, "PROTECTION_READER_TOKEN_EXPIRED");
+    return request(`/repos/${REPO}/${route}`, token.token, "GET", undefined, 2 * 1024 ** 2);
+  };
+  protectionReaders.set(client, canonical(config));
+  return client;
+}
+export async function probeProtectionReader(writer, key, request = appRequest) {
+  const reader = await protectionReaderClient(writer, key, request),
+    main = await reader("branches/main");
+  need(
+    main.protected === true && /^[a-f0-9]{40}$/.test(main.commit?.sha),
+    "APP_MAIN_NOT_PROTECTED",
+  );
+  const evidence = await inspectProtectionVisibility(reader),
+    finalMain = await reader("branches/main");
+  need(finalMain.protected === true && finalMain.commit?.sha === main.commit.sha, "APP_LIVE_DRIFT");
+  return {
+    schema: evidence.schema,
+    outcome: "READ_ONLY_PROTECTION_VISIBILITY_OBSERVED",
+    repository_id: REPOSITORY_ID,
+    B: main.commit.sha,
+    ruleset_count: evidence.ruleset_count,
+    reader_app_id: writer.protection_reader.app_id,
+    candidate_admission_authorized: false,
+    release_authorized: false,
+    live_a6_enforced: false,
+  };
+}
+export async function installationClient(config, key, request = appRequest, reader) {
+  validateAppConfig(config);
+  need(config.protection_reader == null || reader !== undefined, "PROTECTION_READER_REQUIRED");
+  if (reader !== undefined)
+    need(
+      config.protection_reader != null &&
+        protectionReaders.get(reader) === canonical(config.protection_reader),
+      "PROTECTION_READER_BINDING_REJECTED",
+    );
   const jwt = appJWT(config, key),
     actual = await request("/app", jwt);
   need(actual.id === config.app_id && actual.slug === config.slug, "APP_ISSUER_REJECTED");
@@ -193,9 +326,20 @@ export async function installationClient(config, key, request = appRequest) {
       repos.repositories[0].id === REPOSITORY_ID,
     "APP_TOKEN_REPOSITORY_REJECTED",
   );
-  const client = (route, method = "GET", body) =>
-    request(`/repos/${REPO}/${route}`, token.token, method, body);
-  client.trustedSourceRead = (route) => request(route, token.token);
+  const dispatch = (route, method = "GET", body) => {
+    validateAppRoute(route, method);
+    const prefix = `/repos/${REPO}/`,
+      relative = route.startsWith(prefix) ? route.slice(prefix.length) : "";
+    if (relative.split("?")[0] === "rulesets" || protectionPath(relative)) {
+      need(reader !== undefined, "PROTECTION_READER_REQUIRED");
+      return reader(relative, method, body);
+    }
+    return request(route, token.token, method, body);
+  };
+  const client = (route, method = "GET", body) => dispatch(`/repos/${REPO}/${route}`, method, body);
+  // Source revalidation cannot accidentally route a private protection request
+  // through the writer credential either.
+  client.trustedSourceRead = (route) => dispatch(route);
   return client;
 }
 function contextOf(p, number) {
@@ -824,11 +968,33 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   let client, journal, config;
   try {
     need(
-      process.argv.length === 4 && ["--once", "--watch"].includes(process.argv[2]),
+      [4, 5].includes(process.argv.length) &&
+        ["--once", "--watch", "--probe-protection"].includes(process.argv[2]),
       "APP_ARGUMENTS_REJECTED",
     );
     config = await trustedHostSource();
+    if (process.argv[2] === "--probe-protection") {
+      need(process.argv.length === 4, "APP_ARGUMENTS_REJECTED");
+      const result = await probeProtectionReader(
+        config,
+        await readExternalKeyFile(process.argv[3]),
+      );
+      need(
+        canonical(await trustedHostSource()) === canonical(config),
+        "APP_BASE_CHANGED_RESTART_REQUIRED",
+      );
+      console.log(canonical(result));
+      process.exit(0);
+    }
+    need(
+      process.argv.length === (config.protection_reader == null ? 4 : 5),
+      "PROTECTION_READER_KEY_REQUIRED",
+    );
+    need(process.argv[3] !== process.argv[4], "PROTECTION_READER_KEY_REUSE_REJECTED");
     const key = await readExternalKeyFile(process.argv[3]);
+    const readerKey =
+      config.protection_reader == null ? undefined : await readExternalKeyFile(process.argv[4]);
+    need(readerKey === undefined || !readerKey.equals(key), "PROTECTION_READER_KEY_REUSE_REJECTED");
     journal = await openAppJournal(
       path.join(
         path.dirname(process.argv[3]),
@@ -844,7 +1010,9 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
         wake.abort();
       });
     do {
-      client = await installationClient(config, key);
+      const reader =
+        readerKey === undefined ? undefined : await protectionReaderClient(config, readerKey);
+      client = await installationClient(config, key, appRequest, reader);
       // Revalidate the installed source/base before every operation, not just startup.
       try {
         need(

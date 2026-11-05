@@ -22,12 +22,16 @@ import {
   openAppJournal,
   reconcileJournal,
   invalidateAppCheck,
+  protectionReaderClient,
+  probeProtectionReader,
+  validateProtectionRoute,
 } from "../../tools/test/pc100-admission-app.mjs";
 import {
   APP_CHECK,
   validateAppConfig,
   validateEnforcementRules,
   observeCandidateAdmission,
+  inspectProtectionVisibility,
 } from "../../tools/test/pc100-candidate-policy.mjs";
 import { candidateFixture, blobSHA } from "./support/candidate-policy-fixture.mjs";
 const config = {
@@ -40,6 +44,369 @@ const config = {
 };
 const key = generateKeyPairSync("rsa", { modulusLength: 2048 });
 const pem = key.privateKey.export({ format: "pem", type: "pkcs8" });
+// These generated keys and tokens are hermetic test inputs, never live credentials.
+const readerConfig = {
+  schema: "pc100-protection-reader-v1",
+  repository_id: 1395822921,
+  app_id: 357911,
+  installation_id: 23456,
+  slug: "read-only-test-only",
+};
+const withReader = { ...config, protection_reader: readerConfig };
+function protectionAPI(edit = () => {}) {
+  const f = candidateFixture(),
+    calls = [],
+    permissions = { administration: "read", metadata: "read" };
+  const rows = {
+    "/app": { id: readerConfig.app_id, slug: readerConfig.slug, permissions },
+    [`/app/installations/${readerConfig.installation_id}`]: {
+      id: readerConfig.installation_id,
+      app_id: readerConfig.app_id,
+      app_slug: readerConfig.slug,
+      repository_selection: "selected",
+      suspended_at: null,
+      permissions,
+    },
+    [`/app/installations/${readerConfig.installation_id}/access_tokens`]: {
+      token: "hermetic-reader-token",
+      expires_at: new Date(Date.now() + 3500000).toISOString(),
+      permissions,
+    },
+    "/installation/repositories?per_page=100&page=1": {
+      total_count: 1,
+      repositories: [{ id: 1395822921, full_name: "mahmoudemad68/Your_Editor" }],
+    },
+  };
+  edit(rows, f);
+  const request = async (route, token, method = "GET", body, cap) => {
+    calls.push({ route, token, method, body, cap });
+    if (Object.hasOwn(rows, route)) return rows[route];
+    assert.equal(token, "hermetic-reader-token");
+    assert.equal(method, "GET");
+    return f.read(route.replace("/repos/mahmoudemad68/Your_Editor/", ""));
+  };
+  return { rows, f, calls, request };
+}
+test("read-only reader mints a repository-scoped token and probe grants no authority", async () => {
+  const p = protectionAPI(),
+    result = await probeProtectionReader(withReader, pem, p.request);
+  assert.equal(result.outcome, "READ_ONLY_PROTECTION_VISIBILITY_OBSERVED");
+  assert.equal(result.B, p.f.context.B);
+  for (const k of ["candidate_admission_authorized", "release_authorized", "live_a6_enforced"])
+    assert.equal(result[k], false);
+  assert.equal(JSON.stringify(result).includes("hermetic-reader-token"), false);
+  assert.equal(p.calls.filter((c) => c.method !== "GET").length, 1);
+  const mint = p.calls.find((c) => c.method === "POST");
+  assert.deepEqual(mint.body, {
+    repository_ids: [1395822921],
+    permissions: { administration: "read", metadata: "read" },
+  });
+  const jwt = JSON.parse(Buffer.from(mint.token.split(".")[1], "base64url"));
+  assert.equal(jwt.iss, String(readerConfig.app_id));
+  assert.ok(p.calls.every((c) => c.cap === 2 * 1024 ** 2));
+});
+for (const [label, edit] of [
+  ["wrong App", (r) => r["/app"].id++],
+  ["wrong slug", (r) => (r["/app"].slug = "other")],
+  [
+    "App write permission",
+    (r) => (r["/app"].permissions = { administration: "write", metadata: "read" }),
+  ],
+  [
+    "App extra read permission",
+    (r) => (r["/app"].permissions = { administration: "read", metadata: "read", contents: "read" }),
+  ],
+  ["wrong installation", (r) => r[Object.keys(r)[1]].id++],
+  ["wrong installation App", (r) => r[Object.keys(r)[1]].app_id++],
+  ["all-repository installation", (r) => (r[Object.keys(r)[1]].repository_selection = "all")],
+  ["suspended installation", (r) => (r[Object.keys(r)[1]].suspended_at = new Date().toISOString())],
+  [
+    "installation checks permission",
+    (r) =>
+      (r[Object.keys(r)[1]].permissions = {
+        administration: "read",
+        metadata: "read",
+        checks: "write",
+      }),
+  ],
+  ["expired token", (r) => (r[Object.keys(r)[2]].expires_at = new Date(0).toISOString())],
+  [
+    "overlong token lifetime",
+    (r) => (r[Object.keys(r)[2]].expires_at = new Date(Date.now() + 7200000).toISOString()),
+  ],
+  [
+    "token permission expansion",
+    (r) => (r[Object.keys(r)[2]].permissions = { administration: "write", metadata: "read" }),
+  ],
+  [
+    "token missing metadata",
+    (r) => (r[Object.keys(r)[2]].permissions = { administration: "read" }),
+  ],
+  ["multiple repositories", (r) => (r[Object.keys(r)[3]].total_count = 2)],
+  ["wrong repository ID", (r) => r[Object.keys(r)[3]].repositories[0].id++],
+  [
+    "wrong repository name",
+    (r) => (r[Object.keys(r)[3]].repositories[0].full_name = "other/other"),
+  ],
+])
+  test(`reader rejects ${label} without check publication`, async () => {
+    const p = protectionAPI(edit);
+    await assert.rejects(
+      () => protectionReaderClient(withReader, pem, p.request),
+      /PROTECTION_READER_/,
+    );
+    assert.equal(
+      p.calls.some((c) => c.route.includes("check-runs")),
+      false,
+    );
+  });
+test("reader descriptor cannot alias the issuer, extend its schema or activate by PR assertion", async () => {
+  for (const edit of [
+    { app_id: config.app_id },
+    { app_id: 15368 },
+    { installation_id: config.installation_id },
+    { repository_id: 1 },
+    { slug: "../bad" },
+    { approved: true },
+  ])
+    assert.throws(() =>
+      validateAppConfig({ ...withReader, protection_reader: { ...readerConfig, ...edit } }),
+    );
+  await assert.rejects(
+    () => protectionReaderClient(config, pem, async () => assert.fail("network")),
+    /NOT_CONFIGURED/,
+  );
+  await assert.rejects(
+    () => installationClient(withReader, pem, async () => assert.fail("network")),
+    /READER_REQUIRED/,
+  );
+  await assert.rejects(
+    () =>
+      installationClient(
+        withReader,
+        pem,
+        async () => assert.fail("network"),
+        Object.assign(async () => {}, { config: readerConfig }),
+      ),
+    /BINDING_REJECTED/,
+  );
+});
+test("actual issuer dispatch isolates private protection reads from check-writing credentials", async () => {
+  const p = protectionAPI(),
+    reader = await protectionReaderClient(withReader, pem, p.request),
+    writes = [];
+  const writer = async (route, token, method, body) => {
+    writes.push({ route, token, method, body });
+    if (route === "/app") return { id: config.app_id, slug: config.slug };
+    if (route.endsWith("access_tokens"))
+      return {
+        token: "hermetic-writer-token",
+        expires_at: new Date(Date.now() + 3500000).toISOString(),
+        permissions: {
+          contents: "read",
+          pull_requests: "read",
+          actions: "read",
+          checks: "write",
+          metadata: "read",
+        },
+      };
+    if (route === "/installation/repositories")
+      return { total_count: 1, repositories: [{ id: 1395822921 }] };
+    assert.equal(token, "hermetic-writer-token");
+    assert.ok(!/protection|rulesets|rules\/branches/.test(route));
+    return { id: 123 };
+  };
+  const c = await installationClient(withReader, pem, writer, reader);
+  await c("branches/main/protection");
+  await c.trustedSourceRead("/repos/mahmoudemad68/Your_Editor/rulesets/77");
+  await assert.rejects(() => c("rulesets"), /PROTECTION_READER_ROUTE_REJECTED/);
+  await assert.rejects(
+    () => c.trustedSourceRead("/repos/mahmoudemad68/Your_Editor/rulesets?per_page=100&page=1"),
+    /PROTECTION_READER_ROUTE_REJECTED/,
+  );
+  await c("check-runs", "POST", { name: "synthetic" });
+  assert.equal(writes.at(-1).route, "/repos/mahmoudemad68/Your_Editor/check-runs");
+  assert.equal(
+    writes.some((c) => /protection|rulesets/.test(c.route)),
+    false,
+  );
+  assert.equal(
+    p.calls.some((c) => c.route.includes("check-runs")),
+    false,
+  );
+  const legacy = await installationClient(config, pem, writer);
+  assert.throws(() => legacy("branches/main/protection"), /READER_REQUIRED/);
+  assert.throws(
+    () => legacy.trustedSourceRead("/repos/mahmoudemad68/Your_Editor/rulesets/77"),
+    /READER_REQUIRED/,
+  );
+  assert.throws(() => legacy("rulesets"), /READER_REQUIRED/);
+});
+for (const route of [
+  "https://evil.example/x",
+  "../branches/main",
+  "rulesets/%37%37",
+  "rulesets/77/../88",
+  "check-runs",
+  "git/commits/" + "a".repeat(40),
+  "rulesets",
+  "branches/main?state=open",
+  "rules/branches/main?per_page=100&page=41",
+  "rules/branches/main?per_page=100&page=1&page=2",
+  "rules/branches/main?per_page=100&page=1&token=secret",
+])
+  test(`reader rejects closed-route violation ${route}`, () =>
+    assert.throws(() => validateProtectionRoute(route)));
+test("reader rejects all writes and request bodies before credential dispatch", async () => {
+  const p = protectionAPI(),
+    read = await protectionReaderClient(withReader, pem, p.request),
+    n = p.calls.length;
+  for (const method of ["POST", "PATCH", "PUT", "DELETE"])
+    await assert.rejects(() => read("rulesets/77", method, {}), /ROUTE_REJECTED/);
+  await assert.rejects(() => read("branches/main", "GET", {}), /ROUTE_REJECTED/);
+  assert.equal(p.calls.length, n);
+});
+test("reader expires after mint and cannot be rebound to another protected configuration", async () => {
+  const p = protectionAPI(),
+    read = await protectionReaderClient(withReader, pem, p.request);
+  const changed = { ...withReader, protection_reader: { ...readerConfig, installation_id: 99999 } };
+  await assert.rejects(
+    () => installationClient(changed, pem, async () => assert.fail("network"), read),
+    /BINDING_REJECTED/,
+  );
+  p.rows[`/app/installations/${readerConfig.installation_id}/access_tokens`].expires_at = new Date(
+    0,
+  ).toISOString();
+  const before = p.calls.length;
+  await assert.rejects(() => read("branches/main"), /TOKEN_EXPIRED/);
+  assert.equal(p.calls.length, before);
+});
+test("real probe CLI rejects Actions/credential environment before key access", () => {
+  const result = spawnSync(
+    process.execPath,
+    ["tools/test/pc100-admission-app.mjs", "--probe-protection", "missing-private-file"],
+    {
+      cwd: path.resolve(import.meta.dirname, "../.."),
+      env: { GITHUB_ACTIONS: "false" },
+      encoding: "utf8",
+    },
+  );
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /APP_PR_RUNNER_FORBIDDEN/);
+  assert.doesNotMatch(result.stderr, /ENOENT|missing-private-file|private key/i);
+});
+for (const [label, edit] of [
+  ["omitted bypass actors", (f) => delete f.rows["rulesets/77"].bypass_actors],
+  [
+    "nonempty bypass actors",
+    (f) =>
+      f.rows["rulesets/77"].bypass_actors.push({
+        actor_id: 1,
+        actor_type: "Integration",
+        bypass_mode: "always",
+      }),
+  ],
+  ["inactive ruleset", (f) => (f.rows["rulesets/77"].enforcement = "evaluate")],
+  [
+    "missing administration enforcement",
+    (f) => delete f.rows["branches/main/protection"].enforce_admins,
+  ],
+])
+  test(`visibility never substitutes success for ${label}`, async () => {
+    const p = protectionAPI((_r, f) => edit(f));
+    await assert.rejects(
+      () => probeProtectionReader(withReader, pem, p.request),
+      /CANDIDATE_PROTECTION_/,
+    );
+  });
+test("probe rejects main drift and never issues a check", async () => {
+  const p = protectionAPI(),
+    base = p.request;
+  let count = 0;
+  p.request = async (...args) => {
+    const result = await base(...args);
+    if (args[0].endsWith("/branches/main") && ++count === 2)
+      return { ...result, commit: { ...result.commit, sha: "9".repeat(40) } };
+    return result;
+  };
+  await assert.rejects(() => probeProtectionReader(withReader, pem, p.request), /APP_LIVE_DRIFT/);
+  assert.equal(
+    p.calls.some((c) => c.route.includes("check-runs")),
+    false,
+  );
+});
+test("API failures, hidden fields and incomplete pagination remain visibility failures", async () => {
+  for (const status of [401, 403, 404]) {
+    const p = protectionAPI(),
+      request = async (...args) => {
+        if (args[0].endsWith("/protection")) throw Error(`API_${status}`);
+        return p.request(...args);
+      };
+    await assert.rejects(
+      () => probeProtectionReader(withReader, pem, request),
+      new RegExp(`API_${status}`),
+    );
+  }
+  const p = protectionAPI(),
+    rules = p.f.rows["rules/branches/main"];
+  await assert.rejects(
+    () =>
+      inspectProtectionVisibility(async (route) => {
+        if (route.endsWith("page=1"))
+          return Array.from({ length: 100 }, (_, i) => ({ ...rules[0], ruleset_id: i + 1 }));
+        if (route.endsWith("page=2")) throw Error("INCOMPLETE_PAGE");
+        return p.f.read(route);
+      }),
+    /INCOMPLETE_PAGE/,
+  );
+});
+test("visibility inspects bypass actors of rulesets discovered on later pages", async () => {
+  const p = protectionAPI(),
+    first = p.f.rows["rules/branches/main"][0],
+    seen = [];
+  await assert.rejects(
+    () =>
+      inspectProtectionVisibility(async (route) => {
+        if (route.endsWith("page=1"))
+          return Array.from({ length: 100 }, (_, i) => ({ ...first, ruleset_id: i + 1 }));
+        if (route.endsWith("page=2")) return [{ ...first, ruleset_id: 101 }];
+        if (route.startsWith("rulesets/")) {
+          const id = Number(route.split("/")[1]);
+          seen.push(id);
+          return {
+            id,
+            target: "branch",
+            enforcement: "active",
+            ...(id === 101 ? {} : { bypass_actors: [] }),
+          };
+        }
+        return p.f.read(route);
+      }),
+    /CANDIDATE_PROTECTION_BYPASS/,
+  );
+  assert.equal(seen.length, 101);
+  assert.equal(seen.at(-1), 101);
+});
+test("reader response transport enforces its actual two-MiB cap and redirect rejection", async () => {
+  const saved = globalThis.fetch;
+  try {
+    globalThis.fetch = async () => new Response(" ".repeat(2 * 1024 ** 2 + 1));
+    await assert.rejects(
+      () => appRequest("/app", "synthetic", "GET", undefined, 2 * 1024 ** 2),
+      /RESPONSE_TOO_LARGE/,
+    );
+    globalThis.fetch = async (_url, options) => {
+      assert.equal(options.redirect, "error");
+      return new Response("", { status: 302, headers: { location: "https://evil.example" } });
+    };
+    await assert.rejects(
+      () => appRequest("/app", "synthetic", "GET", undefined, 2 * 1024 ** 2),
+      /APP_API_REJECTED/,
+    );
+  } finally {
+    globalThis.fetch = saved;
+  }
+});
 test(
   "Linux key-file guard checks real permissions and rejects symbolic/hard links (non-key marker only)",
   { skip: process.platform !== "linux" },

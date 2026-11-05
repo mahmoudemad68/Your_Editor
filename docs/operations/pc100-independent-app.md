@@ -200,6 +200,138 @@ through that boundary, keep admission blocked; this code does not solve it by
 weakening checks. No native ten-minute merge TTL is claimed: issuer outage still
 leaves a residual non-atomic merge window requiring explicit Owner disposition.
 
-Route A is separately Owner-authorized on Draft PR105. Its native checks and QA
+Route A is separately Owner-authorized on PR105 (now Ready for human review). Its native checks and QA
 are separate evidence, not an authorization to merge it, change protection or
 install this App. PR103's inherited main checks remain independently required.
+
+## N2 separate read-only protection reader (code only; not installed)
+
+`candidate-app.json` now has an optional `protection_reader`, shipped **null**.
+The external controller can use a second, separately Owner-authorized private App
+whose **entire App and installation permissions** are exactly Administration read
+and Metadata read, installed on this repository only. The check-writing App keeps
+its existing token scopes. A narrowed token from a broader reader App is rejected.
+No App, installation, permission, host or key has been created by this change.
+
+The reader descriptor is a closed `pc100-protection-reader-v1` object containing
+`repository_id`, distinct `app_id`, distinct `installation_id`, and `slug`. It is
+read from the independently reviewed protected-main configuration, not a PR.
+The constructor authenticates `/app`, the exact selected/suspended installation,
+the exact token scopes and lifetime, and the token's single repository. Its
+capability permits only GET of main, main protection, effective main rules and
+exact ruleset IDs; responses are capped at 2 MiB with 15-second timeouts and no
+redirects. It cannot write a check or settings. The writer routes those reads
+only through the authenticated reader capability, including source revalidation;
+a missing/forged/mismatched reader cannot fall back to writer credentials.
+
+After independent installation of the reviewed code/config on protected main,
+an Owner-controlled external Linux host can perform a **visibility-only** probe:
+
+```sh
+node tools/test/pc100-admission-app.mjs --probe-protection /secure/external/reader.pem
+# Only after complete independently observed visibility and issuer configuration:
+node tools/test/pc100-admission-app.mjs --once /secure/external/issuer.pem /secure/external/reader.pem
+```
+
+Both files must satisfy the existing Linux ownership, 0600, non-link,
+outside-checkout guards. The CLI rejects identical paths/keys. Neither private
+key nor installation token belongs in Actions, source, artifacts or logs.
+The probe compares protected main before/after all reads, emits bounded public
+identity/count fields only, and explicitly returns candidate/release/live-A6
+authorization **false**. HTTP 401/403/404, hidden bypass actors, incomplete pages,
+unexpected permissions, nonempty bypass lists and base drift all fail closed.
+
+**Unresolved real API capability:** [branch protection GET](https://docs.github.com/en/rest/branches/branch-protection#get-branch-protection)
+requires Administration read; [ruleset GET](https://docs.github.com/en/rest/repos/rules#get-a-repository-ruleset)
+documents that `bypass_actors` is returned only with write access to the ruleset.
+Therefore an Administration-read App is **not proven** to expose complete bypass
+actors. Missing actors never mean an empty list. Owner authorization of the separate
+read-only App and an actual successful authenticated probe are required; if GitHub
+hides the field, N2 remains blocked on an independently authorized trustworthy
+read-only visibility source. No automatic Administration-write or Owner-PAT
+workaround is implemented or requested by the software.
+
+**Consumer integration boundary:** the Actions-side candidate-policy evaluator
+also currently reads private protection metadata. Its contents/actions-read
+`GITHUB_TOKEN` does not acquire the external reader's authority from this patch.
+No reader key/token will be passed into Actions. A future independently reviewed
+consumer integration must authenticate the real external App's exact-source,
+current-base enforcement evidence without re-issuing it as a PR-controlled claim.
+Until then, full candidate admission remains blocked even if the external probe
+succeeds. These tests establish software separation, not live A6 or deployment
+authorization. `LIVE_A6_ENFORCED=NO`, registry unapproved, release hold active.
+
+## PR105 release-hold observation and dependent integration
+
+Read-only inspection on 2026-11-05 found PR105 at
+`4d2b73bc48fada4fe44b96e8efb91703b1afd846`, base
+`5cdb1d794d347a36d869027947bb62504dddff92`. Required CI and Supply Chain and
+Walking E2E are successful; Molomo9's human review remains requested. Classic
+protection requires one approval/admin enforcement/strict ci; ruleset 24207418
+adds strict supply-chain-security, stale-review dismissal, resolved threads and
+no bypass actors. QA is PASS_WITH_FINDINGS, not release approval. Historical
+scan evidence has zero CRITICAL but **380 HIGH package occurrences** across the
+image set; SeaweedFS retains a HIGH go-jose finding. This is not zero HIGH/CRITICAL.
+
+The PR105 Supply Chain main-push path publishes ten scanned images to GHCR with
+both immutable `sha-<fullsha>` and mutable `main` tags, then generates release
+manifest/bundle artifacts. This is not a GitHub Release API creation. Publication
+has packages-write and depends on Supply Chain, not separately on CI/Walking.
+There is **no RELEASE_HOLD guard**. Staging separately requires its enable flag,
+the staging environment, reviewer/prevent-self-review checks, serialized deploys
+and pinned SSH host verification. Repository API inspection found **zero
+environments and zero Actions variables**; staging is currently disabled, but
+GHCR publication/release artifacts are not.
+
+Minimal proposal only (not applied): require both `vars.RELEASE_HOLD == 'false'`
+and `vars.RELEASE_PUBLICATION_ENABLED == 'true'` on the scanned release-image
+save/upload steps and publish/release/staging jobs. Unset/malformed values must
+disable publication, while all scans and required checks continue. Staging must
+also retain its separate flag/protected environment and independently verified
+reviewer, prevent-self-review and admin-bypass settings. Changing variables alone
+cannot fix a workflow with no gate. Separate Owner authorization and exact-head
+regression/review are required before editing that workflow/settings. No merge
+should occur while the release hold and this unconditional publication conflict.
+
+Read-only three-way merge inspection from the common base found:
+
+| Pair                                | Overlapping paths | Text conflict regions |
+| ----------------------------------- | ----------------: | --------------------: |
+| PR105 / PR103 at cce1f3c            |                 0 |                     0 |
+| PR105 / PR100 at fe270e1            |                11 |                    17 |
+| PR103 at cce1f3c / PR100 at fe270e1 |                17 |                    48 |
+
+These are dry-run observations, not an executed merge or a guarantee for later
+heads. PR105/PR100 overlap spans ci/e2e/supply workflows, FFmpeg worker/download
+controls, SeaweedFS Dockerfile/object-storage/S3 tests, Walking runner and Issue99
+operations documentation. PR103/PR100 overlap includes all verifier/admission
+workflows and scripts, App/policy configuration, fixtures/tests and App operations
+documentation. Preserve Route A's Ubuntu24/FFmpeg/native-Brotli fixes alongside
+the separately qualified Go rebuild; never take an entire conflicting side
+blindly. Do not duplicate or discard authenticated admission, six ASR shards,
+security checks, storage defenses or the original MinIO journey.
+
+Executable sequence **after separate authorized official PR105 merge**, never now:
+
+1. Check `gh pr view 105 --json mergedAt,mergeCommit`; require a non-null merge
+   commit, then `git fetch origin main` and
+   `git merge-base --is-ancestor <105-merge> origin/main`. Record the new base/tree
+   and genuine main checks. Abort on unexpected release activity or source drift.
+2. In a clean, preserved PR103 checkout of its independently reviewed latest H,
+   `git merge --no-edit origin/main` (ordinary history-preserving synchronization,
+   not a force/rebase). Run all five verifier suites on Node22/24 and genuine
+   Ubuntu/Windows Actions, lint/format, protection preflight, adversarial checks
+   and all required CI/Supply/Walking on the resulting exact HEAD. Stop on a
+   conflict/new API limitation; no security-settings bypass.
+3. Independently review PR103 and its required source/Owner-only installation
+   gates. Only after separate authorization and official merge, synchronize
+   PR100 with new main by ordinary merge. Resolve the enumerated overlaps by
+   inspecting each contract, including reader compatibility and receipt/evidence
+   IDs. Any new base invalidates earlier H/B/M/tree policy/producer/receipt proofs.
+4. Recompute complete source inventory (blob/mode/SHA-256), review the unapproved
+   candidate registry independently, and prove actual expected-App enforcement.
+   Then run exact-head complete producer before consumer admission, bounded REST
+   and same-run artifact transfer/wire accounting, six ASR shards, real SeaweedFS
+   JWT/S3/firewall/backup/restore and Small-ASR/captions/edit/undo/restart/export,
+   plus the original MinIO browser journey. Independent QA and eventual Owner
+   Ready/Merge decisions remain separate. No production-volume migration.

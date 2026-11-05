@@ -411,7 +411,9 @@ export function evaluateCandidatePolicy(s) {
   };
 }
 export function validateAppConfig(c) {
-  keys(c, ["schema", "repository_id", "app_id", "installation_id", "slug", "check_name"]);
+  const fields = ["schema", "repository_id", "app_id", "installation_id", "slug", "check_name"];
+  if (c && Object.hasOwn(c, "protection_reader")) fields.push("protection_reader");
+  keys(c, fields);
   need(
     c.schema === "pc100-independent-app-v1" &&
       c.repository_id === REPOSITORY_ID &&
@@ -422,6 +424,23 @@ export function validateAppConfig(c) {
       /^[a-z0-9-]{1,100}$/.test(c.slug) &&
       c.check_name === APP_CHECK,
     "CANDIDATE_APP_NOT_CONFIGURED",
+  );
+  if (c.protection_reader != null) validateProtectionReaderConfig(c.protection_reader, c);
+  return c;
+}
+export function validateProtectionReaderConfig(c, writer) {
+  keys(c, ["schema", "repository_id", "app_id", "installation_id", "slug"]);
+  need(
+    c.schema === "pc100-protection-reader-v1" &&
+      c.repository_id === REPOSITORY_ID &&
+      id(c.app_id) &&
+      c.app_id !== 15368 &&
+      c.app_id !== writer.app_id &&
+      id(c.installation_id) &&
+      c.installation_id !== writer.installation_id &&
+      typeof c.slug === "string" &&
+      /^[a-z0-9-]{1,100}$/.test(c.slug),
+    "PROTECTION_READER_CONFIG_REJECTED",
   );
   return c;
 }
@@ -439,9 +458,11 @@ export function validateEnforcementRules(rules, app) {
   need(matching.length === 1, "CANDIDATE_ENFORCEMENT_NOT_INSTALLED");
   return true;
 }
-export async function verifyEnforcement(read, app) {
+// Visibility inspection grants no admission. The issuer must separately require
+// its expected-source App check; private protection data must never be replaced
+// by a PR assertion or by treating an omitted bypass list as empty.
+export async function inspectProtectionVisibility(read) {
   const rules = await completePages(read, "rules/branches/main");
-  validateEnforcementRules(rules, app);
   const protection = await read("branches/main/protection");
   need(
     protection?.enforce_admins?.enabled === true &&
@@ -485,6 +506,18 @@ export async function verifyEnforcement(read, app) {
       "CANDIDATE_PROTECTION_BYPASS",
     );
   }
+  return {
+    schema: "pc100-protection-visibility-v1",
+    rules,
+    ruleset_count: ids.size,
+    candidate_admission_authorized: false,
+    release_authorized: false,
+    live_a6_enforced: false,
+  };
+}
+export async function verifyEnforcement(read, app) {
+  const evidence = await inspectProtectionVisibility(read);
+  validateEnforcementRules(evidence.rules, app);
   return true;
 }
 /** PR-local diagnostics only. A PR workflow runs from the test merge, not B. */
