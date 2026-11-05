@@ -1,0 +1,1374 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocolId",
+    "version",
+    "status",
+    "availability",
+    "baseMain",
+    "authority",
+    "labels",
+    "matchingNormalization",
+    "wordMapping",
+    "clock",
+    "acousticOperationalDefinition",
+    "boundaryPolicy",
+    "proposedSampling",
+    "annotation",
+    "us203PrimaryMetric",
+    "cp2",
+    "us223",
+    "acquisition",
+    "preservedRestrictions",
+    "formalProtocolApproval",
+    "revision",
+    "arabicVarietyScope",
+    "scopeSufficiencyPolicy",
+    "disagreementPolicy"
+  ],
+  "properties": {
+    "protocolId": {
+      "const": "your-editor-en-ar-independent-reference"
+    },
+    "version": {
+      "const": "1.0.0-draft.2"
+    },
+    "status": {
+      "const": "PROPOSED_NOT_AUTHORIZED_FOR_COLLECTION"
+    },
+    "availability": {
+      "const": "BLOCKED_REFERENCE_DATA"
+    },
+    "baseMain": {
+      "const": "5cdb1d794d347a36d869027947bb62504dddff92"
+    },
+    "authority": {
+      "const": "https://github.com/mahmoudemad68/Your_Editor/pull/98#issuecomment-6487456998"
+    },
+    "labels": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "uniqueItems": true,
+      "items": {
+        "enum": ["ACOUSTIC_SILENCE", "NON_SPEECH", "FILLER", "REPETITION"]
+      }
+    },
+    "matchingNormalization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "unicodeTables",
+        "operations",
+        "internalPunctuationPreserved",
+        "internalWhitespaceSplitAllowed",
+        "rawTextOrOffsetsChanged",
+        "alefHamzaYaFolding",
+        "emptyKey"
+      ],
+      "properties": {
+        "id": {
+          "const": "en-ar-reference-key-v1"
+        },
+        "unicodeTables": {
+          "const": "14.0.0"
+        },
+        "operations": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1200
+          },
+          "minItems": 5,
+          "maxItems": 5
+        },
+        "internalPunctuationPreserved": {
+          "const": true
+        },
+        "internalWhitespaceSplitAllowed": {
+          "const": false
+        },
+        "rawTextOrOffsetsChanged": {
+          "const": false
+        },
+        "alefHamzaYaFolding": {
+          "const": false
+        },
+        "emptyKey": {
+          "const": "UNMAPPABLE"
+        }
+      }
+    },
+    "wordMapping": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "candidates",
+        "objective",
+        "ambiguousOptimum",
+        "classLabelsUsedToChooseAlignment"
+      ],
+      "properties": {
+        "candidates": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1200
+        },
+        "objective": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1200
+        },
+        "ambiguousOptimum": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1200
+        },
+        "classLabelsUsedToChooseAlignment": {
+          "const": false
+        }
+      }
+    },
+    "clock": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "coordinateSpace",
+        "interval",
+        "primaryBoundary",
+        "serializedMicroseconds",
+        "originalChannelsPreserved"
+      ],
+      "properties": {
+        "coordinateSpace": {
+          "const": "ORIGINAL_SOURCE"
+        },
+        "interval": {
+          "const": "HALF_OPEN"
+        },
+        "primaryBoundary": {
+          "const": "INTEGER_SOURCE_PCM_SAMPLE"
+        },
+        "serializedMicroseconds": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1200
+        },
+        "originalChannelsPreserved": {
+          "const": true
+        }
+      }
+    },
+    "acousticOperationalDefinition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "noiseDbfs",
+        "minimumDurationUs",
+        "channelPolicy",
+        "meaningfulContentMayCoexist",
+        "productionPredictionVisibleToAnnotators",
+        "referenceComputedFromProductionDetector"
+      ],
+      "properties": {
+        "noiseDbfs": {
+          "const": -60
+        },
+        "minimumDurationUs": {
+          "const": "200000"
+        },
+        "channelPolicy": {
+          "const": "ALL_ORIGINAL_CHANNELS"
+        },
+        "meaningfulContentMayCoexist": {
+          "const": true
+        },
+        "productionPredictionVisibleToAnnotators": {
+          "const": false
+        },
+        "referenceComputedFromProductionDetector": {
+          "const": false
+        }
+      }
+    },
+    "boundaryPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cp2PrimaryCollarUs",
+        "proposedHumanWordReviewTriggerUs",
+        "proposedHumanNonSpeechReviewTriggerUs",
+        "acousticBoundaryIndependentSampleVerificationRequired",
+        "uncertaintyBandsRetained",
+        "reviewTriggersAreMatchingTolerance",
+        "reviewTriggersAreApprovedAcceptanceChanges",
+        "unresolvedPassFailAmbiguity"
+      ],
+      "properties": {
+        "cp2PrimaryCollarUs": {
+          "const": "0"
+        },
+        "proposedHumanWordReviewTriggerUs": {
+          "const": "20000"
+        },
+        "proposedHumanNonSpeechReviewTriggerUs": {
+          "const": "50000"
+        },
+        "acousticBoundaryIndependentSampleVerificationRequired": {
+          "const": true
+        },
+        "uncertaintyBandsRetained": {
+          "const": true
+        },
+        "reviewTriggersAreMatchingTolerance": {
+          "const": false
+        },
+        "reviewTriggersAreApprovedAcceptanceChanges": {
+          "const": false
+        },
+        "unresolvedPassFailAmbiguity": {
+          "const": "BLOCK_QUALIFICATION"
+        }
+      }
+    },
+    "proposedSampling": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "naturalClips",
+        "targetMinutes",
+        "languageGroups",
+        "conditionCellsPerLanguage",
+        "groupedSplitTargets",
+        "groupKey",
+        "sorting",
+        "splitManifestRequiresFreezeBeforeModelUse",
+        "previousProjectEvaluationSources",
+        "syntheticFixtures",
+        "suggestedPositiveEventsPerLanguage",
+        "positiveEventCountIsRoadmapThreshold"
+      ],
+      "properties": {
+        "naturalClips": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "targetMinutes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "languageGroups": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["en", "ar", "mixed-en-ar"],
+          "properties": {
+            "en": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10000
+            },
+            "ar": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10000
+            },
+            "mixed-en-ar": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10000
+            }
+          }
+        },
+        "conditionCellsPerLanguage": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["clean", "quiet", "music", "ambient-noise"],
+          "properties": {
+            "clean": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10000
+            },
+            "quiet": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10000
+            },
+            "music": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10000
+            },
+            "ambient-noise": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10000
+            }
+          }
+        },
+        "groupedSplitTargets": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["train", "dev", "heldout"],
+          "properties": {
+            "train": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10000
+            },
+            "dev": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10000
+            },
+            "heldout": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10000
+            }
+          }
+        },
+        "groupKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1200
+        },
+        "sorting": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1200
+        },
+        "splitManifestRequiresFreezeBeforeModelUse": {
+          "type": "boolean"
+        },
+        "previousProjectEvaluationSources": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1200
+        },
+        "syntheticFixtures": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1200
+        },
+        "suggestedPositiveEventsPerLanguage": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "positiveEventCountIsRoadmapThreshold": {
+          "type": "boolean"
+        }
+      }
+    },
+    "annotation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "independentHumanAnnotators",
+        "independentHumanAdjudicators",
+        "actualPeopleAssigned",
+        "ownerDoesAnnotation",
+        "machinePrefillAllowedForAcceptanceLabels",
+        "asrTranscriptVisibleBeforeHumanFreeze",
+        "rawRaterTracksImmutable",
+        "humanStatementAndContentHashRequired",
+        "hypotheticalPilotMinutes",
+        "pilotPartition"
+      ],
+      "properties": {
+        "independentHumanAnnotators": {
+          "const": 2
+        },
+        "independentHumanAdjudicators": {
+          "const": 1
+        },
+        "actualPeopleAssigned": {
+          "const": 0
+        },
+        "ownerDoesAnnotation": {
+          "const": false
+        },
+        "machinePrefillAllowedForAcceptanceLabels": {
+          "const": false
+        },
+        "asrTranscriptVisibleBeforeHumanFreeze": {
+          "const": false
+        },
+        "rawRaterTracksImmutable": {
+          "const": true
+        },
+        "humanStatementAndContentHashRequired": {
+          "const": true
+        },
+        "hypotheticalPilotMinutes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "pilotPartition": {
+          "const": "TRAIN_ONLY"
+        }
+      }
+    },
+    "us203PrimaryMetric": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "unit",
+        "matching",
+        "input",
+        "precisionThreshold",
+        "noPredictions",
+        "abstention",
+        "holdoutTuningAllowed",
+        "recallAcceptanceThresholdInvented",
+        "aggregation",
+        "aggregationDecision",
+        "decisionAuthority",
+        "eligiblePopulation",
+        "primaryClipGroupsMutuallyExclusive",
+        "predictionIdsCountedOnce",
+        "requiredBreakdowns",
+        "requiredCountsAndRates",
+        "pooledPassImpliesSubgroupPass",
+        "zeroDenominatorStatus",
+        "additionalSubgroupPerformanceThresholds"
+      ],
+      "properties": {
+        "unit": {
+          "const": "typed word-referenced span"
+        },
+        "matching": {
+          "const": "one-to-one exact class and referenced adjudicated human word set; deterministic source-time lexical mapping, ambiguity unresolved not optimistically matched"
+        },
+        "input": {
+          "const": "actual qualified production ASR; human-transcript oracle scored separately"
+        },
+        "precisionThreshold": {
+          "const": 0.85
+        },
+        "noPredictions": {
+          "const": "NOT_PROVEN"
+        },
+        "abstention": {
+          "const": "not positive; retain coverage and missed-positive FN; unresolved native alignment never successful deletion"
+        },
+        "holdoutTuningAllowed": {
+          "const": false
+        },
+        "recallAcceptanceThresholdInvented": {
+          "const": false
+        },
+        "aggregation": {
+          "const": "SUM_TP_DIVIDED_BY_SUM_TP_PLUS_SUM_FP"
+        },
+        "aggregationDecision": {
+          "const": "DECIDED_METHOD_ONLY_PROTOCOL_APPROVAL_PENDING"
+        },
+        "decisionAuthority": {
+          "const": "https://github.com/mahmoudemad68/Your_Editor/pull/98#issuecomment-6487456998"
+        },
+        "eligiblePopulation": {
+          "const": "Frozen manifest-designated heldout EN/AR/MIXED from real production ASR; no post-performance exclusions"
+        },
+        "primaryClipGroupsMutuallyExclusive": {
+          "const": true
+        },
+        "predictionIdsCountedOnce": {
+          "const": true
+        },
+        "requiredBreakdowns": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "LANGUAGE",
+              "CLASS",
+              "ARABIC_VARIETY",
+              "CONDITION",
+              "SOURCE",
+              "CLIP",
+              "SPEAKER_SCOPE",
+              "SWITCH_DIRECTION"
+            ]
+          },
+          "minItems": 8,
+          "maxItems": 8,
+          "uniqueItems": true
+        },
+        "requiredCountsAndRates": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "TP",
+              "FP",
+              "FN",
+              "PRECISION",
+              "RECALL",
+              "COVERAGE",
+              "ABSTENTIONS",
+              "PREDICTION_COUNT",
+              "REFERENCE_POSITIVE_COUNT",
+              "REVIEWED_EXPOSURE"
+            ]
+          },
+          "minItems": 10,
+          "maxItems": 10,
+          "uniqueItems": true
+        },
+        "pooledPassImpliesSubgroupPass": {
+          "const": false
+        },
+        "zeroDenominatorStatus": {
+          "const": "NOT_PROVEN"
+        },
+        "additionalSubgroupPerformanceThresholds": {
+          "const": false
+        }
+      }
+    },
+    "cp2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "silenceF1Threshold",
+        "primaryMetric",
+        "historicalGold",
+        "proposedIndependentReference",
+        "targetInterpretationRequiresOwnerDecision",
+        "historicalGoldReplacementAllowed"
+      ],
+      "properties": {
+        "status": {
+          "const": "NOT_MET"
+        },
+        "silenceF1Threshold": {
+          "const": 0.9
+        },
+        "primaryMetric": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1200
+        },
+        "historicalGold": {
+          "const": "IMMUTABLE_GENERATED_SILERO_NON_SPEECH"
+        },
+        "proposedIndependentReference": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1200
+        },
+        "targetInterpretationRequiresOwnerDecision": {
+          "const": true
+        },
+        "historicalGoldReplacementAllowed": {
+          "const": false
+        }
+      }
+    },
+    "us223": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "automaticNonemptyRemoval",
+        "protectedWordPaddingUs",
+        "protectedContentOverridesTarget",
+        "infeasibleTargetCode",
+        "infeasibleTargetCanMutateTimeline",
+        "solverUnknownIsProvenInfeasible",
+        "explicitHumanEditBypassAuthorized"
+      ],
+      "properties": {
+        "automaticNonemptyRemoval": {
+          "const": "BLOCKED"
+        },
+        "protectedWordPaddingUs": {
+          "const": "50000"
+        },
+        "protectedContentOverridesTarget": {
+          "const": true
+        },
+        "infeasibleTargetCode": {
+          "const": "TARGET_DURATION_UNACHIEVABLE"
+        },
+        "infeasibleTargetCanMutateTimeline": {
+          "const": false
+        },
+        "solverUnknownIsProvenInfeasible": {
+          "const": false
+        },
+        "explicitHumanEditBypassAuthorized": {
+          "const": false
+        }
+      }
+    },
+    "acquisition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "preferredRoute",
+        "newAnnotationHoursEstimate",
+        "engineeringHoursEstimate",
+        "estimatesAreVendorQuotes",
+        "externalSharingAuthorized",
+        "paidServicesAuthorized",
+        "newDownloadsMade",
+        "collectionStarted"
+      ],
+      "properties": {
+        "preferredRoute": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1200
+        },
+        "newAnnotationHoursEstimate": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["min", "max"],
+          "properties": {
+            "min": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10000
+            },
+            "max": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10000
+            }
+          }
+        },
+        "engineeringHoursEstimate": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["min", "max"],
+          "properties": {
+            "min": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10000
+            },
+            "max": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10000
+            }
+          }
+        },
+        "estimatesAreVendorQuotes": {
+          "const": false
+        },
+        "externalSharingAuthorized": {
+          "const": false
+        },
+        "paidServicesAuthorized": {
+          "const": false
+        },
+        "newDownloadsMade": {
+          "const": false
+        },
+        "collectionStarted": {
+          "const": false
+        }
+      }
+    },
+    "preservedRestrictions": {
+      "const": [
+        "CP1_NOT_VERIFIED",
+        "CP2_NOT_MET",
+        "TINY_ARABIC_NOT_QUALIFIED",
+        "PLANNER_NOT_CONFIGURED",
+        "US309_BLOCKED",
+        "NO_READY_MERGE_DEPLOY",
+        "NO_PAID_LLM",
+        "NO_GOLD_THRESHOLD_SECURITY_OR_HELD_FILE_CHANGES"
+      ]
+    },
+    "formalProtocolApproval": {
+      "const": "PENDING"
+    },
+    "revision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "previousVersion",
+        "previousPublishedHead",
+        "previousProtocolSha256",
+        "scope",
+        "authority"
+      ],
+      "properties": {
+        "previousVersion": {
+          "const": "1.0.0-draft.1"
+        },
+        "previousPublishedHead": {
+          "const": "f1ff69d7e849f15a86a7d1fa42680fdc5c0dd43f"
+        },
+        "previousProtocolSha256": {
+          "const": "8f06bad51f8d6d6faff2de65d364cff0970376518e9f9ee10cceca0f2da8dda4"
+        },
+        "scope": {
+          "const": "All three methodology decisions together; document/protocol revisions only"
+        },
+        "authority": {
+          "const": "https://github.com/mahmoudemad68/Your_Editor/pull/98#issuecomment-6487456998"
+        }
+      }
+    },
+    "arabicVarietyScope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reportingLabels",
+        "reportingLabelsAreCoverageClaims",
+        "perSourceFields",
+        "perSpeakerFields",
+        "speakerVarietyMayVaryBySourceSpan",
+        "unknownMayBeQualified",
+        "blanketArabicDialectClaimAllowed",
+        "otherSpecifiedRequiresAuditableName",
+        "competenceMustMatchActualVarietyAndSwitching",
+        "directions",
+        "directionReportsSeparate",
+        "actualVarietiesQualified",
+        "insufficientCoverageQualification",
+        "excludeAfterModelPerformanceAllowed"
+      ],
+      "properties": {
+        "reportingLabels": {
+          "type": "array",
+          "items": {
+            "enum": ["EGYPTIAN_ARABIC", "MSA", "OTHER_SPECIFIED", "UNKNOWN"]
+          },
+          "minItems": 4,
+          "maxItems": 4,
+          "uniqueItems": true
+        },
+        "reportingLabelsAreCoverageClaims": {
+          "const": false
+        },
+        "perSourceFields": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "sourceSha256",
+              "sourceFamilyId",
+              "sessionId",
+              "speakerScopeRefs",
+              "languageGroup",
+              "switchDirections",
+              "split"
+            ]
+          },
+          "minItems": 7,
+          "maxItems": 7,
+          "uniqueItems": true
+        },
+        "perSpeakerFields": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "speakerRef",
+              "sourceSpanScopes",
+              "varietyLabel",
+              "otherSpecifiedName",
+              "varietyEvidenceRef",
+              "competenceEvidenceRef"
+            ]
+          },
+          "minItems": 6,
+          "maxItems": 6,
+          "uniqueItems": true
+        },
+        "speakerVarietyMayVaryBySourceSpan": {
+          "const": true
+        },
+        "unknownMayBeQualified": {
+          "const": false
+        },
+        "blanketArabicDialectClaimAllowed": {
+          "const": false
+        },
+        "otherSpecifiedRequiresAuditableName": {
+          "const": true
+        },
+        "competenceMustMatchActualVarietyAndSwitching": {
+          "const": true
+        },
+        "directions": {
+          "type": "array",
+          "items": {
+            "enum": ["EN_TO_AR", "AR_TO_EN"]
+          },
+          "minItems": 2,
+          "maxItems": 2,
+          "uniqueItems": true
+        },
+        "directionReportsSeparate": {
+          "const": true
+        },
+        "actualVarietiesQualified": {
+          "type": "array",
+          "maxItems": 0
+        },
+        "insufficientCoverageQualification": {
+          "const": "NOT_QUALIFIED"
+        },
+        "excludeAfterModelPerformanceAllowed": {
+          "const": false
+        }
+      }
+    },
+    "scopeSufficiencyPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "role",
+        "freezeBeforeModelPredictions",
+        "minimumsPerClaimedScope",
+        "claimedClasses",
+        "requiredPrimaryGroups",
+        "requiredConditionsDeclaredBeforeSplit",
+        "eachSwitchDirectionMinimumClips",
+        "eachSwitchDirectionMinimumSourceGroups",
+        "unknownScope",
+        "insufficientStatus",
+        "primaryPopulationIncompleteBlocksQualification",
+        "countsAreStatisticalPowerGuarantee",
+        "extraSubgroupPrecisionRecallOrIaaThresholds",
+        "postPerformanceEligibilityChangesAllowed"
+      ],
+      "properties": {
+        "role": {
+          "const": "REFERENCE_COVERAGE_ONLY_NOT_MODEL_PERFORMANCE_THRESHOLDS"
+        },
+        "freezeBeforeModelPredictions": {
+          "const": true
+        },
+        "minimumsPerClaimedScope": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "independentHeldoutSourceGroups",
+            "independentHeldoutSpeakers",
+            "heldoutClips",
+            "knownPositiveEventsPerClaimedClass",
+            "reviewedHardNegativeEventsPerClaimedClass"
+          ],
+          "properties": {
+            "independentHeldoutSourceGroups": {
+              "const": 3
+            },
+            "independentHeldoutSpeakers": {
+              "const": 3
+            },
+            "heldoutClips": {
+              "const": 3
+            },
+            "knownPositiveEventsPerClaimedClass": {
+              "const": 10
+            },
+            "reviewedHardNegativeEventsPerClaimedClass": {
+              "const": 10
+            }
+          }
+        },
+        "claimedClasses": {
+          "type": "array",
+          "items": {
+            "enum": ["FILLER", "REPETITION"]
+          },
+          "minItems": 2,
+          "maxItems": 2,
+          "uniqueItems": true
+        },
+        "requiredPrimaryGroups": {
+          "type": "array",
+          "items": {
+            "enum": ["EN", "AR", "MIXED"]
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "uniqueItems": true
+        },
+        "requiredConditionsDeclaredBeforeSplit": {
+          "const": true
+        },
+        "eachSwitchDirectionMinimumClips": {
+          "const": 2
+        },
+        "eachSwitchDirectionMinimumSourceGroups": {
+          "const": 2
+        },
+        "unknownScope": {
+          "const": "REPORT_WITHOUT_DIALECT_QUALIFICATION"
+        },
+        "insufficientStatus": {
+          "const": "INSUFFICIENT_COVERAGE"
+        },
+        "primaryPopulationIncompleteBlocksQualification": {
+          "const": true
+        },
+        "countsAreStatisticalPowerGuarantee": {
+          "const": false
+        },
+        "extraSubgroupPrecisionRecallOrIaaThresholds": {
+          "const": false
+        },
+        "postPerformanceEligibilityChangesAllowed": {
+          "const": false
+        }
+      }
+    },
+    "disagreementPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "statuses",
+        "immutableIndependentABTracks",
+        "preAdjudicationIaaRequired",
+        "separateIndependentAdjudicatorRequired",
+        "audioBasedRationaleRequired",
+        "blockingDimensions",
+        "anyAffectedUnresolvedBlocksQualification",
+        "blockEvenIfPointScoreAndBoundsPass",
+        "uncertaintyBoundsRole",
+        "unknownDisposition",
+        "insufficientCoverageDisposition",
+        "reviewTriggersAreAcceptanceCollars",
+        "silentClipOrPredictionExclusionAllowed"
+      ],
+      "properties": {
+        "statuses": {
+          "type": "array",
+          "items": {
+            "enum": ["RESOLVED", "UNKNOWN_UNRESOLVED", "INSUFFICIENT_COVERAGE"]
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "uniqueItems": true
+        },
+        "immutableIndependentABTracks": {
+          "const": true
+        },
+        "preAdjudicationIaaRequired": {
+          "const": true
+        },
+        "separateIndependentAdjudicatorRequired": {
+          "const": true
+        },
+        "audioBasedRationaleRequired": {
+          "const": true
+        },
+        "blockingDimensions": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "EVENT_CLASS",
+              "WORD_MAPPING",
+              "BOUNDARY",
+              "PROTECTION",
+              "DENOMINATOR",
+              "POPULATION",
+              "PASS_FAIL"
+            ]
+          },
+          "minItems": 7,
+          "maxItems": 7,
+          "uniqueItems": true
+        },
+        "anyAffectedUnresolvedBlocksQualification": {
+          "const": true
+        },
+        "blockEvenIfPointScoreAndBoundsPass": {
+          "const": true
+        },
+        "uncertaintyBoundsRole": {
+          "const": "REPORT_ONLY_NEVER_UNBLOCK"
+        },
+        "unknownDisposition": {
+          "const": "BLOCKED_QUALIFICATION"
+        },
+        "insufficientCoverageDisposition": {
+          "const": "NOT_QUALIFIED"
+        },
+        "reviewTriggersAreAcceptanceCollars": {
+          "const": false
+        },
+        "silentClipOrPredictionExclusionAllowed": {
+          "const": false
+        }
+      }
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://your-editor.local/reference-review/protocol/1.0.0-draft.2.schema.json",
+  "title": "Reference qualification protocol review snapshot 1.0.0-draft.2",
+  "description": "Strict review-document schema only; not a human annotation schema, acceptance decision or production policy.",
+  "$defs": {
+    "ArabicScopeRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sourceSha256",
+        "speakerRef",
+        "variety",
+        "otherSpecified",
+        "varietyEvidenceRef",
+        "competenceEvidenceRef",
+        "independentlyAnnotated",
+        "coverage",
+        "qualificationClaim"
+      ],
+      "properties": {
+        "sourceSha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "speakerRef": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1200
+        },
+        "variety": {
+          "enum": ["EGYPTIAN_ARABIC", "MSA", "OTHER_SPECIFIED", "UNKNOWN"]
+        },
+        "otherSpecified": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1200
+            }
+          ]
+        },
+        "varietyEvidenceRef": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1200
+            }
+          ]
+        },
+        "competenceEvidenceRef": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1200
+            }
+          ]
+        },
+        "independentlyAnnotated": {
+          "type": "boolean"
+        },
+        "coverage": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "sourceGroups",
+            "speakers",
+            "clips",
+            "positiveFiller",
+            "positiveRepetition",
+            "negativeFiller",
+            "negativeRepetition",
+            "declaredConditionsCovered"
+          ],
+          "properties": {
+            "sourceGroups": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000000
+            },
+            "speakers": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000000
+            },
+            "clips": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000000
+            },
+            "positiveFiller": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000000
+            },
+            "positiveRepetition": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000000
+            },
+            "negativeFiller": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000000
+            },
+            "negativeRepetition": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000000
+            },
+            "declaredConditionsCovered": {
+              "type": "boolean"
+            }
+          }
+        },
+        "qualificationClaim": {
+          "enum": ["NOT_QUALIFIED", "NOT_PROVEN", "QUALIFIED_SCOPE"]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "variety": {
+                "const": "OTHER_SPECIFIED"
+              }
+            },
+            "required": ["variety"]
+          },
+          "then": {
+            "properties": {
+              "otherSpecified": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1200
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "otherSpecified": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "variety": {
+                "const": "UNKNOWN"
+              }
+            },
+            "required": ["variety"]
+          },
+          "then": {
+            "properties": {
+              "qualificationClaim": {
+                "const": "NOT_QUALIFIED"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "qualificationClaim": {
+                "const": "QUALIFIED_SCOPE"
+              }
+            },
+            "required": ["qualificationClaim"]
+          },
+          "then": {
+            "properties": {
+              "variety": {
+                "enum": ["EGYPTIAN_ARABIC", "MSA", "OTHER_SPECIFIED"]
+              },
+              "varietyEvidenceRef": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1200
+              },
+              "competenceEvidenceRef": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1200
+              },
+              "independentlyAnnotated": {
+                "const": true
+              },
+              "coverage": {
+                "type": "object",
+                "properties": {
+                  "sourceGroups": {
+                    "type": "integer",
+                    "minimum": 3
+                  },
+                  "speakers": {
+                    "type": "integer",
+                    "minimum": 3
+                  },
+                  "clips": {
+                    "type": "integer",
+                    "minimum": 3
+                  },
+                  "positiveFiller": {
+                    "type": "integer",
+                    "minimum": 10
+                  },
+                  "positiveRepetition": {
+                    "type": "integer",
+                    "minimum": 10
+                  },
+                  "negativeFiller": {
+                    "type": "integer",
+                    "minimum": 10
+                  },
+                  "negativeRepetition": {
+                    "type": "integer",
+                    "minimum": 10
+                  },
+                  "declaredConditionsCovered": {
+                    "const": true
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "AdjudicationOutcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "resolutionStatus",
+        "affectedDimensions",
+        "independentAdjudicator",
+        "audioBasedRationale",
+        "strictPrecision",
+        "qualificationDisposition"
+      ],
+      "properties": {
+        "resolutionStatus": {
+          "enum": ["RESOLVED", "UNKNOWN_UNRESOLVED", "INSUFFICIENT_COVERAGE"]
+        },
+        "affectedDimensions": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "EVENT_CLASS",
+              "WORD_MAPPING",
+              "BOUNDARY",
+              "PROTECTION",
+              "DENOMINATOR",
+              "POPULATION",
+              "PASS_FAIL"
+            ]
+          },
+          "minItems": 0,
+          "maxItems": 7,
+          "uniqueItems": true
+        },
+        "independentAdjudicator": {
+          "const": true
+        },
+        "audioBasedRationale": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1200
+            }
+          ]
+        },
+        "strictPrecision": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
+          ]
+        },
+        "qualificationDisposition": {
+          "enum": ["ELIGIBLE_FOR_SCORING", "BLOCKED_QUALIFICATION", "NOT_QUALIFIED"]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "resolutionStatus": {
+                "const": "RESOLVED"
+              }
+            },
+            "required": ["resolutionStatus"]
+          },
+          "then": {
+            "properties": {
+              "qualificationDisposition": {
+                "const": "ELIGIBLE_FOR_SCORING"
+              },
+              "audioBasedRationale": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1200
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "resolutionStatus": {
+                "const": "UNKNOWN_UNRESOLVED"
+              }
+            },
+            "required": ["resolutionStatus"]
+          },
+          "then": {
+            "properties": {
+              "qualificationDisposition": {
+                "const": "BLOCKED_QUALIFICATION"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "resolutionStatus": {
+                "const": "INSUFFICIENT_COVERAGE"
+              }
+            },
+            "required": ["resolutionStatus"]
+          },
+          "then": {
+            "properties": {
+              "qualificationDisposition": {
+                "const": "NOT_QUALIFIED"
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

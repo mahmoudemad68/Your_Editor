@@ -1,0 +1,132 @@
+{
+  "protocolId": "your-editor-en-ar-independent-reference",
+  "version": "1.0.0-draft.1",
+  "status": "PROPOSED_NOT_AUTHORIZED_FOR_COLLECTION",
+  "availability": "BLOCKED_REFERENCE_DATA",
+  "baseMain": "5cdb1d794d347a36d869027947bb62504dddff92",
+  "authority": "https://github.com/mahmoudemad68/Your_Editor/issues/97#issuecomment-6481023074",
+  "labels": ["ACOUSTIC_SILENCE", "NON_SPEECH", "FILLER", "REPETITION"],
+  "matchingNormalization": {
+    "id": "en-ar-reference-key-v1",
+    "unicodeTables": "14.0.0",
+    "operations": [
+      "NFC",
+      "Unicode casefold",
+      "delete U+064B..U+065F U+0670 U+0640",
+      "trim outer Unicode whitespace",
+      "strip leading and trailing Unicode P* only"
+    ],
+    "internalPunctuationPreserved": true,
+    "internalWhitespaceSplitAllowed": false,
+    "rawTextOrOffsetsChanged": false,
+    "alefHamzaYaFolding": false,
+    "emptyKey": "UNMAPPABLE"
+  },
+  "wordMapping": {
+    "candidates": "identical nonempty reference keys, positive original-source temporal intersection, monotonic order",
+    "objective": "maximum matched words then minimum summed absolute source-us start differences",
+    "ambiguousOptimum": "only pairs present in every optimum are trusted; remainder UNMAPPABLE",
+    "classLabelsUsedToChooseAlignment": false
+  },
+  "clock": {
+    "coordinateSpace": "ORIGINAL_SOURCE",
+    "interval": "HALF_OPEN",
+    "primaryBoundary": "INTEGER_SOURCE_PCM_SAMPLE",
+    "serializedMicroseconds": "floor(sampleIndex * 1000000 / sampleRate), decimal string",
+    "originalChannelsPreserved": true
+  },
+  "acousticOperationalDefinition": {
+    "noiseDbfs": -60,
+    "minimumDurationUs": "200000",
+    "channelPolicy": "ALL_ORIGINAL_CHANNELS",
+    "meaningfulContentMayCoexist": true,
+    "productionPredictionVisibleToAnnotators": false,
+    "referenceComputedFromProductionDetector": false
+  },
+  "boundaryPolicy": {
+    "cp2PrimaryCollarUs": "0",
+    "proposedHumanWordReviewTriggerUs": "20000",
+    "proposedHumanNonSpeechReviewTriggerUs": "50000",
+    "acousticBoundaryIndependentSampleVerificationRequired": true,
+    "uncertaintyBandsRetained": true,
+    "reviewTriggersAreMatchingTolerance": false,
+    "reviewTriggersAreApprovedAcceptanceChanges": false,
+    "unresolvedPassFailAmbiguity": "BLOCK_QUALIFICATION"
+  },
+  "proposedSampling": {
+    "naturalClips": 60,
+    "targetMinutes": 60,
+    "languageGroups": { "en": 20, "ar": 20, "mixed-en-ar": 20 },
+    "conditionCellsPerLanguage": { "clean": 5, "quiet": 5, "music": 5, "ambient-noise": 5 },
+    "groupedSplitTargets": { "train": 30, "dev": 15, "heldout": 15 },
+    "groupKey": "connected component of source family, recording session and recurring speaker",
+    "sorting": "SHA256(protocolId + LF + groupId) ascending within approved stratification",
+    "splitManifestRequiresFreezeBeforeModelUse": true,
+    "previousProjectEvaluationSources": "TRAIN_OR_DIAGNOSTIC_ONLY",
+    "syntheticFixtures": "SEPARATE_SOFTWARE_TESTS_ONLY",
+    "suggestedPositiveEventsPerLanguage": 50,
+    "positiveEventCountIsRoadmapThreshold": false
+  },
+  "annotation": {
+    "independentHumanAnnotators": 2,
+    "independentHumanAdjudicators": 1,
+    "actualPeopleAssigned": 0,
+    "ownerDoesAnnotation": false,
+    "machinePrefillAllowedForAcceptanceLabels": false,
+    "asrTranscriptVisibleBeforeHumanFreeze": false,
+    "rawRaterTracksImmutable": true,
+    "humanStatementAndContentHashRequired": true,
+    "hypotheticalPilotMinutes": 5,
+    "pilotPartition": "TRAIN_ONLY"
+  },
+  "us203PrimaryMetric": {
+    "unit": "typed word-referenced span",
+    "matching": "one-to-one exact class and referenced adjudicated human word set; deterministic source-time lexical mapping, ambiguity unresolved not optimistically matched",
+    "input": "actual qualified production ASR; human-transcript oracle scored separately",
+    "precisionThreshold": 0.85,
+    "aggregationProposal": "micro TP/(TP+FP) across manifest-designated heldout EN/AR/mixed clips, with per-language/class/clip disclosure",
+    "aggregationOwnerAccepted": false,
+    "noPredictions": "NOT_PROVEN",
+    "abstention": "not positive; retain coverage and missed-positive FN; unresolved native alignment never successful deletion",
+    "holdoutTuningAllowed": false,
+    "recallAcceptanceThresholdInvented": false
+  },
+  "cp2": {
+    "status": "NOT_MET",
+    "silenceF1Threshold": 0.9,
+    "primaryMetric": "source-time union duration TP/FP/FN, zero collar",
+    "historicalGold": "IMMUTABLE_GENERATED_SILERO_NON_SPEECH",
+    "proposedIndependentReference": "SEPARATE_VERSION_HUMAN_REVIEWED_ACOUSTIC_PLUS_CONTENT_LAYERS",
+    "targetInterpretationRequiresOwnerDecision": true,
+    "historicalGoldReplacementAllowed": false
+  },
+  "us223": {
+    "automaticNonemptyRemoval": "BLOCKED",
+    "protectedWordPaddingUs": "50000",
+    "protectedContentOverridesTarget": true,
+    "infeasibleTargetCode": "TARGET_DURATION_UNACHIEVABLE",
+    "infeasibleTargetCanMutateTimeline": false,
+    "solverUnknownIsProvenInfeasible": false,
+    "explicitHumanEditBypassAuthorized": false
+  },
+  "acquisition": {
+    "preferredRoute": "Owner-approved designated local annotators on licensed/consented source pool",
+    "newAnnotationHoursEstimate": { "min": 48, "max": 84 },
+    "engineeringHoursEstimate": { "min": 10, "max": 20 },
+    "estimatesAreVendorQuotes": false,
+    "externalSharingAuthorized": false,
+    "paidServicesAuthorized": false,
+    "newDownloadsMade": false,
+    "collectionStarted": false
+  },
+  "preservedRestrictions": [
+    "CP1_NOT_VERIFIED",
+    "CP2_NOT_MET",
+    "TINY_ARABIC_NOT_QUALIFIED",
+    "PLANNER_NOT_CONFIGURED",
+    "US309_BLOCKED",
+    "NO_READY_MERGE_DEPLOY",
+    "NO_PAID_LLM",
+    "NO_GOLD_THRESHOLD_SECURITY_OR_HELD_FILE_CHANGES"
+  ]
+}

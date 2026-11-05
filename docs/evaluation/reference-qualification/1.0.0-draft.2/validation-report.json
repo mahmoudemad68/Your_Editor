@@ -1,0 +1,311 @@
+{
+  "schemaDialect": "https://json-schema.org/draft/2020-12/schema",
+  "scope": "Draft.2 review schemas and synthetic methodology decision controls only; no human qualification",
+  "validator": {
+    "name": "Ajv",
+    "version": "8.20.0",
+    "formatsVersion": "3.0.1",
+    "nodeVersion": "v22.23.2",
+    "strict": true,
+    "allErrors": true,
+    "networkUsed": false
+  },
+  "positiveValidations": [
+    {
+      "document": "protocol.json",
+      "schema": "protocol.schema.json",
+      "schemaMetaValidation": "PASS",
+      "documentValidation": "PASS",
+      "sha256": "87ad4550d27ec849428618e0f4591d5db93b1f65ff602871cf76f6ae7e13fabe",
+      "schemaSha256": "b1120eb9b20f5def1f524359af4f3e51a2d7d3e87824cb72419851e722463cfd"
+    },
+    {
+      "document": "evidence-inventory.json",
+      "schema": "evidence-inventory.schema.json",
+      "schemaMetaValidation": "PASS",
+      "documentValidation": "PASS",
+      "sha256": "ca837bbe8df3e24f13ff9c653d56c016761309be85ac23e8100c323845bef320",
+      "schemaSha256": "66b4556f04b7695ffb951975494f4ab9bd49963b1bab6c67fa215aafeed24540"
+    }
+  ],
+  "negativeControls": [
+    {
+      "case": "missing protocol version",
+      "result": "REJECTED_AS_EXPECTED"
+    },
+    {
+      "case": "stale draft.1 identity",
+      "result": "REJECTED_AS_EXPECTED"
+    },
+    {
+      "case": "claimed formal approval",
+      "result": "REJECTED_AS_EXPECTED"
+    },
+    {
+      "case": "removal guard claimed enabled",
+      "result": "REJECTED_AS_EXPECTED"
+    },
+    {
+      "case": "lowered precision threshold",
+      "result": "REJECTED_AS_EXPECTED"
+    },
+    {
+      "case": "lowered CP2 threshold",
+      "result": "REJECTED_AS_EXPECTED"
+    },
+    {
+      "case": "duplicate label",
+      "result": "REJECTED_AS_EXPECTED"
+    },
+    {
+      "case": "unexpected property",
+      "result": "REJECTED_AS_EXPECTED"
+    },
+    {
+      "case": "blanket Arabic qualification",
+      "result": "REJECTED_AS_EXPECTED"
+    },
+    {
+      "case": "unknown variety may be qualified",
+      "result": "REJECTED_AS_EXPECTED"
+    },
+    {
+      "case": "missing speaker competence reporting",
+      "result": "REJECTED_AS_EXPECTED"
+    },
+    {
+      "case": "missing AR_TO_EN direction",
+      "result": "REJECTED_AS_EXPECTED"
+    },
+    {
+      "case": "claiming actual qualified varieties",
+      "result": "REJECTED_AS_EXPECTED"
+    },
+    {
+      "case": "post-performance scope exclusion",
+      "result": "REJECTED_AS_EXPECTED"
+    },
+    {
+      "case": "scope floor changed after freeze",
+      "result": "REJECTED_AS_EXPECTED"
+    },
+    {
+      "case": "subgroup performance threshold added",
+      "result": "REJECTED_AS_EXPECTED"
+    },
+    {
+      "case": "macro averaging primary precision",
+      "result": "REJECTED_AS_EXPECTED"
+    },
+    {
+      "case": "human transcript oracle as primary input",
+      "result": "REJECTED_AS_EXPECTED"
+    },
+    {
+      "case": "pooled pass applied to subgroups",
+      "result": "REJECTED_AS_EXPECTED"
+    },
+    {
+      "case": "zero denominator marked pass",
+      "result": "REJECTED_AS_EXPECTED"
+    },
+    {
+      "case": "missing Arabic-variety breakdown",
+      "result": "REJECTED_AS_EXPECTED"
+    },
+    {
+      "case": "missing abstention reporting",
+      "result": "REJECTED_AS_EXPECTED"
+    },
+    {
+      "case": "holdout tuning enabled",
+      "result": "REJECTED_AS_EXPECTED"
+    },
+    {
+      "case": "mutable independent A/B tracks",
+      "result": "REJECTED_AS_EXPECTED"
+    },
+    {
+      "case": "post-adjudication IAA substituted",
+      "result": "REJECTED_AS_EXPECTED"
+    },
+    {
+      "case": "adjudicator independence removed",
+      "result": "REJECTED_AS_EXPECTED"
+    },
+    {
+      "case": "audio rationale omitted",
+      "result": "REJECTED_AS_EXPECTED"
+    },
+    {
+      "case": "unknown tolerated because score passes",
+      "result": "REJECTED_AS_EXPECTED"
+    },
+    {
+      "case": "uncertainty bounds unblock acceptance",
+      "result": "REJECTED_AS_EXPECTED"
+    },
+    {
+      "case": "review triggers treated as collars",
+      "result": "REJECTED_AS_EXPECTED"
+    },
+    {
+      "case": "population disagreement not blocking",
+      "result": "REJECTED_AS_EXPECTED"
+    },
+    {
+      "case": "unknown resolution status omitted",
+      "result": "REJECTED_AS_EXPECTED"
+    },
+    {
+      "case": "invalid artifact digest",
+      "result": "REJECTED_AS_EXPECTED"
+    },
+    {
+      "case": "claimed reference readiness",
+      "result": "REJECTED_AS_EXPECTED"
+    },
+    {
+      "case": "unassigned human work claimed",
+      "result": "REJECTED_AS_EXPECTED"
+    },
+    {
+      "case": "unsupported variety record",
+      "result": "REJECTED_AS_EXPECTED"
+    },
+    {
+      "case": "OTHER_SPECIFIED without name",
+      "result": "REJECTED_AS_EXPECTED"
+    },
+    {
+      "case": "UNKNOWN qualified",
+      "result": "REJECTED_AS_EXPECTED"
+    },
+    {
+      "case": "qualified scope without competence",
+      "result": "REJECTED_AS_EXPECTED"
+    },
+    {
+      "case": "qualified scope without source variety evidence",
+      "result": "REJECTED_AS_EXPECTED"
+    },
+    {
+      "case": "qualified scope without independent reference",
+      "result": "REJECTED_AS_EXPECTED"
+    },
+    {
+      "case": "qualified scope with insufficient sourceGroups",
+      "result": "REJECTED_AS_EXPECTED"
+    },
+    {
+      "case": "qualified scope with insufficient speakers",
+      "result": "REJECTED_AS_EXPECTED"
+    },
+    {
+      "case": "qualified scope with insufficient clips",
+      "result": "REJECTED_AS_EXPECTED"
+    },
+    {
+      "case": "qualified scope with insufficient positiveFiller",
+      "result": "REJECTED_AS_EXPECTED"
+    },
+    {
+      "case": "qualified scope with insufficient positiveRepetition",
+      "result": "REJECTED_AS_EXPECTED"
+    },
+    {
+      "case": "qualified scope with insufficient negativeFiller",
+      "result": "REJECTED_AS_EXPECTED"
+    },
+    {
+      "case": "qualified scope with insufficient negativeRepetition",
+      "result": "REJECTED_AS_EXPECTED"
+    },
+    {
+      "case": "qualified scope missing conditions",
+      "result": "REJECTED_AS_EXPECTED"
+    },
+    {
+      "case": "RESOLVED without audio rationale",
+      "result": "REJECTED_AS_EXPECTED"
+    },
+    {
+      "case": "UNKNOWN_UNRESOLVED allowed by precision1",
+      "result": "REJECTED_AS_EXPECTED"
+    },
+    {
+      "case": "INSUFFICIENT_COVERAGE counted as eligible",
+      "result": "REJECTED_AS_EXPECTED"
+    },
+    {
+      "case": "adjudication by nonindependent reviewer",
+      "result": "REJECTED_AS_EXPECTED"
+    },
+    {
+      "case": "well-formed incorrect digest",
+      "result": "SCHEMA_VALID_BUT_HASH_BINDING_REJECTED_AS_EXPECTED"
+    }
+  ],
+  "syntheticMethodologyControls": [
+    {
+      "case": "unresolved EVENT_CLASS remains blocked at strict precision1",
+      "result": "PASS"
+    },
+    {
+      "case": "unresolved WORD_MAPPING remains blocked at strict precision1",
+      "result": "PASS"
+    },
+    {
+      "case": "unresolved BOUNDARY remains blocked at strict precision1",
+      "result": "PASS"
+    },
+    {
+      "case": "unresolved PROTECTION remains blocked at strict precision1",
+      "result": "PASS"
+    },
+    {
+      "case": "unresolved DENOMINATOR remains blocked at strict precision1",
+      "result": "PASS"
+    },
+    {
+      "case": "unresolved POPULATION remains blocked at strict precision1",
+      "result": "PASS"
+    },
+    {
+      "case": "unresolved PASS_FAIL remains blocked at strict precision1",
+      "result": "PASS"
+    },
+    {
+      "case": "synthetic pooled pass does not certify AR subgroup",
+      "result": "PASS",
+      "tp": 110,
+      "fp": 5,
+      "pooledPrecision": 0.9565217391304348,
+      "arabicPrecision": 0.2
+    },
+    {
+      "case": "zero predictions are undefined and NOT_PROVEN",
+      "result": "PASS",
+      "precision": null,
+      "status": "NOT_PROVEN"
+    }
+  ],
+  "allScopeAndAdjudicationRecordsSynthetic": true,
+  "crossFileShaBindings": "PASS",
+  "revision": {
+    "version": "1.0.0-draft.2",
+    "previousVersion": "1.0.0-draft.1",
+    "semanticChange": "EXPECTED_AUTHORIZED_METHODOLOGY_REVISION",
+    "authority": "https://github.com/mahmoudemad68/Your_Editor/pull/98#issuecomment-6487456998",
+    "priorPublishedArtifactHashesUnchanged": true
+  },
+  "specification": {
+    "path": "SPECIFICATION.md",
+    "sha256": "c8a74f9de89df153d68d8f998a09e0d2601421e473b8c993d502b9d058fdff09",
+    "schemaValidation": "NOT_APPLICABLE_MARKDOWN"
+  },
+  "formalProtocolApproval": "PENDING",
+  "referenceAvailability": "BLOCKED_REFERENCE_DATA",
+  "us309": "BLOCKED",
+  "humanQualification": "NOT_PERFORMED"
+}

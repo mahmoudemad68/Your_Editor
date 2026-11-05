@@ -1,0 +1,639 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocolId",
+    "version",
+    "status",
+    "availability",
+    "baseMain",
+    "authority",
+    "labels",
+    "matchingNormalization",
+    "wordMapping",
+    "clock",
+    "acousticOperationalDefinition",
+    "boundaryPolicy",
+    "proposedSampling",
+    "annotation",
+    "us203PrimaryMetric",
+    "cp2",
+    "us223",
+    "acquisition",
+    "preservedRestrictions"
+  ],
+  "properties": {
+    "protocolId": {
+      "const": "your-editor-en-ar-independent-reference"
+    },
+    "version": {
+      "const": "1.0.0-draft.1"
+    },
+    "status": {
+      "const": "PROPOSED_NOT_AUTHORIZED_FOR_COLLECTION"
+    },
+    "availability": {
+      "const": "BLOCKED_REFERENCE_DATA"
+    },
+    "baseMain": {
+      "const": "5cdb1d794d347a36d869027947bb62504dddff92"
+    },
+    "authority": {
+      "const": "https://github.com/mahmoudemad68/Your_Editor/issues/97#issuecomment-6481023074"
+    },
+    "labels": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "uniqueItems": true,
+      "items": {
+        "enum": ["ACOUSTIC_SILENCE", "NON_SPEECH", "FILLER", "REPETITION"]
+      }
+    },
+    "matchingNormalization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "unicodeTables",
+        "operations",
+        "internalPunctuationPreserved",
+        "internalWhitespaceSplitAllowed",
+        "rawTextOrOffsetsChanged",
+        "alefHamzaYaFolding",
+        "emptyKey"
+      ],
+      "properties": {
+        "id": {
+          "const": "en-ar-reference-key-v1"
+        },
+        "unicodeTables": {
+          "const": "14.0.0"
+        },
+        "operations": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1200
+          },
+          "minItems": 5,
+          "maxItems": 5
+        },
+        "internalPunctuationPreserved": {
+          "const": true
+        },
+        "internalWhitespaceSplitAllowed": {
+          "const": false
+        },
+        "rawTextOrOffsetsChanged": {
+          "const": false
+        },
+        "alefHamzaYaFolding": {
+          "const": false
+        },
+        "emptyKey": {
+          "const": "UNMAPPABLE"
+        }
+      }
+    },
+    "wordMapping": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "candidates",
+        "objective",
+        "ambiguousOptimum",
+        "classLabelsUsedToChooseAlignment"
+      ],
+      "properties": {
+        "candidates": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1200
+        },
+        "objective": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1200
+        },
+        "ambiguousOptimum": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1200
+        },
+        "classLabelsUsedToChooseAlignment": {
+          "const": false
+        }
+      }
+    },
+    "clock": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "coordinateSpace",
+        "interval",
+        "primaryBoundary",
+        "serializedMicroseconds",
+        "originalChannelsPreserved"
+      ],
+      "properties": {
+        "coordinateSpace": {
+          "const": "ORIGINAL_SOURCE"
+        },
+        "interval": {
+          "const": "HALF_OPEN"
+        },
+        "primaryBoundary": {
+          "const": "INTEGER_SOURCE_PCM_SAMPLE"
+        },
+        "serializedMicroseconds": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1200
+        },
+        "originalChannelsPreserved": {
+          "const": true
+        }
+      }
+    },
+    "acousticOperationalDefinition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "noiseDbfs",
+        "minimumDurationUs",
+        "channelPolicy",
+        "meaningfulContentMayCoexist",
+        "productionPredictionVisibleToAnnotators",
+        "referenceComputedFromProductionDetector"
+      ],
+      "properties": {
+        "noiseDbfs": {
+          "const": -60
+        },
+        "minimumDurationUs": {
+          "const": "200000"
+        },
+        "channelPolicy": {
+          "const": "ALL_ORIGINAL_CHANNELS"
+        },
+        "meaningfulContentMayCoexist": {
+          "const": true
+        },
+        "productionPredictionVisibleToAnnotators": {
+          "const": false
+        },
+        "referenceComputedFromProductionDetector": {
+          "const": false
+        }
+      }
+    },
+    "boundaryPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cp2PrimaryCollarUs",
+        "proposedHumanWordReviewTriggerUs",
+        "proposedHumanNonSpeechReviewTriggerUs",
+        "acousticBoundaryIndependentSampleVerificationRequired",
+        "uncertaintyBandsRetained",
+        "reviewTriggersAreMatchingTolerance",
+        "reviewTriggersAreApprovedAcceptanceChanges",
+        "unresolvedPassFailAmbiguity"
+      ],
+      "properties": {
+        "cp2PrimaryCollarUs": {
+          "const": "0"
+        },
+        "proposedHumanWordReviewTriggerUs": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1200
+        },
+        "proposedHumanNonSpeechReviewTriggerUs": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1200
+        },
+        "acousticBoundaryIndependentSampleVerificationRequired": {
+          "type": "boolean"
+        },
+        "uncertaintyBandsRetained": {
+          "type": "boolean"
+        },
+        "reviewTriggersAreMatchingTolerance": {
+          "const": false
+        },
+        "reviewTriggersAreApprovedAcceptanceChanges": {
+          "const": false
+        },
+        "unresolvedPassFailAmbiguity": {
+          "const": "BLOCK_QUALIFICATION"
+        }
+      }
+    },
+    "proposedSampling": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "naturalClips",
+        "targetMinutes",
+        "languageGroups",
+        "conditionCellsPerLanguage",
+        "groupedSplitTargets",
+        "groupKey",
+        "sorting",
+        "splitManifestRequiresFreezeBeforeModelUse",
+        "previousProjectEvaluationSources",
+        "syntheticFixtures",
+        "suggestedPositiveEventsPerLanguage",
+        "positiveEventCountIsRoadmapThreshold"
+      ],
+      "properties": {
+        "naturalClips": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "targetMinutes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "languageGroups": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["en", "ar", "mixed-en-ar"],
+          "properties": {
+            "en": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10000
+            },
+            "ar": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10000
+            },
+            "mixed-en-ar": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10000
+            }
+          }
+        },
+        "conditionCellsPerLanguage": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["clean", "quiet", "music", "ambient-noise"],
+          "properties": {
+            "clean": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10000
+            },
+            "quiet": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10000
+            },
+            "music": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10000
+            },
+            "ambient-noise": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10000
+            }
+          }
+        },
+        "groupedSplitTargets": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["train", "dev", "heldout"],
+          "properties": {
+            "train": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10000
+            },
+            "dev": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10000
+            },
+            "heldout": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10000
+            }
+          }
+        },
+        "groupKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1200
+        },
+        "sorting": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1200
+        },
+        "splitManifestRequiresFreezeBeforeModelUse": {
+          "type": "boolean"
+        },
+        "previousProjectEvaluationSources": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1200
+        },
+        "syntheticFixtures": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1200
+        },
+        "suggestedPositiveEventsPerLanguage": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "positiveEventCountIsRoadmapThreshold": {
+          "type": "boolean"
+        }
+      }
+    },
+    "annotation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "independentHumanAnnotators",
+        "independentHumanAdjudicators",
+        "actualPeopleAssigned",
+        "ownerDoesAnnotation",
+        "machinePrefillAllowedForAcceptanceLabels",
+        "asrTranscriptVisibleBeforeHumanFreeze",
+        "rawRaterTracksImmutable",
+        "humanStatementAndContentHashRequired",
+        "hypotheticalPilotMinutes",
+        "pilotPartition"
+      ],
+      "properties": {
+        "independentHumanAnnotators": {
+          "const": 2
+        },
+        "independentHumanAdjudicators": {
+          "const": 1
+        },
+        "actualPeopleAssigned": {
+          "const": 0
+        },
+        "ownerDoesAnnotation": {
+          "const": false
+        },
+        "machinePrefillAllowedForAcceptanceLabels": {
+          "const": false
+        },
+        "asrTranscriptVisibleBeforeHumanFreeze": {
+          "const": false
+        },
+        "rawRaterTracksImmutable": {
+          "const": true
+        },
+        "humanStatementAndContentHashRequired": {
+          "const": true
+        },
+        "hypotheticalPilotMinutes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "pilotPartition": {
+          "const": "TRAIN_ONLY"
+        }
+      }
+    },
+    "us203PrimaryMetric": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "unit",
+        "matching",
+        "input",
+        "precisionThreshold",
+        "aggregationProposal",
+        "aggregationOwnerAccepted",
+        "noPredictions",
+        "abstention",
+        "holdoutTuningAllowed",
+        "recallAcceptanceThresholdInvented"
+      ],
+      "properties": {
+        "unit": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1200
+        },
+        "matching": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1200
+        },
+        "input": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1200
+        },
+        "precisionThreshold": {
+          "const": 0.85
+        },
+        "aggregationProposal": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1200
+        },
+        "aggregationOwnerAccepted": {
+          "const": false
+        },
+        "noPredictions": {
+          "const": "NOT_PROVEN"
+        },
+        "abstention": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1200
+        },
+        "holdoutTuningAllowed": {
+          "const": false
+        },
+        "recallAcceptanceThresholdInvented": {
+          "const": false
+        }
+      }
+    },
+    "cp2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "silenceF1Threshold",
+        "primaryMetric",
+        "historicalGold",
+        "proposedIndependentReference",
+        "targetInterpretationRequiresOwnerDecision",
+        "historicalGoldReplacementAllowed"
+      ],
+      "properties": {
+        "status": {
+          "const": "NOT_MET"
+        },
+        "silenceF1Threshold": {
+          "const": 0.9
+        },
+        "primaryMetric": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1200
+        },
+        "historicalGold": {
+          "const": "IMMUTABLE_GENERATED_SILERO_NON_SPEECH"
+        },
+        "proposedIndependentReference": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1200
+        },
+        "targetInterpretationRequiresOwnerDecision": {
+          "const": true
+        },
+        "historicalGoldReplacementAllowed": {
+          "const": false
+        }
+      }
+    },
+    "us223": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "automaticNonemptyRemoval",
+        "protectedWordPaddingUs",
+        "protectedContentOverridesTarget",
+        "infeasibleTargetCode",
+        "infeasibleTargetCanMutateTimeline",
+        "solverUnknownIsProvenInfeasible",
+        "explicitHumanEditBypassAuthorized"
+      ],
+      "properties": {
+        "automaticNonemptyRemoval": {
+          "const": "BLOCKED"
+        },
+        "protectedWordPaddingUs": {
+          "const": "50000"
+        },
+        "protectedContentOverridesTarget": {
+          "const": true
+        },
+        "infeasibleTargetCode": {
+          "const": "TARGET_DURATION_UNACHIEVABLE"
+        },
+        "infeasibleTargetCanMutateTimeline": {
+          "const": false
+        },
+        "solverUnknownIsProvenInfeasible": {
+          "const": false
+        },
+        "explicitHumanEditBypassAuthorized": {
+          "const": false
+        }
+      }
+    },
+    "acquisition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "preferredRoute",
+        "newAnnotationHoursEstimate",
+        "engineeringHoursEstimate",
+        "estimatesAreVendorQuotes",
+        "externalSharingAuthorized",
+        "paidServicesAuthorized",
+        "newDownloadsMade",
+        "collectionStarted"
+      ],
+      "properties": {
+        "preferredRoute": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1200
+        },
+        "newAnnotationHoursEstimate": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["min", "max"],
+          "properties": {
+            "min": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10000
+            },
+            "max": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10000
+            }
+          }
+        },
+        "engineeringHoursEstimate": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["min", "max"],
+          "properties": {
+            "min": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10000
+            },
+            "max": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10000
+            }
+          }
+        },
+        "estimatesAreVendorQuotes": {
+          "const": false
+        },
+        "externalSharingAuthorized": {
+          "const": false
+        },
+        "paidServicesAuthorized": {
+          "const": false
+        },
+        "newDownloadsMade": {
+          "const": false
+        },
+        "collectionStarted": {
+          "const": false
+        }
+      }
+    },
+    "preservedRestrictions": {
+      "const": [
+        "CP1_NOT_VERIFIED",
+        "CP2_NOT_MET",
+        "TINY_ARABIC_NOT_QUALIFIED",
+        "PLANNER_NOT_CONFIGURED",
+        "US309_BLOCKED",
+        "NO_READY_MERGE_DEPLOY",
+        "NO_PAID_LLM",
+        "NO_GOLD_THRESHOLD_SECURITY_OR_HELD_FILE_CHANGES"
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://your-editor.local/reference-review/protocol/1.0.0-draft.1.schema.json",
+  "title": "Reference qualification protocol review snapshot 1.0.0-draft.1",
+  "description": "Strict review-document schema only; not a human annotation schema, acceptance decision or production policy."
+}
