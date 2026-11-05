@@ -866,7 +866,78 @@ for (const [name, result] of [
 ])
   test(`N6 unverifiable ${name} cannot count as remote revocation`, async () => {
     await assert.rejects(
-      () => invalidateAppCheck(async () => result, { check: 1, H: "a".repeat(40) }),
+      () =>
+        invalidateAppCheck(
+          async (_route, method = "GET") =>
+            method === "GET"
+              ? {
+                  id: 1,
+                  name: APP_CHECK,
+                  status: "completed",
+                  conclusion: "success",
+                  head_sha: "a".repeat(40),
+                }
+              : result,
+          { check: 1, H: "a".repeat(40) },
+        ),
       /APP_REVOCATION_UNCONFIRMED/,
     );
   });
+
+test("N4 a closed deleted fork cannot revoke the canonical same-H check", async () => {
+  const f = candidateFixture(),
+    c = client(f),
+    tracked = new Map();
+  const alias = globalThis.structuredClone(f.snapshot.pr);
+  alias.number = 500;
+  alias.head.repo.id = 1234;
+  f.rows["pulls/500"] = alias;
+  f.rows["pulls?state=open&base=main&per_page=100&page=1"] = [f.snapshot.pr, alias];
+  await reconcileAppCycle(c.read, config, tracked);
+  const count = c.writes.length;
+  alias.state = "closed";
+  alias.head.repo = null;
+  f.rows["pulls?state=open&base=main&per_page=100&page=1"] = [f.snapshot.pr];
+  const result = await reconcileAppCycle(c.read, config, tracked);
+  assert.equal(result.find((x) => x.pr === 100).conclusion, "success");
+  assert.equal(c.writes.length, count);
+  assert.equal(tracked.has(500), false);
+});
+
+test("N4 an open PR with missing head repository remains untrusted", async () => {
+  const f = candidateFixture(),
+    c = client(f);
+  f.snapshot.pr.head.repo = null;
+  await assert.rejects(() => reconcileAppCheck(c.read, config), /APP_LIVE_DRIFT/);
+  assert.equal(c.writes.length, 0);
+});
+
+test("N6 journal and same-H aliases revoke a failed cycle only once", async () => {
+  const f = candidateFixture(),
+    c = client(f),
+    context = journalContext(f);
+  let entries = [context];
+  const journal = {
+    entries: () => entries,
+    remove: async () => {
+      entries = [];
+    },
+  };
+  const tracked = new Map([100, 500].map((pr) => [pr, { ...context, pr, check: 143 }]));
+  const read = async (route, method, body) => {
+    if (route.startsWith("pulls?")) throw Error("APP_API_REJECTED");
+    return c.read(route, method, body);
+  };
+  await assert.rejects(() => reconcileAppCycle(read, config, tracked, journal), /APP_API_REJECTED/);
+  assert.equal(c.writes.length, 1);
+  assert.equal(c.writes[0].body.conclusion, "failure");
+});
+
+test("N6 a verified existing failure is not rewritten for another revocation reason", async () => {
+  const f = candidateFixture(),
+    c = client(f),
+    item = { check: 143, H: f.context.H };
+  await invalidateAppCheck(c.read, item, "FIRST_FAILURE");
+  await invalidateAppCheck(c.read, item, "SECOND_FAILURE");
+  assert.equal(c.writes.length, 1);
+});

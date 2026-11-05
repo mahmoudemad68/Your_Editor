@@ -205,8 +205,8 @@ function contextOf(p, number) {
       p?.number === number &&
       p.base?.repo?.id === REPOSITORY_ID &&
       p.base.ref === "main" &&
-      Number.isSafeInteger(p.head?.repo?.id) &&
-      p.head.repo.id > 0 &&
+      ((Number.isSafeInteger(p.head?.repo?.id) && p.head.repo.id > 0) ||
+        (p.state === "closed" && p.head?.repo === null)) &&
       [p.head.sha, p.base.sha].every((v) => typeof v === "string" && /^[a-f0-9]{40}$/.test(v)) &&
       ["open", "closed"].includes(p.state) &&
       typeof p.draft === "boolean" &&
@@ -220,7 +220,10 @@ function contextOf(p, number) {
     H: p.head.sha,
     B: p.base.sha,
     M: p.merge_commit_sha,
-    head_repository_id: p.head.repo.id,
+    // GitHub can retain the immutable head SHA after a fork is deleted. Only
+    // closed-PR bookkeeping may omit that repository; this never admits an
+    // open source or writes an authorization for a missing repository.
+    head_repository_id: p.head.repo?.id ?? null,
     state: p.state,
     draft: p.draft,
     merged: p.merged,
@@ -230,6 +233,14 @@ function samePR(p, expected) {
   need(canonical(contextOf(p, expected.pr)) === canonical(expected), "APP_LIVE_DRIFT");
 }
 export async function invalidateAppCheck(read, item, reason = "APP_REVALIDATION_REQUIRED") {
+  const before = await read(`check-runs/${item.check}`);
+  need(
+    before?.id === item.check &&
+      before.name === APP_CHECK &&
+      (item.H === undefined || before.head_sha === item.H),
+    "APP_REVOCATION_UNCONFIRMED",
+  );
+  if (before.status === "completed" && before.conclusion === "failure") return before;
   const result = await read(`check-runs/${item.check}`, "PATCH", {
     status: "completed",
     conclusion: "failure",
@@ -401,7 +412,13 @@ export async function openAppJournal(file, config) {
       update((v) => ({ ...v, entries: v.entries.filter((x) => x.pr !== c.pr || x.H !== c.H) })),
   };
 }
-export async function reconcileJournal(read, config, journal, revokeAll = false) {
+export async function reconcileJournal(
+  read,
+  config,
+  journal,
+  revokeAll = false,
+  visited = new Set(),
+) {
   for (const prior of journal.entries()) {
     let current;
     try {
@@ -427,11 +444,19 @@ export async function reconcileJournal(read, config, journal, revokeAll = false)
           c.id > 0,
         "APP_CHECK_ISSUER_REJECTED",
       );
+      const key = `${c.id}:${prior.H}`;
+      if (visited.has(key)) continue;
+      visited.add(key);
       if (c.status !== "completed" || c.conclusion !== "failure")
-        await invalidateAppCheck(read, { check: c.id }, "APP_RESTART_REVALIDATION_REQUIRED");
+        await invalidateAppCheck(
+          read,
+          { check: c.id, H: prior.H },
+          "APP_RESTART_REVALIDATION_REQUIRED",
+        );
     }
     await journal.remove(prior);
   }
+  return visited;
 }
 /** Transport is an external dedicated App; never a PR GITHUB_TOKEN. */
 export async function reconcileAppCheck(
@@ -696,14 +721,18 @@ export async function reconcileAppCycle(read, config, tracked = new Map(), journ
     if (journal) await reconcileJournal(read, config, journal);
     return await reconcileCycle(read, config, tracked, journal);
   } catch (error) {
+    const visited = new Set();
     if (journal) {
       try {
-        await reconcileJournal(read, config, journal, true);
+        await reconcileJournal(read, config, journal, true, visited);
       } catch {
         console.error("APP_REVOCATION_UNCONFIRMED");
       }
     }
     for (const item of tracked.values()) {
+      const key = `${item.check}:${item.H}`;
+      if (visited.has(key)) continue;
+      visited.add(key);
       try {
         await invalidateAppCheck(read, item, safeError(error));
       } catch {

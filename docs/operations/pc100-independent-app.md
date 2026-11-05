@@ -18,6 +18,9 @@ or a competing failure/neutral. Changed source never acquires approval from its
 own hashes. Only PR100's reviewed registry path grants candidate qualification;
 neutral/skipped checks cannot authorize a candidate. Draft and Ready are lifecycle
 metadata, not policy approvals; exact source and security checks remain mandatory.
+This is App/source-verifier lifecycle support. PR100's separate consumer still
+has Draft-only admission gates; its future Ready integration is not qualified by
+this PR103 change, and no PR is being transitioned to Ready here.
 Candidate qualification is separate from release authorization. The registry is
 still empty and `candidate-app.json` deliberately contains null identities.
 Publishing these files does not install or approve this gate.
