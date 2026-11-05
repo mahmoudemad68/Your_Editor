@@ -203,11 +203,11 @@ jobs:
         run: ./infra/scripts/supply-chain-scan-image.sh "${{ matrix.service }}" "editagent-${{ matrix.service }}:${GITHUB_SHA}"
 
       - name: Preserve scanned production image for main publication
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && matrix.service != 'test-minio'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.RELEASE_HOLD == 'false' && vars.RELEASE_PUBLICATION_ENABLED == 'true' && matrix.service != 'test-minio'
         run: docker save "editagent-${{ matrix.service }}:${GITHUB_SHA}" | gzip > scanned-image.tar.gz
 
       - name: Upload scanned image
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && matrix.service != 'test-minio'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.RELEASE_HOLD == 'false' && vars.RELEASE_PUBLICATION_ENABLED == 'true' && matrix.service != 'test-minio'
         uses: actions/upload-artifact@v7
         with:
           name: scanned-image-${{ matrix.service }}
@@ -275,7 +275,7 @@ jobs:
   publish:
     name: publish ${{ matrix.service }}
     needs: [dependencies, images, supply-chain-security]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.RELEASE_HOLD == 'false' && vars.RELEASE_PUBLICATION_ENABLED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -325,7 +325,7 @@ jobs:
   release:
     name: release manifest
     needs: publish
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.RELEASE_HOLD == 'false' && vars.RELEASE_PUBLICATION_ENABLED == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -355,7 +355,7 @@ jobs:
   staging:
     name: owner-approved staging
     needs: release
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.STAGING_CD_ENABLED == 'true'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.RELEASE_HOLD == 'false' && vars.RELEASE_PUBLICATION_ENABLED == 'true' && vars.STAGING_CD_ENABLED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
