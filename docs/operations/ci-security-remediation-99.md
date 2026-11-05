@@ -130,3 +130,111 @@ Walking driver (which creates and disposes its test stack), never a bare restore
 flag on an existing operator stack. Hermetic tests exercise actual module control
 flow without storage effects; native Walking must additionally pass admission
 against real containers. No production backup/restore is authorized here.
+
+## PR105 case-exact release guard (F1/F4)
+
+GitHub expression string equality is case-insensitive. The historical50167e3
+five-variable gates admitted FALSE/TRUE, False/True and fAlSe/tRuE. These are
+unsafe results, not passing authorization evidence. The replacement runs one
+fixed Node script in an Ubuntu24.04 job with `permissions: {}`, no checkout, no
+secrets and a two-minute deadline. Raw variables arrive through environment
+values, never script interpolation. It emits canonical digits only when event is
+exactly `push`, ref exactly `refs/heads/main`, hold exactly lowercase `false` and
+publication exactly lowercase `true`. All other/missing values yield0. Staging
+also requires an exact lowercase enable value; the original staging expression
+and environment review/SSH defenses remain in place.
+
+Every original publication surface (scanned-image preservation/upload, GHCR
+publish, release manifest, staging) requires **both** the successful authorization
+job result and its digit1. The result fence prevents an output written before a
+later runner failure from becoming permission. Publish/release/staging have
+explicit authorization dependencies and retain default success semantics.
+Images depend on authorization but use `!cancelled()` solely to keep all11
+builds/scans alive after failed/skipped authorization; their two publication
+steps still deny it. Dependency scans and the required security aggregate do not
+depend on authorization. No `always()` overrides a publication guard, and no
+security result or release permission is synthesized.
+
+Run the committed regression with the already locked project dependencies:
+
+```sh
+node --test tests/architecture/release-publication-guard.test.mjs
+```
+
+The suite parses actual YAML using the existing ESLint/js-yaml dependency,
+executes the actual Node preflight on Windows or Linux, and models only the
+workflow's closed string-comparison/conjunction/status-function expression
+subset. String comparisons deliberately remain case-insensitive to match
+GitHub; unknown syntax is an error. It tests raw/missing/empty/confusable/injected
+controls, exact event/ref identity, all five gates, staging, implicit needs
+success, partial output plus failed authorization, scan failures, and deletion/
+typo/weakened-gate mutations. Frozen scan and staging-step definitions are hashed
+as structured YAML; no new dependencies, package/lock changes, scanners, thresholds
+or production settings are introduced. The suite is included in the existing
+root architecture-test glob in native CI. Local model tests are not evidence
+that real publication is authorized; no main push/release is used for testing.
+
+### Residual findings F2/F3/F5/F6
+
+- **F2, repository writer adds another publisher:** the current-workflow inventory
+  test detects known publication-capable jobs/commands outside the five guarded
+  surfaces, but a malicious writer could change tests or hide publication in a
+  new wrapper. This is not an independently enforced repository-wide release
+  policy. Default read-only GITHUB_TOKEN settings alone are not a maximum grant;
+  workflow-level write permissions and package access must also be considered.
+  An Owner-reviewed package-access boundary and separately protected publication
+  environment/trusted publisher are stronger options. No App grant, token,
+  environment, package ACL, required check or repository setting is changed here.
+- **F3, historical unguarded reruns:** this patch cannot retrofit workflow source
+  stored in old runs. No old publication run is replayed. The Owner must audit
+  historical run/workflow identities and package write access, then independently
+  enforce registry/publisher-side restrictions before release. Do not assume a
+  workflow disable/default-token toggle retroactively removes every rerun route;
+  verify its actual effect without publishing. Historical failures are retained.
+- **F5, staging:** repository environment inspection found no staging environment
+  (NOT_CONFIGURED) and no enable/release variables. There is no deployment test
+  or environment creation under this assignment. Future activation requires
+  independently verified required reviewers, prevent-self-review, bypass policy,
+  allowed deployment refs and SSH known-host protection. A missing required
+  environment/reviewer record remains a failure, never permission.
+- **F6, branch/event casing:** the expression comparisons themselves remain
+  case-insensitive; the Node preflight independently compares the real runner
+  event/ref case-sensitively, so refs/heads/MAIN, Main, tags, PR merge refs,
+  workflow_dispatch and non-push events cannot obtain the digit1.
+
+### Render exit137 investigation boundary
+
+CI41951503494 attempt1 failed in the real production-render proof; this is not
+an assertion or timeout being relaxed. The failed child was `docker exec -i
+<coordinator> node` and returned137; the host watchdog's own SIGKILL would instead
+produce a null child exit code with a signal. The failed render step lasted about
+583seconds, below the existing600second per-proof watchdog. Chromium Target
+closed/resource and cancellation messages are also present, but do not prove
+OOM or identify the original killer. The unchanged coordinator cap is1GiB and
+the isolated render executor6GiB, with unchanged CPU/PID limits. Source between
+last green4d2b73b and50167e3 changed only the five workflow expressions, not
+rendering code, limits or concurrency. The successful41890682479 repository
+job used AWS/runner image20261101.114.1/provisioner20261028.624; the failed
+attempt1 used Azure/runner image20261025.353.1/provisioner20261021.618. Both
+advertised Ubuntu24.04.5. This is observed executor variation, not proof that it
+caused the kill. The prior green render phase took835seconds; the failed one
+about583seconds. Identical workflow labels do not prove identical physical
+hardware/kernel/resource state.
+
+No failure-time memory.events, docker State.OOMKilled or kernel-kill record is
+available in that retained log/artifact set. The existing memory.peak collection
+occurs after successful audio proof and was not reached. The Technical Lead's
+attempt2 is diagnostic evidence, not a rerun issued by this repair. Record its
+actual conclusion and new-head native results in the evidence handoff. If137
+recurs without causal telemetry, report ROOT_CAUSE=NOT_PROVEN; the smallest
+separate remediation is sanitized cgroup memory.events/peak/PID and Docker state
+collection **before container removal in the existing render finally path**,
+plus child exit-code/signal/timing evidence. That affects tools/render/integration.mjs
+outside this narrow guard scope and requires separate approval before editing.
+No OOM claim, memory increase, skipped proof or weakened assertion is authorized.
+
+Fresh scans remain mandatory. The original frozen report had0CRITICAL and
+380HIGH package occurrences/30unique CVEs. This is not a vulnerability waiver;
+new-head reports determine current findings. RELEASE_HOLD=ACTIVE,
+SAFE_TO_MERGE=NO and PR105_READY_FOR_MERGE_REVIEW=NO until the required checks and
+separate independent/human review gates are actually satisfied.
