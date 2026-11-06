@@ -1,14 +1,21 @@
 """End-to-end sanitizer fixtures exercise the publication entry point."""
 
 import base64
+import hashlib
 import importlib.util
 import io
 import json
+import os
+import shutil
+import struct
 import subprocess
+import sys
 import tempfile
 import unittest
 import zipfile
+import zlib
 from pathlib import Path
+from unittest.mock import patch
 from urllib.parse import quote, quote_plus
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -25,6 +32,211 @@ audit_spec.loader.exec_module(artifact_audit)
 
 
 class SanitizerRegression(unittest.TestCase):
+    @staticmethod
+    def png(comment):
+        def chunk(kind, value):
+            return (
+                struct.pack(">I", len(value))
+                + kind
+                + value
+                + struct.pack(">I", zlib.crc32(kind + value) & 0xFFFFFFFF)
+            )
+
+        return (
+            b"\x89PNG\r\n\x1a\n"
+            + chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0))
+            + chunk(b"tEXt", b"Comment\0note " + comment)
+            + chunk(b"IDAT", zlib.compress(b"\0\0\0\0"))
+            + chunk(b"IEND", b"")
+        )
+
+    def test_uri_diagnostics_never_disclose_values_or_arbitrary_paths(self):
+        folder = self.artifacts / "DIAG_PRIVATE_PATH"
+        folder.mkdir()
+        path = folder / "fixture.png"
+        raw = self.png(b"postgres://DIAG_USER:DIAG_PASSWORD@invalid.example/")
+        path.write_bytes(raw)
+        with self.assertRaisesRegex(ValueError, "credential audit failed") as caught:
+            artifact_audit.audit(self.artifacts, self.secret_file)
+        message = str(caught.exception)
+        for value in (
+            "DIAG_USER",
+            "DIAG_PASSWORD",
+            "invalid.example",
+            "DIAG_PRIVATE_PATH",
+            str(self.root),
+        ):
+            self.assertNotIn(value, message)
+        report = json.loads(message.split(": ", 1)[1])
+        diag = report["first_uri_diagnostic"]
+        self.assertEqual(
+            set(diag),
+            {
+                "location_class",
+                "format",
+                "stream",
+                "record_kind",
+                "source_contiguous",
+                "png_crc_valid",
+                "png_source_chunks",
+            },
+        )
+        self.assertEqual(diag["location_class"], "other")
+        self.assertEqual(diag["format"], "png")
+        self.assertTrue(diag["source_contiguous"])
+        self.assertTrue(diag["png_crc_valid"])
+        self.assertEqual(diag["png_source_chunks"], ["tEXt"])
+        self.assertLess(len(json.dumps(diag)), 1500)
+
+    def report(self):
+        with self.assertRaisesRegex(ValueError, "credential audit failed") as caught:
+            artifact_audit.audit(self.artifacts, self.secret_file)
+        return json.loads(str(caught.exception).split(": ", 1)[1])
+
+    def test_weak_credentials_have_no_digest_length_offset_or_filename_oracle(self):
+        # A dictionary guess must not be checkable using public metadata.
+        for shape in ("line", "json", "png", "zip", "nested_zip"):
+            diagnostics = []
+            for password in ("a", "password", "x" * 32, "letmein", "123456"):
+                uri = f"postgres://user:{password}@example.invalid/db"
+                raw = (uri + "\n").encode()
+                if shape == "json":
+                    raw = json.dumps({"url": uri}).encode()
+                elif shape == "png":
+                    raw = self.png(raw)
+                elif shape in ("zip", "nested_zip"):
+                    inner = io.BytesIO()
+                    with zipfile.ZipFile(inner, "w") as z:
+                        z.writestr(f"PRIVATE_{password}/payload.log", raw)
+                    raw = inner.getvalue()
+                    if shape == "nested_zip":
+                        outer = io.BytesIO()
+                        with zipfile.ZipFile(outer, "w") as z:
+                            z.writestr("inner.zip", raw)
+                        raw = outer.getvalue()
+                path = self.artifacts / (
+                    "fixture.zip" if "zip" in shape else "fixture.bin"
+                )
+                path.write_bytes(raw)
+                diag = self.report()["first_uri_diagnostic"]
+                encoded = json.dumps(diag)
+                self.assertNotIn(hashlib.sha256(raw).hexdigest(), encoded)
+                self.assertNotIn(hashlib.sha256(uri.encode()).hexdigest(), encoded)
+                self.assertNotIn("PRIVATE_", encoded)
+                self.assertFalse(
+                    set(diag)
+                    & {
+                        "file_sha256",
+                        "bytes",
+                        "raw_start",
+                        "raw_end_exclusive",
+                        "normalized_record_offset",
+                        "entry",
+                        "suffix",
+                        "value_sha256",
+                    }
+                )
+                diagnostics.append(diag)
+                path.unlink()
+            self.assertTrue(all(d == diagnostics[0] for d in diagnostics), shape)
+
+    def test_diagnostic_faults_preserve_original_counts_without_exception_text(self):
+        (self.artifacts / "fixture.log").write_text(
+            "postgres://PRIVATE_USER:PRIVATE_PASS@host/db"
+        )
+        baseline = self.report()
+        baseline.pop("first_uri_diagnostic")
+        for error in (ValueError, RuntimeError, KeyError, MemoryError, TypeError):
+            with (
+                self.subTest(error=error.__name__),
+                patch.object(
+                    artifact_audit,
+                    "uri_diagnostic",
+                    side_effect=error("PRIVATE_EXCEPTION"),
+                ),
+            ):
+                report = self.report()
+                self.assertEqual(
+                    report.pop("first_uri_diagnostic"),
+                    {"status": "DIAGNOSTIC_UNAVAILABLE"},
+                )
+                self.assertEqual(report, baseline)
+                self.assertGreater(report["db_credentials"], 0)
+                self.assertNotIn("PRIVATE", json.dumps(report))
+
+    def test_observer_mutations_cannot_publish_arbitrary_metadata_or_suppress_counts(
+        self,
+    ):
+        (self.artifacts / "fixture.log").write_text("postgres://user:password@host/db")
+        base = {"stream": "ascii_projection", "record_kind": "uri_userinfo"}
+        mutations = [
+            None,
+            {},
+            [],
+            {**base, "suffix": ".PRIVATE_PASSWORD"},
+            {**base, "value_sha256": hashlib.sha256(b"password").hexdigest()},
+            {**base, "png_source_chunks": ["PASS"]},
+            {**base, "png_source_chunks": ["tEXt"] * 9},
+            {**base, "location_class": "PRIVATE_PATH"},
+            {**base, "source_contiguous": 8},
+            {**base, "format": object()},
+            {**base, "bytes": 42},
+        ]
+        expected = self.report()
+        expected.pop("first_uri_diagnostic")
+        for mutation in mutations:
+            with (
+                self.subTest(mutation_type=type(mutation).__name__),
+                patch.object(artifact_audit, "uri_diagnostic", return_value=mutation),
+            ):
+                report = self.report()
+                self.assertEqual(
+                    report.pop("first_uri_diagnostic"),
+                    {"status": "DIAGNOSTIC_UNAVAILABLE"},
+                )
+                self.assertEqual(report, expected)
+
+    def test_untrusted_png_chunk_names_and_suffixes_are_never_public(self):
+        raw = self.png(b"postgres://user:password@host/db")
+        raw = raw.replace(
+            b"tEXt", b"PASS"
+        )  # Deliberately invalid CRC remains a boolean.
+        (self.artifacts / "PRIVATE_PATH.PRIVATE_SUFFIX").write_bytes(raw)
+        report = self.report()
+        diag = report["first_uri_diagnostic"]
+        self.assertEqual(diag["png_source_chunks"], ["other"])
+        self.assertFalse(diag["png_crc_valid"])
+        self.assertNotIn("PRIVATE", json.dumps(diag))
+        self.assertNotIn("PASS", json.dumps(diag))
+
+    def test_projection_diagnostic_observes_but_cannot_change_rejection(self):
+        raw = self.png(b"h\xfftt\xffps\xff://DIAG_USER@invalid.example/")
+        (self.artifacts / "fixture.png").write_bytes(raw)
+        san.sanitize(self.artifacts, self.secret_file)
+        with self.assertRaisesRegex(ValueError, "credential audit failed") as caught:
+            artifact_audit.audit(self.artifacts, self.secret_file)
+        report = json.loads(str(caught.exception).split(": ", 1)[1])
+        diag = report["first_uri_diagnostic"]
+        self.assertEqual(report["db_credentials"], 1)
+        self.assertEqual(diag["stream"], "ascii_projection")
+        self.assertFalse(diag["source_contiguous"])
+        self.assertTrue(diag["png_crc_valid"])
+        self.assertEqual(diag["png_source_chunks"], ["tEXt"])
+        self.assertNotIn("DIAG_USER", str(caught.exception))
+
+    def test_nested_diagnostic_keeps_archive_names_and_credentials_private(self):
+        raw = "postgres://DIAG_USER:DIAG_PASSWORD@invalid.example/".encode("utf-16")
+        with zipfile.ZipFile(self.artifacts / "trace.zip", "w") as archive:
+            archive.writestr("DIAG_PRIVATE_PATH/payload.network", raw)
+        with self.assertRaisesRegex(ValueError, "credential audit failed") as caught:
+            artifact_audit.audit(self.artifacts, self.secret_file)
+        message = str(caught.exception)
+        self.assertNotIn("DIAG_USER", message)
+        self.assertNotIn("DIAG_PASSWORD", message)
+        self.assertNotIn("DIAG_PRIVATE_PATH", message)
+        self.assertGreater(json.loads(message.split(": ", 1)[1])["db_credentials"], 0)
+        self.sanitize()
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
@@ -322,7 +534,7 @@ class SanitizerRegression(unittest.TestCase):
         path.write_text(source)
         result = subprocess.run(
             [
-                "python3",
+                sys.executable,
                 str(ROOT / "tools/test/audit-artifacts.py"),
                 str(self.artifacts),
             ],
@@ -461,6 +673,173 @@ class SanitizerRegression(unittest.TestCase):
         (self.artifacts / "unknown-resource").write_bytes(b"\xff\x00\x01opaque")
         with self.assertRaisesRegex(ValueError, "safely classified"):
             san.sanitize(self.artifacts, self.secret_file)
+
+    @staticmethod
+    def unsafe_zip_cases():
+        name = "PRIVATE_USER:PRIVATE_PASSWORD@PRIVATE_HOST/entry.network"
+        out = io.BytesIO()
+        with zipfile.ZipFile(out, "w", zipfile.ZIP_STORED) as archive:
+            archive.writestr(name, b"PRIVATE_PAYLOAD")
+        valid = out.getvalue()
+        crc = bytearray(valid)
+        crc[valid.index(b"PRIVATE_PAYLOAD")] ^= 1
+        encrypted = bytearray(valid)
+        encrypted[6] |= 1
+        central = valid.index(b"PK\x01\x02")
+        encrypted[central + 8] |= 1
+        mismatch = bytearray(valid)
+        mismatch[valid.index(name.encode())] ^= 1
+        unsupported = bytearray(valid)
+        unsupported[8:10] = (99).to_bytes(2, "little")
+        unsupported[central + 10 : central + 12] = (99).to_bytes(2, "little")
+        nested = io.BytesIO()
+        with zipfile.ZipFile(nested, "w") as archive:
+            archive.writestr("inner.zip", bytes(crc))
+        return {
+            "crc": (bytes(crc), "ARTIFACT_ARCHIVE_INVALID"),
+            "encrypted": (bytes(encrypted), "ARTIFACT_ARCHIVE_ENCRYPTED"),
+            "mismatch": (bytes(mismatch), "ARTIFACT_ARCHIVE_INVALID"),
+            "unsupported": (bytes(unsupported), "ARTIFACT_ARCHIVE_INVALID"),
+            "truncated": (valid[:-22], "ARTIFACT_ARCHIVE_INVALID"),
+            "nested": (nested.getvalue(), "ARTIFACT_ARCHIVE_INVALID"),
+            "not_zip": (b"PRIVATE_PASSWORD not a zip", "ARTIFACT_ARCHIVE_INVALID"),
+        }
+
+    def assert_private_failure(self, result, category):
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stdout, b"")
+        self.assertEqual(result.stderr, (category + os.linesep).encode())
+        for canary in (
+            "PRIVATE_USER",
+            "PRIVATE_PASSWORD",
+            "PRIVATE_HOST",
+            "PRIVATE_PAYLOAD",
+            "PRIVATE_PATH",
+        ):
+            for encoded in (
+                canary.encode(),
+                canary.encode().hex().encode(),
+                base64.b64encode(canary.encode()),
+                quote(canary, safe="").encode(),
+            ):
+                self.assertNotIn(encoded, result.stdout + result.stderr)
+        self.assertNotIn(b"Traceback", result.stderr)
+
+    def private_cli(self, script, *extra, node=False):
+        args = [
+            sys.executable,
+            str(ROOT / "tools/test" / script),
+            str(self.artifacts),
+            *extra,
+        ]
+        if node:
+            executable = shutil.which("node")
+            self.assertIsNotNone(
+                executable, "Node is required for the actual inherit-stdio wrapper"
+            )
+            args = [
+                executable,
+                "-e",
+                "const r=require('node:child_process').spawnSync(process.argv[1],process.argv.slice(2),{stdio:'inherit'});process.exit(r.status??1)",
+                *args,
+            ]
+        return subprocess.run(args, capture_output=True, check=False, timeout=15)
+
+    def test_real_cli_zip_errors_are_fixed_and_never_disclose_member_credentials(self):
+        for name, (raw, category) in self.unsafe_zip_cases().items():
+            for script in ("audit-artifacts.py", "sanitize-artifacts.py"):
+                with self.subTest(case=name, script=script):
+                    path = self.artifacts / "PRIVATE_PATH.zip"
+                    path.write_bytes(raw)
+                    self.assert_private_failure(self.private_cli(script), category)
+                    self.assertEqual(path.read_bytes(), raw)
+                    path.unlink()
+
+    def test_node_inherit_stdio_does_not_reintroduce_archive_exception_leaks(self):
+        for name, (raw, category) in self.unsafe_zip_cases().items():
+            for script in ("audit-artifacts.py", "sanitize-artifacts.py"):
+                with self.subTest(case=name, script=script):
+                    path = self.artifacts / "PRIVATE_PATH.zip"
+                    path.write_bytes(raw)
+                    self.assert_private_failure(
+                        self.private_cli(script, node=True), category
+                    )
+                    path.unlink()
+
+    def test_real_filesystem_errors_do_not_disclose_secret_file_paths(self):
+        # Reading a directory as a secret file fails on both Windows and Linux.
+        private = self.root / "PRIVATE_PATH_PRIVATE_PASSWORD"
+        private.mkdir()
+        for script in ("audit-artifacts.py", "sanitize-artifacts.py"):
+            for node in (False, True):
+                with self.subTest(script=script, node=node):
+                    self.assert_private_failure(
+                        self.private_cli(
+                            script, "--secret-file", str(private), node=node
+                        ),
+                        "ARTIFACT_IO_FAILED",
+                    )
+
+    def test_library_io_exceptions_are_safe_even_when_the_original_message_is_malicious(
+        self,
+    ):
+        path = self.artifacts / "PRIVATE_PATH.log"
+        path.write_text("clean")
+        for action in (san.sanitize, artifact_audit.audit):
+            for error in (PermissionError, OSError, FileNotFoundError):
+                with (
+                    self.subTest(action=action.__name__, error=error.__name__),
+                    patch.object(
+                        Path,
+                        "read_bytes",
+                        side_effect=error("PRIVATE_PASSWORD PRIVATE_PATH"),
+                    ),
+                ):
+                    with self.assertRaisesRegex(
+                        ValueError, "^ARTIFACT_IO_FAILED$"
+                    ) as caught:
+                        action(self.artifacts)
+                    self.assertTrue(caught.exception.__suppress_context__)
+
+    def test_cli_argument_errors_do_not_echo_private_arguments(self):
+        for script in ("audit-artifacts.py", "sanitize-artifacts.py"):
+            self.assert_private_failure(
+                self.private_cli(script, "--PRIVATE_PASSWORD"),
+                "ARTIFACT_ARGUMENT_INVALID",
+            )
+
+    def test_real_cli_success_and_credential_rejection_still_use_original_counts(self):
+        for script in ("audit-artifacts.py", "sanitize-artifacts.py"):
+            result = self.private_cli(script)
+            self.assertEqual(result.returncode, 0)
+            self.assertEqual(result.stderr, b"")
+        (self.artifacts / "services.log").write_text(
+            "postgres://PRIVATE_USER:PRIVATE_PASSWORD@PRIVATE_HOST/db"
+        )
+        expected = self.report()
+        result = self.private_cli("audit-artifacts.py")
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stdout, b"")
+        self.assertEqual(json.loads(result.stderr.decode().split(": ", 1)[1]), expected)
+        self.assertNotIn(b"PRIVATE", result.stderr)
+
+    def test_6079_reference_decisions_and_counters_are_unchanged(self):
+        corpus_spec = importlib.util.spec_from_file_location(
+            "audit_decision_corpus",
+            Path(__file__).with_name("audit-decision-corpus.py"),
+        )
+        corpus = importlib.util.module_from_spec(corpus_spec)
+        corpus_spec.loader.exec_module(corpus)
+        count, totals, digest = corpus.decisions(artifact_audit)
+        # Captured from b9484e0922daa7860f30bb3bd088f3cfbc46ca89,
+        # auditor SHA-256 88060ade27ef276b7523a5f844d8b64087d6b9408fda6c8c7dab6e4b23cfa2b2.
+        # Hashes here cover synthetic decision/counter records, never private
+        # evidence, credentials or the public diagnostic payload.
+        self.assertEqual(count, 6079)
+        self.assertEqual(totals, {"accept": 530, "reject": 4038, "closed": 1511})
+        self.assertEqual(
+            digest, "7c44aaffff2a15016b22b27ceeb25da5472d39c10ab8ce6eb1cc3eb783c5eff8"
+        )
 
 
 if __name__ == "__main__":

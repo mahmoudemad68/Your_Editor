@@ -203,6 +203,118 @@ jobs:
           if-no-files-found: ignore
           path: .local/agent-loop-lifecycle-public/diagnostic.json
 
+      - name: Upload coverage reports
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage
+          if-no-files-found: ignore
+          path: |
+            coverage/lcov.info
+            apps/*/coverage/lcov.info
+            packages/*/coverage/lcov.info
+            workers/*/coverage/lcov.info
+            workers/ai-worker/coverage.xml
+
+  media-qualification:
+    name: real media qualification
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    env:
+      TURBO_TELEMETRY_DISABLED: "1"
+      DATABASE_URL: postgresql://editagent:editagent-dev-password@localhost:5432/editagent
+      REDIS_URL: redis://127.0.0.1:6379/0
+      S3_ENDPOINT: http://127.0.0.1:9000
+      S3_PUBLIC_ENDPOINT: http://127.0.0.1:9000
+      S3_BUCKET: editagent
+      S3_ACCESS_KEY_ID: editagent
+      S3_SECRET_ACCESS_KEY: editagent-dev-secret
+      S3_REGION: us-east-1
+    services:
+      postgres:
+        image: postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
+        env:
+          POSTGRES_USER: editagent
+          POSTGRES_PASSWORD: editagent-dev-password
+          POSTGRES_DB: editagent
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U editagent -d editagent"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      redis:
+        image: redis:7.4-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          lfs: true
+          persist-credentials: false
+
+      - name: Start SeaweedFS
+        run: |
+          set -eu
+          ./infra/seaweedfs/start-storage.sh
+          curl -fsS http://127.0.0.1:9000/status >/dev/null
+          S3_HOST=127.0.0.1 S3_PORT=9000 python3 infra/scripts/ensure_bucket.py
+          ./infra/seaweedfs/verify-firewall-lifecycle.sh
+          ./infra/seaweedfs/verify-jwt-authority.sh
+          ./infra/seaweedfs/verify-trust-boundary.sh
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          cache: pnpm
+          node-version-file: .nvmrc
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v10.2.0
+        with:
+          cache-python: true
+          enable-cache: true
+          ignore-nothing-to-cache: true
+          python-version: "3.11"
+          version: "0.12.20"
+
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
+      - name: Install FFmpeg and Chrome
+        run: |
+          sh tools/test/ensure-ffmpeg.sh
+          sh tools/test/ensure-chrome.sh
+          ffprobe -version
+          command -v google-chrome
+          google-chrome --version
+
+      - name: Verify Git LFS fixture checkout
+        run: |
+          git lfs version
+          git lfs ls-files
+          pnpm test:fixtures
+
       - name: Real non-root CPU ASR, S3 readiness and crash recovery
         if: ${{ !cancelled() }}
         run: pnpm asr:container
@@ -261,19 +373,6 @@ jobs:
             .local/caption-public/boundary-*.png
             .local/caption-public/visual/visual-report.json
             .local/caption-public/visual/*.png
-
-      - name: Upload coverage reports
-        if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: coverage
-          if-no-files-found: ignore
-          path: |
-            coverage/lcov.info
-            apps/*/coverage/lcov.info
-            packages/*/coverage/lcov.info
-            workers/*/coverage/lcov.info
-            workers/ai-worker/coverage.xml
 
   real-asr:
     name: real ASR (${{ matrix.shard }})
@@ -345,13 +444,15 @@ jobs:
   ci:
     name: ci
     runs-on: ubuntu-24.04
-    needs: [repository, real-asr]
+    needs: [repository, real-asr, media-qualification]
     if: ${{ always() }}
     steps:
       - name: Require repository checks and every real-inference shard
         env:
           REPOSITORY_RESULT: ${{ needs.repository.result }}
           REAL_ASR_RESULT: ${{ needs['real-asr'].result }}
+          MEDIA_RESULT: ${{ needs['media-qualification'].result }}
         run: |
           test "$REPOSITORY_RESULT" = success
           test "$REAL_ASR_RESULT" = success
+          test "$MEDIA_RESULT" = success

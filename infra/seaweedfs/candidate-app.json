@@ -1,0 +1,9 @@
+{
+  "schema": "pc100-independent-app-v1",
+  "repository_id": 1395822921,
+  "app_id": null,
+  "installation_id": null,
+  "slug": null,
+  "check_name": "PC100 independent security admission",
+  "protection_reader": null
+}

@@ -1,0 +1,63 @@
+name: PC100 verifier tests
+on:
+  pull_request:
+    paths:
+      - tools/test/pc100-source-verifier.mjs
+      - tests/architecture/pc100-source-verifier*.test.mjs
+      - .github/workflows/pc100-source-verifier.yml
+      - .github/workflows/pc100-verifier-tests.yml
+      - tools/test/pc100-candidate-policy.mjs
+      - tools/test/pc100-bootstrap-preflight.mjs
+      - tests/architecture/pc100-bootstrap-preflight.test.mjs
+      - tools/test/pc100-admission-app.mjs
+      - infra/seaweedfs/candidate-app.json
+      - tests/architecture/pc100-admission-app.test.mjs
+      - infra/seaweedfs/candidate-policy.json
+      - tests/architecture/pc100-candidate-policy.test.mjs
+      - tests/architecture/support/candidate-policy-fixture.mjs
+      - .github/workflows/pc100-candidate-admission.yml
+      - .github/workflows/pc100-required-admission.yml
+  push:
+    branches: [main]
+    paths:
+      - tools/test/pc100-source-verifier.mjs
+      - tests/architecture/pc100-source-verifier*.test.mjs
+      - .github/workflows/pc100-source-verifier.yml
+      - .github/workflows/pc100-verifier-tests.yml
+      - tools/test/pc100-candidate-policy.mjs
+      - tools/test/pc100-bootstrap-preflight.mjs
+      - tests/architecture/pc100-bootstrap-preflight.test.mjs
+      - tools/test/pc100-admission-app.mjs
+      - infra/seaweedfs/candidate-app.json
+      - tests/architecture/pc100-admission-app.test.mjs
+      - infra/seaweedfs/candidate-policy.json
+      - tests/architecture/pc100-candidate-policy.test.mjs
+      - tests/architecture/support/candidate-policy-fixture.mjs
+      - .github/workflows/pc100-candidate-admission.yml
+      - .github/workflows/pc100-required-admission.yml
+permissions:
+  contents: read
+jobs:
+  verifier-tests:
+    name: verifier contracts (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: "24"
+      - name: Test bootstrap contracts without PR100-only source or services
+        run: >-
+          node --test --test-timeout=30000
+          tests/architecture/pc100-source-verifier.test.mjs
+          tests/architecture/pc100-source-verifier-adversarial.test.mjs
+          tests/architecture/pc100-candidate-policy.test.mjs
+          tests/architecture/pc100-admission-app.test.mjs
+          tests/architecture/pc100-bootstrap-preflight.test.mjs
