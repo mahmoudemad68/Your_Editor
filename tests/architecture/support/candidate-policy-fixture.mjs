@@ -1,4 +1,5 @@
 /** Synthetic GitHub/Git inputs only. Never a real policy or qualification receipt. */
+import { readFileSync } from "node:fs";
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 import { canonical, hash } from "../../../tools/test/pc100-source-verifier.mjs";
@@ -125,6 +126,9 @@ export function candidateFixture({ context, fileBytes, lock = sampleLock(), appC
     ? Buffer.from(fileBytes[LOCK])
     : Buffer.from(JSON.stringify(lock) + "\n");
   content[LOCK] = lockBytes;
+  content[".github/workflows/supply-chain.yml"] ??= readFileSync(
+    new URL("../../../.github/workflows/supply-chain.yml", import.meta.url),
+  );
   content[APP_ENGINE] ??= Buffer.from("synthetic:independent-app-engine");
   const app = appConfig ?? {
     schema: "pc100-independent-app-v1",
@@ -313,7 +317,10 @@ export function candidateFixture({ context, fileBytes, lock = sampleLock(), appC
   rows["branches/main/protection"] = {
     enforce_admins: { enabled: true },
     required_status_checks: { strict: true },
-    required_pull_request_reviews: { required_approving_review_count: 1 },
+    required_pull_request_reviews: {
+      required_approving_review_count: 1,
+      bypass_pull_request_allowances: { users: [], teams: [], apps: [] },
+    },
     allow_force_pushes: { enabled: false },
     allow_deletions: { enabled: false },
   };
@@ -398,4 +405,99 @@ export function candidateFixture({ context, fileBytes, lock = sampleLock(), appC
     rows,
     read,
   };
+}
+
+// MOCK GraphQL replay: no installed App/private endpoint qualification.
+export function branchBypassFixture(B) {
+  const ref = {
+    id: "REF_SYNTHETIC_MAIN",
+    name: "main",
+    prefix: "refs/heads/",
+    target: { __typename: "Commit", oid: B },
+  };
+  const connection = (nodes) => ({
+    totalCount: nodes.length,
+    nodes,
+    edges: nodes.map((node, i) => ({ cursor: `cursor${i}`, node })),
+    pageInfo: {
+      hasNextPage: false,
+      hasPreviousPage: false,
+      startCursor: nodes.length ? "cursor0" : null,
+      endCursor: nodes.length ? `cursor${nodes.length - 1}` : null,
+    },
+  });
+  const rule = {
+    id: "BPR_SYNTHETIC_MAIN",
+    databaseId: 10,
+    pattern: "main",
+    matchingRefs: connection([ref]),
+    bypassPullRequestAllowances: connection([]),
+  };
+  return {
+    data: {
+      repository: {
+        id: "R_kgDOUzKRSQ",
+        databaseId: 1395822921,
+        nameWithOwner: "mahmoudemad68/Your_Editor",
+        ref: { ...ref, branchProtectionRule: { id: rule.id, databaseId: 10, pattern: "main" } },
+        branchProtectionRules: connection([rule]),
+      },
+    },
+  };
+}
+
+// Exact synthetic shape for the protected-main, native attempt1 full Supply job set.
+export function supplyJobsFixture(f, r) {
+  const names = [
+    "Case-exact release authorization",
+    "dependencies",
+    ...[
+      "api",
+      "web",
+      "media-worker",
+      "render-worker",
+      "render-executor",
+      "agent-worker",
+      "ai-worker",
+      "seaweedfs",
+      "postgres",
+      "redis",
+      "test-minio",
+    ].map((n) => "image " + n),
+    "supply-chain-security",
+    "publish ${{ matrix.service }}",
+    "release manifest",
+    "owner-approved staging",
+  ];
+  r.check_suite_id = 9000;
+  const jobs = names.map((name, i) => ({
+    id: 10000 + i,
+    name,
+    run_id: r.id,
+    run_attempt: 1,
+    status: "completed",
+    conclusion: i >= 14 ? "skipped" : "success",
+    check_run_url: `https://api.github.com/repos/mahmoudemad68/Your_Editor/check-runs/${11000 + i}`,
+  }));
+  f.rows[`actions/runs/${r.id}/attempts/1/jobs?per_page=100&page=1`] = {
+    total_count: jobs.length,
+    jobs,
+  };
+  f.rows["check-suites/9000"] = {
+    id: 9000,
+    head_sha: r.head_sha,
+    app: { id: 15368 },
+    repository: { id: 1395822921 },
+  };
+  for (const [i, j] of jobs.entries())
+    f.rows[`check-runs/${11000 + i}`] = {
+      id: 11000 + i,
+      name: j.name,
+      head_sha: r.head_sha,
+      app: { id: 15368 },
+      check_suite: { id: 9000 },
+      status: j.status,
+      conclusion: j.conclusion,
+    };
+  return jobs;
 }

@@ -3,10 +3,17 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
 import { generateKeyPairSync, sign } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, mkdtemp, writeFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { spawnSync } from "node:child_process";
 import process from "node:process";
-import { candidateFixture, blobSHA } from "./support/candidate-policy-fixture.mjs";
+import {
+  candidateFixture,
+  blobSHA,
+  branchBypassFixture,
+  supplyJobsFixture,
+} from "./support/candidate-policy-fixture.mjs";
 import { canonical, hash, sourceInventory } from "../../tools/test/pc100-source-verifier.mjs";
 import {
   reconcileAppCheck,
@@ -19,12 +26,32 @@ import {
   createConsumerAttestation,
   verifyConsumerAttestation,
   decodeAuthorityJSON,
+  collectProtectionAttestation,
+  collectProtectionEvidence,
+  controlPlanePath,
+  isVerifiedConsumerEvidence,
   CONTROL_PATHS,
   TRUST_CONFIG,
 } from "../../tools/test/pc100-app-attestation.mjs";
 const authority = generateKeyPairSync("ed25519");
 const keyID = hash(authority.publicKey.export({ format: "der", type: "spki" }));
 const now = 1800000000000;
+// Literal field omission observed by independent QA. This is a replay fixture,
+// not proof that the read-only Reader App can access the GraphQL alternative.
+const omittedLegacyProtection = () => ({
+  enforce_admins: { enabled: true },
+  required_status_checks: { strict: true },
+  required_pull_request_reviews: {
+    url: "https://api.github.com/repos/mahmoudemad68/Your_Editor/branches/main/protection/required_pull_request_reviews",
+    dismiss_stale_reviews: true,
+    require_code_owner_reviews: false,
+    require_last_push_approval: false,
+    required_approving_review_count: 1,
+  },
+  allow_force_pushes: { enabled: false },
+  allow_deletions: { enabled: false },
+});
+
 function fixture({ enabled = true, sourceAuthority = true, revoked = false } = {}) {
   const seed = candidateFixture(),
     content = { ...seed.content };
@@ -114,6 +141,8 @@ function signedReview(f, anchors, c, edit = () => {}) {
     B: c.B,
     TH: f.snapshot.targetTree.sha,
     TB: anchors.TB,
+    M: c.M,
+    TM: f.snapshot.targetTree.sha,
     source_inventory_sha256: hash(canonical(sourceInventory(f.snapshot.targetTree))),
     policy_sha256: anchors.policy_sha256,
     observed_at: new Date(now).toISOString(),
@@ -156,6 +185,7 @@ async function consumerFixture({ emptyRegistry = false } = {}) {
     path: ".github/workflows/supply-chain.yml",
   };
   f.rows["actions/workflows/98"] = { id: 98, path: ".github/workflows/supply-chain.yml" };
+  supplyJobsFixture(f, f.rows["actions/runs/131"]);
   const anchors = await readAppTrust(f.read, f.context.B);
   const r = globalThis.structuredClone(
     await createConsumerAttestation(
@@ -193,6 +223,16 @@ function replaceRecord(f, edit) {
   c.output.summary = canonical(f.record) + "\n";
   c.external_id = hash(canonical(f.record));
 }
+
+test("QA107 BLOCKER-1 literal omitted REST field accepts only corroborated Reader GraphQL", async () => {
+  const f = fixture();
+  f.rows["branches/main/protection"] = omittedLegacyProtection();
+  f.read.branchProtectionGraphQL = async () => branchBypassFixture(f.context.B);
+  const result = await collectProtectionAttestation(f.read, f.app);
+  assert.equal(result.branch_bypass.source, "reader-graphql-corroboration-v1");
+  assert.equal(result.branch_bypass.B, f.context.B);
+  assert.equal(result.bypass_visible, true);
+});
 test("synthetic independent Ed25519 source review binds complete path/mode/blob tree", async () => {
   const f = fixture(),
     c = ordinary(f),
@@ -219,6 +259,8 @@ for (const field of [
   "B",
   "TH",
   "TB",
+  "M",
+  "TM",
   "policy_sha256",
   "source_inventory_sha256",
   "nonce",
@@ -355,8 +397,9 @@ test("actual controller publishes authorized changed source as success, never ne
     c = ordinary(f),
     anchors = await readAppTrust(f.read, c.B),
     r = signedReview(f, anchors, c);
-  r.payload.observed_at = new Date().toISOString();
-  r.payload.expires_at = new Date(Date.now() + 600000).toISOString();
+  const observed = Date.now();
+  r.payload.observed_at = new Date(observed).toISOString();
+  r.payload.expires_at = new Date(observed + 600000).toISOString();
   r.signature = sign(null, Buffer.from(canonical(r.payload)), authority.privateKey).toString(
     "base64url",
   );
@@ -402,8 +445,9 @@ test("source review and record revocation after check publication invalidates su
     c = ordinary(f),
     anchors = await readAppTrust(f.read, c.B),
     r = signedReview(f, anchors, c);
-  r.payload.observed_at = new Date().toISOString();
-  r.payload.expires_at = new Date(Date.now() + 600000).toISOString();
+  const observed = Date.now();
+  r.payload.observed_at = new Date(observed).toISOString();
+  r.payload.expires_at = new Date(observed + 600000).toISOString();
   r.signature = sign(null, Buffer.from(canonical(r.payload)), authority.privateKey).toString(
     "base64url",
   );
@@ -780,8 +824,9 @@ test("ordinary source pre-install check does not depend on already requiring its
   f.rows["rules/branches/main"][0].parameters.required_status_checks = f.rows[
     "rules/branches/main"
   ][0].parameters.required_status_checks.filter((r) => r.context !== f.app.check_name);
-  review.payload.observed_at = new Date().toISOString();
-  review.payload.expires_at = new Date(Date.now() + 600000).toISOString();
+  const observed = Date.now();
+  review.payload.observed_at = new Date(observed).toISOString();
+  review.payload.expires_at = new Date(observed + 600000).toISOString();
   review.signature = sign(
     null,
     Buffer.from(canonical(review.payload)),
@@ -822,3 +867,586 @@ for (const mode of [
     assert.equal(result.stderr, "");
   });
 }
+
+// QA107 adversarial replays. These are synthetic transport results (MOCK_READY),
+// never proof of the Reader App's real GraphQL/Admin-Read capability.
+const bypassMutations = [
+  [
+    "nonempty",
+    (d) => {
+      const c = d.data.repository.branchProtectionRules.nodes[0].bypassPullRequestAllowances;
+      c.totalCount = 1;
+      c.nodes = [{ id: "ALLOW_1" }];
+      c.edges = [{ cursor: "c1", node: { id: "ALLOW_1" } }];
+      c.pageInfo = {
+        hasNextPage: false,
+        hasPreviousPage: false,
+        startCursor: "c1",
+        endCursor: "c1",
+      };
+    },
+  ],
+  [
+    "missing bypass",
+    (d) => delete d.data.repository.branchProtectionRules.nodes[0].bypassPullRequestAllowances,
+  ],
+  [
+    "null bypass",
+    (d) => (d.data.repository.branchProtectionRules.nodes[0].bypassPullRequestAllowances = null),
+  ],
+  [
+    "null count",
+    (d) =>
+      (d.data.repository.branchProtectionRules.nodes[0].bypassPullRequestAllowances.totalCount =
+        null),
+  ],
+  [
+    "missing nodes",
+    (d) =>
+      delete d.data.repository.branchProtectionRules.nodes[0].bypassPullRequestAllowances.nodes,
+  ],
+  [
+    "missing edges",
+    (d) =>
+      delete d.data.repository.branchProtectionRules.nodes[0].bypassPullRequestAllowances.edges,
+  ],
+  ["partial errors", (d) => (d.errors = [{ message: "SYNTHETIC_PRIVATE_CANARY" }])],
+  ["null errors", (d) => (d.errors = null)],
+  ["missing data", (d) => delete d.data],
+  ["wrong repository", (d) => d.data.repository.databaseId++],
+  ["wrong node repository", (d) => (d.data.repository.id = "R_OTHER")],
+  ["wrong name", (d) => (d.data.repository.nameWithOwner = "other/repo")],
+  ["wrong branch", (d) => (d.data.repository.ref.name = "develop")],
+  ["wrong prefix", (d) => (d.data.repository.ref.prefix = "refs/tags/")],
+  ["wrong target", (d) => (d.data.repository.ref.target.oid = "f".repeat(40))],
+  ["wrong rule", (d) => (d.data.repository.ref.branchProtectionRule.id = "BPR_OTHER")],
+  ["wrong rule pattern", (d) => (d.data.repository.ref.branchProtectionRule.pattern = "develop")],
+  [
+    "unrelated empty rule",
+    (d) =>
+      (d.data.repository.branchProtectionRules.nodes[0].matchingRefs.nodes[0].name = "develop"),
+  ],
+  ["over-limit rules", (d) => (d.data.repository.branchProtectionRules.totalCount = 101)],
+  ["next rules page", (d) => (d.data.repository.branchProtectionRules.pageInfo.hasNextPage = true)],
+  [
+    "next bypass page",
+    (d) =>
+      (d.data.repository.branchProtectionRules.nodes[0].bypassPullRequestAllowances.pageInfo.hasNextPage = true),
+  ],
+  [
+    "partial ref page",
+    (d) =>
+      (d.data.repository.branchProtectionRules.nodes[0].matchingRefs.pageInfo.hasNextPage = true),
+  ],
+  [
+    "missing pageInfo",
+    (d) =>
+      delete d.data.repository.branchProtectionRules.nodes[0].bypassPullRequestAllowances.pageInfo,
+  ],
+  [
+    "mismatched edge",
+    (d) => (d.data.repository.branchProtectionRules.edges[0].node.id = "BPR_OTHER"),
+  ],
+  [
+    "mismatched cursor",
+    (d) => (d.data.repository.branchProtectionRules.pageInfo.endCursor = "wrong"),
+  ],
+  [
+    "ambiguous rules",
+    (d) => {
+      const c = d.data.repository.branchProtectionRules,
+        r = globalThis.structuredClone(c.nodes[0]);
+      r.id = "BPR_SECOND";
+      r.databaseId++;
+      c.nodes.push(r);
+      c.edges.push({ cursor: "cursor1", node: { id: r.id } });
+      c.totalCount++;
+      c.pageInfo.endCursor = "cursor1";
+    },
+  ],
+];
+for (const [label, edit] of bypassMutations)
+  test(`QA107 BLOCKER-1 GraphQL rejects ${label}`, async () => {
+    const f = fixture(),
+      data = branchBypassFixture(f.context.B);
+    f.rows["branches/main/protection"] = omittedLegacyProtection();
+    edit(data);
+    f.read.branchProtectionGraphQL = async () => data;
+    await assert.rejects(
+      () => collectProtectionEvidence(f.read),
+      (e) => !e.message.includes("SYNTHETIC_PRIVATE_CANARY"),
+    );
+  });
+for (const label of [
+  "no Reader capability",
+  "Reader incapable",
+  "REST null",
+  "REST nonempty",
+  "missing ruleset actors",
+  "ruleset drift",
+  "base drift",
+  "GraphQL drift",
+])
+  test(`QA107 BLOCKER-1 shared predicate rejects ${label}`, async () => {
+    const f = fixture();
+    f.rows["branches/main/protection"] = omittedLegacyProtection();
+    f.read.branchProtectionGraphQL = async () => branchBypassFixture(f.context.B);
+    if (label === "no Reader capability") delete f.read.branchProtectionGraphQL;
+    if (label === "Reader incapable")
+      f.read.branchProtectionGraphQL = async () => {
+        throw Error("SYNTHETIC_PRIVATE_CANARY");
+      };
+    if (label === "REST null")
+      f.rows[
+        "branches/main/protection"
+      ].required_pull_request_reviews.bypass_pull_request_allowances = null;
+    if (label === "REST nonempty")
+      f.rows[
+        "branches/main/protection"
+      ].required_pull_request_reviews.bypass_pull_request_allowances = {
+        users: [{ id: 1 }],
+        teams: [],
+        apps: [],
+      };
+    if (label === "missing ruleset actors") delete f.rows["rulesets/77"].bypass_actors;
+    let calls = 0;
+    const read = async (route) => {
+      const value = await f.read(route);
+      if (label === "base drift" && route === "branches/main" && ++calls === 2)
+        return { ...value, commit: { sha: "f".repeat(40) } };
+      if (label === "ruleset drift" && route === "rulesets/77" && ++calls === 2)
+        return { ...value, bypass_actors: [{ actor_id: 1 }] };
+      return value;
+    };
+    read.branchProtectionGraphQL = f.read.branchProtectionGraphQL;
+    if (label === "GraphQL drift")
+      read.branchProtectionGraphQL = async () => {
+        const d = branchBypassFixture(f.context.B);
+        if (++calls === 2) d.data.repository.ref.target.oid = "f".repeat(40);
+        return d;
+      };
+    await assert.rejects(
+      () => collectProtectionEvidence(read),
+      (e) => !e.message.includes("SYNTHETIC_PRIVATE_CANARY"),
+    );
+  });
+test("QA107 BLOCKER-1 probe/ordinary/collector use the same missing-field predicate", async () => {
+  const f = fixture(),
+    c = ordinary(f),
+    a = await readAppTrust(f.read, c.B),
+    at = Date.now(),
+    r = signedReview(f, a, c);
+  r.payload.observed_at = new Date(at).toISOString();
+  r.payload.expires_at = new Date(at + 600000).toISOString();
+  r.signature = sign(null, Buffer.from(canonical(r.payload)), authority.privateKey).toString(
+    "base64url",
+  );
+  f.read.sourceAuthorization = async () => Buffer.from(canonical(r) + "\n");
+  f.rows["branches/main/protection"] = omittedLegacyProtection();
+  await assert.rejects(
+    () => authorizeOrdinarySource(f.read, f.app, c, f.snapshot.targetTree, at),
+    /BYPASS/,
+  );
+  f.read.branchProtectionGraphQL = async () => branchBypassFixture(c.B);
+  assert.equal(
+    (await authorizeOrdinarySource(f.read, f.app, c, f.snapshot.targetTree, at)).decision,
+    "AUTHORIZED_SOURCE_CHANGE",
+  );
+  assert.equal((await collectProtectionAttestation(f.read, f.app)).branch_bypass.B, c.B);
+});
+for (const p of [
+  TRUST_CONFIG,
+  "tools/test/pc100-admission-app.mjs",
+  "tools/new-controller.mjs",
+  "infra/seaweedfs/candidate-app.json",
+  "infra/seaweedfs/candidate-policy.json",
+  ".github/workflows/new.yml",
+  ".github/CODEOWNERS",
+  "pnpm-lock.yaml",
+  "package.json",
+  "apps/api/package.json",
+  "apps/api/Dockerfile",
+  "compose.yml",
+  "docs/operations/pc100-independent-app.md",
+  "tests/architecture/new.test.mjs",
+])
+  test(`QA107 HIGH-2 valid ordinary key cannot authorize control path ${p}`, async () => {
+    const f = fixture(),
+      c = ordinary(f),
+      a = await readAppTrust(f.read, c.B),
+      tree = f.snapshot.targetTree;
+    const row = tree.tree.find((e) => e.path === p);
+    if (row) row.sha = "1".repeat(40);
+    else tree.tree.push({ path: p, type: "blob", mode: "100644", sha: "1".repeat(40), size: 1 });
+    const r = signedReview(f, a, c);
+    assert.throws(
+      () => verifySourceAuthorization(r, a, c, tree, now),
+      /SOURCE_CONTROL_CHANGE_REQUIRES_INDEPENDENT_REVIEW/,
+    );
+  });
+for (const edit of [
+  (t) => (t.tree.find((e) => e.path === TRUST_CONFIG).mode = "100755"),
+  (t) =>
+    t.tree.splice(
+      t.tree.findIndex((e) => e.path === TRUST_CONFIG),
+      1,
+    ),
+  (t) => (t.tree.find((e) => e.path === TRUST_CONFIG).path = "docs/renamed-trust.md"),
+])
+  test("QA107 HIGH-2 control mode/removal/rename cannot borrow ordinary signature", async () => {
+    const f = fixture(),
+      c = ordinary(f),
+      a = await readAppTrust(f.read, c.B);
+    edit(f.snapshot.targetTree);
+    assert.throws(
+      () => verifySourceAuthorization(signedReview(f, a, c), a, c, f.snapshot.targetTree, now),
+      /INDEPENDENT_REVIEW/,
+    );
+  });
+for (const label of ["null merge", "new merge", "wrong parents", "wrong TM", "wrong H tree"])
+  test(`QA107 MED-3 signed ordinary source rejects ${label}`, async () => {
+    const f = fixture(),
+      c = ordinary(f),
+      a = await readAppTrust(f.read, c.B),
+      at = Date.now(),
+      r = signedReview(f, a, c);
+    r.payload.observed_at = new Date(at).toISOString();
+    r.payload.expires_at = new Date(at + 600000).toISOString();
+    r.signature = sign(null, Buffer.from(canonical(r.payload)), authority.privateKey).toString(
+      "base64url",
+    );
+    f.read.sourceAuthorization = async () => Buffer.from(canonical(r) + "\n");
+    if (label === "null merge") c.M = f.rows["pulls/104"].merge_commit_sha = null;
+    if (label === "new merge") f.rows["pulls/104"].merge_commit_sha = "f".repeat(40);
+    if (label === "wrong parents") f.snapshot.merge.parents.reverse();
+    if (label === "wrong TM") f.snapshot.merge.tree.sha = "f".repeat(40);
+    if (label === "wrong H tree") f.snapshot.head.tree.sha = "f".repeat(40);
+    await assert.rejects(() =>
+      authorizeOrdinarySource(f.read, f.app, c, f.snapshot.targetTree, at),
+    );
+  });
+test("QA107 LOW-2 noncanonical signature alias cannot create a second authorization digest", async () => {
+  const f = fixture(),
+    c = ordinary(f),
+    a = await readAppTrust(f.read, c.B),
+    r = signedReview(f, a, c);
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_",
+    last = chars.indexOf(r.signature.at(-1));
+  const alias = { ...r, signature: r.signature.slice(0, -1) + chars[last + 1] };
+  assert.deepEqual(
+    Buffer.from(alias.signature, "base64url"),
+    Buffer.from(r.signature, "base64url"),
+  );
+  assert.throws(
+    () => verifySourceAuthorization(alias, a, c, f.snapshot.targetTree, now),
+    /REJECTED/,
+  );
+  assert.equal(
+    verifySourceAuthorization(r, a, c, f.snapshot.targetTree, now).authorization_sha256,
+    hash(canonical(r)),
+  );
+});
+for (const [label, edit] of [
+  ["missing image", (f, j) => j.jobs.splice(2, 1)],
+  [
+    "skipped image",
+    (f, j) => {
+      j.jobs[2].conclusion = "skipped";
+    },
+  ],
+  [
+    "failed dependencies",
+    (f, j) => {
+      j.jobs[1].conclusion = "failure";
+    },
+  ],
+  [
+    "failed aggregate",
+    (f, j) => {
+      j.jobs.find((j) => j.name === "supply-chain-security").conclusion = "failure";
+    },
+  ],
+  [
+    "extra image",
+    (f, j) => {
+      j.jobs.push({ ...j.jobs[2], id: 999, name: "image extra" });
+      j.total_count++;
+    },
+  ],
+  [
+    "attempt2",
+    (f) => {
+      f.record.runs.supply.attempt = 2;
+      f.rows["actions/runs/131"].run_attempt = 2;
+    },
+  ],
+  [
+    "cross run",
+    (f, j) => {
+      j.jobs[2].run_id = 999;
+    },
+  ],
+  [
+    "cross attempt",
+    (f, j) => {
+      j.jobs[2].run_attempt = 2;
+    },
+  ],
+  [
+    "forged check",
+    (f) => {
+      f.rows["check-runs/11002"].app.id++;
+    },
+  ],
+  [
+    "wrong suite",
+    (f) => {
+      f.rows["check-suites/9000"].head_sha = "f".repeat(40);
+    },
+  ],
+  [
+    "missing page",
+    (f, j) => {
+      j.total_count = 101;
+    },
+  ],
+  [
+    "duplicate job",
+    (f, j) => {
+      j.jobs[3] = j.jobs[2];
+    },
+  ],
+  [
+    "cross artifact URL",
+    (f, j) => {
+      j.jobs[2].check_run_url = "https://evil.invalid/check-runs/1";
+    },
+  ],
+  [
+    "release activated",
+    (f, j) => {
+      j.jobs[14].conclusion = "success";
+    },
+  ],
+])
+  test(`QA107 MED-4 entire Supply rejects ${label}`, async () => {
+    const f = await consumerFixture(),
+      j = f.rows["actions/runs/131/attempts/1/jobs?per_page=100&page=1"];
+    replaceRecord(f, () => edit(f, j));
+    await assert.rejects(() => verifyConsumerAttestation(f.publicRead, f.full, { now }));
+  });
+test("QA107 MED-4 complete bounded job pagination and late attempt race", async () => {
+  const f = await consumerFixture(),
+    j = f.rows["actions/runs/131/attempts/1/jobs?per_page=100&page=1"];
+  // Artificial page split smaller than requested must fail closed, not miss rows.
+  j.jobs = j.jobs.slice(0, 2);
+  await assert.rejects(() => verifyConsumerAttestation(f.publicRead, f.full, { now }));
+  const g = await consumerFixture();
+  let n = 0;
+  const read = async (route) => {
+    const d = await g.publicRead(route);
+    if (route === "actions/runs/131" && ++n === 2) return { ...d, run_attempt: 2 };
+    return d;
+  };
+  await assert.rejects(() => verifyConsumerAttestation(read, g.full, { now }));
+});
+for (const [label, edit] of [["key ID", (r) => (r.source_authority.key_id = "f".repeat(64))]])
+  test(`QA107 MED-7 trusted root rejects ${label} mutant`, async () => {
+    const f = fixture(),
+      entry = f.snapshot.trustedTree.tree.find((e) => e.path === TRUST_CONFIG),
+      d = JSON.parse(f.content[TRUST_CONFIG]);
+    edit(d);
+    const raw = Buffer.from(canonical(d) + "\n"),
+      sha = blobSHA(raw);
+    entry.sha = sha;
+    entry.size = raw.length;
+    f.rows[`git/blobs/${sha}`] = {
+      sha,
+      encoding: "base64",
+      size: raw.length,
+      content: raw.toString("base64"),
+    };
+    await assert.rejects(() => readAppTrust(f.read, f.context.B), /AUTHORITY/);
+  });
+for (const [label, edit] of [
+  [
+    "bypass visible",
+    (f) =>
+      replaceRecord(f, (r) => {
+        r.protection.bypass_visible = false;
+      }),
+  ],
+  [
+    "ten minute window",
+    (f) =>
+      replaceRecord(f, (r) => {
+        r.expires_at = new Date(now + 600001).toISOString();
+      }),
+  ],
+  [
+    "external ID",
+    (f) => {
+      f.rows["check-runs/143"].external_id = "f".repeat(64);
+    },
+  ],
+  [
+    "suite integration",
+    (f) => {
+      f.rows["check-suites/141"].app.id++;
+    },
+  ],
+  [
+    "TH TM",
+    (f) => {
+      f.snapshot.merge.tree.sha = "f".repeat(40);
+    },
+  ],
+  [
+    "merge parents",
+    (f) => {
+      f.snapshot.merge.parents.reverse();
+    },
+  ],
+  [
+    "branch proof B",
+    (f) =>
+      replaceRecord(f, (r) => {
+        r.protection.branch_bypass.B = "f".repeat(40);
+      }),
+  ],
+])
+  test(`QA107 MED-7 actual consumer rejects ${label} mutant`, async () => {
+    const f = await consumerFixture();
+    edit(f);
+    await assert.rejects(() => verifyConsumerAttestation(f.publicRead, f.full, { now }));
+  });
+test("QA107 MED-7 caller-created verified-proof objects cannot cross capability gate", async () => {
+  const f = await consumerFixture(),
+    proof = await verifyConsumerAttestation(f.publicRead, f.full, { now });
+  assert.equal(isVerifiedConsumerEvidence({ ...proof }, f.full), false);
+  assert.equal(isVerifiedConsumerEvidence(proof, { ...f.full, M: "f".repeat(40) }), false);
+  assert.equal(isVerifiedConsumerEvidence(proof, f.full), true);
+  assert.equal(controlPlanePath("docs/readme.md", "100644"), false);
+});
+
+for (const canary of [
+  "SYNTHETIC_PRIVATE_CREDENTIAL_UPPERCASE",
+  "private synthetic exception content",
+])
+  test("QA107 LOW-6 actual policy CLI never prints arbitrary exception messages", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "pc100-safe-error-"));
+    try {
+      const event = path.join(dir, "event.json");
+      await writeFile(event, "{}");
+      const mod = new URL("../../tools/test/pc100-candidate-policy.mjs", import.meta.url);
+      const script = `process.argv=[process.execPath,${JSON.stringify(path.join(process.cwd(), "tools/test/pc100-candidate-policy.mjs"))}];
+     JSON.parse=()=>{throw Error(${JSON.stringify(canary)})};await import(${JSON.stringify(mod.href)});`;
+      const run = spawnSync(process.execPath, ["--input-type=module", "-e", script], {
+        encoding: "utf8",
+        timeout: 10000,
+        env: {
+          PATH: process.env.PATH,
+          SystemRoot: process.env.SystemRoot,
+          GITHUB_EVENT_PATH: event,
+          GITHUB_EVENT_NAME: "workflow_run",
+          TRUSTED_WORKFLOW_SHA: "b".repeat(40),
+        },
+      });
+      assert.equal(run.status, 1);
+      assert.equal((run.stdout + run.stderr).includes(canary), false);
+      assert.match(run.stderr, /CANDIDATE_OPERATION_REJECTED/);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+test(
+  "QA107 Linux root-owned documented checkout starts under real systemd confinement",
+  { skip: process.platform !== "linux" },
+  async () => {
+    const source = path.resolve(import.meta.dirname, "../.."),
+      node = process.execPath;
+    // No keys, App API or service activation: a disposable transient unit executes
+    // ONLY the real checkout/public-record verification helpers, then is collected.
+    const script = `
+ import {mkdtemp,mkdir,writeFile,readFile,copyFile,chmod,symlink,rm} from "node:fs/promises";
+ import {execFileSync,spawnSync} from "node:child_process";
+ import path from "node:path";
+ const base=await mkdtemp("/run/pc100-synthetic-");
+ try {
+  await chmod(base,0o755);const repo=base+"/reviewed-main",cfg=base+"/gitconfig",pub=base+"/reviews";
+  await mkdir(repo+"/tools/test",{recursive:true,mode:0o755});await mkdir(pub,{mode:0o755});
+  for(const p of ["pc100-admission-app.mjs","pc100-app-attestation.mjs","pc100-source-verifier.mjs","pc100-candidate-policy.mjs"])
+   await copyFile(${JSON.stringify(source)}+"/tools/test/"+p,repo+"/tools/test/"+p);
+  await copyFile(${JSON.stringify(node)},base+"/node");await chmod(base+"/node",0o755);
+  const git=(...a)=>execFileSync("git",a,{cwd:repo,env:{PATH:"/usr/bin:/bin",HOME:base},encoding:"utf8",stdio:["ignore","pipe","pipe"]});
+  git("init","-q");git("config","user.name","synthetic");git("config","user.email","synthetic@example.invalid");
+  git("add","tools");git("commit","-qm","synthetic checkout");const B=git("rev-parse","HEAD").trim();
+  await writeFile(cfg,"[safe]\n\tdirectory = "+repo+"\n",{mode:0o644});
+  await writeFile(cfg+"-bad","[safe]\n\tdirectory = *\n",{mode:0o644});
+  await symlink(repo,base+"/alias");
+  const context={H:B,B,M:"c".repeat(40),pr:104};
+  const filename=pub+"/"+B+"-"+B+"-"+context.M+"-104.source-review.json";
+  await writeFile(filename,"public-synthetic-record",{mode:0o644});
+  const driver=base+"/driver.mjs";
+  await writeFile(driver,'import assert from "node:assert/strict";import {writeFile} from "node:fs/promises";'+
+   'import {verifyReviewedCheckout,readRootOwnedSourceReview} from '+JSON.stringify(repo+"/tools/test/pc100-admission-app.mjs")+';'+
+   'await verifyReviewedCheckout('+JSON.stringify(B)+','+JSON.stringify(repo)+','+JSON.stringify(cfg)+');'+
+   'await assert.rejects(()=>verifyReviewedCheckout('+JSON.stringify(B)+','+JSON.stringify(repo)+','+JSON.stringify(cfg+"-bad")+'),/GIT_CONFIG_REJECTED/);'+
+   'await assert.rejects(()=>verifyReviewedCheckout('+JSON.stringify(B)+','+JSON.stringify(base+"/alias")+','+JSON.stringify(cfg)+'),/OWNERSHIP_REJECTED/);'+
+   'await assert.rejects(()=>writeFile('+JSON.stringify(cfg)+',"alter"));'+
+   'assert.equal((await readRootOwnedSourceReview('+JSON.stringify(context)+','+JSON.stringify(pub)+')).toString(),"public-synthetic-record");'+
+   'console.log("ROOT_READONLY_SYSTEMD_STARTUP_PASS");',{mode:0o644});
+  const unit=await readFile(${JSON.stringify(source)}+"/infra/seaweedfs/pc100-admission.service","utf8");
+  const keys=["NoNewPrivileges","PrivateTmp","PrivateDevices","ProtectSystem","ProtectHome","ProtectClock","ProtectKernelLogs","ProtectKernelTunables","ProtectKernelModules","ProtectControlGroups","RestrictSUIDSGID","RestrictAddressFamilies","CapabilityBoundingSet","RestrictNamespaces","LockPersonality","RestrictRealtime","SystemCallArchitectures","UMask","KillMode"];
+  const props=unit.split(/\r?\n/).filter(l=>keys.includes(l.split("=")[0])).flatMap(l=>["--property",l]);
+  const args=["--quiet","--wait","--pipe","--collect","--unit",path.basename(base),"--property","User=nobody","--property","Group=nogroup","--property","PrivateNetwork=yes","--property","TimeoutStartSec=15",...props,"/usr/bin/env","-i","HOME="+base,"PATH=/usr/bin:/bin","USER=nobody",base+"/node",driver];
+  const r=spawnSync("systemd-run",args,{encoding:"utf8",timeout:20000,env:{PATH:"/usr/bin:/bin"}});
+  if(r.status!==0 || !r.stdout.includes("ROOT_READONLY_SYSTEMD_STARTUP_PASS")){console.error("SYNTHETIC_SYSTEMD_FAILED",r.status,r.signal,r.stderr);process.exitCode=1;}
+  else console.log("ROOT_READONLY_SYSTEMD_STARTUP_PASS");
+ } finally {
+  if(!base.startsWith("/run/pc100-synthetic-"))throw Error("UNSAFE_TEST_CLEANUP");
+  await rm(base,{recursive:true,force:true});
+ }`;
+    const run = spawnSync("sudo", ["-n", node, "--input-type=module", "-e", script], {
+      encoding: "utf8",
+      timeout: 28000,
+      maxBuffer: 1024 * 1024,
+      env: { PATH: "/usr/bin:/bin" },
+    });
+    assert.equal(run.status, 0, `Synthetic systemd startup failed: ${run.stderr}`);
+    assert.match(run.stdout, /ROOT_READONLY_SYSTEMD_STARTUP_PASS/);
+  },
+);
+
+test("QA107 MED-7 valid signature cannot bypass anchored-object capability", async () => {
+  const f = fixture(),
+    c = ordinary(f),
+    a = await readAppTrust(f.read, c.B),
+    r = signedReview(f, a, c);
+  assert.throws(
+    () => verifySourceAuthorization(r, { ...a }, c, f.snapshot.targetTree, now),
+    /NOT_CONFIGURED/,
+  );
+});
+test("QA107 MED-7 unsigned ordinary documentation blob drift is independently rejected", async () => {
+  const f = fixture(),
+    c = ordinary(f),
+    a = await readAppTrust(f.read, c.B),
+    r = signedReview(f, a, c);
+  f.snapshot.targetTree.tree.find((e) => e.path === "docs/ordinary-change.md").sha = "1".repeat(40);
+  assert.throws(() => verifySourceAuthorization(r, a, c, f.snapshot.targetTree, now), /DRIFT/);
+});
+test("QA107 MED-7 internally consistent but unequal head/merge trees reject", async () => {
+  const f = await consumerFixture();
+  f.full.TM = "f".repeat(40);
+  f.snapshot.merge.tree.sha = f.full.TM;
+  replaceRecord(f, (r) => {
+    r.context.TM = f.full.TM;
+    r.authorization.TM = f.full.TM;
+  });
+  await assert.rejects(
+    () => verifyConsumerAttestation(f.publicRead, f.full, { now }),
+    /TREE_DRIFT/,
+  );
+});

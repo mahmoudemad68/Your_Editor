@@ -12,6 +12,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { setTimeout, clearTimeout } from "node:timers";
 import {
   verifyConsumerAttestation,
+  collectProtectionEvidence,
   isVerifiedConsumerEvidence,
   TRUST_CONFIG,
   ATTESTATION_ENGINE,
@@ -473,59 +474,8 @@ export function validateEnforcementRules(rules, app) {
 // Visibility inspection grants no admission. The issuer must separately require
 // its expected-source App check; private protection data must never be replaced
 // by a PR assertion or by treating an omitted bypass list as empty.
-export async function inspectProtectionVisibility(read) {
-  const rules = await completePages(read, "rules/branches/main");
-  const protection = await read("branches/main/protection");
-  need(
-    protection?.enforce_admins?.enabled === true &&
-      protection.required_status_checks?.strict === true &&
-      Number.isSafeInteger(
-        protection.required_pull_request_reviews?.required_approving_review_count,
-      ) &&
-      protection.required_pull_request_reviews.required_approving_review_count >= 1 &&
-      protection.allow_force_pushes?.enabled === false &&
-      protection.allow_deletions?.enabled === false,
-    "CANDIDATE_PROTECTION_UNVERIFIABLE",
-  );
-  const existing = rules
-    .filter((r) => r.type === "required_status_checks")
-    .flatMap((r) => r.parameters?.required_status_checks ?? []);
-  need(
-    ["ci", "supply-chain-security"].every((name) =>
-      existing.some((c) => c.context === name && c.integration_id === 15368),
-    ),
-    "CANDIDATE_EXISTING_CHECKS_REMOVED",
-  );
-  const allowances = protection.required_pull_request_reviews?.bypass_pull_request_allowances;
-  if (allowances !== undefined) {
-    need(
-      ["users", "teams", "apps"].every(
-        (k) => Array.isArray(allowances[k]) && allowances[k].length === 0,
-      ),
-      "CANDIDATE_PROTECTION_BYPASS",
-    );
-  }
-  const ids = new Set(rules.map((r) => r.ruleset_id));
-  need(ids.size > 0 && [...ids].every(id), "CANDIDATE_PROTECTION_UNVERIFIABLE");
-  for (const i of ids) {
-    const r = await read(`rulesets/${i}`);
-    need(
-      r.id === i &&
-        r.enforcement === "active" &&
-        r.target === "branch" &&
-        Array.isArray(r.bypass_actors) &&
-        r.bypass_actors.length === 0,
-      "CANDIDATE_PROTECTION_BYPASS",
-    );
-  }
-  return {
-    schema: "pc100-protection-visibility-v1",
-    rules,
-    ruleset_count: ids.size,
-    candidate_admission_authorized: false,
-    release_authorized: false,
-    live_a6_enforced: false,
-  };
+export async function inspectProtectionVisibility(read, expectedB) {
+  return collectProtectionEvidence(read, expectedB);
 }
 export async function verifyEnforcement(read, app) {
   const evidence = await inspectProtectionVisibility(read);
@@ -1213,10 +1163,10 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     console.log(
       `::notice title=${CANDIDATE_TITLE}::${canonical(record).replaceAll("%", "%25").replaceAll("\r", "%0D").replaceAll("\n", "%0A")}`,
     );
-  } catch (e) {
+  } catch {
     console.error(
       JSON.stringify({
-        outcome: /^[A-Z_]+$/.test(e.message) ? e.message : "CANDIDATE_INTERNAL_FAILURE",
+        outcome: "CANDIDATE_OPERATION_REJECTED",
       }),
     );
     process.exitCode = 1;

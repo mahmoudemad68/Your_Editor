@@ -469,7 +469,7 @@ when every tracked path, mode and blob is identical to main. Neither exempts doc
 lockfiles, registry, descriptors, new files, PR numbers, authors or review labels.
 PR100 candidate authorization is always a separate registry decision.
 
-A detached Ed25519 source-review record binds repository ID, PR, H/B, TH/TB, the
+A detached Ed25519 source-review record binds repository ID, PR, H/B/M, TH/TB/TM (TH=TM and merge parents [B,H]), the
 SHA-256 of the complete path/mode/blob inventory, exact protected-main policy
 snapshot, a nonce and a maximum ten-minute expiry with 30-second clock skew. The
 verifier recomputes the full inventory, verifies the independent signature,
@@ -493,8 +493,9 @@ keeps authority enabling BLOCKED; no public root is invented or approved here.
 Synthetic test keys establish software behavior only.
 
 After that future decision, the controller reads a public signed review record
-`<H>-<B>-<PR>.source-review.json` beside its private journal on the independent
-host. It accepts only bounded, owner-only regular files outside the checkout;
+`<H>-<B>-<M>-<PR>.source-review.json` in root-owned `/var/lib/pc100-reviews`,
+separate from the private key/journal directory. The controller accepts only
+bounded root-owned regular files in that read-only directory;
 file contents are signed public source decisions, not App credentials. They
 cannot approve PR100, release or deployment. Missing records or authority fail.
 The independent source-review private key is NEVER loaded by the controller.
@@ -564,3 +565,204 @@ LIVE_A6_ENFORCED=NO. TRUSTED_CONTROLLER_HOST_READY=NO.
 N2_READER_VISIBILITY=NOT_VERIFIED. POLICY_APPROVAL=NOT_GRANTED.
 RELEASE_HOLD=ACTIVE. No services were started, real keys read, checks activated,
 cloud resources created, policies approved, PRs merged or releases deployed.
+
+## PR107 Independent QA remediation: source protocol, NOT activation
+
+QA baseline `28efec1d426960c165222753dd748de74c7ba25c` and the independent report
+remain immutable. The following are software changes tested with synthetic
+credentials. `source_authority` is still null, both consumer flags false and the
+candidate registry empty. None of these tests authenticates the real Reader App,
+resolves live merge freeze or authorizes installing this source on main.
+
+### Authoritative bypass evidence (BLOCKER-1)
+
+Probe, ordinary-source authorization and attestation collection now use one
+strict `collectProtectionEvidence` predicate. Missing is never empty. Explicit
+REST PR-bypass allowances must have empty users/teams/apps. When the restricted
+Reader capability is selected, the source-fixed `PC100BranchBypass` GraphQL query
+corroborates the legacy branch-rule evidence (including explicit REST evidence).
+The writer cannot supply its token, URL, arbitrary query or a PAT fallback.
+A literal QA field-omitting REST replay is committed as a regression fixture.
+
+The query binds repository database/node identity, name, `refs/heads/main`, exact
+stable B, applicable rule ID/database ID/pattern and actual matching refs. Every
+queried connection must have consistent count/nodes/edges/cursors and complete
+pageInfo. Non-null zero bypass count is mandatory. The implementation deliberately
+rejects more than 100 rules/refs/allowances or more than one applicable legacy
+rule: those cases require explicit future support, not an unrelated empty count.
+Null/partial/error/unauthorized GraphQL results reject. Main, REST protection,
+complete effective rules, ruleset records and GraphQL corroboration are reread
+before evidence is accepted; any B, rule or policy change rejects.
+
+Ruleset `bypass_actors` remains a separate complete, explicitly empty requirement;
+branch-rule GraphQL does not replace it. No extra App permission is requested.
+Official API semantics: [branch protection REST](https://docs.github.com/en/rest/branches/branch-protection),
+[GraphQL BranchProtectionRule](https://docs.github.com/en/graphql/reference/branches#branchprotectionrule)
+and [Ref](https://docs.github.com/en/graphql/reference/git#ref).
+The sanitized v2 snapshot binds B and the corroboration source/rule/digest, never
+raw actors or credentials. Consumers authenticate that App-issued snapshot and
+its exact protected-main source; they do not call these private endpoints.
+
+Hermetic outcomes are **MOCK_READY**, not LIVE/N2 verification. Administration
+READ access to the exact GraphQL connection and complete ruleset actors with the
+same real Reader installation token remains **NOT_VERIFIED/BLOCKED**. A later
+Owner-only independent-host probe must establish both or activation must stop.
+
+### Per-PR isolation and alias policy (HIGH-1, MED-1, LOW-4)
+
+Deleted forks, retargeted or malformed PRs and duplicate list IDs are locally
+quarantined with fixed reason codes. They cannot create positive authorization or
+terminate unrelated-head polling. Old journaled checks for the affected head are
+invalidated and removed. Authoritative detail, not the list's optional `merged`
+field, controls a valid PR. A persistence failure, global protection/credential
+outage, source/main drift or unconfirmed revocation remains a global stop: the
+controller does not disguise those as harmless quarantines or auto-clear locks.
+
+GitHub checks attach to SHAs, not individual PRs. Changed ordinary PRs with a
+same-H alias remain denied; fork changed-source review is unsupported. Native
+same-H ambiguity is not solved by ignoring foreign PRs. A canonical PR100 head
+can only be evaluated under the independent candidate policy, never borrowed
+ordinary review. Alias journal bookkeeping does not manufacture a separate
+positive authorization. Same-H availability/griefing remains an Owner disposition
+and activation blocker; this repair only prevents unrelated-head/global denial.
+
+### Ordinary signer boundary and recovery (HIGH-2, MED-5, LOW-3/5)
+
+A single ordinary source signature cannot change the control plane. The enforced
+boundary includes `.github`, `infra`, `tools`, `tests`, hidden root configuration,
+operational/evaluation policy documents, all dependency/lock/build configuration,
+Docker/Compose inputs and non-100644 modes (including executable changes). The
+full before/after path/mode/blob inventory detects additions, removals and renames.
+Controller, verifier, signature validation, App descriptors, roots and CI policy
+cannot approve themselves through this ordinary path. Their updates fail with
+`SOURCE_CONTROL_CHANGE_REQUIRES_INDEPENDENT_REVIEW` even if signed by the ordinary
+key. Unrecognized or missing source roots still reject, with no neutral fallback.
+
+No higher-assurance signer is enabled. A separately reviewed protected-main
+control-plane process is required before enabling any authority. A conservative
+future proposal is a source-anchored 2-of-3 independent reviewer quorum, distinct
+from PR authors, agents, QA, Actions, controller and each other, with exact
+repo/H/B/M/trees/diff/scope/time binding. Changing quorum membership or roots must
+require the previous quorum plus independent protected-main human review. This is
+an unimplemented Owner trust-contract decision, not permission granted here.
+There is no hidden administrative success override.
+
+Ordinary review signatures use canonical unpadded base64url encoding and one
+canonical audit digest. Both merge parents [B,H] and TH=TM are checked against
+live Git objects and the PR's current M before and after issuance. Null,
+recreated, conflicted or stale merge metadata fails closed; a newly computed M
+requires a fresh independently signed record. Signatures expire within ten
+minutes, with bounded skew. They bind B, so main advance also invalidates them.
+GitHub native checks themselves have **no TTL**; outage can leave a stale native
+positive. Withhold merges on issuer outage and revalidate externally before any
+future activation. Consumers' freshness rejection does not erase native checks.
+
+Public records are delivered by the independent host's root operator to
+`/var/lib/pc100-reviews` (root:root,0755), as atomic, single-link root-owned files
+(0644). The service has read-only access. This delivery does not grant the signer
+access to App keys or journals. The source-signing private key is never on this
+host. Signature production/custody, renewal cadence and human independence are
+still BLOCKED pending explicit Owner review; no personnel or live delivery is
+arranged by these source changes.
+
+Key loss/compromise/rotation is not repaired by silently removing a required
+context. Stop issuance and withhold merges; independently verify affected checks
+and source. While activation is still off, install any newly reviewed trust
+configuration only through normal protected-main review. After activation,
+ordinary control-plane rotation is deliberately unsupported: obtain the reviewed
+higher-assurance recovery/quorum procedure first, retaining branch protection.
+No signature from a lost ordinary key, PR label, shared GitHub credential or
+self-authored comment is a recovery authority. Until that contract exists, stop.
+
+### Documented read-only installation prerequisites (MED-2, LOW-7)
+
+These are instructions for a FUTURE separately authorized independent host, not
+commands run by the Coding Agent. Do not install credentials or start a service
+on the shared Windows/agent environment. The Owner first reviews an exact main
+commit and installs a standalone, clean root-owned checkout (no worktrees,
+symlinks, object alternates, agent-writable code or embedded clone credentials)
+at `/opt/pc100/reviewed-main`, plus the reviewed actual Node24 executable at
+`/opt/pc100/node24/bin/node`. Keep source and Node files root-owned and not writable
+by group/others. Never recursively change their owner to the service account.
+
+Before any service startup, prepare an exact protected Git configuration:
+
+```sh
+# Independent host root, only after source/host installation authorization.
+install -d -o root -g root -m 0755 /etc/pc100 /var/lib/pc100-reviews
+printf '[safe]\n\tdirectory = /opt/pc100/reviewed-main\n' > /etc/pc100/gitconfig
+chown root:root /etc/pc100/gitconfig
+chmod 0644 /etc/pc100/gitconfig
+```
+
+The startup helper verifies ownership/modes, canonical paths and no symlinks for
+Node, checkout, Git metadata and ancestors, enforces this exact config content,
+rejects shared object stores, pins HEAD to independently authenticated main B and
+requires a clean tree. Git receives this system config only, no global config,
+no inherited Git overrides or optional index writes. No `safe.directory=*` is
+permitted. The source account stays read-only; the private key/journal directory
+alone is service-owned0700, with distinct0600 key files. No `--once` is authorized
+by installing these templates. It would issue checks for every open base-main PR.
+
+The Linux regression creates a disposable root-owned synthetic checkout/config,
+then executes the actual startup/public-record helpers as `nobody` inside a real
+transient systemd unit with the template's hardening and no network. It verifies
+startup, inability to edit source/config and rejection of wildcard trust and
+symlinked checkout. It uses existing Node/Git binaries, no App keys/API/service
+activation, account creation or persistent unit. This tests the documented
+filesystem prerequisite path, NOT full real-host/controller operation.
+
+The template additionally sets PrivateDevices, ProtectClock, ProtectKernelLogs,
+RestrictNamespaces, LockPersonality, RestrictRealtime and native syscall
+architecture. MemoryDenyWriteExecute is deliberately omitted because Node/V8 JIT
+needs executable memory transitions; a source change that enables it requires
+native qualification. Production PrivateNetwork would block required GitHub
+HTTPS, so only the synthetic unit uses it. No new host sandbox permissions are
+assumed from a Windows test. Full independent-host hardening remains unqualified.
+
+### Supply evidence and lifecycle handling (MED-4/6/7)
+
+Run success alone is insufficient. The consumer binds attempt1, immutable run,
+workflow and source, then reads the entire bounded paginated attempt job list.
+The supported protected-main Supply workflow is bound to SHA256
+`2c54849ebbbf401538572dab86e6466d888218e3d7fb936aaa8afa165708a4a9`.
+Its exact profile requires dependencies, release guard, all11 named images and
+security aggregate success; release/publish/staging jobs must be skipped on the
+PR event. All job/check/suite GitHub App, H, run and attempt associations must
+match. Missing, failed, skipped-required, duplicate, additional, cross-attempt or
+racing evidence rejects. Unknown workflow bytes require a new independent control
+review. No retry protocol beyond original attempt1 is approved. The existing424
+HIGH findings remain unwaived; this code changes no scanners or severity policy.
+
+A leftover journal `.lock` deliberately blocks restart. Never remove it because
+of age, mtime or a PID alone, and never build an adversary-triggered unlock path.
+Safe MANUAL recovery requires the independent host Owner to stop/fence every
+controller, prove exclusive local journal storage and that no live controller or
+credential can mutate it (or keep the host stopped if exclusivity is unproven),
+preserve the private journal/lock and filesystem metadata in a private backup,
+validate the journal against the exact reviewed source and actual issued checks,
+and independently authorize removal of only that known lock. Do not publish this
+backup. Reconcile/revoke recorded old checks before resuming merges. If ownership,
+corruption, unconfirmed writes or another host is possible, do not unlock.
+A persistent storage failure stays a global stop, not a per-PR exception.
+
+After main advances, stop/fence the old unit and withhold merges. Independently
+review the new main SHA/control inventory and obtain explicit Owner source-pin
+rollover authorization; install the clean new root-owned checkout and matching
+config. Keep the existing private journal for old-head reconciliation. Verify
+complete source/protection visibility, revoke stale checks and observe a clean
+cycle before resuming. No auto-pull, timestamp-based source rollover or claim that
+old native checks expired is permitted.
+
+LOW-1 fixtures now capture one clock instant per signature window. LOW-2 rejects
+alternate encodings of identical signature bytes. LOW-6 CLI failures use a closed
+safe outcome instead of echoing uppercase SDK/exception text. Focused mutant
+regressions cover authority key ID/capability, inventory, expiry, bypass visibility,
+external ID, suite integration, head/merge equality, parent order and verified
+consumer-proof capability. All App transports and credentials in these tests are
+synthetic; actual N2, source custody and independent QA are still required.
+
+PR107_INDEPENDENT_SOURCE_QA=FAIL until fresh independent review.
+PR107_BOOTSTRAP_SAFE_TO_MERGE=NO. A6_MERGE_FREEZE_RESOLVED=NO (live).
+A6_CONSUMER_ATTESTATION_CODE_READY=NO. N2_READER_VISIBILITY=NOT_VERIFIED.
+LIVE_A6_ENFORCED=NO. RELEASE_HOLD=ACTIVE. PR100/PR103 remain untouched.

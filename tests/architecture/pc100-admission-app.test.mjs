@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import process from "node:process";
 import {
   assertExternalHost,
+  AppAPIError,
   assertExternalKeyPath,
   readExternalKeyFile,
   appJWT,
@@ -33,7 +34,11 @@ import {
   observeCandidateAdmission,
   inspectProtectionVisibility,
 } from "../../tools/test/pc100-candidate-policy.mjs";
-import { candidateFixture, blobSHA } from "./support/candidate-policy-fixture.mjs";
+import {
+  candidateFixture,
+  blobSHA,
+  branchBypassFixture,
+} from "./support/candidate-policy-fixture.mjs";
 const config = {
   schema: "pc100-independent-app-v1",
   repository_id: 1395822921,
@@ -81,6 +86,11 @@ function protectionAPI(edit = () => {}) {
   const request = async (route, token, method = "GET", body, cap) => {
     calls.push({ route, token, method, body, cap });
     if (Object.hasOwn(rows, route)) return rows[route];
+    if (route === "/graphql") {
+      assert.equal(token, "hermetic-reader-token");
+      assert.equal(method, "POST");
+      return branchBypassFixture(f.context.B);
+    }
     assert.equal(token, "hermetic-reader-token");
     assert.equal(method, "GET");
     return f.read(route.replace("/repos/mahmoudemad68/Your_Editor/", ""));
@@ -95,7 +105,7 @@ test("read-only reader mints a repository-scoped token and probe grants no autho
   for (const k of ["candidate_admission_authorized", "release_authorized", "live_a6_enforced"])
     assert.equal(result[k], false);
   assert.equal(JSON.stringify(result).includes("hermetic-reader-token"), false);
-  assert.equal(p.calls.filter((c) => c.method !== "GET").length, 1);
+  assert.equal(p.calls.filter((c) => c.method !== "GET" && c.route !== "/graphql").length, 1);
   const mint = p.calls.find((c) => c.method === "POST");
   assert.deepEqual(mint.body, {
     repository_ids: [1395822921],
@@ -329,7 +339,10 @@ test("probe rejects main drift and never issues a check", async () => {
       return { ...result, commit: { ...result.commit, sha: "9".repeat(40) } };
     return result;
   };
-  await assert.rejects(() => probeProtectionReader(withReader, pem, p.request), /APP_LIVE_DRIFT/);
+  await assert.rejects(
+    () => probeProtectionReader(withReader, pem, p.request),
+    /CANDIDATE_LIVE_DRIFT/,
+  );
   assert.equal(
     p.calls.some((c) => c.route.includes("check-runs")),
     false,
@@ -698,6 +711,28 @@ function unrelated(f, number) {
   ] = { total_count: 0, check_runs: [] };
   return pr;
 }
+
+for (const kind of ["deleted fork", "retargeted PR"])
+  test(`QA107 HIGH-1 ${kind} cannot abort healthy PR polling`, async () => {
+    const f = candidateFixture();
+    f.snapshot.pr.state = "closed";
+    f.snapshot.pr.merged = true;
+    const good = unrelated(f, 104),
+      bad = unrelated(f, 900);
+    bad.head = { ...bad.head, repo: kind === "deleted fork" ? null : { id: 424242 } };
+    if (kind === "retargeted PR") bad.base = { ...bad.base, ref: "develop" };
+    f.rows["pulls?state=open&base=main&per_page=100&page=1"] = [good, bad];
+    const c = client(f),
+      tracked = new Map();
+    const first = await reconcileAppCycle(c.read, config, tracked);
+    assert.equal(first.find((x) => x.pr === 104).conclusion, "neutral");
+    assert.equal(first.find((x) => x.pr === 900).outcome, "APP_PR_QUARANTINED");
+    assert.ok(c.writes.every((w) => w.body.head_sha !== bad.head.sha));
+    assert.equal(
+      (await reconcileAppCycle(c.read, config, tracked)).find((x) => x.pr === 104).conclusion,
+      "neutral",
+    );
+  });
 test("N1 unchanged complete source receives authenticated neutral, never candidate admission", async () => {
   const f = candidateFixture();
   unrelated(f, 104);
@@ -1308,3 +1343,158 @@ test("N6 a verified existing failure is not rewritten for another revocation rea
   await invalidateAppCheck(c.read, item, "SECOND_FAILURE");
   assert.equal(c.writes.length, 1);
 });
+
+// Independent multi-head API model: IDs never alias between fixture writes.
+function quarantineWorld() {
+  const f = candidateFixture();
+  f.snapshot.pr.state = "closed";
+  f.snapshot.pr.merged = true;
+  const good = unrelated(f, 104),
+    bad = unrelated(f, 900),
+    writes = [];
+  let next = 200;
+  f.rows["pulls?state=open&base=main&per_page=100&page=1"] = [good, bad];
+  const read = async (route, method = "GET", body) => {
+    if (method !== "GET") {
+      const id = method === "POST" ? next++ : Number(route.split("/").at(-1));
+      const value = {
+        ...f.rows[`check-runs/${id}`],
+        ...body,
+        id,
+        app: { id: config.app_id, slug: config.slug },
+      };
+      f.rows[`check-runs/${id}`] = value;
+      writes.push({ route, body });
+      const page = `commits/${value.head_sha}/check-runs?check_name=${encodeURIComponent(APP_CHECK)}&filter=all&per_page=100&page=1`;
+      f.rows[page] = { total_count: 1, check_runs: [value] };
+      return value;
+    }
+    if (route.startsWith("commits/") && !Object.hasOwn(f.rows, route)) throw new AppAPIError(404);
+    return f.read(route);
+  };
+  return { f, good, bad, read, writes };
+}
+for (const kind of [
+  "deleted fork",
+  "retarget",
+  "null list row",
+  "wrong ID",
+  "duplicate ID",
+  "detail wrong ID",
+  "head mutation",
+])
+  test(`QA107 HIGH-1 independent lifecycle isolates ${kind} through restart`, async () => {
+    const w = quarantineWorld(),
+      tracked = new Map();
+    await reconcileAppCycle(w.read, config, tracked);
+    const goodCheck = tracked.get(104).check;
+    if (kind === "deleted fork") w.bad.head.repo = null;
+    if (kind === "retarget") w.bad.base = { ...w.bad.base, ref: "develop" };
+    if (kind === "null list row")
+      w.f.rows["pulls?state=open&base=main&per_page=100&page=1"].push(null);
+    if (kind === "wrong ID")
+      w.f.rows["pulls?state=open&base=main&per_page=100&page=1"].push({ number: "900" });
+    if (kind === "duplicate ID")
+      w.f.rows["pulls?state=open&base=main&per_page=100&page=1"].push({ ...w.bad });
+    if (kind === "detail wrong ID") w.f.rows["pulls/900"] = { ...w.bad, number: 901 };
+    if (kind === "head mutation") w.bad.head = { ...w.bad.head, sha: "e".repeat(40), repo: null };
+    const out = await reconcileAppCycle(w.read, config, tracked);
+    assert.equal(out.find((r) => r.pr === 104).conclusion, "neutral");
+    assert.equal(w.f.rows[`check-runs/${goodCheck}`].conclusion, "neutral");
+    assert.ok(out.some((r) => r.outcome === "APP_PR_QUARANTINED"));
+    assert.equal(
+      (await reconcileAppCycle(w.read, config, new Map())).find((r) => r.pr === 104).conclusion,
+      "neutral",
+    );
+  });
+test("QA107 HIGH-1 deleted/retargeted journal entry only invalidates its own head", async () => {
+  const w = quarantineWorld(),
+    tracked = new Map();
+  await reconcileAppCycle(w.read, config, tracked);
+  const entries = [104, 900].map((n) => {
+    const {
+      check: _check,
+      conclusion: _conclusion,
+      outcome: _outcome,
+      terminal: _terminal,
+      ...c
+    } = tracked.get(n);
+    return c;
+  });
+  let values = entries;
+  const journal = {
+    entries: () => values,
+    remove: async (c) => {
+      values = values.filter((v) => v.pr !== c.pr);
+    },
+    record: async () => {},
+  };
+  w.bad.head.repo = null;
+  const goodCheck = tracked.get(104).check;
+  await reconcileAppCycle(w.read, config, tracked, journal);
+  assert.equal(w.f.rows[`check-runs/${goodCheck}`].conclusion, "neutral");
+  assert.equal(
+    values.some((v) => v.pr === 900),
+    false,
+  );
+});
+test("QA107 HIGH-1 journal mutation failure remains global fail-closed, not a PR quarantine", async () => {
+  const w = quarantineWorld(),
+    tracked = new Map();
+  await reconcileAppCycle(w.read, config, tracked);
+  const journal = {
+    entries: () => [],
+    record: async () => {
+      throw Error("APP_JOURNAL_BUSY");
+    },
+    remove: async () => {},
+  };
+  await assert.rejects(
+    () => reconcileAppCycle(w.read, config, tracked, journal),
+    /APP_JOURNAL_BUSY/,
+  );
+  assert.ok(
+    [...tracked.values()].every((c) => w.f.rows[`check-runs/${c.check}`].conclusion === "failure"),
+  );
+});
+test("QA107 BLOCKER-1 Reader-only GraphQL delegation has fixed query and no writer fallback", async () => {
+  const p = protectionAPI(),
+    client = await protectionReaderClient(withReader, pem, p.request);
+  const result = await client.branchProtectionGraphQL();
+  assert.equal(result.data.repository.databaseId, 1395822921);
+  const calls = p.calls.filter((c) => c.route === "/graphql");
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].token, "hermetic-reader-token");
+  assert.equal(calls[0].method, "POST");
+  assert.equal(calls[0].body.query.includes("mutation"), false);
+  assert.deepEqual(Object.keys(calls[0].body), ["query"]);
+  await assert.rejects(
+    () => client("/graphql", "POST", { query: "mutation { evil }" }),
+    /ROUTE_REJECTED/,
+  );
+});
+
+test("QA107 HIGH-1 reboot quarantines existing malformed-head positives without in-memory state", async () => {
+  const w = quarantineWorld(),
+    tracked = new Map();
+  await reconcileAppCycle(w.read, config, tracked);
+  const badCheck = tracked.get(900).check,
+    goodCheck = tracked.get(104).check;
+  w.bad.head.repo = null;
+  await reconcileAppCycle(w.read, config, new Map());
+  assert.equal(w.f.rows[`check-runs/${badCheck}`].conclusion, "failure");
+  assert.equal(w.f.rows[`check-runs/${goodCheck}`].conclusion, "neutral");
+});
+
+for (const status of [401, 403, 429, 500])
+  test(`QA107 HIGH-1 HTTP ${status} remains global, not a missing-head quarantine`, async () => {
+    const w = quarantineWorld(),
+      tracked = new Map();
+    await reconcileAppCycle(w.read, config, tracked);
+    w.bad.head.repo = null;
+    const read = async (route, ...args) => {
+      if (route.startsWith(`commits/${w.bad.head.sha}/`)) throw new AppAPIError(status);
+      return w.read(route, ...args);
+    };
+    await assert.rejects(() => reconcileAppCycle(read, config, tracked), /APP_API_REJECTED/);
+  });

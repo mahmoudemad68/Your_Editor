@@ -191,7 +191,9 @@ export async function readAppTrust(read, B) {
   const result = {
     B,
     TB: base.tree.sha,
+    supply_bytes: entries.get(".github/workflows/supply-chain.yml").size,
     controls,
+    source_inventory: sourceInventory(tree),
     trust,
     app,
     policy_sha256: hash(
@@ -207,6 +209,35 @@ export async function readAppTrust(read, B) {
   immutable(result);
   anchored.add(result);
   return result;
+}
+// The ordinary signer is NOT a control-plane authority. This closed boundary
+// includes executable/configuration dependencies, policy and operational setup.
+// Enlarging trust or changing any of these paths requires separate independent
+// protected-main review; this module implements no quorum/break-glass approval.
+export function controlPlanePath(p, mode) {
+  return (
+    mode !== "100644" ||
+    /^(?:\.github|\.git|\.husky|\.agents|\.codex|infra|tools|tests)(?:\/|$)/.test(p) ||
+    p.startsWith(".") ||
+    /^(?:docs\/operations|docs\/evaluation)(?:\/|$)/.test(p) ||
+    /(?:^|\/)(?:AGENTS\.md|Dockerfile(?:\..*)?|[^/]*[Cc]ompose[^/]*\.ya?ml|package\.json|[^/]*lock[^/]*|go\.(?:mod|sum)|[^/]*config[^/]*|requirements[^/]*|[^/]*\.(?:service|target|socket|env))$/.test(
+      p,
+    )
+  );
+}
+function ordinaryBoundary(anchors, headTree) {
+  const before = new Map(Object.entries(anchors.source_inventory)),
+    after = new Map(Object.entries(sourceInventory(headTree)));
+  for (const p of new Set([...before.keys(), ...after.keys()])) {
+    const old = before.get(p),
+      next = after.get(p);
+    if (canonical(old) !== canonical(next))
+      need(
+        !controlPlanePath(p, old?.mode ?? next?.mode) &&
+          !controlPlanePath(p, next?.mode ?? old?.mode),
+        "SOURCE_CONTROL_CHANGE_REQUIRES_INDEPENDENT_REVIEW",
+      );
+  }
 }
 function fresh(record, now) {
   const observed = Date.parse(record.observed_at),
@@ -238,6 +269,12 @@ export function verifySourceAuthorization(envelope, anchors, expected, headTree,
       /^[A-Za-z0-9_-]{86}$/.test(envelope.signature),
     "SOURCE_AUTHORIZATION_REJECTED",
   );
+  const signature = Buffer.from(envelope.signature, "base64url");
+  need(
+    signature.length === 64 && signature.toString("base64url") === envelope.signature,
+    "SOURCE_AUTHORIZATION_REJECTED",
+  );
+  ordinaryBoundary(anchors, headTree);
   const r = envelope.payload;
   exact(r, [
     "schema",
@@ -247,6 +284,8 @@ export function verifySourceAuthorization(envelope, anchors, expected, headTree,
     "B",
     "TH",
     "TB",
+    "M",
+    "TM",
     "source_inventory_sha256",
     "policy_sha256",
     "observed_at",
@@ -261,6 +300,9 @@ export function verifySourceAuthorization(envelope, anchors, expected, headTree,
       r.repository_id === REPOSITORY_ID &&
       r.pr === expected.pr &&
       r.pr !== 100 &&
+      r.M === expected.M &&
+      sha(r.M) &&
+      r.TM === headTree.sha &&
       r.H === expected.H &&
       r.B === expected.B &&
       r.B === anchors.B &&
@@ -288,6 +330,8 @@ export function verifySourceAuthorization(envelope, anchors, expected, headTree,
   );
   return immutable({
     decision: "AUTHORIZED_SOURCE_CHANGE",
+    M: r.M,
+    TM: r.TM,
     source_authorization: envelope,
     authorization_sha256: hash(canonical(envelope)),
     authority_key_id: anchors.trust.source_authority.key_id,
@@ -315,9 +359,159 @@ function validatePublicRules(rules, app) {
     );
   }
 }
-function validateProtection(p, rules, app) {
+// Fixed read-only query, delegated ONLY to the authenticated Reader installation.
+// No caller-selected query, variables, URL, credential or pagination expansion.
+export const BRANCH_BYPASS_QUERY = `query PC100BranchBypass {
+  repository(owner: "mahmoudemad68", name: "Your_Editor") {
+    id databaseId nameWithOwner
+    ref(qualifiedName: "refs/heads/main") {
+      ...PC100Ref branchProtectionRule { id databaseId pattern }
+    }
+    branchProtectionRules(first: 100) {
+      totalCount pageInfo { ...PC100Page }
+      edges { cursor node { id } }
+      nodes {
+        id databaseId pattern
+        matchingRefs(first: 100, query: "main") {
+          totalCount pageInfo { ...PC100Page }
+          edges { cursor node { id } } nodes { ...PC100Ref }
+        }
+        bypassPullRequestAllowances(first: 100) {
+          totalCount pageInfo { ...PC100Page }
+          edges { cursor node { id } } nodes { id }
+        }
+      }
+    }
+  }
+}
+fragment PC100Ref on Ref { id name prefix target { __typename ... on Commit { oid } } }
+fragment PC100Page on PageInfo { hasNextPage hasPreviousPage startCursor endCursor }`;
+const graphID = (v) => typeof v === "string" && /^[A-Za-z0-9_+/=-]{1,256}$/.test(v);
+function closedConnection(c) {
+  need(
+    c &&
+      Number.isSafeInteger(c.totalCount) &&
+      c.totalCount >= 0 &&
+      c.totalCount <= 100 &&
+      Array.isArray(c.nodes) &&
+      c.nodes.length === c.totalCount &&
+      Array.isArray(c.edges) &&
+      c.edges.length === c.totalCount &&
+      c.pageInfo?.hasNextPage === false &&
+      c.pageInfo.hasPreviousPage === false &&
+      new Set(c.nodes.map((n) => n?.id)).size === c.totalCount &&
+      new Set(c.edges.map((n) => n?.cursor)).size === c.totalCount,
+    "PROTECTION_GRAPHQL_INCOMPLETE",
+  );
+  for (let i = 0; i < c.totalCount; i++)
+    need(
+      graphID(c.nodes[i]?.id) &&
+        c.edges[i]?.node?.id === c.nodes[i].id &&
+        typeof c.edges[i]?.cursor === "string" &&
+        c.edges[i].cursor.length > 0 &&
+        c.edges[i].cursor.length <= 512,
+      "PROTECTION_GRAPHQL_INCOMPLETE",
+    );
+  need(
+    c.pageInfo.startCursor === (c.totalCount ? c.edges[0].cursor : null) &&
+      c.pageInfo.endCursor === (c.totalCount ? c.edges.at(-1).cursor : null),
+    "PROTECTION_GRAPHQL_INCOMPLETE",
+  );
+  return c.nodes;
+}
+function graphBypassProof(response, B) {
+  need(
+    response &&
+      response.data &&
+      (!Object.hasOwn(response, "errors") ||
+        (Array.isArray(response.errors) && response.errors.length === 0)),
+    "PROTECTION_READER_GRAPHQL_NOT_VERIFIED",
+  );
+  const r = response.data.repository,
+    ref = r?.ref;
+  need(
+    r?.databaseId === REPOSITORY_ID &&
+      r.id === "R_kgDOUzKRSQ" &&
+      r.nameWithOwner === "mahmoudemad68/Your_Editor" &&
+      graphID(ref?.id) &&
+      ref.name === "main" &&
+      ref.prefix === "refs/heads/" &&
+      ref.target?.__typename === "Commit" &&
+      ref.target.oid === B,
+    "PROTECTION_GRAPHQL_IDENTITY_REJECTED",
+  );
+  const rules = closedConnection(r.branchProtectionRules),
+    applicable = [];
+  for (const rule of rules) {
+    need(
+      id(rule.databaseId) &&
+        typeof rule.pattern === "string" &&
+        rule.pattern.length > 0 &&
+        rule.pattern.length <= 1024,
+      "PROTECTION_GRAPHQL_IDENTITY_REJECTED",
+    );
+    const refs = closedConnection(rule.matchingRefs);
+    for (const f of refs)
+      need(
+        f.prefix === "refs/heads/" &&
+          typeof f.name === "string" &&
+          f.name.length > 0 &&
+          f.target?.__typename === "Commit" &&
+          sha(f.target.oid),
+        "PROTECTION_GRAPHQL_IDENTITY_REJECTED",
+      );
+    const main = refs.filter((f) => f.name === "main");
+    if (main.length) {
+      need(
+        main.length === 1 && main[0].id === ref.id && main[0].target.oid === B,
+        "PROTECTION_GRAPHQL_IDENTITY_REJECTED",
+      );
+      need(
+        closedConnection(rule.bypassPullRequestAllowances).length === 0,
+        "CANDIDATE_PROTECTION_BYPASS",
+      );
+      applicable.push(rule);
+    }
+  }
+  // Multiple applicable legacy rules are explicitly unsupported: no unrelated
+  // rule's empty count may substitute for the effective main protection rule.
+  need(
+    applicable.length === 1 &&
+      ["id", "databaseId", "pattern"].every(
+        (k) => applicable[0][k] === ref.branchProtectionRule?.[k],
+      ),
+    "PROTECTION_GRAPHQL_IDENTITY_REJECTED",
+  );
+  return {
+    schema: "pc100-branch-bypass-proof-v1",
+    source: "reader-graphql-corroboration-v1",
+    B,
+    target: "refs/heads/main",
+    rule_ids: [applicable[0].id],
+    sha256: hash(canonical(response.data)),
+  };
+}
+function validateBranchProof(p, B) {
+  exact(p, ["schema", "source", "B", "target", "rule_ids", "sha256"]);
+  need(
+    p.schema === "pc100-branch-bypass-proof-v1" &&
+      sha(B) &&
+      p.B === B &&
+      p.target === "refs/heads/main" &&
+      digest(p.sha256) &&
+      Array.isArray(p.rule_ids) &&
+      ((p.source === "rest-explicit-v1" && p.rule_ids.length === 0) ||
+        (p.source === "reader-graphql-corroboration-v1" &&
+          p.rule_ids.length === 1 &&
+          graphID(p.rule_ids[0]))),
+    "ATTESTATION_BYPASS_UNVERIFIABLE",
+  );
+}
+function validateProtectionSnapshot(p, rules, B) {
   exact(p, [
     "schema",
+    "B",
+    "branch_bypass",
     "rules_sha256",
     "enforce_admins",
     "strict",
@@ -329,7 +523,8 @@ function validateProtection(p, rules, app) {
     "rulesets",
   ]);
   need(
-    p.schema === "pc100-protection-attestation-v1" &&
+    p.schema === "pc100-protection-attestation-v2" &&
+      p.B === B &&
       p.rules_sha256 === hash(canonical(rules)) &&
       p.enforce_admins === true &&
       p.strict === true &&
@@ -339,9 +534,22 @@ function validateProtection(p, rules, app) {
       p.bypass_visible === true &&
       Array.isArray(p.bypass_actors) &&
       p.bypass_actors.length === 0,
-    "ATTESTATION_PROTECTION_REJECTED",
+    "CANDIDATE_PROTECTION_UNVERIFIABLE",
   );
-  validatePublicRules(rules, app);
+  validateBranchProof(p.branch_bypass, B);
+  const existing = rules
+    .filter((r) => r.type === "required_status_checks")
+    .flatMap((r) =>
+      r.parameters?.strict_required_status_checks_policy === true
+        ? (r.parameters.required_status_checks ?? [])
+        : [],
+    );
+  need(
+    ["ci", "supply-chain-security"].every((name) =>
+      existing.some((c) => c.context === name && c.integration_id === 15368),
+    ),
+    "CANDIDATE_EXISTING_CHECKS_REMOVED",
+  );
   const ids = [...new Set(rules.map((r) => r.ruleset_id))].sort((a, b) => a - b);
   need(
     ids.length > 0 &&
@@ -359,21 +567,68 @@ function validateProtection(p, rules, app) {
         r.bypass_visible === true &&
         Array.isArray(r.bypass_actors) &&
         r.bypass_actors.length === 0,
-      "ATTESTATION_PROTECTION_REJECTED",
+      "CANDIDATE_PROTECTION_BYPASS",
     );
   }
 }
-export async function collectProtectionAttestation(read, app) {
+function validateProtection(p, rules, app, B) {
+  validateProtectionSnapshot(p, rules, B);
+  validatePublicRules(rules, app);
+}
+/** One strict predicate for probe, source authorization and attestation issuance. */
+export async function collectProtectionEvidence(read, expectedB) {
+  const main = await read("branches/main"),
+    B = main?.commit?.sha;
+  need(
+    main?.protected === true && sha(B) && (expectedB === undefined || expectedB === B),
+    "CANDIDATE_LIVE_DRIFT",
+  );
   const rules = await completePages(read, "rules/branches/main"),
     protection = await read("branches/main/protection");
+  const allowances = protection?.required_pull_request_reviews?.bypass_pull_request_allowances;
+  let branch;
+  if (
+    Object.hasOwn(protection?.required_pull_request_reviews ?? {}, "bypass_pull_request_allowances")
+  ) {
+    need(
+      allowances &&
+        ["users", "teams", "apps"].every(
+          (k) => Array.isArray(allowances[k]) && allowances[k].length === 0,
+        ),
+      "CANDIDATE_PROTECTION_BYPASS",
+    );
+    branch = {
+      schema: "pc100-branch-bypass-proof-v1",
+      source: "rest-explicit-v1",
+      B,
+      target: "refs/heads/main",
+      rule_ids: [],
+      sha256: hash(canonical(allowances)),
+    };
+    // If a dedicated Reader capability is selected, corroborate even an explicit
+    // REST empty result; conflicting sources must never be silently ignored.
+  }
+  if (typeof read.branchProtectionGraphQL === "function") {
+    let response;
+    try {
+      response = await read.branchProtectionGraphQL();
+    } catch {
+      throw new AttestationError("PROTECTION_READER_GRAPHQL_NOT_VERIFIED");
+    }
+    branch = graphBypassProof(response, B);
+  }
+  need(branch !== undefined, "ATTESTATION_BYPASS_UNVERIFIABLE");
   const ids = [...new Set(rules.map((r) => r.ruleset_id))].sort((a, b) => a - b),
-    rulesets = [];
+    rulesets = [],
+    originals = [];
+  need(ids.length > 0 && ids.every(id), "ATTESTATION_RULESETS_INCOMPLETE");
   for (const i of ids) {
     const r = await read(`rulesets/${i}`);
     need(
       r.id === i && Array.isArray(r.bypass_actors) && r.bypass_actors.length === 0,
-      "ATTESTATION_BYPASS_UNVERIFIABLE",
+      "CANDIDATE_PROTECTION_BYPASS",
     );
+    originals.push(canonical(r));
     rulesets.push({
       id: i,
       sha256: hash(canonical(r)),
@@ -383,14 +638,10 @@ export async function collectProtectionAttestation(read, app) {
       bypass_actors: [],
     });
   }
-  const a = protection.required_pull_request_reviews?.bypass_pull_request_allowances;
-  need(
-    a !== undefined &&
-      ["users", "teams", "apps"].every((k) => Array.isArray(a[k]) && a[k].length === 0),
-    "ATTESTATION_BYPASS_UNVERIFIABLE",
-  );
   const snapshot = {
-    schema: "pc100-protection-attestation-v1",
+    schema: "pc100-protection-attestation-v2",
+    B,
+    branch_bypass: branch,
     rules_sha256: hash(canonical(rules)),
     enforce_admins: protection.enforce_admins?.enabled,
     strict: protection.required_status_checks?.strict,
@@ -401,8 +652,118 @@ export async function collectProtectionAttestation(read, app) {
     bypass_actors: [],
     rulesets,
   };
-  validateProtection(snapshot, rules, app);
-  return snapshot;
+  validateProtectionSnapshot(snapshot, rules, B);
+  need(
+    canonical(await completePages(read, "rules/branches/main")) === canonical(rules) &&
+      canonical(await read("branches/main/protection")) === canonical(protection),
+    "CANDIDATE_LIVE_DRIFT",
+  );
+  for (let i = 0; i < ids.length; i++)
+    need(canonical(await read(`rulesets/${ids[i]}`)) === originals[i], "CANDIDATE_LIVE_DRIFT");
+  if (branch.source === "reader-graphql-corroboration-v1") {
+    let response;
+    try {
+      response = await read.branchProtectionGraphQL();
+    } catch {
+      throw new AttestationError("PROTECTION_READER_GRAPHQL_NOT_VERIFIED");
+    }
+    need(canonical(graphBypassProof(response, B)) === canonical(branch), "CANDIDATE_LIVE_DRIFT");
+  }
+  const after = await read("branches/main");
+  need(after?.protected === true && after.commit?.sha === B, "CANDIDATE_LIVE_DRIFT");
+  return {
+    schema: "pc100-protection-visibility-v2",
+    B,
+    rules,
+    ruleset_count: ids.length,
+    snapshot,
+    candidate_admission_authorized: false,
+    release_authorized: false,
+    live_a6_enforced: false,
+  };
+}
+export async function collectProtectionAttestation(read, app) {
+  const evidence = await collectProtectionEvidence(read);
+  validateProtection(evidence.snapshot, evidence.rules, app, evidence.B);
+  return evidence.snapshot;
+}
+// Closed protected-main Supply profile. Unknown workflow bytes require a new
+// independent control-plane review, not a PR-defined job-name manifest.
+export const SUPPORTED_SUPPLY_SHA256 =
+  "2c54849ebbbf401538572dab86e6466d888218e3d7fb936aaa8afa165708a4a9";
+export const SUPPLY_JOB_PROFILE = Object.freeze({
+  "Case-exact release authorization": "success",
+  dependencies: "success",
+  ...Object.fromEntries(
+    [
+      "api",
+      "web",
+      "media-worker",
+      "render-worker",
+      "render-executor",
+      "agent-worker",
+      "ai-worker",
+      "seaweedfs",
+      "postgres",
+      "redis",
+      "test-minio",
+    ].map((n) => ["image " + n, "success"]),
+  ),
+  "supply-chain-security": "success",
+  "publish ${{ matrix.service }}": "skipped",
+  "release manifest": "skipped",
+  "owner-approved staging": "skipped",
+});
+async function verifySupplyJobs(read, r, context, anchors) {
+  const entry = anchors.controls[".github/workflows/supply-chain.yml"],
+    data = await blob(read, {
+      ...entry,
+      sha: entry.blob_sha1,
+      type: "blob",
+      size: anchors.supply_bytes,
+    });
+  need(hash(data) === SUPPORTED_SUPPLY_SHA256, "ATTESTATION_SUPPLY_PROFILE_UNSUPPORTED");
+  const jobs = await completePages(read, `actions/runs/${r.id}/attempts/1/jobs`, "jobs");
+  need(
+    id(r.check_suite_id) &&
+      jobs.length === Object.keys(SUPPLY_JOB_PROFILE).length &&
+      new Set(jobs.map((j) => j.name)).size === jobs.length &&
+      new Set(jobs.map((j) => j.id)).size === jobs.length,
+    "ATTESTATION_SUPPLY_JOBS_REJECTED",
+  );
+  for (const j of jobs) {
+    need(
+      id(j.id) &&
+        j.run_id === r.id &&
+        j.run_attempt === 1 &&
+        j.status === "completed" &&
+        Object.hasOwn(SUPPLY_JOB_PROFILE, j.name) &&
+        j.conclusion === SUPPLY_JOB_PROFILE[j.name] &&
+        typeof j.check_run_url === "string" &&
+        /^https:\/\/api\.github\.com\/repos\/mahmoudemad68\/Your_Editor\/check-runs\/[1-9][0-9]*$/.test(
+          j.check_run_url,
+        ),
+      "ATTESTATION_SUPPLY_JOBS_REJECTED",
+    );
+    const cid = Number(j.check_run_url.split("/").at(-1));
+    need(id(cid), "ATTESTATION_SUPPLY_JOBS_REJECTED");
+    const check = await read(`check-runs/${cid}`),
+      suite = await read(`check-suites/${r.check_suite_id}`);
+    need(
+      check.id === cid &&
+        check.name === j.name &&
+        check.head_sha === context.H &&
+        check.app?.id === 15368 &&
+        check.check_suite?.id === r.check_suite_id &&
+        check.status === "completed" &&
+        check.conclusion === j.conclusion &&
+        suite.id === r.check_suite_id &&
+        suite.repository?.id === REPOSITORY_ID &&
+        suite.head_sha === context.H &&
+        suite.app?.id === 15368,
+      "ATTESTATION_SUPPLY_CHECK_REJECTED",
+    );
+  }
 }
 const workflows = {
   preflight: ".github/workflows/pc100-artifact-integration.yml",
@@ -410,7 +771,7 @@ const workflows = {
   ci: ".github/workflows/ci.yml",
   walking: ".github/workflows/e2e.yml",
 };
-async function verifyRuns(read, runs, context, required) {
+async function verifyRuns(read, runs, context, required, anchors) {
   need(
     Array.isArray(required) &&
       required.includes(context.pr === 100 ? "preflight" : "ci") &&
@@ -429,7 +790,7 @@ async function verifyRuns(read, runs, context, required) {
   for (const role of Object.keys(runs)) {
     const ref = runs[role];
     exact(ref, ["id", "attempt", "workflow_id"]);
-    need(id(ref.id) && id(ref.attempt) && id(ref.workflow_id), "ATTESTATION_RUN_REJECTED");
+    need(id(ref.id) && ref.attempt === 1 && id(ref.workflow_id), "ATTESTATION_RUN_REJECTED");
     const r = await read(`actions/runs/${ref.id}`),
       w = await read(`actions/workflows/${ref.workflow_id}`);
     need(
@@ -451,6 +812,7 @@ async function verifyRuns(read, runs, context, required) {
         r.pull_requests[0].base?.sha === context.B,
       "ATTESTATION_RUN_REJECTED",
     );
+    if (role === "supply") await verifySupplyJobs(read, r, context, anchors);
   }
 }
 async function liveContext(read, c) {
@@ -545,6 +907,7 @@ function authorizationShape(r, c) {
       "schema",
       "TH",
       "TB",
+      "TM",
       "source_inventory_sha256",
       "decision",
       "source_authorization",
@@ -573,6 +936,7 @@ function authorizationShape(r, c) {
         r.repository_id === REPOSITORY_ID &&
         r.trusted_main_sha === c.B &&
         r.TH === c.TH &&
+        r.TM === c.TM &&
         r.TB === c.TB &&
         r.state === "open" &&
         r.merged === false &&
@@ -601,7 +965,7 @@ export async function createConsumerAttestation(
     "CONSUMER_ATTESTATION_DISABLED",
   );
   await liveContext(read, context);
-  await verifyRuns(read, runs, context, requiredRoles);
+  await verifyRuns(read, runs, context, requiredRoles, anchors);
   const scope = context.pr === 100 ? "security-candidate" : "ordinary-source-change";
   need(
     authorization?.release_authorized === false &&
@@ -618,6 +982,8 @@ export async function createConsumerAttestation(
     verifySourceAuthorization(authorization.source_authorization, anchors, context, tree, now);
   }
   const protection = await collectProtectionAttestation(read, anchors.app);
+  await verifyRuns(read, runs, context, requiredRoles, anchors);
+  await liveContext(read, context);
   return {
     schema: "pc100-app-consumer-attestation-v1",
     context,
@@ -742,8 +1108,8 @@ async function verifyConsumer(
     "ATTESTATION_EXPIRED",
   );
   const rules = await completePages(read, "rules/branches/main");
-  validateProtection(r.protection, rules, anchors.app);
-  await verifyRuns(read, r.runs, expected, requiredRoles);
+  validateProtection(r.protection, rules, anchors.app, expected.B);
+  await verifyRuns(read, r.runs, expected, requiredRoles, anchors);
   // Re-read both immutable anchors and mutable check state after all expensive reads.
   const current = await readAppTrust(read, expected.B),
     again = await read(`check-runs/${check.id}`);
@@ -751,7 +1117,7 @@ async function verifyConsumer(
     current.policy_sha256 === anchors.policy_sha256 && canonical(again) === canonical(check),
     "ATTESTATION_REVOKED_OR_DRIFTED",
   );
-  await verifyRuns(read, r.runs, expected, requiredRoles);
+  await verifyRuns(read, r.runs, expected, requiredRoles, anchors);
   await liveContext(read, expected);
   const result = {
     schema: "pc100-consumer-verification-v1",

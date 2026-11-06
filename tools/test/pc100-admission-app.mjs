@@ -1,7 +1,7 @@
 /** Dedicated external App controller. Never run by a PR workflow. No third-party dependencies. */
 import { createPrivateKey, createHash, randomBytes, sign } from "node:crypto";
 import { Buffer } from "node:buffer";
-import { readFile, lstat, realpath, open, rename, unlink } from "node:fs/promises";
+import { readFile, lstat, realpath, open, rename, unlink, readdir } from "node:fs/promises";
 import { constants } from "node:fs";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
@@ -11,6 +11,7 @@ import { fileURLToPath, URLSearchParams } from "node:url";
 import { setTimeout as sleep } from "node:timers/promises";
 import {
   readAppTrust,
+  BRANCH_BYPASS_QUERY,
   verifySourceAuthorization,
   decodeAuthorityJSON,
   createConsumerAttestation,
@@ -54,6 +55,8 @@ const SAFE_FAILURES = new Set([
   "APP_BASE_CHANGED_RESTART_REQUIRED",
   "APP_BOOTSTRAP_SOURCE_DRIFT",
   "APP_CHECKOUT_NOT_PROTECTED_MAIN",
+  "APP_CHECKOUT_OWNERSHIP_REJECTED",
+  "APP_CHECKOUT_GIT_CONFIG_REJECTED",
   "APP_CHECK_ISSUER_REJECTED",
   "APP_DUPLICATE_CHECK_REJECTED",
   "APP_DUPLICATE_PR",
@@ -77,6 +80,11 @@ const SAFE_FAILURES = new Set([
   "APP_POLICY_RECORD_REJECTED",
   "APP_POLICY_REVOKED",
   "APP_PR_INACTIVE",
+  "APP_PR_QUARANTINED",
+  "APP_PR_IDENTITY_REJECTED",
+  "PROTECTION_GRAPHQL_INCOMPLETE",
+  "PROTECTION_GRAPHQL_IDENTITY_REJECTED",
+  "PROTECTION_READER_GRAPHQL_NOT_VERIFIED",
   "APP_PR_RUNNER_FORBIDDEN",
   "APP_RESPONSE_TOO_LARGE",
   "APP_RESTART_REVALIDATION_REQUIRED",
@@ -88,6 +96,9 @@ const SAFE_FAILURES = new Set([
   "APP_SOURCE_AUTHORITY_NOT_CONFIGURED",
   "APP_SOURCE_IDENTITY_REJECTED",
   "APP_SOURCE_ISSUER_DRIFT",
+  "APP_SOURCE_MERGE_UNVERIFIABLE",
+  "APP_SOURCE_REVIEW_FILE_REJECTED",
+  "SOURCE_CONTROL_CHANGE_REQUIRES_INDEPENDENT_REVIEW",
   "APP_SOURCE_PROTECTION_UNVERIFIABLE",
   "APP_TOKEN_REPOSITORY_REJECTED",
   "APP_TOKEN_SCOPE_REJECTED",
@@ -122,6 +133,9 @@ const SAFE_FAILURES = new Set([
   "ATTESTATION_SIZE_REJECTED",
   "ATTESTATION_TREE_DRIFT",
   "ATTESTATION_TRUST_REJECTED",
+  "ATTESTATION_SUPPLY_PROFILE_UNSUPPORTED",
+  "ATTESTATION_SUPPLY_JOBS_REJECTED",
+  "ATTESTATION_SUPPLY_CHECK_REJECTED",
   "CANDIDATE_APP_EVIDENCE_EXPIRED",
   "CANDIDATE_APP_NOT_CONFIGURED",
   "CANDIDATE_BLOB_DIGEST_MISMATCH",
@@ -282,6 +296,7 @@ export function validateAppRoute(route, method = "GET") {
         /^\/app\/installations\/[1-9][0-9]*$/.test(pathname) ||
         (relative !== null && readPath.test(relative)))) ||
       (method === "POST" && /^\/app\/installations\/[1-9][0-9]*\/access_tokens$/.test(pathname)) ||
+      (method === "POST" && pathname === "/graphql") ||
       (method === "POST" && relative === "check-runs") ||
       (method === "PATCH" && /^check-runs\/[1-9][0-9]*$/.test(relative ?? "")),
     "APP_ROUTE_REJECTED",
@@ -307,9 +322,20 @@ export function validateAppRoute(route, method = "GET") {
   }
   need(method === "GET" || !query, "APP_ROUTE_REJECTED");
 }
+export class AppAPIError extends Error {
+  constructor(status) {
+    super("APP_API_REJECTED");
+    this.status = status;
+  }
+}
 export async function appRequest(route, token, method = "GET", body, cap = 24 * 1024 ** 2) {
   validateAppRoute(route, method);
   need(Number.isSafeInteger(cap) && cap >= 1024 && cap <= 24 * 1024 ** 2, "APP_RESPONSE_TOO_LARGE");
+  if (route === "/graphql")
+    need(
+      canonical(body) === canonical({ query: BRANCH_BYPASS_QUERY }),
+      "PROTECTION_READER_ROUTE_REJECTED",
+    );
   const r = await globalThis.fetch("https://api.github.com" + route, {
     method,
     redirect: "error",
@@ -322,7 +348,10 @@ export async function appRequest(route, token, method = "GET", body, cap = 24 * 
     },
     ...(body ? { body: JSON.stringify(body) } : {}),
   });
-  need(r.status === (method === "POST" ? 201 : 200), "APP_API_REJECTED");
+  if (r.status !== (method === "POST" && route !== "/graphql" ? 201 : 200)) {
+    await r.body?.cancel?.();
+    throw new AppAPIError(r.status);
+  }
   const chunks = [];
   let size = 0;
   for await (const b of r.body) {
@@ -451,6 +480,10 @@ export async function protectionReaderClient(writer, key, request = appRequest) 
     need(Date.parse(token.expires_at) > Date.now() + 15000, "PROTECTION_READER_TOKEN_EXPIRED");
     return request(`/repos/${REPO}/${route}`, token.token, "GET", undefined, 2 * 1024 ** 2);
   };
+  client.branchProtectionGraphQL = async () => {
+    need(Date.parse(token.expires_at) > Date.now() + 15000, "PROTECTION_READER_TOKEN_EXPIRED");
+    return request("/graphql", token.token, "POST", { query: BRANCH_BYPASS_QUERY }, 2 * 1024 ** 2);
+  };
   protectionReaders.set(client, canonical(config));
   return client;
 }
@@ -461,7 +494,7 @@ export async function probeProtectionReader(writer, key, request = appRequest) {
     main.protected === true && /^[a-f0-9]{40}$/.test(main.commit?.sha),
     "APP_MAIN_NOT_PROTECTED",
   );
-  const evidence = await inspectProtectionVisibility(reader),
+  const evidence = await inspectProtectionVisibility(reader, main.commit.sha),
     finalMain = await reader("branches/main");
   need(finalMain.protected === true && finalMain.commit?.sha === main.commit.sha, "APP_LIVE_DRIFT");
   return {
@@ -532,10 +565,15 @@ export async function installationClient(config, key, request = appRequest, read
   const client = (route, method = "GET", body) => dispatch(`/repos/${REPO}/${route}`, method, body);
   // Source revalidation cannot accidentally route a private protection request
   // through the writer credential either.
+  if (reader) client.branchProtectionGraphQL = () => reader.branchProtectionGraphQL();
   client.trustedSourceRead = (route) => dispatch(route);
   return client;
 }
+class PRQuarantine extends Error {}
 function contextOf(p, number) {
+  const need = (ok) => {
+    if (!ok) throw new PRQuarantine("APP_LIVE_DRIFT");
+  };
   need(
     Number.isSafeInteger(number) &&
       number > 0 &&
@@ -567,7 +605,8 @@ function contextOf(p, number) {
   };
 }
 function samePR(p, expected) {
-  need(canonical(contextOf(p, expected.pr)) === canonical(expected), "APP_LIVE_DRIFT");
+  if (canonical(contextOf(p, expected.pr)) !== canonical(expected))
+    throw new PRQuarantine("APP_LIVE_DRIFT");
 }
 export async function invalidateAppCheck(read, item, reason = "APP_REVALIDATION_REQUIRED") {
   const before = await read(`check-runs/${item.check}`);
@@ -761,7 +800,7 @@ export async function reconcileJournal(
     try {
       current = contextOf(await read(`pulls/${prior.pr}`), prior.pr);
     } catch (e) {
-      if (!revokeAll) throw e;
+      if (!revokeAll && !(e instanceof PRQuarantine)) throw e;
     }
     if (current?.state === "closed" && current.merged) {
       await journal.remove(prior);
@@ -1093,7 +1132,7 @@ export async function appConsumerRecord(
   }
   return record;
 }
-export async function authorizeOrdinarySource(read, config, context, headTree) {
+export async function authorizeOrdinarySource(read, config, context, headTree, now = Date.now()) {
   need(
     context.pr !== 100 && context.head_repository_id === REPOSITORY_ID,
     "APP_SOURCE_ALIAS_REJECTED",
@@ -1101,65 +1140,164 @@ export async function authorizeOrdinarySource(read, config, context, headTree) {
   const anchors = await readAppTrust(read, context.B);
   need(canonical(anchors.app) === canonical(config), "APP_SOURCE_ISSUER_DRIFT");
   need(anchors.trust.source_authority !== null, "APP_SOURCE_AUTHORITY_NOT_CONFIGURED");
-  const aliases = (await completePages(read, "pulls?state=open&base=main")).filter(
-    (p) => p.head?.sha === context.H,
-  );
+  const aliases = (await listOpenPRs(read)).filter((p) => p?.head?.sha === context.H);
   need(aliases.length === 1 && aliases[0].number === context.pr, "APP_SOURCE_ALIAS_REJECTED");
   // This is the independent host path, never the Actions consumer. A signed
   // source review cannot substitute for live complete read-only N2 visibility.
   // Inspect inherited ci/Supply protections without requiring our own check
   // to be installed first (the first Owner-authorized check must be issuable).
-  await inspectProtectionVisibility(read);
-  const protection = await read("branches/main/protection");
-  const allowances = protection.required_pull_request_reviews?.bypass_pull_request_allowances;
+  await inspectProtectionVisibility(read, context.B);
   need(
-    protection.enforce_admins?.enabled === true &&
-      protection.required_status_checks?.strict === true &&
-      protection.required_pull_request_reviews?.required_approving_review_count >= 1 &&
-      protection.allow_force_pushes?.enabled === false &&
-      protection.allow_deletions?.enabled === false &&
-      allowances !== undefined &&
-      ["users", "teams", "apps"].every(
-        (k) => Array.isArray(allowances[k]) && allowances[k].length === 0,
-      ),
-    "APP_SOURCE_PROTECTION_UNVERIFIABLE",
+    typeof context.M === "string" && /^[a-f0-9]{40}$/.test(context.M),
+    "APP_SOURCE_MERGE_UNVERIFIABLE",
+  );
+  samePR(await read(`pulls/${context.pr}`), context);
+  const [h, b, m] = await Promise.all(
+    [context.H, context.B, context.M].map((s) => read(`git/commits/${s}`)),
+  );
+  need(
+    h.sha === context.H &&
+      b.sha === context.B &&
+      m.sha === context.M &&
+      h.tree?.sha === headTree.sha &&
+      b.tree?.sha === anchors.TB &&
+      m.tree?.sha === headTree.sha &&
+      canonical(m.parents?.map((p) => p.sha)) === canonical([context.B, context.H]),
+    "APP_SOURCE_MERGE_UNVERIFIABLE",
   );
   const raw = await read.sourceAuthorization(context);
-  return verifySourceAuthorization(
+  const proof = verifySourceAuthorization(
     decodeAuthorityJSON(raw, 4 * 1024 ** 2),
     anchors,
     context,
     headTree,
+    now,
   );
+  samePR(await read(`pulls/${context.pr}`), context);
+  return proof;
 }
-/** Every open main PR receives this context, including registry and Dependabot PRs. */
+// Preserve duplicate/malformed *rows* for per-PR quarantine. The generic policy
+// paginator rejects duplicates globally and is deliberately unchanged elsewhere.
+async function listOpenPRs(read) {
+  const rows = [];
+  for (let page = 1; page <= 40; page++) {
+    const data = await read(`pulls?state=open&base=main&per_page=100&page=${page}`);
+    need(Array.isArray(data) && data.length <= 100, "POLICY_PAGE_INCOMPLETE");
+    rows.push(...data);
+    if (data.length < 100) return rows;
+  }
+  throw Error("POLICY_PAGE_INCOMPLETE");
+}
+/** Per-PR identity failures cannot terminate unrelated canonical PR polling. */
 async function reconcileCycle(read, config, tracked, journal) {
-  const listed = await completePages(read, "pulls?state=open&base=main");
-  const numbers = new Set([100, ...tracked.keys()]),
-    seen = new Set();
+  const protection = await inspectProtectionVisibility(read);
+  const listed = await listOpenPRs(read),
+    numbers = new Set([100, ...tracked.keys()]),
+    seen = new Set(),
+    quarantine = new Map(),
+    quarantineHeads = new Map(),
+    results = [];
   for (const p of listed) {
-    need(
-      Number.isSafeInteger(p.number) &&
-        p.number > 0 &&
-        p.state === "open" &&
-        p.base?.ref === "main" &&
-        p.base.repo?.id === REPOSITORY_ID,
-      "APP_LIVE_DRIFT",
-    );
-    need(!seen.has(p.number), "APP_DUPLICATE_PR");
-    seen.add(p.number);
-    numbers.add(p.number);
+    const n = p?.number;
+    if (!Number.isSafeInteger(n) || n <= 0) {
+      results.push({ pr: null, outcome: "APP_PR_QUARANTINED", reason: "APP_PR_IDENTITY_REJECTED" });
+      continue;
+    }
+    if (/^[a-f0-9]{40}$/.test(p.head?.sha ?? "")) {
+      const hs = quarantineHeads.get(n) ?? new Set();
+      hs.add(p.head.sha);
+      quarantineHeads.set(n, hs);
+    }
+    if (seen.has(n)) quarantine.set(n, "APP_DUPLICATE_PR");
+    seen.add(n);
+    numbers.add(n);
+    try {
+      // List responses legitimately omit `merged`; only authoritative detail
+      // participates in authorization. Still reject visibly foreign/malformed rows.
+      if (
+        p.state !== "open" ||
+        p.base?.ref !== "main" ||
+        p.base?.repo?.id !== REPOSITORY_ID ||
+        !Number.isSafeInteger(p.head?.repo?.id) ||
+        p.head.repo.id <= 0 ||
+        !/^[a-f0-9]{40}$/.test(p.head?.sha ?? "")
+      )
+        throw new PRQuarantine("APP_LIVE_DRIFT");
+    } catch (e) {
+      if (!(e instanceof PRQuarantine)) throw e;
+      quarantine.set(n, "APP_PR_IDENTITY_REJECTED");
+    }
   }
   const current = new Map(),
-    groups = new Map(),
-    results = [];
+    groups = new Map();
+  const isolate = async (n, reason) => {
+    const old = tracked.get(n);
+    if (old) {
+      // Invalidating a shared H may deny that H's group; never preserve a
+      // potentially reusable positive alias. Other heads remain unaffected.
+      await invalidateAppCheck(read, old, "APP_PR_QUARANTINED");
+      tracked.delete(n);
+    }
+    // Also revoke an existing same-App check after reboot when a malformed
+    // PR still exposes its immutable GitHub head but is not in memory.
+    for (const H of quarantineHeads.get(n) ?? []) {
+      let rows;
+      try {
+        rows = await completePages(
+          read,
+          `commits/${H}/check-runs?check_name=${encodeURIComponent(APP_CHECK)}&filter=all`,
+          "check_runs",
+        );
+      } catch (e) {
+        // A removed/foreign head may have no base-repository object. It gains
+        // no authorization. Never downgrade authentication/outage errors here.
+        if (e instanceof AppAPIError && e.status === 404) {
+          results.push({
+            pr: n,
+            outcome: "APP_PR_QUARANTINED",
+            reason: "APP_HEAD_NOT_FOUND",
+            revocation_confirmed: false,
+          });
+          continue;
+        }
+        throw e;
+      }
+      for (const check of rows.filter((c) => c.name === APP_CHECK && c.app?.id === config.app_id)) {
+        need(
+          check.head_sha === H &&
+            check.app.slug === config.slug &&
+            Number.isSafeInteger(check.id) &&
+            check.id > 0,
+          "APP_CHECK_ISSUER_REJECTED",
+        );
+        await invalidateAppCheck(read, { check: check.id, H }, "APP_PR_QUARANTINED");
+      }
+    }
+    results.push({ pr: n, outcome: "APP_PR_QUARANTINED", reason });
+  };
   for (const n of [...numbers].sort((a, b) => a - b)) {
-    const c = contextOf(await read(`pulls/${n}`), n);
-    current.set(n, c);
-    if (c.state === "open" && !c.merged) {
-      const g = groups.get(c.H) ?? [];
-      g.push(n);
-      groups.set(c.H, g);
+    if (quarantine.has(n)) {
+      await isolate(n, quarantine.get(n));
+      continue;
+    }
+    let detail;
+    try {
+      detail = await read(`pulls/${n}`);
+      const c = contextOf(detail, n);
+      current.set(n, c);
+      if (c.state === "open" && !c.merged) {
+        const g = groups.get(c.H) ?? [];
+        g.push(n);
+        groups.set(c.H, g);
+      }
+    } catch (e) {
+      if (!(e instanceof PRQuarantine) && !(e instanceof AppAPIError && e.status === 404)) throw e;
+      if (detail?.number === n && /^[a-f0-9]{40}$/.test(detail.head?.sha ?? "")) {
+        const hs = quarantineHeads.get(n) ?? new Set();
+        hs.add(detail.head.sha);
+        quarantineHeads.set(n, hs);
+      }
+      await isolate(n, "APP_PR_IDENTITY_REJECTED");
     }
   }
   for (const [n, c] of current) {
@@ -1179,13 +1317,21 @@ async function reconcileCycle(read, config, tracked, journal) {
   }
   for (const members of groups.values()) {
     const n = members.includes(100) ? 100 : members[0];
-    const result = await reconcileAppCheck(read, config, verifyCandidateEvent, n, journal);
-    for (const alias of members) {
-      const item = { ...result, pr: alias };
-      tracked.set(alias, item);
-      results.push(item);
+    try {
+      const result = await reconcileAppCheck(read, config, verifyCandidateEvent, n, journal);
+      for (const alias of members) {
+        const item = { ...result, pr: alias };
+        tracked.set(alias, item);
+        results.push(item);
+      }
+    } catch (e) {
+      if (!(e instanceof PRQuarantine)) throw e;
+      for (const n of members) await isolate(n, "APP_PR_IDENTITY_REJECTED");
+      if (journal) await reconcileJournal(read, config, journal);
     }
   }
+  const after = await inspectProtectionVisibility(read, protection.B);
+  need(canonical(after) === canonical(protection), "APP_LIVE_DRIFT");
   return results;
 }
 export async function reconcileAppCycle(read, config, tracked = new Map(), journal) {
@@ -1214,6 +1360,82 @@ export async function reconcileAppCycle(read, config, tracked = new Map(), journ
     throw error;
   }
 }
+// Installation invariant: root owns the reviewed source and exact Git trust
+// config; the service account cannot edit either. No wildcard safe.directory,
+// local worktree, alternates, symlink traversal or inherited Git configuration.
+async function rootOwnedPath(p, kind) {
+  need(path.isAbsolute(p) && (await realpath(p)) === p, "APP_CHECKOUT_OWNERSHIP_REJECTED");
+  let at = p;
+  for (;;) {
+    const st = await lstat(at);
+    need(
+      !st.isSymbolicLink() &&
+        st.uid === 0 &&
+        (st.mode & 0o022) === 0 &&
+        (at !== p || (kind === "file" ? st.isFile() : st.isDirectory())),
+      "APP_CHECKOUT_OWNERSHIP_REJECTED",
+    );
+    if (at === "/") break;
+    at = path.dirname(at);
+  }
+}
+export async function verifyReviewedCheckout(
+  B,
+  checkout = root,
+  gitConfig = "/etc/pc100/gitconfig",
+) {
+  need(process.platform === "linux" && /^[a-f0-9]{40}$/.test(B), "APP_CHECKOUT_NOT_PROTECTED_MAIN");
+  await rootOwnedPath(process.execPath, "file");
+  await rootOwnedPath(checkout, "directory");
+  await rootOwnedPath(gitConfig, "file");
+  const config = await readFile(gitConfig);
+  need(
+    config.length <= 4096 && config.toString() === `[safe]\n\tdirectory = ${checkout}\n`,
+    "APP_CHECKOUT_GIT_CONFIG_REJECTED",
+  );
+  await rootOwnedPath(path.join(checkout, ".git"), "directory");
+  const pending = [checkout];
+  let count = 0;
+  while (pending.length)
+    for (const entry of await readdir(pending.pop(), { withFileTypes: true })) {
+      const p = path.join(entry.parentPath, entry.name),
+        st = await lstat(p);
+      need(
+        ++count <= 30000 &&
+          !st.isSymbolicLink() &&
+          st.uid === 0 &&
+          (st.mode & 0o022) === 0 &&
+          (st.isFile() || st.isDirectory()),
+        "APP_CHECKOUT_OWNERSHIP_REJECTED",
+      );
+      need(
+        ![".git/commondir", ".git/objects/info/alternates"].includes(path.relative(checkout, p)),
+        "APP_CHECKOUT_GIT_CONFIG_REJECTED",
+      );
+      if (st.isDirectory()) pending.push(p);
+    }
+  const git = (args) =>
+    execFileSync("git", ["-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", ...args], {
+      cwd: checkout,
+      env: {
+        ...withoutQualificationCredentials(process.env),
+        GIT_CONFIG_SYSTEM: gitConfig,
+        GIT_CONFIG_GLOBAL: "/dev/null",
+        GIT_CONFIG_NOSYSTEM: "0",
+        GIT_OPTIONAL_LOCKS: "0",
+      },
+      encoding: "utf8",
+      timeout: 15000,
+      maxBuffer: 16 * 1024 ** 2,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+  need(
+    git(["rev-parse", "HEAD"]).trim() === B &&
+      !git(["status", "--porcelain", "--untracked-files=all"]).trim(),
+    "APP_CHECKOUT_NOT_PROTECTED_MAIN",
+  );
+  return git;
+}
 async function trustedHostSource(request = appRequest) {
   assertExternalHost(process.env);
   need(process.platform === "linux", "APP_TRUSTED_HOST_REQUIRES_LINUX");
@@ -1223,24 +1445,9 @@ async function trustedHostSource(request = appRequest) {
   );
   const main = await request(`/repos/${REPO}/branches/main`);
   need(main.protected === true, "APP_MAIN_NOT_PROTECTED");
-  const B = main.commit.sha,
-    git = (args) =>
-      execFileSync(
-        "git",
-        ["-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", ...args],
-        {
-          cwd: root,
-          env: withoutQualificationCredentials(process.env),
-          encoding: "utf8",
-          timeout: 15000,
-          maxBuffer: 16 * 1024 ** 2,
-        },
-      );
-  need(
-    git(["rev-parse", "HEAD"]).trim() === B &&
-      !git(["status", "--porcelain", "--untracked-files=all"]).trim(),
-    "APP_CHECKOUT_NOT_PROTECTED_MAIN",
-  );
+  const B = main.commit.sha;
+  const git = await verifyReviewedCheckout(B);
+  need(git(["rev-parse", "HEAD"]).trim() === B, "APP_CHECKOUT_NOT_PROTECTED_MAIN");
   const commit = await request(`/repos/${REPO}/git/commits/${B}`),
     tree = treeEntries(await request(`/repos/${REPO}/git/trees/${commit.tree.sha}?recursive=1`));
   for (const p of [
@@ -1263,6 +1470,53 @@ async function trustedHostSource(request = appRequest) {
     );
   }
   return validateAppConfig(readPolicyJSON(await readFile(path.join(root, APP_CONFIG))));
+}
+// Public signed records are deliberately outside the private key/journal dir.
+// Only the independent host's root operator delivers them; no signing key is
+// loaded and the service cannot write either the records or reviewed source.
+export async function readRootOwnedSourceReview(c, dir = "/var/lib/pc100-reviews") {
+  need(
+    [c.H, c.B, c.M].every((x) => typeof x === "string" && /^[a-f0-9]{40}$/.test(x)) &&
+      Number.isSafeInteger(c.pr) &&
+      c.pr > 0,
+    "SOURCE_AUTHORIZATION_REJECTED",
+  );
+  await rootOwnedPath(dir, "directory");
+  const file = path.join(dir, `${c.H}-${c.B}-${c.M}-${c.pr}.source-review.json`);
+  assertExternalKeyPath(file);
+  await rootOwnedPath(file, "file");
+  const st = await lstat(file);
+  need(
+    st.nlink === 1 && st.size > 0 && st.size <= 4 * 1024 ** 2,
+    "APP_SOURCE_REVIEW_FILE_REJECTED",
+  );
+  const fd = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const again = await fd.stat();
+    need(
+      again.dev === st.dev &&
+        again.ino === st.ino &&
+        again.uid === 0 &&
+        (again.mode & 0o022) === 0 &&
+        again.nlink === 1 &&
+        again.size === st.size,
+      "APP_SOURCE_REVIEW_FILE_REJECTED",
+    );
+    const bytes = Buffer.alloc(4 * 1024 ** 2 + 1);
+    let count = 0;
+    while (count < bytes.length) {
+      const r = await fd.read(bytes, count, bytes.length - count, count);
+      if (!r.bytesRead) break;
+      count += r.bytesRead;
+    }
+    need(
+      count > 0 && count === st.size && count <= 4 * 1024 ** 2,
+      "APP_SOURCE_REVIEW_FILE_REJECTED",
+    );
+    return bytes.subarray(0, count);
+  } finally {
+    await fd.close();
+  }
 }
 export function assertExternalKeyPath(file, checkout = root) {
   const relative = path.relative(checkout, file);
@@ -1371,25 +1625,15 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
         throw e;
       }
       client.sourceBytes = readGitSourceBytes;
-      // Signed public review records live outside the checkout. No private key
-      // for this independent authority is loaded by this controller. The main
-      // trust config remains null until separately reviewed Owner installation.
-      client.sourceAuthorization = (c) => {
-        need(
-          /^[a-f0-9]{40}$/.test(c.H) &&
-            /^[a-f0-9]{40}$/.test(c.B) &&
-            Number.isSafeInteger(c.pr) &&
-            c.pr > 0,
-          "SOURCE_AUTHORIZATION_REJECTED",
-        );
-        return readExternalKeyFile(
-          path.join(path.dirname(process.argv[3]), `${c.H}-${c.B}-${c.pr}.source-review.json`),
-          4 * 1024 ** 2,
-        );
-      };
+      // Public review delivery never grants access to the key/journal directory.
+      // The independently approved authority is still null by default.
+      client.sourceAuthorization = (c) => readRootOwnedSourceReview(c);
       const results = await reconcileAppCycle(client, config, tracked, journal);
       console.log(JSON.stringify(results));
-      if (process.argv[2] === "--once" && results.some((r) => r.conclusion === "failure"))
+      if (
+        process.argv[2] === "--once" &&
+        results.some((r) => r.conclusion === "failure" || r.outcome === "APP_PR_QUARANTINED")
+      )
         process.exitCode = 1;
       if (process.argv[2] === "--once") break;
       if (!stopping)
