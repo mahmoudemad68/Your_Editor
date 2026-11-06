@@ -13,6 +13,7 @@ import unittest
 import zipfile
 import zlib
 from pathlib import Path
+from unittest.mock import patch
 from urllib.parse import quote, quote_plus
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -66,12 +67,145 @@ class SanitizerRegression(unittest.TestCase):
             self.assertNotIn(value, message)
         report = json.loads(message.split(": ", 1)[1])
         diag = report["first_uri_diagnostic"]
-        self.assertEqual(diag["file_sha256"], hashlib.sha256(raw).hexdigest())
+        self.assertEqual(
+            set(diag),
+            {
+                "location_class",
+                "format",
+                "stream",
+                "record_kind",
+                "source_contiguous",
+                "png_crc_valid",
+                "png_source_chunks",
+            },
+        )
+        self.assertEqual(diag["location_class"], "other")
         self.assertEqual(diag["format"], "png")
         self.assertTrue(diag["source_contiguous"])
         self.assertTrue(diag["png_crc_valid"])
         self.assertEqual(diag["png_source_chunks"], ["tEXt"])
         self.assertLess(len(json.dumps(diag)), 1500)
+
+    def report(self):
+        with self.assertRaisesRegex(ValueError, "credential audit failed") as caught:
+            artifact_audit.audit(self.artifacts, self.secret_file)
+        return json.loads(str(caught.exception).split(": ", 1)[1])
+
+    def test_weak_credentials_have_no_digest_length_offset_or_filename_oracle(self):
+        # A dictionary guess must not be checkable using public metadata.
+        for shape in ("line", "json", "png", "zip", "nested_zip"):
+            diagnostics = []
+            for password in ("a", "password", "x" * 32, "letmein", "123456"):
+                uri = f"postgres://user:{password}@example.invalid/db"
+                raw = (uri + "\n").encode()
+                if shape == "json":
+                    raw = json.dumps({"url": uri}).encode()
+                elif shape == "png":
+                    raw = self.png(raw)
+                elif shape in ("zip", "nested_zip"):
+                    inner = io.BytesIO()
+                    with zipfile.ZipFile(inner, "w") as z:
+                        z.writestr(f"PRIVATE_{password}/payload.log", raw)
+                    raw = inner.getvalue()
+                    if shape == "nested_zip":
+                        outer = io.BytesIO()
+                        with zipfile.ZipFile(outer, "w") as z:
+                            z.writestr("inner.zip", raw)
+                        raw = outer.getvalue()
+                path = self.artifacts / (
+                    "fixture.zip" if "zip" in shape else "fixture.bin"
+                )
+                path.write_bytes(raw)
+                diag = self.report()["first_uri_diagnostic"]
+                encoded = json.dumps(diag)
+                self.assertNotIn(hashlib.sha256(raw).hexdigest(), encoded)
+                self.assertNotIn(hashlib.sha256(uri.encode()).hexdigest(), encoded)
+                self.assertNotIn("PRIVATE_", encoded)
+                self.assertFalse(
+                    set(diag)
+                    & {
+                        "file_sha256",
+                        "bytes",
+                        "raw_start",
+                        "raw_end_exclusive",
+                        "normalized_record_offset",
+                        "entry",
+                        "suffix",
+                        "value_sha256",
+                    }
+                )
+                diagnostics.append(diag)
+                path.unlink()
+            self.assertTrue(all(d == diagnostics[0] for d in diagnostics), shape)
+
+    def test_diagnostic_faults_preserve_original_counts_without_exception_text(self):
+        (self.artifacts / "fixture.log").write_text(
+            "postgres://PRIVATE_USER:PRIVATE_PASS@host/db"
+        )
+        baseline = self.report()
+        baseline.pop("first_uri_diagnostic")
+        for error in (ValueError, RuntimeError, KeyError, MemoryError, TypeError):
+            with (
+                self.subTest(error=error.__name__),
+                patch.object(
+                    artifact_audit,
+                    "uri_diagnostic",
+                    side_effect=error("PRIVATE_EXCEPTION"),
+                ),
+            ):
+                report = self.report()
+                self.assertEqual(
+                    report.pop("first_uri_diagnostic"),
+                    {"status": "DIAGNOSTIC_UNAVAILABLE"},
+                )
+                self.assertEqual(report, baseline)
+                self.assertGreater(report["db_credentials"], 0)
+                self.assertNotIn("PRIVATE", json.dumps(report))
+
+    def test_observer_mutations_cannot_publish_arbitrary_metadata_or_suppress_counts(
+        self,
+    ):
+        (self.artifacts / "fixture.log").write_text("postgres://user:password@host/db")
+        base = {"stream": "ascii_projection", "record_kind": "uri_userinfo"}
+        mutations = [
+            None,
+            {},
+            [],
+            {**base, "suffix": ".PRIVATE_PASSWORD"},
+            {**base, "value_sha256": hashlib.sha256(b"password").hexdigest()},
+            {**base, "png_source_chunks": ["PASS"]},
+            {**base, "png_source_chunks": ["tEXt"] * 9},
+            {**base, "location_class": "PRIVATE_PATH"},
+            {**base, "source_contiguous": 8},
+            {**base, "format": object()},
+            {**base, "bytes": 42},
+        ]
+        expected = self.report()
+        expected.pop("first_uri_diagnostic")
+        for mutation in mutations:
+            with (
+                self.subTest(mutation_type=type(mutation).__name__),
+                patch.object(artifact_audit, "uri_diagnostic", return_value=mutation),
+            ):
+                report = self.report()
+                self.assertEqual(
+                    report.pop("first_uri_diagnostic"),
+                    {"status": "DIAGNOSTIC_UNAVAILABLE"},
+                )
+                self.assertEqual(report, expected)
+
+    def test_untrusted_png_chunk_names_and_suffixes_are_never_public(self):
+        raw = self.png(b"postgres://user:password@host/db")
+        raw = raw.replace(
+            b"tEXt", b"PASS"
+        )  # Deliberately invalid CRC remains a boolean.
+        (self.artifacts / "PRIVATE_PATH.PRIVATE_SUFFIX").write_bytes(raw)
+        report = self.report()
+        diag = report["first_uri_diagnostic"]
+        self.assertEqual(diag["png_source_chunks"], ["other"])
+        self.assertFalse(diag["png_crc_valid"])
+        self.assertNotIn("PRIVATE", json.dumps(diag))
+        self.assertNotIn("PASS", json.dumps(diag))
 
     def test_projection_diagnostic_observes_but_cannot_change_rejection(self):
         raw = self.png(b"h\xfftt\xffps\xff://DIAG_USER@invalid.example/")

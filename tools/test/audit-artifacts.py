@@ -7,7 +7,6 @@ redacted failure-location metadata only, never matched values or raw paths.
 
 import argparse
 import base64
-import hashlib
 import io
 import json
 import re
@@ -81,7 +80,10 @@ def location_class(name):
         "services.log",
         "trace.zip",
     }
-    return "/".join(part if part in allowed else "*" for part in Path(name).parts[-8:])
+    # One fixed category, not a path-depth or filename-length oracle.
+    return next(
+        (part for part in reversed(Path(name).parts) if part in allowed), "other"
+    )
 
 
 def uri_diagnostic(frame, match):
@@ -90,28 +92,10 @@ def uri_diagnostic(frame, match):
         return {"stream": "path", "record_kind": "uri_userinfo"}
     raw = frame["raw"]
     result = {
-        "entry": frame["entry"],
         "location_class": location_class(frame["name"]),
-        "file_sha256": hashlib.sha256(raw).hexdigest(),
-        "bytes": len(raw),
         "format": "png" if raw.startswith(b"\x89PNG\r\n\x1a\n") else "other",
-        "suffix": Path(frame["name"]).suffix.lower()
-        if Path(frame["name"]).suffix.lower()
-        in (
-            ".png",
-            ".jpeg",
-            ".jpg",
-            ".zip",
-            ".json",
-            ".trace",
-            ".network",
-            ".log",
-            ".js",
-        )
-        else "other",
         "stream": frame["stream"],
         "record_kind": "uri_userinfo",
-        "normalized_record_offset": match.start(),
     }
     projected = frame.get("projection", "")
     value = match[0]  # In-memory only; never returned, logged or hashed separately.
@@ -138,11 +122,7 @@ def uri_diagnostic(frame, match):
         i += 1
     if first is None or last is None:
         return result
-    result.update(
-        raw_start=first,
-        raw_end_exclusive=last + 1,
-        source_contiguous=last - first + 1 == len(value),
-    )
+    result["source_contiguous"] = last - first + 1 == len(value)
     if result["format"] == "png":
         offset, chunks, valid, ended = 8, [], True, False
         for _ in range(4096):
@@ -173,6 +153,64 @@ def uri_diagnostic(frame, match):
             png_source_chunks=chunks,
         )
     return result
+
+
+def safe_uri_diagnostic(frame, match):
+    """Closed public vocabulary; observer faults cannot mask audit findings.
+
+    Do not pass arbitrary observer dictionaries through to JSON, even if future
+    observer changes accidentally add a hash, filename, length or exception.
+    """
+    enums = {
+        "stream": {"path", "raw", "ascii_projection", "decoded_text"},
+        "record_kind": {"uri_userinfo"},
+        "format": {"png", "other"},
+        "location_class": {
+            "healthy",
+            "negative",
+            "runtime",
+            "playwright",
+            "resources",
+            "services.log",
+            "trace.zip",
+            "other",
+        },
+    }
+    flags = {"source_contiguous", "png_crc_valid"}
+    try:
+        value = uri_diagnostic(frame, match)
+        if type(value) is not dict or not {"stream", "record_kind"} <= value.keys():
+            raise ValueError
+        if value.keys() - (enums.keys() | flags | {"png_source_chunks"}):
+            raise ValueError
+        result = {}
+        for key, choices in enums.items():
+            if key in value:
+                if type(value[key]) is not str or value[key] not in choices:
+                    raise ValueError
+                result[key] = value[key]
+        for key in flags:
+            if key in value:
+                if type(value[key]) is not bool:
+                    raise ValueError
+                result[key] = value[key]
+        if "png_source_chunks" in value:
+            chunks = value["png_source_chunks"]
+            if (
+                type(chunks) is not list
+                or len(chunks) > 8
+                or any(
+                    type(kind) is not str
+                    or kind not in {"IDAT", "tEXt", "iTXt", "zTXt", "other"}
+                    for kind in chunks
+                )
+            ):
+                raise ValueError
+            result["png_source_chunks"] = list(chunks)
+        return result
+    except Exception:  # noqa: BLE001 -- public diagnostics must contain every observer fault
+        # Never stringify the exception: even its message/path can be a secret.
+        return {"status": "DIAGNOSTIC_UNAVAILABLE"}
 
 
 def audit(directory: Path, secret_file: Path | None = None) -> dict:
@@ -233,10 +271,10 @@ def audit(directory: Path, secret_file: Path | None = None) -> dict:
                 finding("token")
         for match in URI_USER.finditer(value):
             if not safe(unquote_plus(match[1])):
-                if first_uri is None:
-                    first_uri = uri_diagnostic(frame, match)
                 counts["db_credentials"] += 1
                 finding("userinfo")
+                if first_uri is None:
+                    first_uri = safe_uri_diagnostic(frame, match)
         for match in ASSIGNMENT.finditer(decoded):
             candidate = match[2].strip("\"'")
             # Closing JSON/array/escaped-quote punctuation is not credential
