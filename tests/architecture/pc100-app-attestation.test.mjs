@@ -1362,7 +1362,7 @@ for (const canary of [
 
 function syntheticStartupScript(source, node) {
   return String.raw`
- import {mkdtemp,mkdir,writeFile,readFile,copyFile,chmod,symlink,rm} from "node:fs/promises";
+ import {mkdtemp,mkdir,writeFile,readFile,copyFile,chmod,chown,lstat,readdir,symlink,rm} from "node:fs/promises";
  import {execFileSync,spawnSync} from "node:child_process";
  import path from "node:path";
  const base=await mkdtemp("/run/pc100-synthetic-");
@@ -1382,20 +1382,24 @@ function syntheticStartupScript(source, node) {
   const filename=pub+"/"+B+"-"+B+"-"+context.M+"-104.source-review.json";
   await writeFile(filename,"public-synthetic-record",{mode:0o644});
   const driver=base+"/driver.mjs";
-  await writeFile(driver,'import assert from "node:assert/strict";import {writeFile} from "node:fs/promises";'+
+  await writeFile(driver,'import assert from "node:assert/strict";import {writeFile,lstat} from "node:fs/promises";'+
    'import {verifyReviewedCheckout,readRootOwnedSourceReview} from '+JSON.stringify(repo+"/tools/test/pc100-admission-app.mjs")+';'+
+   'for(const [label,p] of Object.entries('+JSON.stringify({NODE:base+"/node",BASE:base,RUN:"/run",ROOT:"/"})+')){const s=await lstat(p);console.log("SYNTHETIC_OWNERSHIP",JSON.stringify({label,root:s.uid===0,modeSafe:(s.mode&0o022)===0}));}'+
    'await verifyReviewedCheckout('+JSON.stringify(B)+','+JSON.stringify(repo)+','+JSON.stringify(cfg)+');'+
    'await assert.rejects(()=>verifyReviewedCheckout('+JSON.stringify(B)+','+JSON.stringify(repo)+','+JSON.stringify(cfg+"-bad")+'),/GIT_CONFIG_REJECTED/);'+
    'await assert.rejects(()=>verifyReviewedCheckout('+JSON.stringify(B)+','+JSON.stringify(base+"/alias")+','+JSON.stringify(cfg)+'),/OWNERSHIP_REJECTED/);'+
    'await assert.rejects(()=>writeFile('+JSON.stringify(cfg)+',"alter"));'+
    'assert.equal((await readRootOwnedSourceReview('+JSON.stringify(context)+','+JSON.stringify(pub)+')).toString(),"public-synthetic-record");'+
    'console.log("ROOT_READONLY_SYSTEMD_STARTUP_PASS");',{mode:0o644});
+  // Apply the documented explicit ownership step, not an assumption about
+  // sudo/copy metadata. Touch only this disposable, prefix-checked fixture.
+  const pending=[base];while(pending.length){const dir=pending.pop();await chown(dir,0,0);for(const ent of await readdir(dir,{withFileTypes:true})){const p=path.join(dir,ent.name);if(ent.isSymbolicLink())continue;await chown(p,0,0);if(ent.isDirectory())pending.push(p);}}
   const unit=await readFile(${JSON.stringify(source)}+"/infra/seaweedfs/pc100-admission.service","utf8");
   const keys=["NoNewPrivileges","PrivateTmp","PrivateDevices","ProtectSystem","ProtectHome","ProtectClock","ProtectKernelLogs","ProtectKernelTunables","ProtectKernelModules","ProtectControlGroups","RestrictSUIDSGID","RestrictAddressFamilies","CapabilityBoundingSet","RestrictNamespaces","LockPersonality","RestrictRealtime","SystemCallArchitectures","UMask","KillMode"];
   const props=unit.split(/\r?\n/).filter(l=>keys.includes(l.split("=")[0])).flatMap(l=>["--property",l]);
   const args=["--quiet","--wait","--pipe","--collect","--unit",path.basename(base),"--property","User=nobody","--property","Group=nogroup","--property","PrivateNetwork=yes","--property","TimeoutStartSec=15",...props,"/usr/bin/env","-i","HOME="+base,"PATH=/usr/bin:/bin","USER=nobody",base+"/node",driver];
   const r=spawnSync("systemd-run",args,{encoding:"utf8",timeout:20000,env:{PATH:"/usr/bin:/bin"}});
-  if(r.status!==0 || !r.stdout.includes("ROOT_READONLY_SYSTEMD_STARTUP_PASS")){console.error("SYNTHETIC_SYSTEMD_FAILED",r.status,r.signal,r.stderr);process.exitCode=1;}
+  if(r.status!==0 || !r.stdout.includes("ROOT_READONLY_SYSTEMD_STARTUP_PASS")){console.error("SYNTHETIC_SYSTEMD_FAILED",r.status,r.signal,r.stdout,r.stderr);process.exitCode=1;}
   else console.log("ROOT_READONLY_SYSTEMD_STARTUP_PASS");
  } finally {
   if(!base.startsWith("/run/pc100-synthetic-"))throw Error("UNSAFE_TEST_CLEANUP");
