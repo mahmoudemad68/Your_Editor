@@ -704,3 +704,45 @@ test("new consumer cannot silently use stale upstream after a run-attempt change
   };
   await assert.rejects(() => verifyConsumerAttestation(read, f.full, { now }), /RUN_REJECTED/);
 });
+test("unexpected context data cannot be reflected into authenticated evidence", async () => {
+  const f = await consumerFixture();
+  const hostile = { ...f.full, GITHUB_TOKEN: "SYNTHETIC_PRIVATE_CREDENTIAL" };
+  await assert.rejects(
+    () => verifyConsumerAttestation(f.publicRead, hostile, { now }),
+    (error) =>
+      error.message === "ATTESTATION_FIELDS_REJECTED" &&
+      !String(error).includes("SYNTHETIC_PRIVATE_CREDENTIAL"),
+  );
+  await assert.rejects(
+    () =>
+      createConsumerAttestation(
+        f.read,
+        f.anchors,
+        hostile,
+        f.decision,
+        { preflight: { id: 130, attempt: 1, workflow_id: 99 } },
+        ["preflight"],
+        now,
+      ),
+    /FIELDS_REJECTED/,
+  );
+});
+
+test("App publication never reflects an uppercase credential-shaped SDK exception", async () => {
+  const f = fixture(),
+    writes = [];
+  const read = async (route, method, body) => {
+    if (method) {
+      writes.push(body);
+      return { ...body, id: 999, app: { id: f.app.app_id, slug: f.app.slug } };
+    }
+    return f.read(route);
+  };
+  const canary = "SYNTHETIC_PRIVATE_CREDENTIAL";
+  const result = await reconcileAppCheck(read, f.app, async () => {
+    throw Error(canary);
+  });
+  assert.equal(result.conclusion, "failure");
+  assert.equal(result.outcome, "APP_OPERATION_FAILED");
+  assert.ok(writes.every((w) => !JSON.stringify(w).includes(canary)));
+});

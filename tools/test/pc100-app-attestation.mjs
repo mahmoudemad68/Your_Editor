@@ -454,6 +454,7 @@ async function verifyRuns(read, runs, context, required) {
   }
 }
 async function liveContext(read, c) {
+  exact(c, ["repository_id", "pr", "H", "B", "M", "TH", "TB", "TM"]);
   const main = await read("branches/main"),
     pr = await read(`pulls/${c.pr}`);
   need(
