@@ -10,6 +10,7 @@ import base64
 import io
 import json
 import re
+import sys
 import zipfile
 import zlib
 from pathlib import Path
@@ -213,7 +214,15 @@ def safe_uri_diagnostic(frame, match):
         return {"status": "DIAGNOSTIC_UNAVAILABLE"}
 
 
-def audit(directory: Path, secret_file: Path | None = None) -> dict:
+class ArtifactAuditError(ValueError):
+    """Only fixed, source-owned failure categories may cross the public boundary."""
+
+
+class CredentialAuditRejected(ValueError):
+    """Counts and closed-vocabulary diagnostics, never the underlying evidence."""
+
+
+def _audit(directory: Path, secret_file: Path | None = None) -> dict:
     known = variants(
         DEFAULT_SECRETS
         + (
@@ -286,7 +295,9 @@ def audit(directory: Path, secret_file: Path | None = None) -> dict:
 
     def structured(value, depth=0):
         if depth > MAX_JSON_DEPTH:
-            raise ValueError("Artifact audit nesting exceeds safe limit")
+            raise ArtifactAuditError(
+                "ARTIFACT_LIMIT_EXCEEDED: Artifact audit nesting exceeds safe limit"
+            )
         if isinstance(value, dict):
             for key_field in ("name", "key"):
                 if isinstance(value.get(key_field), str) and KEY.search(
@@ -338,12 +349,18 @@ def audit(directory: Path, secret_file: Path | None = None) -> dict:
         archive_claim = Path(name).suffix.lower() == ".zip" or raw.startswith(b"PK")
         if archive_claim or zipfile.is_zipfile(io.BytesIO(raw)):
             if archive_depth >= MAX_ARCHIVE_DEPTH:
-                raise ValueError("Artifact audit archive nesting exceeds safe limit")
+                raise ArtifactAuditError(
+                    "ARTIFACT_LIMIT_EXCEEDED: Artifact audit archive nesting exceeds safe limit"
+                )
             with zipfile.ZipFile(io.BytesIO(raw)) as z:
                 for entry in z.infolist():
                     budget[0] -= entry.file_size
                     if budget[0] < 0:
-                        raise ValueError("Artifact audit expanded-byte budget exceeded")
+                        raise ArtifactAuditError(
+                            "ARTIFACT_LIMIT_EXCEEDED: Artifact audit expanded-byte budget exceeded"
+                        )
+                    if entry.flag_bits & 1:
+                        raise ArtifactAuditError("ARTIFACT_ARCHIVE_ENCRYPTED")
                     text(entry.filename)
                     content(z.read(entry), archive_depth + 1, depth, entry.filename)
             return
@@ -400,16 +417,51 @@ def audit(directory: Path, secret_file: Path | None = None) -> dict:
     if counts["secret"]:
         if first_uri is not None:
             result["first_uri_diagnostic"] = first_uri
-        raise ValueError("Artifact credential audit failed: " + json.dumps(result))
+        raise CredentialAuditRejected(
+            "Artifact credential audit failed: " + json.dumps(result)
+        )
     return result
 
 
+def audit(directory: Path, secret_file: Path | None = None) -> dict:
+    try:
+        return _audit(directory, secret_file)
+    except (ArtifactAuditError, CredentialAuditRejected):
+        raise
+    except (zipfile.BadZipFile, RuntimeError, NotImplementedError, zlib.error):
+        raise ArtifactAuditError("ARTIFACT_ARCHIVE_INVALID") from None
+    except OSError:
+        raise ArtifactAuditError("ARTIFACT_IO_FAILED") from None
+    except (ValueError, TypeError, RecursionError, MemoryError):
+        raise ArtifactAuditError("ARTIFACT_INPUT_INVALID") from None
+    except Exception:  # noqa: BLE001 -- never expose unclassified exception text
+        raise ArtifactAuditError("ARTIFACT_INTERNAL_FAILURE") from None
+
+
+class SafeArgumentParser(argparse.ArgumentParser):
+    def error(self, message):
+        # argparse's default error echoes attacker-controlled paths/arguments.
+        raise ArtifactAuditError("ARTIFACT_ARGUMENT_INVALID")
+
+
+def main():
+    try:
+        parser = SafeArgumentParser()
+        parser.add_argument("directory", type=Path)
+        parser.add_argument("--secret-file", type=Path)
+        args = parser.parse_args()
+        print(
+            "ACTUAL_ARTIFACT_SECRET_AUDIT",
+            json.dumps(audit(args.directory, args.secret_file)),
+        )
+        return 0
+    except (ArtifactAuditError, CredentialAuditRejected) as failure:
+        print(str(failure), file=sys.stderr)
+        return 1
+    except Exception:  # noqa: BLE001 -- final CLI boundary, no traceback or raw data
+        print("ARTIFACT_INTERNAL_FAILURE", file=sys.stderr)
+        return 1
+
+
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("directory", type=Path)
-    parser.add_argument("--secret-file", type=Path)
-    args = parser.parse_args()
-    print(
-        "ACTUAL_ARTIFACT_SECRET_AUDIT",
-        json.dumps(audit(args.directory, args.secret_file)),
-    )
+    sys.exit(main())

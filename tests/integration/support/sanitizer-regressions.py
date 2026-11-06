@@ -5,6 +5,8 @@ import hashlib
 import importlib.util
 import io
 import json
+import os
+import shutil
 import struct
 import subprocess
 import sys
@@ -671,6 +673,173 @@ class SanitizerRegression(unittest.TestCase):
         (self.artifacts / "unknown-resource").write_bytes(b"\xff\x00\x01opaque")
         with self.assertRaisesRegex(ValueError, "safely classified"):
             san.sanitize(self.artifacts, self.secret_file)
+
+    @staticmethod
+    def unsafe_zip_cases():
+        name = "PRIVATE_USER:PRIVATE_PASSWORD@PRIVATE_HOST/entry.network"
+        out = io.BytesIO()
+        with zipfile.ZipFile(out, "w", zipfile.ZIP_STORED) as archive:
+            archive.writestr(name, b"PRIVATE_PAYLOAD")
+        valid = out.getvalue()
+        crc = bytearray(valid)
+        crc[valid.index(b"PRIVATE_PAYLOAD")] ^= 1
+        encrypted = bytearray(valid)
+        encrypted[6] |= 1
+        central = valid.index(b"PK\x01\x02")
+        encrypted[central + 8] |= 1
+        mismatch = bytearray(valid)
+        mismatch[valid.index(name.encode())] ^= 1
+        unsupported = bytearray(valid)
+        unsupported[8:10] = (99).to_bytes(2, "little")
+        unsupported[central + 10 : central + 12] = (99).to_bytes(2, "little")
+        nested = io.BytesIO()
+        with zipfile.ZipFile(nested, "w") as archive:
+            archive.writestr("inner.zip", bytes(crc))
+        return {
+            "crc": (bytes(crc), "ARTIFACT_ARCHIVE_INVALID"),
+            "encrypted": (bytes(encrypted), "ARTIFACT_ARCHIVE_ENCRYPTED"),
+            "mismatch": (bytes(mismatch), "ARTIFACT_ARCHIVE_INVALID"),
+            "unsupported": (bytes(unsupported), "ARTIFACT_ARCHIVE_INVALID"),
+            "truncated": (valid[:-22], "ARTIFACT_ARCHIVE_INVALID"),
+            "nested": (nested.getvalue(), "ARTIFACT_ARCHIVE_INVALID"),
+            "not_zip": (b"PRIVATE_PASSWORD not a zip", "ARTIFACT_ARCHIVE_INVALID"),
+        }
+
+    def assert_private_failure(self, result, category):
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stdout, b"")
+        self.assertEqual(result.stderr, (category + os.linesep).encode())
+        for canary in (
+            "PRIVATE_USER",
+            "PRIVATE_PASSWORD",
+            "PRIVATE_HOST",
+            "PRIVATE_PAYLOAD",
+            "PRIVATE_PATH",
+        ):
+            for encoded in (
+                canary.encode(),
+                canary.encode().hex().encode(),
+                base64.b64encode(canary.encode()),
+                quote(canary, safe="").encode(),
+            ):
+                self.assertNotIn(encoded, result.stdout + result.stderr)
+        self.assertNotIn(b"Traceback", result.stderr)
+
+    def private_cli(self, script, *extra, node=False):
+        args = [
+            sys.executable,
+            str(ROOT / "tools/test" / script),
+            str(self.artifacts),
+            *extra,
+        ]
+        if node:
+            executable = shutil.which("node")
+            self.assertIsNotNone(
+                executable, "Node is required for the actual inherit-stdio wrapper"
+            )
+            args = [
+                executable,
+                "-e",
+                "const r=require('node:child_process').spawnSync(process.argv[1],process.argv.slice(2),{stdio:'inherit'});process.exit(r.status??1)",
+                *args,
+            ]
+        return subprocess.run(args, capture_output=True, check=False, timeout=15)
+
+    def test_real_cli_zip_errors_are_fixed_and_never_disclose_member_credentials(self):
+        for name, (raw, category) in self.unsafe_zip_cases().items():
+            for script in ("audit-artifacts.py", "sanitize-artifacts.py"):
+                with self.subTest(case=name, script=script):
+                    path = self.artifacts / "PRIVATE_PATH.zip"
+                    path.write_bytes(raw)
+                    self.assert_private_failure(self.private_cli(script), category)
+                    self.assertEqual(path.read_bytes(), raw)
+                    path.unlink()
+
+    def test_node_inherit_stdio_does_not_reintroduce_archive_exception_leaks(self):
+        for name, (raw, category) in self.unsafe_zip_cases().items():
+            for script in ("audit-artifacts.py", "sanitize-artifacts.py"):
+                with self.subTest(case=name, script=script):
+                    path = self.artifacts / "PRIVATE_PATH.zip"
+                    path.write_bytes(raw)
+                    self.assert_private_failure(
+                        self.private_cli(script, node=True), category
+                    )
+                    path.unlink()
+
+    def test_real_filesystem_errors_do_not_disclose_secret_file_paths(self):
+        # Reading a directory as a secret file fails on both Windows and Linux.
+        private = self.root / "PRIVATE_PATH_PRIVATE_PASSWORD"
+        private.mkdir()
+        for script in ("audit-artifacts.py", "sanitize-artifacts.py"):
+            for node in (False, True):
+                with self.subTest(script=script, node=node):
+                    self.assert_private_failure(
+                        self.private_cli(
+                            script, "--secret-file", str(private), node=node
+                        ),
+                        "ARTIFACT_IO_FAILED",
+                    )
+
+    def test_library_io_exceptions_are_safe_even_when_the_original_message_is_malicious(
+        self,
+    ):
+        path = self.artifacts / "PRIVATE_PATH.log"
+        path.write_text("clean")
+        for action in (san.sanitize, artifact_audit.audit):
+            for error in (PermissionError, OSError, FileNotFoundError):
+                with (
+                    self.subTest(action=action.__name__, error=error.__name__),
+                    patch.object(
+                        Path,
+                        "read_bytes",
+                        side_effect=error("PRIVATE_PASSWORD PRIVATE_PATH"),
+                    ),
+                ):
+                    with self.assertRaisesRegex(
+                        ValueError, "^ARTIFACT_IO_FAILED$"
+                    ) as caught:
+                        action(self.artifacts)
+                    self.assertTrue(caught.exception.__suppress_context__)
+
+    def test_cli_argument_errors_do_not_echo_private_arguments(self):
+        for script in ("audit-artifacts.py", "sanitize-artifacts.py"):
+            self.assert_private_failure(
+                self.private_cli(script, "--PRIVATE_PASSWORD"),
+                "ARTIFACT_ARGUMENT_INVALID",
+            )
+
+    def test_real_cli_success_and_credential_rejection_still_use_original_counts(self):
+        for script in ("audit-artifacts.py", "sanitize-artifacts.py"):
+            result = self.private_cli(script)
+            self.assertEqual(result.returncode, 0)
+            self.assertEqual(result.stderr, b"")
+        (self.artifacts / "services.log").write_text(
+            "postgres://PRIVATE_USER:PRIVATE_PASSWORD@PRIVATE_HOST/db"
+        )
+        expected = self.report()
+        result = self.private_cli("audit-artifacts.py")
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stdout, b"")
+        self.assertEqual(json.loads(result.stderr.decode().split(": ", 1)[1]), expected)
+        self.assertNotIn(b"PRIVATE", result.stderr)
+
+    def test_6079_reference_decisions_and_counters_are_unchanged(self):
+        corpus_spec = importlib.util.spec_from_file_location(
+            "audit_decision_corpus",
+            Path(__file__).with_name("audit-decision-corpus.py"),
+        )
+        corpus = importlib.util.module_from_spec(corpus_spec)
+        corpus_spec.loader.exec_module(corpus)
+        count, totals, digest = corpus.decisions(artifact_audit)
+        # Captured from b9484e0922daa7860f30bb3bd088f3cfbc46ca89,
+        # auditor SHA-256 88060ade27ef276b7523a5f844d8b64087d6b9408fda6c8c7dab6e4b23cfa2b2.
+        # Hashes here cover synthetic decision/counter records, never private
+        # evidence, credentials or the public diagnostic payload.
+        self.assertEqual(count, 6079)
+        self.assertEqual(totals, {"accept": 530, "reject": 4038, "closed": 1511})
+        self.assertEqual(
+            digest, "7c44aaffff2a15016b22b27ceeb25da5472d39c10ab8ce6eb1cc3eb783c5eff8"
+        )
 
 
 if __name__ == "__main__":

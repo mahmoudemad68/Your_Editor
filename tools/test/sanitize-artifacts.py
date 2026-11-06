@@ -13,6 +13,7 @@ import copy
 import io
 import json
 import re
+import sys
 import zipfile
 from pathlib import Path
 from urllib.parse import parse_qsl, quote, quote_plus, urlencode, urlsplit, urlunsplit
@@ -131,9 +132,13 @@ def decode_text(source: bytes, name: str = "") -> str | None:
     try:
         decoded = source.decode("utf-8-sig")
     except UnicodeDecodeError as exc:
-        raise ValueError("Artifact format cannot be safely classified") from exc
+        raise ArtifactSanitizationError(
+            "ARTIFACT_FORMAT_UNSUPPORTED: Artifact format cannot be safely classified"
+        ) from exc
     if "\x00" in decoded:
-        raise ValueError("Unknown artifact contains opaque binary data")
+        raise ArtifactSanitizationError(
+            "ARTIFACT_FORMAT_UNSUPPORTED: Unknown artifact contains opaque binary data"
+        )
     return decoded
 
 
@@ -190,7 +195,9 @@ def text(value: str, secrets: list[str]) -> str:
 
 def clean(value: object, secrets: list[str], depth: int = 0) -> object:
     if depth > MAX_JSON_DEPTH:
-        raise ValueError("Artifact JSON nesting exceeds safe limit")
+        raise ArtifactSanitizationError(
+            "ARTIFACT_LIMIT_EXCEEDED: Artifact JSON nesting exceeds safe limit"
+        )
     if isinstance(value, dict):
         for key_field in ("name", "key"):
             if isinstance(value.get(key_field), str) and SENSITIVE.search(
@@ -275,7 +282,9 @@ def archive(
     source: bytes, secrets: list[str], budget: list[int], depth: int = 1
 ) -> bytes:
     if depth > MAX_ARCHIVE_DEPTH:
-        raise ValueError("Artifact ZIP nesting exceeds safe limit")
+        raise ArtifactSanitizationError(
+            "ARTIFACT_LIMIT_EXCEEDED: Artifact ZIP nesting exceeds safe limit"
+        )
     output = io.BytesIO()
     with (
         zipfile.ZipFile(io.BytesIO(source)) as old,
@@ -285,7 +294,11 @@ def archive(
         for entry in old.infolist():
             budget[0] -= entry.file_size
             if budget[0] < 0:
-                raise ValueError("Artifact ZIP expanded bytes exceed safe limit")
+                raise ArtifactSanitizationError(
+                    "ARTIFACT_LIMIT_EXCEEDED: Artifact ZIP expanded bytes exceed safe limit"
+                )
+            if entry.flag_bits & 1:
+                raise ArtifactSanitizationError("ARTIFACT_ARCHIVE_ENCRYPTED")
             raw = old.read(entry)
             name = text(entry.filename, secrets)
             candidate, suffix = name, 1
@@ -304,7 +317,11 @@ def archive(
     return output.getvalue()
 
 
-def sanitize(directory: Path, secret_file: Path | None = None) -> dict:
+class ArtifactSanitizationError(ValueError):
+    """Only fixed, source-owned failure categories may cross the public boundary."""
+
+
+def _sanitize(directory: Path, secret_file: Path | None = None) -> dict:
     secrets = secret_variants(
         DEFAULT_SECRETS
         + (
@@ -329,16 +346,52 @@ def sanitize(directory: Path, secret_file: Path | None = None) -> dict:
         file.write_bytes(result)
         if file.name == "services.log":
             if decode_text(source, str(file)) is None:
-                raise ValueError("services.log must be safely inspectable text")
+                raise ArtifactSanitizationError(
+                    "ARTIFACT_FORMAT_UNSUPPORTED: services.log must be safely inspectable text"
+                )
             stats["servicesLogFilesSanitized"] += 1
     return stats
 
 
+def sanitize(directory: Path, secret_file: Path | None = None) -> dict:
+    try:
+        return _sanitize(directory, secret_file)
+    except ArtifactSanitizationError:
+        raise
+    except (zipfile.BadZipFile, RuntimeError, NotImplementedError):
+        raise ArtifactSanitizationError("ARTIFACT_ARCHIVE_INVALID") from None
+    except OSError:
+        raise ArtifactSanitizationError("ARTIFACT_IO_FAILED") from None
+    except (ValueError, TypeError, RecursionError, MemoryError):
+        raise ArtifactSanitizationError("ARTIFACT_INPUT_INVALID") from None
+    except Exception:  # noqa: BLE001 -- never expose unclassified exception text
+        raise ArtifactSanitizationError("ARTIFACT_INTERNAL_FAILURE") from None
+
+
+class SafeArgumentParser(argparse.ArgumentParser):
+    def error(self, message):
+        # argparse's default error echoes attacker-controlled paths/arguments.
+        raise ArtifactSanitizationError("ARTIFACT_ARGUMENT_INVALID")
+
+
+def main():
+    try:
+        parser = SafeArgumentParser()
+        parser.add_argument("directory", type=Path)
+        parser.add_argument("--secret-file", type=Path)
+        args = parser.parse_args()
+        print(
+            "ARTIFACT_SANITIZATION",
+            json.dumps(sanitize(args.directory, args.secret_file)),
+        )
+        return 0
+    except ArtifactSanitizationError as failure:
+        print(str(failure), file=sys.stderr)
+        return 1
+    except Exception:  # noqa: BLE001 -- final CLI boundary, no traceback or raw data
+        print("ARTIFACT_INTERNAL_FAILURE", file=sys.stderr)
+        return 1
+
+
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("directory", type=Path)
-    parser.add_argument("--secret-file", type=Path)
-    args = parser.parse_args()
-    print(
-        "ARTIFACT_SANITIZATION", json.dumps(sanitize(args.directory, args.secret_file))
-    )
+    sys.exit(main())
