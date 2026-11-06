@@ -1,0 +1,16 @@
+{
+  "schema": "pc100-independent-app-v1",
+  "repository_id": 1395822921,
+  "app_id": 5641456,
+  "installation_id": 179231676,
+  "slug": "your-editor-security-issuer",
+  "check_name": "PC100 independent security admission",
+  "protection_reader": {
+    "schema": "pc100-protection-reader-v1",
+    "repository_id": 1395822921,
+    "app_id": 5641556,
+    "installation_id": 179232585,
+    "slug": "your-editor-protection-reader"
+  },
+  "consumer_attestation": false
+}

@@ -1,0 +1,7 @@
+{
+  "schema": "pc100-app-trust-v1",
+  "repository_id": 1395822921,
+  "consumer_attestation_enabled": false,
+  "source_authority": null,
+  "revoked_authorizations": []
+}
