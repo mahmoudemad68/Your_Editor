@@ -88,6 +88,7 @@ const SAFE_FAILURES = new Set([
   "APP_SOURCE_AUTHORITY_NOT_CONFIGURED",
   "APP_SOURCE_IDENTITY_REJECTED",
   "APP_SOURCE_ISSUER_DRIFT",
+  "APP_SOURCE_PROTECTION_UNVERIFIABLE",
   "APP_TOKEN_REPOSITORY_REJECTED",
   "APP_TOKEN_SCOPE_REJECTED",
   "APP_TRUSTED_HOST_REQUIRES_LINUX",
@@ -1104,6 +1105,25 @@ export async function authorizeOrdinarySource(read, config, context, headTree) {
     (p) => p.head?.sha === context.H,
   );
   need(aliases.length === 1 && aliases[0].number === context.pr, "APP_SOURCE_ALIAS_REJECTED");
+  // This is the independent host path, never the Actions consumer. A signed
+  // source review cannot substitute for live complete read-only N2 visibility.
+  // Inspect inherited ci/Supply protections without requiring our own check
+  // to be installed first (the first Owner-authorized check must be issuable).
+  await inspectProtectionVisibility(read);
+  const protection = await read("branches/main/protection");
+  const allowances = protection.required_pull_request_reviews?.bypass_pull_request_allowances;
+  need(
+    protection.enforce_admins?.enabled === true &&
+      protection.required_status_checks?.strict === true &&
+      protection.required_pull_request_reviews?.required_approving_review_count >= 1 &&
+      protection.allow_force_pushes?.enabled === false &&
+      protection.allow_deletions?.enabled === false &&
+      allowances !== undefined &&
+      ["users", "teams", "apps"].every(
+        (k) => Array.isArray(allowances[k]) && allowances[k].length === 0,
+      ),
+    "APP_SOURCE_PROTECTION_UNVERIFIABLE",
+  );
   const raw = await read.sourceAuthorization(context);
   return verifySourceAuthorization(
     decodeAuthorityJSON(raw, 4 * 1024 ** 2),

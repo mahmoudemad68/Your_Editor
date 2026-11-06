@@ -481,6 +481,11 @@ immutable. A PR's hashes alone, or a check from GitHub Actions, confer no author
 approve the source-review signing authority and custody, its public Ed25519
 key/key ID, the bounded review/signing procedure and revocation responsibilities.
 The signing authority must not be the Coding/QA agent, the PR author or Actions.
+Even with consumer attestations disabled, the host revalidates complete private
+read-only N2 visibility and inherited protections before and after an authorized
+source-change check. A signature never substitutes for missing bypass visibility.
+This pre-install source check does not require itself to be a required context;
+candidate consumers still require the exact installed App source and strict policy.
 The public root must be independently reviewed on main and deployed as part of
 the exact reviewed controller source on the separate trusted host. No automatic
 main update or controller pull is allowed. The current `source_authority: null`

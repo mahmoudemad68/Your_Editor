@@ -746,3 +746,48 @@ test("App publication never reflects an uppercase credential-shaped SDK exceptio
   assert.equal(result.outcome, "APP_OPERATION_FAILED");
   assert.ok(writes.every((w) => !JSON.stringify(w).includes(canary)));
 });
+for (const mode of ["missing actors", "nonempty actors", "missing allowances", "reader outage"]) {
+  test(`ordinary authorized source still fails closed on ${mode}`, async () => {
+    const f = fixture({ enabled: false }),
+      c = ordinary(f);
+    if (mode === "missing actors") delete f.rows["rulesets/77"].bypass_actors;
+    if (mode === "nonempty actors") f.rows["rulesets/77"].bypass_actors.push({ actor_id: 42 });
+    if (mode === "missing allowances")
+      delete f.rows["branches/main/protection"].required_pull_request_reviews
+        .bypass_pull_request_allowances;
+    const read = async (route) => {
+      if (mode === "reader outage" && route === "branches/main/protection")
+        throw Error("SYNTHETIC_READER_UNAVAILABLE");
+      return f.read(route);
+    };
+    let records = 0;
+    read.sourceAuthorization = async () => {
+      records++;
+      return Buffer.from("must not reach the review record");
+    };
+    await assert.rejects(
+      () => authorizeOrdinarySource(read, f.app, c, f.snapshot.targetTree),
+      /BYPASS|PROTECTION_UNVERIFIABLE|READER_UNAVAILABLE/,
+    );
+    assert.equal(records, 0);
+  });
+}
+test("ordinary source pre-install check does not depend on already requiring itself", async () => {
+  const f = fixture({ enabled: false }),
+    c = ordinary(f),
+    anchors = await readAppTrust(f.read, c.B),
+    review = signedReview(f, anchors, c);
+  f.rows["rules/branches/main"][0].parameters.required_status_checks = f.rows[
+    "rules/branches/main"
+  ][0].parameters.required_status_checks.filter((r) => r.context !== f.app.check_name);
+  review.payload.observed_at = new Date().toISOString();
+  review.payload.expires_at = new Date(Date.now() + 600000).toISOString();
+  review.signature = sign(
+    null,
+    Buffer.from(canonical(review.payload)),
+    authority.privateKey,
+  ).toString("base64url");
+  f.read.sourceAuthorization = async () => Buffer.from(canonical(review) + "\n");
+  const result = await authorizeOrdinarySource(f.read, f.app, c, f.snapshot.targetTree);
+  assert.equal(result.decision, "AUTHORIZED_SOURCE_CHANGE");
+});
