@@ -1,6 +1,7 @@
 import "./dom-setup";
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { execFileSync } from "node:child_process";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { ManualEditor, secondsToUs } from "./manual-editor";
 import type { EditorApi } from "./editor-api";
@@ -10,6 +11,127 @@ import { CaptionControls } from "./caption-controls";
 const PROJECT = "018f6b6e-7c3a-7000-8000-000000000001";
 const ID = "018f6b6e-7c3a-7000-8000-000000000002";
 const CLIP = "018f6b6e-7c3a-7000-8000-000000000003";
+
+// Isolate React's official scheduler mock before loading ReactDOM. Stop at the
+// first paint, rather than waiting for initialization and concealing a lost edit.
+// The real component, React event handlers and deferred API responses still run.
+const scheduledDraftScenario = String.raw`
+const assert = require("node:assert/strict");
+const { createRequire } = require("node:module");
+const fromReactDOM = createRequire(require.resolve("react-dom"));
+const scheduler = fromReactDOM("scheduler/unstable_mock");
+require.cache[fromReactDOM.resolve("scheduler")] = { exports: scheduler };
+require("./dom-setup");
+globalThis.IS_REACT_ACT_ENVIRONMENT = false;
+const React = require("react");
+const { createRoot } = require("react-dom/client");
+const { fireEvent, getByLabelText, getByRole, queryByRole, queryByLabelText } = require("@testing-library/dom");
+const { ManualEditor } = require("./manual-editor");
+const ordering = process.argv[1];
+assert.ok(["before-passive", "after-passive"].includes(ordering));
+const project = "018f6b6e-7c3a-7000-8000-000000000001";
+const id = "018f6b6e-7c3a-7000-8000-000000000002";
+const clip = "018f6b6e-7c3a-7000-8000-000000000003";
+const other = "018f6b6e-7c3a-7000-8000-000000000004";
+const names = ["Trim start (timeline seconds)", "Trim end (timeline seconds)", "Split at (timeline seconds)"];
+const fixture = () => ({ stateSha256: "a".repeat(64), timeline: {
+  id, projectId: project, composition: { width: 640, height: 360, durationUs: "2000000", frameRate: { numerator: "30", denominator: "1" } },
+  tracks: [{ id, clips: [{ id: clip, sourceId: id, inPoint: "0", outPoint: "2000000", timelineStartUs: "0" }] }]
+} });
+const input = index => getByLabelText(document.body, names[index]);
+const values = () => names.map((_, i) => input(i).value);
+const disabled = () => names.map((_, i) => input(i).disabled);
+const timeline = [];
+function flush(phase, paint = false) {
+  if (paint) scheduler.unstable_flushUntilNextPaint();
+  else scheduler.unstable_flushAllWithoutAsserting();
+  scheduler.unstable_clearLog();
+  timeline.push({ phase, values: names.map(n => queryByLabelText(document.body, n)?.value ?? null) });
+}
+const tick = async () => { await Promise.resolve(); await Promise.resolve(); };
+const reads = [];
+const unexpected = async () => { throw Error("Unexpected mutation in a read/coordinate regression"); };
+const api = { read: (_project, timelineId, signal) => new Promise(resolve => reads.push({ timelineId, signal, resolve })),
+  create: unexpected, edit: unexpected, render: unexpected, job: unexpected, cancel: unexpected, download: unexpected };
+const host = document.createElement("div"); document.body.append(host);
+const root = createRoot(host);
+const render = timelineId => root.render(React.createElement(ManualEditor, {
+  projectId: project, initialTimelineId: timelineId, api, stream: { subscribe: () => () => {} }
+}));
+const reload = async () => { fireEvent.click(getByRole(document.body, "button", { name: "Reload saved timeline" })); await tick(); flush("pending-read"); assert.deepEqual(disabled(), [true, true, true]); };
+const respond = async (index, result, phase, paint = false) => {
+  assert.ok(reads[index]); reads[index].resolve(result); await tick(); flush(phase, paint);
+  if (!paint) { await tick(); flush(phase + "-settled"); }
+};
+(async () => {
+  render(id); await tick(); flush("mount"); assert.equal(reads.length, 1);
+  await respond(0, { ok: true, data: fixture() }, "first-paint", true);
+  const firstPaint = values();
+  if (ordering === "after-passive") flush("control-initialization");
+  assert.deepEqual(disabled(), [false, false, false]);
+  fireEvent.change(input(1), { target: { value: "1.6" } });
+  fireEvent.change(input(0), { target: { value: "0.3" } });
+  fireEvent.change(input(2), { target: { value: "0.7" } });
+  await tick(); flush("typed-draft", true);
+  await reload(); assert.equal(reads.length, 2);
+  const unchanged = fixture(); unchanged.stateSha256 = "b".repeat(64);
+  await respond(1, { ok: true, data: unchanged }, "unchanged-response");
+  assert.deepEqual(disabled(), [false, false, false]);
+  assert.equal(input(1).value, "1.6");
+  assert.deepEqual(values(), ["0.3", "1.6", "0.7"]);
+  if (ordering === "before-passive") assert.deepEqual(firstPaint, ["0", "2", "1"]);
+
+  await reload();
+  const changed = fixture(); changed.stateSha256 = "c".repeat(64);
+  Object.assign(changed.timeline.tracks[0].clips[0], { inPoint: "200000", outPoint: "1600000", timelineStartUs: "100000" });
+  await respond(2, { ok: true, data: changed }, "changed-clip", ordering === "before-passive");
+  assert.deepEqual(values(), ["0.1", "1.5", "0.8"]);
+
+  await reload(); assert.equal(reads.length, 4);
+  render(other); await tick(); flush("superseding-navigation");
+  assert.equal(reads.length, 5); assert.equal(reads[3].signal.aborted, true);
+  const fresh = fixture(); fresh.timeline.id = other; fresh.stateSha256 = "d".repeat(64);
+  fresh.timeline.tracks[0].clips[0].id = other;
+  await respond(4, { ok: true, data: fresh }, "fresh-timeline", ordering === "before-passive");
+  assert.deepEqual(values(), ["0", "2", "1"]);
+  await respond(3, { ok: false, status: 403, message: "Access denied." }, "stale-denial");
+  assert.equal(getByRole(document.body, "region", { name: "Timeline" }).getAttribute("data-timeline-id"), other);
+  assert.equal(queryByRole(document.body, "alert"), null);
+
+  await reload(); await respond(5, { ok: false, status: 403, message: "Access denied." }, "active-denial");
+  assert.equal(queryByRole(document.body, "region", { name: "Timeline" }), null);
+  assert.equal(queryByLabelText(document.body, names[1]), null);
+  render(id); await tick(); flush("pending-unmount"); assert.equal(reads.length, 7);
+  root.unmount(); flush("unmount"); assert.equal(reads[6].signal.aborted, true);
+  await respond(6, { ok: true, data: fixture() }, "late-after-unmount");
+  assert.equal(host.childNodes.length, 0);
+  console.log(JSON.stringify({ status: "PASS", ordering, firstPaint, reads: reads.length, timeline }));
+})().catch(error => { console.error(error.stack); console.error(JSON.stringify({ ordering, timeline })); process.exitCode = 1; });
+`;
+
+test("first interactive paint and deferred reads preserve user drafts under either effect ordering", async (t) => {
+  for (const ordering of ["before-passive", "after-passive"]) {
+    await t.test(ordering, () => {
+      const output = execFileSync(process.execPath, ["-e", scheduledDraftScenario, ordering], {
+        cwd: __dirname,
+        encoding: "utf8",
+        timeout: 10_000,
+        maxBuffer: 1_048_576,
+        env: {
+          NODE_ENV: "test",
+          PATH: process.env.PATH,
+          SystemRoot: process.env.SystemRoot ?? "",
+          TEMP: process.env.TEMP ?? "",
+          TMP: process.env.TMP ?? "",
+        },
+      });
+      const result = JSON.parse(output);
+      assert.equal(result.status, "PASS");
+      assert.equal(result.ordering, ordering);
+      assert.equal(result.reads, 7);
+    });
+  }
+});
 test("caption controls request current evidence and persist through fixed routes without client words", async () => {
   const stored = fixture(),
     calls: { url: string; body: Record<string, unknown> | null }[] = [];
