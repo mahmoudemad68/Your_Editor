@@ -519,6 +519,12 @@ The external controller can emit the versioned check summary only if BOTH
 app-trust.json are enabled through independent review. Its authenticated private
 reader supplies visibility; missing or nonempty bypass actors still reject.
 The consumer never receives the external App key or installation token.
+Its default transport accepts only the job's `GITHUB_TOKEN`; it never inherits
+`PC100_METADATA_TOKEN` or `GH_TOKEN` and never falls back after a 403. Public check
+metadata can be read without additional Checks permissions for this public repo
+([GitHub check API permissions](https://docs.github.com/en/rest/checks/runs#list-check-runs-for-a-git-reference)).
+Real App consumer qualification is still NOT_VERIFIED; hermetic HTTP tests are
+not proof of live App, private-repository or protection visibility compatibility.
 
 Legacy `observeCandidateAdmission` / `readCandidateAdmission` use private-reader
 semantics and remain for external-controller/backward-compatibility tests; they

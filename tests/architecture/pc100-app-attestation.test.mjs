@@ -791,3 +791,34 @@ test("ordinary source pre-install check does not depend on already requiring its
   const result = await authorizeOrdinarySource(f.read, f.app, c, f.snapshot.targetTree);
   assert.equal(result.decision, "AUTHORIZED_SOURCE_CHANGE");
 });
+for (const mode of [
+  "job token only",
+  "missing job token",
+  "403 no fallback",
+  "malicious SDK failure",
+]) {
+  test(`consumer credential isolation: ${mode}`, () => {
+    const moduleURL = new URL("../../tools/test/pc100-candidate-policy.mjs", import.meta.url).href;
+    const code = `import assert from 'node:assert/strict';
+      import {readConsumerMetadata} from ${JSON.stringify(moduleURL)};
+      let calls=0;
+      globalThis.fetch=async(url,options)=>{calls++;assert.equal(options.headers.Authorization,'Bearer synthetic-job-token');${mode === "malicious SDK failure" ? "throw Error('SYNTHETIC_OWNER_CREDENTIAL');" : ""}return new Response('{"ok":true}',{status:${mode === "403 no fallback" ? 403 : 200}});};
+      ${mode === "missing job token" ? "await assert.rejects(()=>readConsumerMetadata('branches/main'),/CONSUMER_TOKEN_REQUIRED/);assert.equal(calls,0);" : ["403 no fallback", "malicious SDK failure"].includes(mode) ? "await assert.rejects(()=>readConsumerMetadata('branches/main'),/CANDIDATE_CONSUMER_METADATA_UNAVAILABLE/);assert.equal(calls,1);" : "assert.deepEqual(await readConsumerMetadata('branches/main'),{ok:true});assert.equal(calls,1);"}
+      process.stdout.write('ISOLATED_PASS');`;
+    const env = {
+      PATH: process.env.PATH,
+      ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
+      PC100_METADATA_TOKEN: "synthetic-shadow-token",
+      GH_TOKEN: "synthetic-owner-token",
+      ...(mode === "missing job token" ? {} : { GITHUB_TOKEN: "synthetic-job-token" }),
+    };
+    const result = spawnSync(process.execPath, ["--input-type=module", "-e", code], {
+      env,
+      encoding: "utf8",
+      timeout: 10000,
+    });
+    assert.equal(result.status, 0);
+    assert.equal(result.stdout, "ISOLATED_PASS");
+    assert.equal(result.stderr, "");
+  });
+}

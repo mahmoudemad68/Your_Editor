@@ -1139,7 +1139,27 @@ export async function readCandidateAdmission(
 /** Versioned Actions consumer. Legacy observe/readCandidateAdmission require an
  * external private reader and are NOT valid Actions admission paths. No fallback.
  * PR100's receipt migration must use this entry before enabling the feature. */
-export async function observeAuthenticatedCandidateAdmission(context, read = api, options) {
+export async function readConsumerMetadata(route) {
+  const token = process.env.GITHUB_TOKEN;
+  need(
+    typeof token === "string" && /^[A-Za-z0-9_.-]{1,4096}$/.test(token),
+    "CANDIDATE_CONSUMER_TOKEN_REQUIRED",
+  );
+  // Explicit token argument prevents the legacy PC100_METADATA_TOKEN override.
+  // Public check metadata needs no additional Checks permission in this public
+  // repository. Private protection endpoints are never consumer dependencies.
+  try {
+    return await api(route, token);
+  } catch {
+    throw Error("CANDIDATE_CONSUMER_METADATA_UNAVAILABLE");
+  }
+}
+readConsumerMetadata.sourceBytes = readGitSourceBytes;
+export async function observeAuthenticatedCandidateAdmission(
+  context,
+  read = readConsumerMetadata,
+  options,
+) {
   const consumerOptions = { ...options, requiredRoles: ["preflight", "supply"] };
   const base = await read(`git/commits/${context.B}`);
   const full = { repository_id: REPOSITORY_ID, pr: 100, ...context, TB: base.tree.sha };
