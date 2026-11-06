@@ -1,0 +1,37 @@
+# Future independently controlled native Linux host only. NOT installed/started.
+# Owner must provision the exact reviewed main checkout and Node24 first.
+[Unit]
+Description=Independent PC100 source admission (Owner activation required)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=pc100
+Group=pc100
+WorkingDirectory=/opt/pc100/reviewed-main
+ExecStart=/usr/bin/env -i HOME=/var/lib/pc100-private PATH=/opt/pc100/node24/bin:/usr/bin:/bin USER=pc100 /opt/pc100/node24/bin/node /opt/pc100/reviewed-main/tools/test/pc100-admission-app.mjs --watch /var/lib/pc100-private/issuer.pem /var/lib/pc100-private/reader.pem
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+ReadOnlyPaths=/opt/pc100/reviewed-main /opt/pc100/node24
+ReadWritePaths=/var/lib/pc100-private
+Restart=on-failure
+RestartSec=30
+TimeoutStopSec=60
+KillMode=control-group
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

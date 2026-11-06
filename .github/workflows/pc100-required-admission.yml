@@ -1,0 +1,46 @@
+name: PC100 admission diagnostics
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  exact-head:
+    name: pc100-independent-candidate-admission
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout protected verification source only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: "24"
+      - name: Observe actual native PR workflow identity (diagnostic only)
+        env:
+          EVENT_H: ${{ github.event.pull_request.head.sha }}
+          EVENT_B: ${{ github.event.pull_request.base.sha }}
+          EVENT_M: ${{ github.event.pull_request.merge_commit_sha }}
+        run: |
+          set -euo pipefail
+          printf 'PR_WORKFLOW_IDENTITY H=%s B=%s EVENT_M=%s ACTUAL_M=%s WORKFLOW_SHA=%s CHECKOUT=%s\n' "$EVENT_H" "$EVENT_B" "$EVENT_M" "$GITHUB_SHA" "$GITHUB_WORKFLOW_SHA" "$(git rev-parse HEAD)"
+          test "$(git rev-parse HEAD)" = "$EVENT_B"
+          test "$GITHUB_WORKFLOW_SHA" = "$GITHUB_SHA"
+          test "$GITHUB_WORKFLOW_REF" = "$GITHUB_REPOSITORY/.github/workflows/pc100-required-admission.yml@refs/pull/${{ github.event.pull_request.number }}/merge"
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+          timeout 60s git -c credential.helper= fetch --no-tags --depth=2 origin "$GITHUB_SHA"
+          test "$(git show -s --format=%P "$GITHUB_SHA")" = "$EVENT_B $EVENT_H"
+          test "$(git show -s --format=%T "$GITHUB_SHA")" = "$(git show -s --format=%T "$EVENT_H")"
+      - name: Inspect independently installed candidate policy (not independent enforcement)
+        if: github.event.pull_request.number == 100
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TRUSTED_WORKFLOW_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$TRUSTED_WORKFLOW_SHA"
+          node tools/test/pc100-candidate-policy.mjs required
