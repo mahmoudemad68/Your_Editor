@@ -1,5 +1,7 @@
 /** Synthetic GitHub/Git inputs only. Never a real policy or qualification receipt. */
-import { readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import process from "node:process";
+import { fileURLToPath } from "node:url";
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 import { canonical, hash } from "../../../tools/test/pc100-source-verifier.mjs";
@@ -19,6 +21,25 @@ import {
   CANDIDATE_TITLE,
   evaluateCandidatePolicy,
 } from "../../../tools/test/pc100-candidate-policy.mjs";
+// Raw immutable Git bytes, not platform-converted checkout bytes. Test fixtures
+// must reproduce what the GitHub blob API returns; no production normalization.
+const supplyGitBytes = execFileSync(
+  "git",
+  [
+    "-c",
+    `safe.directory=${fileURLToPath(new URL("../../../", import.meta.url))}`,
+    "show",
+    "HEAD:.github/workflows/supply-chain.yml",
+  ],
+  {
+    cwd: new URL("../../../", import.meta.url),
+    encoding: "buffer",
+    timeout: 10000,
+    maxBuffer: 65536,
+    env: { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot },
+    stdio: ["ignore", "pipe", "pipe"],
+  },
+);
 export const blobSHA = (b) =>
   createHash("sha1")
     .update(Buffer.concat([Buffer.from(`blob ${b.length}\0`), b]))
@@ -126,9 +147,7 @@ export function candidateFixture({ context, fileBytes, lock = sampleLock(), appC
     ? Buffer.from(fileBytes[LOCK])
     : Buffer.from(JSON.stringify(lock) + "\n");
   content[LOCK] = lockBytes;
-  content[".github/workflows/supply-chain.yml"] ??= readFileSync(
-    new URL("../../../.github/workflows/supply-chain.yml", import.meta.url),
-  );
+  content[".github/workflows/supply-chain.yml"] ??= Buffer.from(supplyGitBytes);
   content[APP_ENGINE] ??= Buffer.from("synthetic:independent-app-engine");
   const app = appConfig ?? {
     schema: "pc100-independent-app-v1",

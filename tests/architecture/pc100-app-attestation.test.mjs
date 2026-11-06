@@ -1360,15 +1360,8 @@ for (const canary of [
     }
   });
 
-test(
-  "QA107 Linux root-owned documented checkout starts under real systemd confinement",
-  { skip: process.platform !== "linux" },
-  async () => {
-    const source = path.resolve(import.meta.dirname, "../.."),
-      node = process.execPath;
-    // No keys, App API or service activation: a disposable transient unit executes
-    // ONLY the real checkout/public-record verification helpers, then is collected.
-    const script = `
+function syntheticStartupScript(source, node) {
+  return String.raw`
  import {mkdtemp,mkdir,writeFile,readFile,copyFile,chmod,symlink,rm} from "node:fs/promises";
  import {execFileSync,spawnSync} from "node:child_process";
  import path from "node:path";
@@ -1408,6 +1401,25 @@ test(
   if(!base.startsWith("/run/pc100-synthetic-"))throw Error("UNSAFE_TEST_CLEANUP");
   await rm(base,{recursive:true,force:true});
  }`;
+}
+test("QA107 generated Linux startup program compiles on every supported development OS", () => {
+  const run = spawnSync(process.execPath, ["--check", "--input-type=module"], {
+    input: syntheticStartupScript("/run/synthetic-source", "/run/synthetic-node"),
+    encoding: "utf8",
+    timeout: 10000,
+    env: { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot },
+  });
+  assert.equal(run.status, 0, run.stderr);
+});
+test(
+  "QA107 Linux root-owned documented checkout starts under real systemd confinement",
+  { skip: process.platform !== "linux" },
+  async () => {
+    const source = path.resolve(import.meta.dirname, "../.."),
+      node = process.execPath;
+    // No keys, App API or service activation: a disposable transient unit executes
+    // ONLY the real checkout/public-record verification helpers, then is collected.
+    const script = syntheticStartupScript(source, node);
     const run = spawnSync("sudo", ["-n", node, "--input-type=module", "-e", script], {
       encoding: "utf8",
       timeout: 28000,
