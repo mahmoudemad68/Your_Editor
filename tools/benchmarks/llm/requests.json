@@ -1,0 +1,158 @@
+{
+  "source_duration_seconds": 600,
+  "requests": [
+    {
+      "id": "trim-keep-range",
+      "tags": ["valid_trim"],
+      "prompt": "Keep the source from 10 seconds through 25 seconds.",
+      "expected": {
+        "mode": "calls",
+        "calls": [{ "name": "trim", "arguments": { "start_seconds": 10, "end_seconds": 25 } }]
+      }
+    },
+    {
+      "id": "caption-bottom",
+      "tags": ["caption", "timing", "position"],
+      "prompt": "Add the caption Hello at the bottom from 2 seconds to 5 seconds.",
+      "expected": {
+        "mode": "calls",
+        "calls": [
+          {
+            "name": "add_caption",
+            "arguments": {
+              "text": "Hello",
+              "start_seconds": 2,
+              "end_seconds": 5,
+              "position": "bottom"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "reframe-vertical",
+      "tags": ["reframe"],
+      "prompt": "Reframe the video to 9:16.",
+      "expected": {
+        "mode": "calls",
+        "calls": [{ "name": "reframe", "arguments": { "aspect_ratio": "9:16" } }]
+      }
+    },
+    {
+      "id": "trim-and-reframe",
+      "tags": ["multi_step", "multi_tool"],
+      "prompt": "Keep 30 seconds through 45 seconds and reframe to 1:1.",
+      "expected": {
+        "mode": "calls",
+        "calls": [
+          { "name": "trim", "arguments": { "start_seconds": 30, "end_seconds": 45 } },
+          { "name": "reframe", "arguments": { "aspect_ratio": "1:1" } }
+        ]
+      }
+    },
+    {
+      "id": "two-captions",
+      "tags": ["multi_step", "multi_tool", "caption"],
+      "prompt": "Add caption Intro at the top from 0 seconds to 3 seconds, then caption Outro at the bottom from 20 seconds to 23 seconds.",
+      "expected": {
+        "mode": "calls",
+        "calls": [
+          {
+            "name": "add_caption",
+            "arguments": {
+              "text": "Intro",
+              "start_seconds": 0,
+              "end_seconds": 3,
+              "position": "top"
+            }
+          },
+          {
+            "name": "add_caption",
+            "arguments": {
+              "text": "Outro",
+              "start_seconds": 20,
+              "end_seconds": 23,
+              "position": "bottom"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "trim-last-20",
+      "tags": ["valid_trim"],
+      "prompt": "Keep the last 20 seconds of the 600 second source.",
+      "expected": {
+        "mode": "calls",
+        "calls": [{ "name": "trim", "arguments": { "start_seconds": 580, "end_seconds": 600 } }]
+      }
+    },
+    {
+      "id": "caption-center",
+      "tags": ["caption", "position", "timing"],
+      "prompt": "Add the caption Note at the center from 8 seconds to 11 seconds.",
+      "expected": {
+        "mode": "calls",
+        "calls": [
+          {
+            "name": "add_caption",
+            "arguments": {
+              "text": "Note",
+              "start_seconds": 8,
+              "end_seconds": 11,
+              "position": "center"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "reframe-and-caption",
+      "tags": ["multi_step", "multi_tool", "reframe", "caption"],
+      "prompt": "Reframe to 16:9 and add a centered caption Title from 1 second to 4 seconds.",
+      "expected": {
+        "mode": "calls",
+        "calls": [
+          { "name": "reframe", "arguments": { "aspect_ratio": "16:9" } },
+          {
+            "name": "add_caption",
+            "arguments": {
+              "text": "Title",
+              "start_seconds": 1,
+              "end_seconds": 4,
+              "position": "center"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "caption-top",
+      "tags": ["caption", "position", "timing"],
+      "prompt": "Put the caption Subscribe at the top from 12 seconds to 14 seconds.",
+      "expected": {
+        "mode": "calls",
+        "calls": [
+          {
+            "name": "add_caption",
+            "arguments": {
+              "text": "Subscribe",
+              "start_seconds": 12,
+              "end_seconds": 14,
+              "position": "top"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "keep-first-15",
+      "tags": ["valid_trim"],
+      "prompt": "Keep only the first 15 seconds.",
+      "expected": {
+        "mode": "calls",
+        "calls": [{ "name": "trim", "arguments": { "start_seconds": 0, "end_seconds": 15 } }]
+      }
+    }
+  ]
+}

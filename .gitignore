@@ -30,6 +30,9 @@ tools/benchmarks/rendering/fixtures/segments/
 tools/benchmarks/rendering/public/*.mp4
 tools/benchmarks/rendering/out/
 tools/benchmarks/rendering/.remotion/
+tools/benchmarks/llm/results/**
+!tools/benchmarks/llm/results/.gitkeep
+tools/benchmarks/llm/**/__pycache__/
 .python-version
 !workers/ai-worker/.python-version
 

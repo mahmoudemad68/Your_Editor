@@ -1,0 +1,18 @@
+{
+  "role": "guardrail",
+  "note": "These requests are not part of the CP1 10. A correct abstention is reported separately and is not a schema-valid tool call.",
+  "requests": [
+    {
+      "id": "ambiguous-request",
+      "tags": ["ambiguous"],
+      "prompt": "Make it better.",
+      "expected": { "mode": "no_calls", "calls": [] }
+    },
+    {
+      "id": "out-of-bounds-trim",
+      "tags": ["out_of_bounds"],
+      "prompt": "Trim the 600 second source from 700 seconds to 800 seconds.",
+      "expected": { "mode": "no_calls", "calls": [] }
+    }
+  ]
+}

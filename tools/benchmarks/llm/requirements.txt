@@ -1,0 +1,2 @@
+# The benchmark uses the Python standard library. Provider calls are HTTP.
+# Do not add an SDK unless the owner chooses one later.
