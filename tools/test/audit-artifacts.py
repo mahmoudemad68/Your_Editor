@@ -1,15 +1,18 @@
 """Fail artifact publication if retained evidence still contains credentials.
 
 Inspect structured trace fields independently of sanitization, including decoded
-bodies, nested serialized JSON and archive names. Print counts only, never values.
+bodies, nested serialized JSON and archive names. Print counts and bounded,
+redacted failure-location metadata only, never matched values or raw paths.
 """
 
 import argparse
 import base64
+import hashlib
 import io
 import json
 import re
 import zipfile
+import zlib
 from pathlib import Path
 from urllib.parse import unquote_plus
 
@@ -67,6 +70,111 @@ BEARER = re.compile(r"\bBearer\s+(\S+)", re.IGNORECASE)
 URI_USER = re.compile(r"[a-z][a-z0-9+.-]*://([^/@\s]+)@", re.IGNORECASE)
 
 
+def location_class(name):
+    # Never log arbitrary filenames: trace/member names can themselves be secrets.
+    allowed = {
+        "healthy",
+        "negative",
+        "runtime",
+        "playwright",
+        "resources",
+        "services.log",
+        "trace.zip",
+    }
+    return "/".join(part if part in allowed else "*" for part in Path(name).parts[-8:])
+
+
+def uri_diagnostic(frame, match):
+    """Bounded metadata only. This observer never changes the audit verdict."""
+    if frame is None:
+        return {"stream": "path", "record_kind": "uri_userinfo"}
+    raw = frame["raw"]
+    result = {
+        "entry": frame["entry"],
+        "location_class": location_class(frame["name"]),
+        "file_sha256": hashlib.sha256(raw).hexdigest(),
+        "bytes": len(raw),
+        "format": "png" if raw.startswith(b"\x89PNG\r\n\x1a\n") else "other",
+        "suffix": Path(frame["name"]).suffix.lower()
+        if Path(frame["name"]).suffix.lower()
+        in (
+            ".png",
+            ".jpeg",
+            ".jpg",
+            ".zip",
+            ".json",
+            ".trace",
+            ".network",
+            ".log",
+            ".js",
+        )
+        else "other",
+        "stream": frame["stream"],
+        "record_kind": "uri_userinfo",
+        "normalized_record_offset": match.start(),
+    }
+    projected = frame.get("projection", "")
+    value = match[0]  # In-memory only; never returned, logged or hashed separately.
+    at = projected.find(value)
+    if frame["stream"] != "ascii_projection" or at < 0 or projected.count(value) != 1:
+        return result
+    end = at + len(value)
+    escapes = iter(RAW_ESCAPE.finditer(raw))
+    escape = next(escapes, None)
+    i = pos = 0
+    first = last = None
+    while i < len(raw) and pos < end:
+        if escape is not None and i == escape.start():
+            i = escape.end()
+            escape = next(escapes, None)
+            continue
+        b = raw[i]
+        if b in (9, 10, 13) or 32 <= b < 127:
+            if pos == at:
+                first = i
+            if pos == end - 1:
+                last = i
+            pos += 1
+        i += 1
+    if first is None or last is None:
+        return result
+    result.update(
+        raw_start=first,
+        raw_end_exclusive=last + 1,
+        source_contiguous=last - first + 1 == len(value),
+    )
+    if result["format"] == "png":
+        offset, chunks, valid, ended = 8, [], True, False
+        for _ in range(4096):
+            if offset + 12 > len(raw):
+                valid = False
+                break
+            size = int.from_bytes(raw[offset : offset + 4], "big")
+            stop = offset + 12 + size
+            if stop > len(raw):
+                valid = False
+                break
+            kind = raw[offset + 4 : offset + 8]
+            valid &= zlib.crc32(
+                raw[offset + 4 : stop - 4]
+            ) & 0xFFFFFFFF == int.from_bytes(raw[stop - 4 : stop], "big")
+            if offset + 8 <= first and last < stop - 4:
+                chunks.append(
+                    kind.decode("ascii")
+                    if kind in (b"IDAT", b"tEXt", b"iTXt", b"zTXt")
+                    else "other"
+                )
+            offset = stop
+            if kind == b"IEND":
+                ended = True
+                break
+        result.update(
+            png_crc_valid=bool(valid and ended and offset == len(raw)),
+            png_source_chunks=chunks,
+        )
+    return result
+
+
 def audit(directory: Path, secret_file: Path | None = None) -> dict:
     known = variants(
         DEFAULT_SECRETS
@@ -96,6 +204,8 @@ def audit(directory: Path, secret_file: Path | None = None) -> dict:
         for encoding in ("utf-8", "utf-16-le", "utf-16-be")
     }
     budget = [MAX_EXPANDED_BYTES]
+    frame = None
+    first_uri = None
 
     def safe(value):
         return value is None or value == "" or value == "[REDACTED]"
@@ -110,6 +220,7 @@ def audit(directory: Path, secret_file: Path | None = None) -> dict:
             counts["token"] += 1
 
     def text(value):
+        nonlocal first_uri
         value = normalized(value)
         decoded = unquote_plus(value)
         if any(secret in value or secret in decoded for secret in known):
@@ -122,6 +233,8 @@ def audit(directory: Path, secret_file: Path | None = None) -> dict:
                 finding("token")
         for match in URI_USER.finditer(value):
             if not safe(unquote_plus(match[1])):
+                if first_uri is None:
+                    first_uri = uri_diagnostic(frame, match)
                 counts["db_credentials"] += 1
                 finding("userinfo")
         for match in ASSIGNMENT.finditer(decoded):
@@ -171,8 +284,16 @@ def audit(directory: Path, secret_file: Path | None = None) -> dict:
                     text(value)
 
     def content(raw, archive_depth=0, depth=0, name=""):
-        nonlocal entries
+        nonlocal entries, frame
         entries += 1
+        previous = frame
+        frame = {"entry": entries, "name": name, "raw": raw, "stream": "raw"}
+        try:
+            scan_content(raw, archive_depth, depth, name)
+        finally:
+            frame = previous
+
+    def scan_content(raw, archive_depth, depth, name):
         # No binary/text classifier may suppress a raw known-secret check.
         if any(secret in raw for secret in raw_known):
             finding("known_raw")
@@ -195,6 +316,7 @@ def audit(directory: Path, secret_file: Path | None = None) -> dict:
         projected_text = bytes(
             b for b in projected if b in (9, 10, 13) or 32 <= b < 127
         ).decode("ascii")
+        frame.update(stream="ascii_projection", projection=projected_text)
         inspect_text(projected_text, depth)
         decoded = normalized(
             raw.decode(
@@ -202,6 +324,7 @@ def audit(directory: Path, secret_file: Path | None = None) -> dict:
                 errors="replace",
             )
         )
+        frame["stream"] = "decoded_text"
         inspect_text(decoded, depth)
 
     def inspect_text(decoded, depth):
@@ -237,6 +360,8 @@ def audit(directory: Path, secret_file: Path | None = None) -> dict:
         **counts,
     }
     if counts["secret"]:
+        if first_uri is not None:
+            result["first_uri_diagnostic"] = first_uri
         raise ValueError("Artifact credential audit failed: " + json.dumps(result))
     return result
 

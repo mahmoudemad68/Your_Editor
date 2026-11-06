@@ -1,13 +1,17 @@
 """End-to-end sanitizer fixtures exercise the publication entry point."""
 
 import base64
+import hashlib
 import importlib.util
 import io
 import json
+import struct
 import subprocess
+import sys
 import tempfile
 import unittest
 import zipfile
+import zlib
 from pathlib import Path
 from urllib.parse import quote, quote_plus
 
@@ -25,6 +29,78 @@ audit_spec.loader.exec_module(artifact_audit)
 
 
 class SanitizerRegression(unittest.TestCase):
+    @staticmethod
+    def png(comment):
+        def chunk(kind, value):
+            return (
+                struct.pack(">I", len(value))
+                + kind
+                + value
+                + struct.pack(">I", zlib.crc32(kind + value) & 0xFFFFFFFF)
+            )
+
+        return (
+            b"\x89PNG\r\n\x1a\n"
+            + chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0))
+            + chunk(b"tEXt", b"Comment\0note " + comment)
+            + chunk(b"IDAT", zlib.compress(b"\0\0\0\0"))
+            + chunk(b"IEND", b"")
+        )
+
+    def test_uri_diagnostics_never_disclose_values_or_arbitrary_paths(self):
+        folder = self.artifacts / "DIAG_PRIVATE_PATH"
+        folder.mkdir()
+        path = folder / "fixture.png"
+        raw = self.png(b"postgres://DIAG_USER:DIAG_PASSWORD@invalid.example/")
+        path.write_bytes(raw)
+        with self.assertRaisesRegex(ValueError, "credential audit failed") as caught:
+            artifact_audit.audit(self.artifacts, self.secret_file)
+        message = str(caught.exception)
+        for value in (
+            "DIAG_USER",
+            "DIAG_PASSWORD",
+            "invalid.example",
+            "DIAG_PRIVATE_PATH",
+            str(self.root),
+        ):
+            self.assertNotIn(value, message)
+        report = json.loads(message.split(": ", 1)[1])
+        diag = report["first_uri_diagnostic"]
+        self.assertEqual(diag["file_sha256"], hashlib.sha256(raw).hexdigest())
+        self.assertEqual(diag["format"], "png")
+        self.assertTrue(diag["source_contiguous"])
+        self.assertTrue(diag["png_crc_valid"])
+        self.assertEqual(diag["png_source_chunks"], ["tEXt"])
+        self.assertLess(len(json.dumps(diag)), 1500)
+
+    def test_projection_diagnostic_observes_but_cannot_change_rejection(self):
+        raw = self.png(b"h\xfftt\xffps\xff://DIAG_USER@invalid.example/")
+        (self.artifacts / "fixture.png").write_bytes(raw)
+        san.sanitize(self.artifacts, self.secret_file)
+        with self.assertRaisesRegex(ValueError, "credential audit failed") as caught:
+            artifact_audit.audit(self.artifacts, self.secret_file)
+        report = json.loads(str(caught.exception).split(": ", 1)[1])
+        diag = report["first_uri_diagnostic"]
+        self.assertEqual(report["db_credentials"], 1)
+        self.assertEqual(diag["stream"], "ascii_projection")
+        self.assertFalse(diag["source_contiguous"])
+        self.assertTrue(diag["png_crc_valid"])
+        self.assertEqual(diag["png_source_chunks"], ["tEXt"])
+        self.assertNotIn("DIAG_USER", str(caught.exception))
+
+    def test_nested_diagnostic_keeps_archive_names_and_credentials_private(self):
+        raw = "postgres://DIAG_USER:DIAG_PASSWORD@invalid.example/".encode("utf-16")
+        with zipfile.ZipFile(self.artifacts / "trace.zip", "w") as archive:
+            archive.writestr("DIAG_PRIVATE_PATH/payload.network", raw)
+        with self.assertRaisesRegex(ValueError, "credential audit failed") as caught:
+            artifact_audit.audit(self.artifacts, self.secret_file)
+        message = str(caught.exception)
+        self.assertNotIn("DIAG_USER", message)
+        self.assertNotIn("DIAG_PASSWORD", message)
+        self.assertNotIn("DIAG_PRIVATE_PATH", message)
+        self.assertGreater(json.loads(message.split(": ", 1)[1])["db_credentials"], 0)
+        self.sanitize()
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
@@ -322,7 +398,7 @@ class SanitizerRegression(unittest.TestCase):
         path.write_text(source)
         result = subprocess.run(
             [
-                "python3",
+                sys.executable,
                 str(ROOT / "tools/test/audit-artifacts.py"),
                 str(self.artifacts),
             ],
