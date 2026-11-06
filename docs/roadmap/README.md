@@ -17,7 +17,7 @@ documentation and CI/CD are tasks inside each story from Sprint 1, not a late ph
 | [Sprint plan](sprints.md) | Sprint goals, increments, deliverables, committed stories, parallel lanes, quality work per sprint |
 | [Dependency map](dependencies.md) | Phase and epic graphs, epic parallelism, critical path, full story dependency register |
 | [Milestones and checkpoints](milestones.md) | Exit criteria and fallbacks for M0-M7 and CP1-CP6 |
-| [export/jira-import.csv](export/jira-import.csv) | Epic / Story / Sub-task import for Jira and Linear |
+| [export/jira-import.csv](export/jira-import.csv) | Legacy generated export. Jira is not the active tracker |
 | [export/backlog-full.csv](export/backlog-full.csv) | Every level (Phase, Epic, Feature, Story, Task) with parents, sprint, lane, points, dependencies |
 
 Each phase document follows the same ten sections: Objective, Epics, Features, User Stories, Technical Tasks,
@@ -205,6 +205,11 @@ implements them as adapters. The rule is enforced by dependency-cruiser and impo
 
 ## 6. Scrum process
 
+The same cadence, Definition of Ready, and Definition of Done are written for the team in
+[docs/process/working-agreements.md](../process/working-agreements.md), with the GitHub Project runbook and the empty
+approval record beside it. That page does not change the rules below. Team approval of the written agreements is still
+pending. GitHub is the active tracker, and the Project has not been created.
+
 ### Sprint cadence (10 working days)
 
 | Day | Event |
@@ -302,31 +307,18 @@ Exit criteria, required stories and fallbacks are listed in [milestones.md](mile
 | Integration surprises across Python and TypeScript | Late defects | JSON Schema contracts with generated bindings, contract tests, integration day each sprint | OPS |
 | Team member unavailability | Lane blocked | Review buddies per lane, pairing, documentation in every story | ALL |
 
-## 10. Importing into a tracker
+## 10. Tracker
 
-**Jira** - create sprints "Sprint 1" to "Sprint 12" on the board, then use *System -> External System Import -> CSV*
-with [export/jira-import.csv](export/jira-import.csv). Map `Issue Id` and `Parent Id` to keep the Epic -> Story ->
-Sub-task hierarchy, `Story Points` to the story points field, `Component/s` to lane components and the repeated `Labels`
-columns to labels (phase, feature, priority, scope).
+GitHub is the only tracker. The board setup, the Sprint 1 and Sprint 2 issue mapping, and the reason the Project was
+not created are in [docs/process/github-project.md](../process/github-project.md). Validate the mapping with
+`python3 tools/roadmap/check_tracker_export.py`. That check does not create issues.
 
-**Linear** - *Settings -> Import -> Jira (CSV)* with the same file. Map epics to Projects (or parent issues), sprints to
-Cycles and lanes to Teams or labels.
+Do not import every story in [export/backlog-full.csv](export/backlog-full.csv) in one pass. The first board contains
+Sprint 1 and Sprint 2, plus the epics those stories name. Search for an existing `US-` or `EP-` title before creating
+an issue.
 
-**GitHub Projects** - create a project with custom fields Sprint (iteration), Points (number), Lane, Priority and
-Phase (single select), then create issues from [export/backlog-full.csv](export/backlog-full.csv):
-
-```bash
-python3 - <<'EOF'
-import csv, subprocess
-for row in csv.DictReader(open("docs/roadmap/export/backlog-full.csv", encoding="utf-8")):
-    if row["Type"] == "Story":
-        subprocess.run(["gh", "issue", "create", "--title", f"{row['ID']} {row['Title']}",
-                        "--body", row["Description"]], check=True)
-EOF
-```
-
-Then add the issues to the project with `gh project item-add` and fill the fields from the CSV columns. Technical tasks
-already appear as a checklist in each issue body.
+[export/jira-import.csv](export/jira-import.csv) is still generated so the roadmap check stays reproducible. Jira and
+Linear are not the active tracker. Do not import that file.
 
 ## 11. Maintaining this roadmap
 
