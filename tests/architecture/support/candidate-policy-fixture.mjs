@@ -405,6 +405,20 @@ export function candidateFixture({ context, fileBytes, lock = sampleLock(), appC
       size: b.length,
       content: b.toString("base64"),
     };
+  let explicitOpenPRs;
+  Object.defineProperty(rows, "pulls?state=open&base=main&per_page=100&page=1", {
+    enumerable: true,
+    configurable: true,
+    get: () =>
+      explicitOpenPRs ??
+      Object.keys(rows)
+        .filter((p) => /^pulls\/[1-9][0-9]*$/.test(p))
+        .map((p) => rows[p])
+        .filter((v) => v?.state === "open" && v.base?.ref === "main"),
+    set: (value) => {
+      explicitOpenPRs = value;
+    },
+  });
   const read = async (route) => {
     if (!Object.hasOwn(rows, route)) throw Error(`Unexpected fixture read: ${route}`);
     return rows[route];

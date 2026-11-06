@@ -620,10 +620,12 @@ controller does not disguise those as harmless quarantines or auto-clear locks.
 
 GitHub checks attach to SHAs, not individual PRs. Changed ordinary PRs with a
 same-H alias remain denied; fork changed-source review is unsupported. Native
-same-H ambiguity is not solved by ignoring foreign PRs. A canonical PR100 head
-can only be evaluated under the independent candidate policy, never borrowed
-ordinary review. Alias journal bookkeeping does not manufacture a separate
-positive authorization. Same-H availability/griefing remains an Owner disposition
+same-H ambiguity is not solved by ignoring foreign PRs. A shared-H group, including a canonical PR100 head, receives no positive
+source check while any open alias exists. Consumers independently reread the
+complete open-PR association before and after verification, so an old positive
+cannot be reused before the next issuer poll. A canonical PR100 head is always
+evaluated under candidate policy, never borrowed ordinary review. Closing an
+alias requires fresh canonical reevaluation; journal bookkeeping is not approval. Same-H availability/griefing remains an Owner disposition
 and activation blocker; this repair only prevents unrelated-head/global denial.
 
 ### Ordinary signer boundary and recovery (HIGH-2, MED-5, LOW-3/5)
@@ -689,6 +691,9 @@ Before any service startup, prepare an exact protected Git configuration:
 
 ```sh
 # Independent host root, only after source/host installation authorization.
+# First verify both literal installation paths and their exact reviewed source.
+chown -R root:root /opt/pc100/reviewed-main /opt/pc100/node24
+chmod -R go-w /opt/pc100/reviewed-main /opt/pc100/node24
 install -d -o root -g root -m 0755 /etc/pc100 /var/lib/pc100-reviews
 printf '[safe]\n\tdirectory = /opt/pc100/reviewed-main\n' > /etc/pc100/gitconfig
 chown root:root /etc/pc100/gitconfig

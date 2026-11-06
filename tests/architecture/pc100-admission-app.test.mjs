@@ -900,12 +900,12 @@ test("S5 App read routes and queries are closed; writes limited to tokens/checks
     assert.throws(() => validateAppRoute(r, m), /APP_ROUTE_REJECTED/);
 });
 
-test("N4 same-H fork alias uses independently verified canonical source, never neutral", async () => {
+test("N4 same-H fork alias denies reusable native status even for canonical candidate source", async () => {
   const f = candidateFixture();
   f.rows["pulls/104"] = { ...f.snapshot.pr, number: 104 };
   const c = client(f);
   const r = await reconcileAppCheck(c.read, config, undefined, 104);
-  assert.equal(r.conclusion, "success");
+  assert.equal(r.conclusion, "failure");
   assert.equal(r.pr, 100);
   assert.ok(c.writes.every((w) => w.body.conclusion !== "neutral"));
 });
@@ -1097,7 +1097,7 @@ test("N6 merged candidate ends lifecycle without new failure/check spam", async 
   assert.equal(c.writes.length, 0);
 });
 
-test("N4 complete same-H fork group evaluates one canonical verdict per stable cycle", async () => {
+test("N4 complete same-H fork group evaluates one fail-closed verdict per stable cycle", async () => {
   const f = candidateFixture(),
     c = client(f),
     tracked = new Map();
@@ -1107,11 +1107,11 @@ test("N4 complete same-H fork group evaluates one canonical verdict per stable c
   f.rows["pulls/500"].merge_commit_sha = "9".repeat(40);
   f.rows["pulls?state=open&base=main&per_page=100&page=1"] = [f.rows["pulls/500"], f.snapshot.pr];
   const first = await reconcileAppCycle(c.read, config, tracked);
-  assert.equal(first.filter((x) => x.conclusion === "success").length, 2);
+  assert.equal(first.filter((x) => x.conclusion === "failure").length, 2);
   const count = c.writes.length;
   await reconcileAppCycle(c.read, config, tracked);
   assert.equal(c.writes.length, count);
-  assert.ok(c.writes.every((w) => w.body.conclusion === "success"));
+  assert.ok(c.writes.every((w) => w.body.conclusion === "failure"));
 });
 
 function journalContext(f) {
@@ -1286,7 +1286,7 @@ for (const [name, result] of [
     );
   });
 
-test("N4 a closed deleted fork cannot revoke the canonical same-H check", async () => {
+test("N4 closing an alias requires fresh canonical reevaluation, never borrowed success", async () => {
   const f = candidateFixture(),
     c = client(f),
     tracked = new Map();
@@ -1302,7 +1302,8 @@ test("N4 a closed deleted fork cannot revoke the canonical same-H check", async 
   f.rows["pulls?state=open&base=main&per_page=100&page=1"] = [f.snapshot.pr];
   const result = await reconcileAppCycle(c.read, config, tracked);
   assert.equal(result.find((x) => x.pr === 100).conclusion, "success");
-  assert.equal(c.writes.length, count);
+  assert.equal(c.writes.length, count + 1);
+  assert.equal(c.writes[0].body.conclusion, "failure");
   assert.equal(tracked.has(500), false);
 });
 
@@ -1498,3 +1499,35 @@ for (const status of [401, 403, 429, 500])
     };
     await assert.rejects(() => reconcileAppCycle(read, config, tracked), /APP_API_REJECTED/);
   });
+
+test("QA107 shared-H candidate alias cannot retain a positive native source context", async () => {
+  const f = candidateFixture(),
+    c = client(f),
+    alias = globalThis.structuredClone(f.snapshot.pr);
+  alias.number = 500;
+  alias.head.repo.id = 424242;
+  f.rows["pulls/500"] = alias;
+  f.rows["pulls?state=open&base=main&per_page=100&page=1"] = [f.snapshot.pr, alias];
+  const result = await reconcileAppCheck(c.read, config);
+  assert.equal(result.conclusion, "failure");
+  assert.equal(result.outcome, "APP_SOURCE_ALIAS_REJECTED");
+  assert.ok(c.writes.every((w) => w.body.conclusion !== "success"));
+});
+
+test("QA107 shared-H alias race after publication is revoked without stopping other heads", async () => {
+  const f = candidateFixture();
+  unrelated(f, 104);
+  let inserted = false;
+  const c = client(f, {
+    afterWrite: (b) => {
+      if (b.conclusion === "success" && !inserted) {
+        inserted = true;
+        f.rows["pulls/500"] = { ...globalThis.structuredClone(f.snapshot.pr), number: 500 };
+      }
+    },
+  });
+  const out = await reconcileAppCycle(c.read, config);
+  assert.equal(out.find((r) => r.pr === 104).conclusion, "neutral");
+  assert.ok(out.find((r) => r.pr === 100).outcome === "APP_PR_QUARANTINED");
+  assert.ok(c.writes.some((w) => w.body.conclusion === "failure"));
+});

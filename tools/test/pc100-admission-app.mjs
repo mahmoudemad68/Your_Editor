@@ -133,6 +133,7 @@ const SAFE_FAILURES = new Set([
   "ATTESTATION_SIZE_REJECTED",
   "ATTESTATION_TREE_DRIFT",
   "ATTESTATION_TRUST_REJECTED",
+  "ATTESTATION_SOURCE_ALIAS_REJECTED",
   "ATTESTATION_SUPPLY_PROFILE_UNSUPPORTED",
   "ATTESTATION_SUPPLY_JOBS_REJECTED",
   "ATTESTATION_SUPPLY_CHECK_REJECTED",
@@ -881,6 +882,8 @@ export async function reconcileAppCheck(
   }
   let record, failure, changedTree;
   try {
+    const aliases = (await listOpenPRs(read)).filter((p) => p?.head?.sha === context.H);
+    need(aliases.length === 1 && aliases[0].number === number, "APP_SOURCE_ALIAS_REJECTED");
     need(pr.state === "open" && !pr.merged, "APP_PR_INACTIVE");
     if (number === 100) {
       need(
@@ -1029,6 +1032,9 @@ export async function reconcileAppCheck(
   try {
     samePR(await read(`pulls/${number}`), context);
     if (!failure) {
+      const aliases = (await listOpenPRs(read)).filter((p) => p?.head?.sha === context.H);
+      if (aliases.length !== 1 || aliases[0].number !== number)
+        throw new PRQuarantine("APP_SOURCE_ALIAS_REJECTED");
       if (number === 100) {
         const current = await authorize(
           { workflow_run: { id: record.upstream_run } },

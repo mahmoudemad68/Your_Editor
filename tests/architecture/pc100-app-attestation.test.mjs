@@ -1466,3 +1466,11 @@ test("QA107 MED-7 internally consistent but unequal head/merge trees reject", as
     /TREE_DRIFT/,
   );
 });
+
+test("QA107 shared-H alias invalidates a previously valid consumer proof", async () => {
+  const f = await consumerFixture();
+  const alias = { ...globalThis.structuredClone(f.snapshot.pr), number: 500 };
+  alias.head.repo.id = 424242;
+  f.rows["pulls?state=open&base=main&per_page=100&page=1"] = [f.snapshot.pr, alias];
+  await assert.rejects(() => verifyConsumerAttestation(f.publicRead, f.full, { now }));
+});

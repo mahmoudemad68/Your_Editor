@@ -836,6 +836,10 @@ async function liveContext(read, c) {
       pr.merge_commit_sha === c.M,
     "ATTESTATION_LIVE_DRIFT",
   );
+  const aliases = (await completePages(read, "pulls?state=open&base=main")).filter(
+    (p) => p?.head?.sha === c.H,
+  );
+  need(aliases.length === 1 && aliases[0].number === c.pr, "ATTESTATION_SOURCE_ALIAS_REJECTED");
   const [h, b, m] = await Promise.all([c.H, c.B, c.M].map((s) => read(`git/commits/${s}`)));
   need(
     h.sha === c.H &&
