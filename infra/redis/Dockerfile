@@ -4,7 +4,7 @@
 # Upgrade through the signed apk index and reject anything older than that
 # revision. A newer revision still satisfies the check.
 
-FROM redis:7.4-alpine@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499
+FROM redis:8.10-alpine@sha256:71885d8cc6e42f2bc0aa2eb853bfc4be200b5108a46ac50e117ae1df0531fb80
 USER root
 COPY infra/redis/require-openssl.sh /usr/local/bin/require-openssl.sh
 RUN chmod 0755 /usr/local/bin/require-openssl.sh \
